@@ -222,3 +222,66 @@ def test_cw_guide_apply_cli_rejects_invalid_artifact(cli_runner, fake_runtime, f
         "code": "GUIDE_SCENE_MISMATCH",
         "message": "guide artifact scene must be cw, got: ocr",
     }
+
+
+@pytest.mark.parametrize(
+    ("artifact_id", "raw"),
+    [
+        ("0123456789abcdef0123456789abcdef", "{broken json"),
+        (
+            "fedcba9876543210fedcba9876543210",
+            json.dumps({"artifact_id": "fedcba9876543210fedcba9876543210", "kind": "guide"}, ensure_ascii=False),
+        ),
+    ],
+)
+def test_cw_guide_apply_cli_classifies_invalid_artifact(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch, artifact_id, raw):
+    import trail.commands.cw as cw_cmd
+
+    artifacts_dir = tmp_path / ".trail" / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / f"{artifact_id}.json").write_text(raw, encoding="utf-8")
+    monkeypatch.setattr(cw_cmd, "artifact_store_factory", lambda: ArtifactStore(artifacts_dir), raising=False)
+
+    result = cli_runner.invoke(app, ["cw", "guide", "apply", "--session", fake_session, "--guide", artifact_id])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "GUIDE_ARTIFACT_INVALID"
+
+
+@pytest.mark.parametrize(
+    "structured_content",
+    [
+        json.dumps({"ops": [{"insert": {"image": "https://example.invalid/demo.png"}}]}, ensure_ascii=False),
+        json.dumps(["unexpected", {"insert": {"image": "https://example.invalid/demo.png"}}], ensure_ascii=False),
+    ],
+)
+def test_extract_post_text_falls_back_to_html_when_structured_content_shape_unexpected(structured_content):
+    guide_module = load_cw_guide_module()
+    extract_post_text = getattr(guide_module, "_extract_post_text", None)
+    assert extract_post_text is not None
+
+    post = {
+        "post": {
+            "content": "<p>【回退】</p><p>##HTML-FALLBACK##</p>",
+            "structured_content": structured_content,
+        }
+    }
+
+    assert "##HTML-FALLBACK##" in extract_post_text(post)
+
+
+@pytest.mark.parametrize("field", ["on_field", "off_field", "priority", "positioning"])
+def test_apply_cw_guide_rejects_non_mapping_payload_fields(tmp_path, field):
+    guide_module = load_cw_guide_module()
+    apply_cw_guide = getattr(guide_module, "apply_cw_guide", None)
+    assert apply_cw_guide is not None
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+
+    with pytest.raises(TrailError) as exc_info:
+        apply_cw_guide(session, guide_data={**fake_guide(), field: []})
+
+    assert exc_info.value.code == "GUIDE_PAYLOAD_INVALID"
+    assert field in str(exc_info.value)

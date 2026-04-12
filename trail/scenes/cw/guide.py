@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import html
 import json
 import re
@@ -26,7 +27,22 @@ SHARE_CODE_PATTERN = re.compile(r"##[^#\s]+##")
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 
 
+def _guide_artifact_invalid(target: str) -> TrailError:
+    return TrailError("GUIDE_ARTIFACT_INVALID", f"guide artifact invalid: {target}")
+
+
+def _require_mapping(value: object, *, field_name: str) -> dict:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise TrailError("GUIDE_PAYLOAD_INVALID", f"guide payload field '{field_name}' must be an object")
+    return dict(value)
+
+
 def normalize_cw_guide_payload(guide_data: dict) -> dict:
+    if not isinstance(guide_data, Mapping):
+        raise TrailError("GUIDE_PAYLOAD_INVALID", "guide payload must be an object")
+
     payload = dict(guide_data)
     scene = str(payload.get("scene", "cw"))
     kind = str(payload.get("kind", "guide"))
@@ -41,6 +57,10 @@ def normalize_cw_guide_payload(guide_data: dict) -> dict:
 
     payload["scene"] = scene
     payload["kind"] = kind
+    payload["on_field"] = _require_mapping(payload.get("on_field"), field_name="on_field")
+    payload["off_field"] = _require_mapping(payload.get("off_field"), field_name="off_field")
+    payload["priority"] = _require_mapping(payload.get("priority"), field_name="priority")
+    payload["positioning"] = _require_mapping(payload.get("positioning"), field_name="positioning")
     return payload
 
 
@@ -81,13 +101,26 @@ def _fetch_miyoushe_post(url: str, *, timeout: int = 10) -> dict:
 def _extract_post_text(post: dict) -> str:
     post_data = post.get("post") or {}
     structured_content = post_data.get("structured_content")
+
+    operations: list[object] = []
     if isinstance(structured_content, str) and structured_content:
         try:
-            operations = json.loads(structured_content)
+            structured_content = json.loads(structured_content)
         except json.JSONDecodeError:
-            operations = []
+            structured_content = None
+
+    if isinstance(structured_content, dict):
+        maybe_ops = structured_content.get("ops")
+        if isinstance(maybe_ops, list):
+            operations = maybe_ops
+    elif isinstance(structured_content, list):
+        operations = structured_content
+
+    if operations:
         parts: list[str] = []
         for operation in operations:
+            if not isinstance(operation, dict):
+                continue
             insert = operation.get("insert")
             if isinstance(insert, str):
                 parts.append(insert)
@@ -140,9 +173,9 @@ def _read_guide_payload(path: Path) -> dict:
     except FileNotFoundError as exc:
         raise TrailError("GUIDE_NOT_FOUND", f"guide artifact not found: {path}") from exc
     except json.JSONDecodeError as exc:
-        raise TrailError("GUIDE_PAYLOAD_INVALID", f"guide payload invalid: {path}") from exc
+        raise _guide_artifact_invalid(str(path)) from exc
     except OSError as exc:
-        raise TrailError("GUIDE_PAYLOAD_INVALID", f"guide payload unreadable: {path}") from exc
+        raise _guide_artifact_invalid(str(path)) from exc
 
 
 def resolve_guide_input(value: str, *, artifact_store: ArtifactStore) -> dict:
@@ -156,8 +189,14 @@ def resolve_guide_input(value: str, *, artifact_store: ArtifactStore) -> dict:
         meta = artifact_store.load(value)
     except FileNotFoundError as exc:
         raise TrailError("GUIDE_NOT_FOUND", f"guide artifact not found: {value}") from exc
+    except json.JSONDecodeError as exc:
+        raise _guide_artifact_invalid(value) from exc
+    except (KeyError, OSError) as exc:
+        raise _guide_artifact_invalid(value) from exc
     except ValueError as exc:
-        raise TrailError("GUIDE_INPUT_INVALID", f"guide artifact id invalid: {value}") from exc
+        if str(exc) == "invalid artifact_id":
+            raise TrailError("GUIDE_INPUT_INVALID", f"guide artifact id invalid: {value}") from exc
+        raise _guide_artifact_invalid(value) from exc
 
     payload = _read_guide_payload(meta.path)
     payload["artifact_id"] = meta.artifact_id
