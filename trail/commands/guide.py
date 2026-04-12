@@ -5,6 +5,7 @@ import typer
 from trail.commands.helpers import build_default_artifact_store, build_default_runtime, print_json, to_jsonable
 from trail.core.errors import TrailError
 from trail.output.capture import with_auto_capture
+from trail.scenes.cw.guide import fetch_cw_guide
 
 
 artifact_store_factory = build_default_artifact_store
@@ -23,14 +24,19 @@ def fetch_guide_payload(scene: str, url: str) -> dict:
     }
 
 
+def fetch_cw_guide_payload(url: str) -> dict:
+    return fetch_guide_payload("cw", url)
+
+
 @guide_app.command("fetch")
 def guide_fetch(scene: str, url: str) -> None:
     artifact_store = artifact_store_factory()
     runtime = runtime_factory()
 
     def action() -> dict:
-        payload = fetch_guide_payload(scene, url)
-        artifact = artifact_store.create(scene=scene, kind="guide", payload=payload)
+        if scene != "cw":
+            raise TrailError("SCENE_NOT_SUPPORTED", f"暂不支持场景 {scene}")
+        artifact = fetch_cw_guide(url, artifact_store=artifact_store, fetcher=fetch_cw_guide_payload)
         return to_jsonable(artifact)
 
     print_json(with_auto_capture(runtime, action))
