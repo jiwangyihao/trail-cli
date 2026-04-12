@@ -25,3 +25,11 @@ def with_auto_capture(runtime, fn: Callable[[], dict]):
             screenshot=screenshot,
             timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
         )
+    except Exception as exc:
+        screenshot = runtime.capture_after_action(optional=True)
+        return command_failure(
+            code="UNEXPECTED_ERROR",
+            message=str(exc),
+            screenshot=screenshot,
+            timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
+        )

@@ -96,3 +96,35 @@ def test_run_session_command_persists_failure_result_and_last_screenshot(tmp_pat
         "error": {"code": "WINDOW_NOT_FOUND", "message": session.session_id},
     }
     assert loaded.last_screenshot.endswith("after-fail.png")
+
+
+def test_run_session_command_wraps_unexpected_exception_and_persists_failure(tmp_path):
+    store = SessionStore(tmp_path)
+    session = store.create(window_binding={"title": "崩坏：星穹铁道"})
+    runtime = FakeRuntime(tmp_path / "after-crash.png")
+
+    result = run_session_command(
+        store=store,
+        session_id=session.session_id,
+        runtime=runtime,
+        command_name="session.inspect",
+        action=lambda loaded: (_ for _ in ()).throw(RuntimeError(f"boom:{loaded.session_id}")),
+    )
+    loaded = store.load(session.session_id)
+
+    assert result["ok"] is False
+    assert result["error"] == {
+        "code": "UNEXPECTED_ERROR",
+        "message": f"boom:{session.session_id}",
+    }
+    assert loaded.last_result == {
+        "command": "session.inspect",
+        "ok": False,
+        "data": {},
+        "error": {
+            "code": "UNEXPECTED_ERROR",
+            "message": f"boom:{session.session_id}",
+        },
+    }
+    assert loaded.last_screenshot.endswith("after-crash.png")
+    assert runtime.calls == [True]
