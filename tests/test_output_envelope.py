@@ -40,6 +40,14 @@ class FakeRuntime:
         return self._shot
 
 
+class OptionalCaptureFailsRuntime(FakeRuntime):
+    def capture_after_action(self, optional: bool = False):
+        self.calls.append(optional)
+        if optional:
+            raise RuntimeError("capture failed")
+        return self._shot
+
+
 def test_with_auto_capture_wraps_trail_error_as_failure(tmp_path):
     runtime = FakeRuntime(tmp_path / "failed.png")
 
@@ -127,4 +135,34 @@ def test_run_session_command_wraps_unexpected_exception_and_persists_failure(tmp
         },
     }
     assert loaded.last_screenshot.endswith("after-crash.png")
+    assert runtime.calls == [True]
+
+
+def test_run_session_command_persists_failure_when_optional_capture_also_fails(tmp_path):
+    store = SessionStore(tmp_path)
+    session = store.create(window_binding={"title": "崩坏：星穹铁道"})
+    runtime = OptionalCaptureFailsRuntime(tmp_path / "after-fail.png")
+
+    result = run_session_command(
+        store=store,
+        session_id=session.session_id,
+        runtime=runtime,
+        command_name="session.inspect",
+        action=lambda loaded: (_ for _ in ()).throw(TrailError("WINDOW_NOT_FOUND", loaded.session_id)),
+    )
+    loaded = store.load(session.session_id)
+
+    assert result["ok"] is False
+    assert result["error"] == {
+        "code": "WINDOW_NOT_FOUND",
+        "message": session.session_id,
+    }
+    assert result["screenshot"] is None
+    assert loaded.last_result == {
+        "command": "session.inspect",
+        "ok": False,
+        "data": {},
+        "error": {"code": "WINDOW_NOT_FOUND", "message": session.session_id},
+    }
+    assert loaded.last_screenshot is None
     assert runtime.calls == [True]

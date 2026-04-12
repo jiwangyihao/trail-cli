@@ -7,6 +7,13 @@ from trail.core.errors import TrailError
 from trail.output.envelope import command_failure, command_success
 
 
+def _capture_optional_screenshot(runtime):
+    try:
+        return runtime.capture_after_action(optional=True)
+    except Exception:
+        return None
+
+
 def with_auto_capture(runtime, fn: Callable[[], dict]):
     started = perf_counter()
     try:
@@ -18,7 +25,7 @@ def with_auto_capture(runtime, fn: Callable[[], dict]):
             timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
         )
     except TrailError as exc:
-        screenshot = runtime.capture_after_action(optional=True)
+        screenshot = _capture_optional_screenshot(runtime)
         return command_failure(
             code=exc.code,
             message=str(exc),
@@ -26,7 +33,7 @@ def with_auto_capture(runtime, fn: Callable[[], dict]):
             timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
         )
     except Exception as exc:
-        screenshot = runtime.capture_after_action(optional=True)
+        screenshot = _capture_optional_screenshot(runtime)
         return command_failure(
             code="UNEXPECTED_ERROR",
             message=str(exc),
