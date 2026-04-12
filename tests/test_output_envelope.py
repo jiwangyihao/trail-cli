@@ -140,6 +140,49 @@ def test_run_session_command_does_not_persist_partial_state_on_failure(tmp_path)
     assert loaded.last_stage == {"scene": "cw", "value": "shop"}
 
 
+def test_run_session_command_can_persist_safe_failure_state_when_enabled(tmp_path):
+    store = SessionStore(tmp_path)
+    session = store.create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state = {"cw": {"stage": {"value": "event", "stale": False}}}
+    session.last_stage = {"scene": "cw", "value": "event"}
+    store.save(session)
+
+    def fail_after_invalidating_stage(loaded):
+        loaded.scene_state["cw"]["stage"] = {
+            "stale": True,
+            "error": {
+                "code": "STAGE_AMBIGUOUS",
+                "message": "当前资源无法区分阶段: shop, replenish",
+            },
+        }
+        loaded.last_stage = None
+        raise TrailError("STAGE_AMBIGUOUS", "当前资源无法区分阶段: shop, replenish")
+
+    result = run_session_command(
+        store=store,
+        session_id=session.session_id,
+        runtime=FakeRuntime(tmp_path / "after-fail.png"),
+        command_name="cw.stage.detect",
+        action=fail_after_invalidating_stage,
+        failure_persistence=lambda loaded, failure: failure["error"] == {
+            "code": "STAGE_AMBIGUOUS",
+            "message": "当前资源无法区分阶段: shop, replenish",
+        }
+        and loaded.scene_state["cw"]["stage"]["stale"] is True,
+    )
+    loaded = store.load(session.session_id)
+
+    assert result["ok"] is False
+    assert loaded.scene_state["cw"]["stage"] == {
+        "stale": True,
+        "error": {
+            "code": "STAGE_AMBIGUOUS",
+            "message": "当前资源无法区分阶段: shop, replenish",
+        },
+    }
+    assert loaded.last_stage is None
+
+
 def test_run_session_command_wraps_unexpected_exception_and_persists_failure(tmp_path):
     store = SessionStore(tmp_path)
     session = store.create(window_binding={"title": "崩坏：星穹铁道"})

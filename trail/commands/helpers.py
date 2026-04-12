@@ -80,7 +80,24 @@ def _load_session_result(*, store, session_id: str, runtime=None, runtime_factor
         )
 
 
-def run_session_command(*, store, session_id: str, command_name: str, action, runtime=None, runtime_factory=None):
+def _should_persist_failure(*, working_session, result: dict, failure_persistence=None) -> bool:
+    if result["ok"]:
+        return True
+    if failure_persistence is None:
+        return False
+    return bool(failure_persistence(working_session, result))
+
+
+def run_session_command(
+    *,
+    store,
+    session_id: str,
+    command_name: str,
+    action,
+    runtime=None,
+    runtime_factory=None,
+    failure_persistence=None,
+):
     session = _load_session_result(
         store=store,
         session_id=session_id,
@@ -97,7 +114,15 @@ def run_session_command(*, store, session_id: str, command_name: str, action, ru
     )
     working_session = deepcopy(session)
     result = with_auto_capture(resolved_runtime, lambda: action(working_session))
-    session_to_save = working_session if result["ok"] else session
+    session_to_save = (
+        working_session
+        if _should_persist_failure(
+            working_session=working_session,
+            result=result,
+            failure_persistence=failure_persistence,
+        )
+        else session
+    )
     session_to_save.last_result = {
         "command": command_name,
         "ok": result["ok"],

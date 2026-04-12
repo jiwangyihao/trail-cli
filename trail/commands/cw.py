@@ -87,7 +87,7 @@ def _runtime_for_session(session_id: str):
     return runtime_factory(window_title=window_title, window_binding=window_binding)
 
 
-def _run(session_id: str, command_name: str, action, *, runtime=None) -> None:
+def _run(session_id: str, command_name: str, action, *, runtime=None, failure_persistence=None) -> None:
     print_json(
         run_session_command(
             store=session_store_factory(),
@@ -96,8 +96,22 @@ def _run(session_id: str, command_name: str, action, *, runtime=None) -> None:
             action=action,
             runtime=runtime,
             runtime_factory=runtime_factory,
+            failure_persistence=failure_persistence,
         )
     )
+
+
+def _should_persist_stage_failure(working_session, result: dict) -> bool:
+    if result.get("ok"):
+        return True
+
+    error = result.get("error")
+    stage_state = working_session.scene_state.get("cw", {}).get("stage")
+    if not isinstance(error, dict) or not isinstance(stage_state, dict):
+        return False
+
+    stage_error = stage_state.get("error")
+    return isinstance(stage_error, dict) and stage_error.get("code") == error.get("code")
 
 
 @cw_app.command("enter")
@@ -137,7 +151,13 @@ def cw_stage_detect(session: str = typer.Option(..., "--session")) -> None:
         refreshed = detect_cw_stage(loaded, detector=stage_detector_factory(runtime))
         return refreshed.scene_state["cw"]["stage"]
 
-    _run(session, "cw.stage.detect", action, runtime=runtime)
+    _run(
+        session,
+        "cw.stage.detect",
+        action,
+        runtime=runtime,
+        failure_persistence=_should_persist_stage_failure,
+    )
 
 
 @stage_app.command("wait")
@@ -148,7 +168,13 @@ def cw_stage_wait(session: str = typer.Option(..., "--session"), timeout: int = 
         refreshed = wait_cw_stage(loaded, detector=stage_detector_factory(runtime), timeout=timeout)
         return refreshed.scene_state["cw"]["stage"]
 
-    _run(session, "cw.stage.wait", action, runtime=runtime)
+    _run(
+        session,
+        "cw.stage.wait",
+        action,
+        runtime=runtime,
+        failure_persistence=_should_persist_stage_failure,
+    )
 
 
 @slots_app.command("read")

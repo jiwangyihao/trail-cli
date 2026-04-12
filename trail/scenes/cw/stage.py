@@ -22,20 +22,42 @@ STAGE_RESOURCE_ALIASES: tuple[tuple[str, str], ...] = (
 )
 
 
+def _invalidate_cw_stage(session: SessionModel, *, code: str, message: str) -> None:
+    cw_state = ensure_cw_state(session)
+    cw_state["stage"] = {
+        "stale": True,
+        "error": {"code": code, "message": message},
+    }
+    session.last_stage = None
+
+
 def build_cw_stage_detector(runtime):
-    templates = tuple((value, str(resolve_scene_asset("cw", alias))) for alias, value in STAGE_RESOURCE_ALIASES)
+    grouped_templates: dict[str, list[str]] = {}
+    for alias, value in STAGE_RESOURCE_ALIASES:
+        template = str(resolve_scene_asset("cw", alias))
+        grouped_templates.setdefault(template, []).append(value)
+
+    templates = tuple((tuple(values), template) for template, values in grouped_templates.items())
 
     def detector() -> str | None:
-        for value, template in templates:
+        for values, template in templates:
             if runtime.locate(template) is not None:
-                return value
+                if len(values) == 1:
+                    return values[0]
+                raise TrailError("STAGE_AMBIGUOUS", f"当前资源无法区分阶段: {', '.join(values)}")
         return None
 
     return detector
 
 
 def detect_cw_stage(session: SessionModel, *, detector) -> SessionModel:
-    stage = detector()
+    try:
+        stage = detector()
+    except TrailError as exc:
+        if exc.code == "STAGE_AMBIGUOUS":
+            _invalidate_cw_stage(session, code=exc.code, message=str(exc))
+        raise
+
     cw_state = ensure_cw_state(session)
     cw_state["stage"] = {"value": stage, "stale": False}
     session.last_stage = {"scene": "cw", "value": stage}
