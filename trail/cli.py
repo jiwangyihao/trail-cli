@@ -1,4 +1,5 @@
-import trail
+from importlib.metadata import version as distribution_version
+
 import typer
 
 app = typer.Typer(no_args_is_help=True)
@@ -11,4 +12,4 @@ def main() -> None:
 
 @app.command()
 def version() -> None:
-    print(f"trail {trail.__version__}")
+    print(f"trail {distribution_version('trail-cli')}")
