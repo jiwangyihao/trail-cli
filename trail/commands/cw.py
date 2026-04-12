@@ -1,23 +1,28 @@
 from __future__ import annotations
 
+import json
 from enum import StrEnum
 
 import typer
 
 from trail.commands.helpers import (
+    DEFAULT_WINDOW_TITLE,
     build_default_artifact_store,
     build_default_session_store,
     build_default_runtime,
     print_json,
     run_session_command,
 )
+from trail.scenes.cw.entry import enter_cw
 from trail.scenes.cw.guide import apply_cw_guide, resolve_guide_input
 from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.stage import build_cw_stage_detector, detect_cw_stage, wait_cw_stage
 
 
 runtime_factory = build_default_runtime
 session_store_factory = build_default_session_store
 artifact_store_factory = build_default_artifact_store
+stage_detector_factory = build_cw_stage_detector
 
 cw_app = typer.Typer(no_args_is_help=True)
 cw_guide_app = typer.Typer(no_args_is_help=True)
@@ -66,13 +71,30 @@ cw_app.add_typer(battle_app, name="battle")
 cw_app.add_typer(settle_app, name="settle")
 cw_app.add_typer(event_app, name="event")
 
-def _run(session_id: str, command_name: str, action) -> None:
+def _runtime_for_session(session_id: str):
+    store = session_store_factory()
+    try:
+        session = store.load(session_id)
+    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
+        return None
+
+    window_binding = session.window_binding
+    window_title = DEFAULT_WINDOW_TITLE
+    if isinstance(window_binding, dict):
+        maybe_title = window_binding.get("title")
+        if isinstance(maybe_title, str) and maybe_title:
+            window_title = maybe_title
+    return runtime_factory(window_title=window_title, window_binding=window_binding)
+
+
+def _run(session_id: str, command_name: str, action, *, runtime=None) -> None:
     print_json(
         run_session_command(
             store=session_store_factory(),
             session_id=session_id,
             command_name=command_name,
             action=action,
+            runtime=runtime,
             runtime_factory=runtime_factory,
         )
     )
@@ -86,14 +108,13 @@ def cw_enter(
     battle_mode: BattleMode = typer.Option(BattleMode.STANDARD, "--battle-mode"),
 ) -> None:
     def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["entry"] = {
-            "mode": mode.value,
-            "difficulty": difficulty.value,
-            "battle_mode": battle_mode.value,
-            "status": "stub",
-        }
-        return state["entry"]
+        refreshed = enter_cw(
+            loaded,
+            mode=mode.value,
+            difficulty=difficulty.value,
+            battle_mode=battle_mode.value,
+        )
+        return refreshed.scene_state["cw"]["entry"]
 
     _run(session, "cw.enter", action)
 
@@ -110,22 +131,24 @@ def cw_guide_apply(session: str = typer.Option(..., "--session"), guide: str = t
 
 @stage_app.command("detect")
 def cw_stage_detect(session: str = typer.Option(..., "--session")) -> None:
-    def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["stage"] = {"value": "unknown", "stale": False, "status": "stub"}
-        return state["stage"]
+    runtime = _runtime_for_session(session)
 
-    _run(session, "cw.stage.detect", action)
+    def action(loaded):
+        refreshed = detect_cw_stage(loaded, detector=stage_detector_factory(runtime))
+        return refreshed.scene_state["cw"]["stage"]
+
+    _run(session, "cw.stage.detect", action, runtime=runtime)
 
 
 @stage_app.command("wait")
 def cw_stage_wait(session: str = typer.Option(..., "--session"), timeout: int = typer.Option(30, "--timeout")) -> None:
-    def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["stage"] = {"value": "unknown", "timeout": timeout, "stale": False, "status": "stub"}
-        return state["stage"]
+    runtime = _runtime_for_session(session)
 
-    _run(session, "cw.stage.wait", action)
+    def action(loaded):
+        refreshed = wait_cw_stage(loaded, detector=stage_detector_factory(runtime), timeout=timeout)
+        return refreshed.scene_state["cw"]["stage"]
+
+    _run(session, "cw.stage.wait", action, runtime=runtime)
 
 
 @slots_app.command("read")
