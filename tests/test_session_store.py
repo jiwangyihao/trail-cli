@@ -35,3 +35,28 @@ def test_load_rejects_session_id_mismatch_between_file_and_payload(tmp_path):
 
     with pytest.raises(ValueError, match="session_id mismatch"):
         store.load(session.session_id)
+
+
+def test_create_session_deep_copies_window_binding(tmp_path):
+    store = SessionStore(tmp_path)
+    window_binding = {
+        "title": "崩坏：星穹铁道",
+        "bounds": {"left": 100, "top": 200},
+        "tags": ["game"],
+    }
+
+    session = store.create(window_binding=window_binding)
+    window_binding["bounds"]["left"] = 999
+    window_binding["tags"].append("mutated")
+    loaded = store.load(session.session_id)
+
+    assert session.window_binding == {
+        "title": "崩坏：星穹铁道",
+        "bounds": {"left": 100, "top": 200},
+        "tags": ["game"],
+    }
+    assert loaded.window_binding == {
+        "title": "崩坏：星穹铁道",
+        "bounds": {"left": 100, "top": 200},
+        "tags": ["game"],
+    }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import re
 from datetime import datetime, timezone
@@ -29,7 +30,7 @@ class SessionStore:
         session = SessionModel(
             session_id=uuid4().hex,
             workspace=self.workspace,
-            window_binding=dict(window_binding),
+            window_binding=deepcopy(window_binding),
             created_at=datetime.now(timezone.utc).isoformat(),
         )
         return self.save(session)
