@@ -15,7 +15,14 @@ from trail.commands.helpers import (
 )
 from trail.scenes.cw.entry import enter_cw
 from trail.scenes.cw.guide import apply_cw_guide, resolve_guide_input
-from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.shop import (
+    buy_cw_shop_slot,
+    close_cw_shop,
+    open_cw_shop,
+    refresh_cw_shop,
+    scan_cw_shop,
+    shop_cw_status,
+)
 from trail.scenes.cw.slots import (
     collect_cw_crystals,
     place_one_cw_slot,
@@ -37,7 +44,18 @@ def _default_slots_reader():
     return [], [], []
 
 
+def _default_shop_scanner():
+    return [], None, None, False, None
+
+
+def _default_shop_buyer(*, slot: int, expect: str):
+    del slot, expect
+    return None
+
+
 slots_reader = _default_slots_reader
+shop_scanner = _default_shop_scanner
+shop_buyer = _default_shop_buyer
 
 cw_app = typer.Typer(no_args_is_help=True)
 cw_guide_app = typer.Typer(no_args_is_help=True)
@@ -253,9 +271,8 @@ def cw_hand_sell_plan(session: str = typer.Option(..., "--session")) -> None:
 @shop_app.command("open")
 def cw_shop_open(session: str = typer.Option(..., "--session")) -> None:
     def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["shop"] = {"open": True, "stale": False, "status": "stub"}
-        return state["shop"]
+        refreshed = open_cw_shop(loaded)
+        return refreshed.scene_state["cw"]["shop"]
 
     _run(session, "cw.shop.open", action)
 
@@ -263,18 +280,8 @@ def cw_shop_open(session: str = typer.Option(..., "--session")) -> None:
 @shop_app.command("scan")
 def cw_shop_scan(session: str = typer.Option(..., "--session")) -> None:
     def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["shop"] = {
-            "open": True,
-            "items": [],
-            "coins": None,
-            "level": None,
-            "reserve_full": False,
-            "max_team_size": None,
-            "stale": False,
-            "status": "stub",
-        }
-        return state["shop"]
+        refreshed = scan_cw_shop(loaded, scanner=shop_scanner)
+        return refreshed.scene_state["cw"]["shop"]
 
     _run(session, "cw.shop.scan", action)
 
@@ -286,9 +293,8 @@ def cw_shop_buy_slot(
     expect: str = typer.Option(..., "--expect"),
 ) -> None:
     def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["shop"] = {"slot": slot, "expect": expect, "purchased": False, "stale": False, "status": "stub"}
-        return state["shop"]
+        refreshed = buy_cw_shop_slot(loaded, slot=slot, expect=expect, buyer=shop_buyer)
+        return refreshed.scene_state["cw"]["shop"]
 
     _run(session, "cw.shop.buy-slot", action)
 
@@ -296,9 +302,8 @@ def cw_shop_buy_slot(
 @shop_app.command("refresh")
 def cw_shop_refresh(session: str = typer.Option(..., "--session")) -> None:
     def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["shop"] = {"stale": True, "refreshed": True, "status": "stub"}
-        return state["shop"]
+        refreshed = refresh_cw_shop(loaded)
+        return refreshed.scene_state["cw"]["shop"]
 
     _run(session, "cw.shop.refresh", action)
 
@@ -306,20 +311,15 @@ def cw_shop_refresh(session: str = typer.Option(..., "--session")) -> None:
 @shop_app.command("close")
 def cw_shop_close(session: str = typer.Option(..., "--session")) -> None:
     def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["shop"] = {"open": False, "stale": True, "status": "stub"}
-        return state["shop"]
+        refreshed = close_cw_shop(loaded)
+        return refreshed.scene_state["cw"]["shop"]
 
     _run(session, "cw.shop.close", action)
 
 
 @shop_app.command("status")
 def cw_shop_status(session: str = typer.Option(..., "--session")) -> None:
-    def action(loaded):
-        state = ensure_cw_state(loaded)
-        return state["shop"]
-
-    _run(session, "cw.shop.status", action)
+    _run(session, "cw.shop.status", lambda loaded: shop_cw_status(loaded))
 
 
 @replenish_app.command("read")
