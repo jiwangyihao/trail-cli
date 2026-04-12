@@ -39,8 +39,16 @@ def test_slots_read_refreshes_snapshot(tmp_path):
     read_cw_slots = getattr(slots_module, "read_cw_slots", None)
     assert read_cw_slots is not None
 
-    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
-    refreshed = read_cw_slots(session, reader=fake_reader)
+    front = ["希儿"]
+    back = ["佩拉"]
+    hand = ["银狼", None, "阮·梅"]
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["sell_plan"] = {"candidates": [0, 2]}
+    refreshed = read_cw_slots(session, reader=lambda: (front, back, hand))
+
+    front.append("卡芙卡")
+    back.clear()
+    hand[0] = "停云"
 
     assert refreshed.scene_state["cw"]["slots"] == {
         "front": ["希儿"],
@@ -48,6 +56,7 @@ def test_slots_read_refreshes_snapshot(tmp_path):
         "hand": ["银狼", None, "阮·梅"],
         "stale": False,
     }
+    assert refreshed.scene_state["cw"]["sell_plan"] == {}
 
 
 def test_slots_swap_invalidates_existing_snapshot(tmp_path):
@@ -105,6 +114,30 @@ def test_sell_plan_returns_candidates_and_refreshes_snapshot(tmp_path):
     assert result == {"candidates": [0, 2]}
     assert session.scene_state["cw"]["sell_plan"] == {"candidates": [0, 2]}
     assert session.scene_state["cw"]["slots"] == before_slots
+
+    result["candidates"].append(9)
+    assert session.scene_state["cw"]["sell_plan"] == {"candidates": [0, 2]}
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs"),
+    [
+        ("swap_cw_slots", {"source": "hand:0", "target": "front:0"}),
+        ("place_one_cw_slot", {"source": "hand:2", "target": "back:0"}),
+        ("sell_one_cw_hand", {"slot": 2}),
+    ],
+)
+def test_slots_mutations_clear_sell_plan(tmp_path, method_name, kwargs):
+    slots_module = load_cw_slots_module()
+    method = getattr(slots_module, method_name, None)
+    assert method is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["sell_plan"] = {"candidates": [0, 2]}
+
+    refreshed = method(session, **kwargs)
+
+    assert refreshed.scene_state["cw"]["sell_plan"] == {}
 
 
 def test_sell_one_marks_slots_snapshot_stale(tmp_path):
@@ -236,6 +269,27 @@ def test_cw_hand_sell_plan_cli_returns_candidates_and_persists_snapshot(cli_runn
         "hand": ["银狼", None, "阮·梅"],
         "stale": False,
     }
+
+
+def test_cw_hand_sell_plan_then_slots_swap_cli_clears_sell_plan(cli_runner, fake_runtime, fake_session, tmp_path):
+    store = SessionStore(tmp_path / ".trail" / "sessions")
+    session = store.load(fake_session)
+    ensure_cw_state(session)["slots"] = {
+        "front": ["希儿"],
+        "back": ["佩拉"],
+        "hand": ["银狼", None, "阮·梅"],
+        "stale": False,
+    }
+    store.save(session)
+
+    sell_plan_result = cli_runner.invoke(app, ["cw", "hand", "sell-plan", "--session", fake_session])
+    assert sell_plan_result.exit_code == 0
+
+    swap_result = cli_runner.invoke(app, ["cw", "slots", "swap", "--session", fake_session, "--source", "hand:0", "--target", "front:0"])
+    assert swap_result.exit_code == 0
+
+    session = store.load(fake_session)
+    assert session.scene_state["cw"]["sell_plan"] == {}
 
 
 def test_cw_hand_sell_one_cli_marks_slots_stale(cli_runner, fake_runtime, fake_session, tmp_path):
