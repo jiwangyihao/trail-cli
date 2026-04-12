@@ -93,17 +93,18 @@ def test_collect_cw_crystals_records_metric(tmp_path):
     assert refreshed.scene_state["cw"]["metrics"]["last_crystal_collection"] == "done"
 
 
-def test_sell_plan_returns_candidates_not_side_effects(tmp_path):
+def test_sell_plan_returns_candidates_and_refreshes_snapshot(tmp_path):
     slots_module = load_cw_slots_module()
     plan_cw_hand_sell = getattr(slots_module, "plan_cw_hand_sell", None)
     assert plan_cw_hand_sell is not None
 
     session = build_fake_cw_session(tmp_path)
-    before = deepcopy(session.scene_state["cw"])
+    before_slots = deepcopy(session.scene_state["cw"]["slots"])
     result = plan_cw_hand_sell(session)
 
     assert result == {"candidates": [0, 2]}
-    assert session.scene_state["cw"] == before
+    assert session.scene_state["cw"]["sell_plan"] == {"candidates": [0, 2]}
+    assert session.scene_state["cw"]["slots"] == before_slots
 
 
 def test_sell_one_marks_slots_snapshot_stale(tmp_path):
@@ -209,7 +210,7 @@ def test_cw_crystals_collect_cli_records_metric(cli_runner, fake_runtime, fake_s
     assert session.scene_state["cw"]["metrics"] == payload["data"]
 
 
-def test_cw_hand_sell_plan_cli_returns_candidates_without_mutating_slots(cli_runner, fake_runtime, fake_session, tmp_path):
+def test_cw_hand_sell_plan_cli_returns_candidates_and_persists_snapshot(cli_runner, fake_runtime, fake_session, tmp_path):
     store = SessionStore(tmp_path / ".trail" / "sessions")
     session = store.load(fake_session)
     ensure_cw_state(session)["slots"] = {
@@ -228,6 +229,7 @@ def test_cw_hand_sell_plan_cli_returns_candidates_without_mutating_slots(cli_run
     assert payload["data"] == {"candidates": [0, 2]}
 
     session = store.load(fake_session)
+    assert session.scene_state["cw"]["sell_plan"] == payload["data"]
     assert session.scene_state["cw"]["slots"] == {
         "front": ["希儿"],
         "back": ["佩拉"],

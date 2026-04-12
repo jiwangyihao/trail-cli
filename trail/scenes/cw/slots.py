@@ -43,10 +43,12 @@ def collect_cw_crystals(session: SessionModel) -> SessionModel:
 
 
 def plan_cw_hand_sell(session: SessionModel) -> dict:
-    slots = ensure_cw_state(session).get("slots", {})
+    cw_state = ensure_cw_state(session)
+    slots = cw_state.get("slots", {})
     hand = slots.get("hand", [])
     candidates = [index for index, value in enumerate(hand) if value is not None]
-    return {"candidates": candidates}
+    cw_state["sell_plan"] = {"candidates": candidates}
+    return cw_state["sell_plan"]
 
 
 def sell_one_cw_hand(session: SessionModel, *, slot: int) -> SessionModel:
