@@ -16,6 +16,14 @@ from trail.commands.helpers import (
 from trail.scenes.cw.entry import enter_cw
 from trail.scenes.cw.guide import apply_cw_guide, resolve_guide_input
 from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.slots import (
+    collect_cw_crystals,
+    place_one_cw_slot,
+    plan_cw_hand_sell,
+    read_cw_slots,
+    sell_one_cw_hand,
+    swap_cw_slots,
+)
 from trail.scenes.cw.stage import build_cw_stage_detector, detect_cw_stage, wait_cw_stage
 
 
@@ -23,6 +31,13 @@ runtime_factory = build_default_runtime
 session_store_factory = build_default_session_store
 artifact_store_factory = build_default_artifact_store
 stage_detector_factory = build_cw_stage_detector
+
+
+def _default_slots_reader():
+    return [], [], []
+
+
+slots_reader = _default_slots_reader
 
 cw_app = typer.Typer(no_args_is_help=True)
 cw_guide_app = typer.Typer(no_args_is_help=True)
@@ -180,9 +195,8 @@ def cw_stage_wait(session: str = typer.Option(..., "--session"), timeout: int = 
 @slots_app.command("read")
 def cw_slots_read(session: str = typer.Option(..., "--session")) -> None:
     def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["slots"] = {"front": [], "back": [], "hand": [], "stale": False, "status": "stub"}
-        return state["slots"]
+        refreshed = read_cw_slots(loaded, reader=slots_reader)
+        return refreshed.scene_state["cw"]["slots"]
 
     _run(session, "cw.slots.read", action)
 
@@ -194,9 +208,8 @@ def cw_slots_swap(
     target: str = typer.Option(..., "--target"),
 ) -> None:
     def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["slots"] = {"stale": True, "last_move": {"source": source, "target": target}, "status": "stub"}
-        return state["slots"]
+        refreshed = swap_cw_slots(loaded, source=source, target=target)
+        return refreshed.scene_state["cw"]["slots"]
 
     _run(session, "cw.slots.swap", action)
 
@@ -208,9 +221,8 @@ def cw_slots_place_one(
     target: str = typer.Option(..., "--target"),
 ) -> None:
     def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["slots"] = {"stale": True, "placed": {"source": source, "target": target}, "status": "stub"}
-        return state["slots"]
+        refreshed = place_one_cw_slot(loaded, source=source, target=target)
+        return refreshed.scene_state["cw"]["slots"]
 
     _run(session, "cw.slots.place-one", action)
 
@@ -218,9 +230,8 @@ def cw_slots_place_one(
 @crystals_app.command("collect")
 def cw_crystals_collect(session: str = typer.Option(..., "--session")) -> None:
     def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["metrics"]["crystals_collected"] = True
-        return state["metrics"]
+        refreshed = collect_cw_crystals(loaded)
+        return refreshed.scene_state["cw"]["metrics"]
 
     _run(session, "cw.crystals.collect", action)
 
@@ -228,16 +239,15 @@ def cw_crystals_collect(session: str = typer.Option(..., "--session")) -> None:
 @hand_app.command("sell-one")
 def cw_hand_sell_one(session: str = typer.Option(..., "--session"), slot: int = typer.Option(..., "--slot")) -> None:
     def action(loaded):
-        state = ensure_cw_state(loaded)
-        state["slots"] = {"stale": True, "sold_slot": slot, "status": "stub"}
-        return state["slots"]
+        refreshed = sell_one_cw_hand(loaded, slot=slot)
+        return refreshed.scene_state["cw"]["slots"]
 
     _run(session, "cw.hand.sell-one", action)
 
 
 @hand_app.command("sell-plan")
 def cw_hand_sell_plan(session: str = typer.Option(..., "--session")) -> None:
-    _run(session, "cw.hand.sell-plan", lambda loaded: {"recommendations": [], "status": "stub"})
+    _run(session, "cw.hand.sell-plan", lambda loaded: plan_cw_hand_sell(loaded))
 
 
 @shop_app.command("open")
