@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from trail.cli import app
+from trail.session.store import SessionStore
 
 
 def test_window_attach_returns_envelope_and_binding(cli_runner, fake_runtime):
@@ -88,6 +89,25 @@ def test_state_dump_returns_session_snapshot(cli_runner, fake_runtime, fake_sess
     assert payload["data"]["last_result"] is None
 
 
+def test_state_dump_returns_structured_error_for_missing_session(cli_runner, fake_runtime, tmp_path, monkeypatch):
+    import trail.commands.state as state_cmd
+
+    monkeypatch.setattr(state_cmd, "session_store", SessionStore(tmp_path / ".trail" / "sessions"))
+
+    result = cli_runner.invoke(app, ["state", "dump", "--session", "deadbeefdeadbeefdeadbeefdeadbeef"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["data"] == {}
+    assert payload["error"] == {
+        "code": "SESSION_NOT_FOUND",
+        "message": "session not found: deadbeefdeadbeefdeadbeefdeadbeef",
+    }
+    assert payload["screenshot"]
+    assert "Traceback" not in result.stdout
+
+
 def test_cli_help_exposes_top_level_command_groups(cli_runner):
     result = cli_runner.invoke(app, ["--help"])
 
@@ -122,3 +142,15 @@ def test_cw_help_exposes_scene_command_groups(cli_runner):
     assert "battle" in result.stdout
     assert "settle" in result.stdout
     assert "event" in result.stdout
+
+
+def test_cw_enter_help_exposes_enum_contract(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "enter", "--help"])
+
+    assert result.exit_code == 0
+    assert "--mode" in result.stdout
+    assert "[new|continue]" in result.stdout
+    assert "--difficulty" in result.stdout
+    assert "[lowest|current|highest]" in result.stdout
+    assert "--battle-mode" in result.stdout
+    assert "[standard|overclock]" in result.stdout

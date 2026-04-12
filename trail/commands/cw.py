@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from enum import StrEnum
+
 import typer
 
 from trail.commands.helpers import build_default_session_store, build_default_runtime, print_json, run_session_command
@@ -23,6 +25,22 @@ boss_preview_app = typer.Typer(no_args_is_help=True)
 battle_app = typer.Typer(no_args_is_help=True)
 settle_app = typer.Typer(no_args_is_help=True)
 event_app = typer.Typer(no_args_is_help=True)
+
+
+class EnterMode(StrEnum):
+    NEW = "new"
+    CONTINUE = "continue"
+
+
+class EnterDifficulty(StrEnum):
+    LOWEST = "lowest"
+    CURRENT = "current"
+    HIGHEST = "highest"
+
+
+class BattleMode(StrEnum):
+    STANDARD = "standard"
+    OVERCLOCK = "overclock"
 
 cw_app.add_typer(cw_guide_app, name="guide")
 cw_app.add_typer(stage_app, name="stage")
@@ -69,16 +87,16 @@ def _run(session_id: str, command_name: str, action) -> None:
 @cw_app.command("enter")
 def cw_enter(
     session: str = typer.Option(..., "--session"),
-    mode: str = typer.Option(..., "--mode"),
-    difficulty: str = typer.Option("current", "--difficulty"),
-    battle_mode: str = typer.Option("standard", "--battle-mode"),
+    mode: EnterMode = typer.Option(..., "--mode"),
+    difficulty: EnterDifficulty = typer.Option(EnterDifficulty.CURRENT, "--difficulty"),
+    battle_mode: BattleMode = typer.Option(BattleMode.STANDARD, "--battle-mode"),
 ) -> None:
     def action(loaded):
         state = _ensure_cw_state(loaded)
         state["entry"] = {
-            "mode": mode,
-            "difficulty": difficulty,
-            "battle_mode": battle_mode,
+            "mode": mode.value,
+            "difficulty": difficulty.value,
+            "battle_mode": battle_mode.value,
             "status": "stub",
         }
         return state["entry"]
