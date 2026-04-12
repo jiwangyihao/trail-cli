@@ -1,3 +1,4 @@
+import trail
 import typer
 
 app = typer.Typer(no_args_is_help=True)
@@ -10,4 +11,4 @@ def main() -> None:
 
 @app.command()
 def version() -> None:
-    print("trail 0.1.0")
+    print(f"trail {trail.__version__}")
