@@ -298,7 +298,13 @@ def cw_shop_buy_slot(
     runtime = _runtime_for_session(session)
 
     def action(loaded):
-        refreshed = buy_cw_shop_slot(loaded, slot=slot, expect=expect, buyer=shop_buyer_factory(runtime))
+        refreshed = buy_cw_shop_slot(
+            loaded,
+            slot=slot,
+            expect=expect,
+            buyer=shop_buyer_factory(runtime),
+            scanner=shop_scanner_factory(runtime),
+        )
         return refreshed.scene_state["cw"]["shop"]
 
     _run(session, "cw.shop.buy-slot", action, runtime=runtime)

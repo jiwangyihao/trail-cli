@@ -61,26 +61,31 @@ def _parse_last_int(items: list[Any], *, default: int | None) -> int | None:
     return default
 
 
+def _parse_shop_items(raw_items: list[Any] | None) -> tuple[list[dict[str, Any]], bool]:
+    items: list[dict[str, Any]] = []
+    reserve_full = False
+    for item in raw_items or []:
+        text = _read_ocr_text(item).strip()
+        if not text:
+            continue
+        if "备" in text:
+            reserve_full = True
+            continue
+        if text.isdecimal():
+            if items and items[-1]["price"] is None:
+                items[-1]["price"] = int(text)
+            continue
+        items.append({"name": text, "price": None})
+    return items, reserve_full
+
+
 def build_cw_shop_opener(runtime) -> ShopAction:
     return lambda: runtime.click_point(*SHOP_OPEN_POINT)
 
 
 def build_cw_shop_scanner(runtime) -> ShopScanner:
-    def scanner() -> tuple[list[str], int | None, int | None, bool, int | None]:
-        raw_items = runtime.ocr(**SHOP_SCAN_REGION)
-        items: list[str] = []
-        reserve_full = False
-        for item in raw_items or []:
-            text = _read_ocr_text(item).strip()
-            if not text:
-                continue
-            if "备" in text:
-                reserve_full = True
-                continue
-            if text.isdecimal():
-                continue
-            items.append(text)
-
+    def scanner() -> tuple[list[dict[str, Any]], int | None, int | None, bool, int | None]:
+        items, reserve_full = _parse_shop_items(runtime.ocr(**SHOP_SCAN_REGION))
         coins = _parse_first_int(runtime.ocr(**SHOP_COINS_REGION) or [], default=0)
         level = _parse_last_int(runtime.ocr(**SHOP_LEVEL_REGION) or [], default=None)
         max_team_size = _parse_last_int(runtime.ocr(**SHOP_MAX_TEAM_SIZE_REGION) or [], default=None)
@@ -134,13 +139,13 @@ def scan_cw_shop(session: SessionModel, *, scanner: ShopScanner) -> SessionModel
     return session
 
 
-def buy_cw_shop_slot(session: SessionModel, *, slot: int, expect: str, buyer: ShopBuyer) -> SessionModel:
+def buy_cw_shop_slot(session: SessionModel, *, slot: int, expect: str, buyer: ShopBuyer, scanner: ShopScanner) -> SessionModel:
     buyer(slot=slot, expect=expect)
     cw_state = ensure_cw_state(session)
     guide_state = cw_state.setdefault("guide", {})
     remaining = guide_state.setdefault("remaining_purchases", {})
     remaining[expect] = max(0, remaining.get(expect, 0) - 1)
-    cw_state["shop"] = {**cw_state.get("shop", {}), "stale": True}
+    scan_cw_shop(session, scanner=scanner)
     cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
     return session
 

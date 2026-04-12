@@ -9,6 +9,14 @@ from trail.cli import app
 from trail.session.store import SessionStore
 
 
+def fake_shop_snapshot():
+    return ([{"name": "银狼", "price": 20}], 40, 7, False, 8)
+
+
+def fake_shop_snapshot_after_purchase():
+    return ([{"name": "阮·梅", "price": 30}], 22, 8, False, 8)
+
+
 def load_cw_shop_module():
     try:
         return importlib.import_module("trail.scenes.cw.shop")
@@ -39,13 +47,13 @@ def test_shop_scan_refreshes_store_snapshot(tmp_path):
     scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
     assert scan_cw_shop is not None
 
-    from tests.conftest import build_fake_cw_session, fake_shop_scan
+    from tests.conftest import build_fake_cw_session
 
     session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
-    refreshed = scan_cw_shop(session, scanner=fake_shop_scan)
+    refreshed = scan_cw_shop(session, scanner=fake_shop_snapshot)
 
     assert refreshed.scene_state["cw"]["shop"] == {
-        "items": ["银狼"],
+        "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
         "reserve_full": False,
@@ -63,10 +71,10 @@ def test_shop_status_returns_current_snapshot(tmp_path):
     shop_cw_status = getattr(shop_module, "shop_cw_status", None)
     assert shop_cw_status is not None
 
-    from tests.conftest import build_fake_cw_session, fake_shop_scan
+    from tests.conftest import build_fake_cw_session
 
     session = build_fake_cw_session(tmp_path)
-    scanned = getattr(shop_module, "scan_cw_shop")(session, scanner=fake_shop_scan)
+    scanned = getattr(shop_module, "scan_cw_shop")(session, scanner=fake_shop_snapshot)
 
     assert shop_cw_status(scanned) == scanned.scene_state["cw"]["shop"]
 
@@ -79,10 +87,27 @@ def test_shop_buy_slot_mutates_remaining_purchases(tmp_path):
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
     session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
-    refreshed = buy_cw_shop_slot(session, slot=3, expect="银狼", buyer=fake_buy_success)
+    refreshed = buy_cw_shop_slot(
+        session,
+        slot=3,
+        expect="银狼",
+        buyer=fake_buy_success,
+        scanner=fake_shop_snapshot_after_purchase,
+    )
 
     assert refreshed.scene_state["cw"]["guide"]["remaining_purchases"]["银狼"] == 0
-    assert refreshed.scene_state["cw"]["shop"]["stale"] is True
+    assert refreshed.scene_state["cw"]["shop"] == {
+        "items": [{"name": "阮·梅", "price": 30}],
+        "coins": 22,
+        "level": 8,
+        "reserve_full": False,
+        "max_team_size": 8,
+        "guide_summary": {
+            "remaining_purchases": {"银狼": 0},
+            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
+        },
+        "stale": False,
+    }
     assert refreshed.scene_state["cw"]["slots"]["stale"] is True
 
 
@@ -91,10 +116,10 @@ def test_shop_refresh_invalidates_snapshot(tmp_path):
     refresh_cw_shop = getattr(shop_module, "refresh_cw_shop", None)
     assert refresh_cw_shop is not None
 
-    from tests.conftest import build_fake_cw_session, fake_shop_scan
+    from tests.conftest import build_fake_cw_session
 
     session = build_fake_cw_session(tmp_path)
-    scanned = getattr(shop_module, "scan_cw_shop")(session, scanner=fake_shop_scan)
+    scanned = getattr(shop_module, "scan_cw_shop")(session, scanner=fake_shop_snapshot)
     refreshed_calls: list[str] = []
     refreshed = refresh_cw_shop(scanned, refresher=lambda: refreshed_calls.append("refresh"))
 
@@ -140,7 +165,7 @@ def test_cw_shop_scan_cli_uses_runtime_scanner(cli_runner, fake_runtime, fake_se
     def fake_ocr(**kwargs):
         calls.append(kwargs)
         if kwargs == {"from_x": 0.19, "from_y": 0.26, "to_x": 0.88, "to_y": 0.31}:
-            return [(None, "银狼"), (None, "20"), (None, "希儿")]
+            return [(None, "银狼"), (None, "20"), (None, "希儿"), (None, "30")]
         if kwargs == {"from_x": 0.84, "from_y": 0.81, "to_x": 0.89, "to_y": 0.89}:
             return [(None, "40")]
         if kwargs == {"from_x": 0.05, "from_y": 0.815, "to_x": 0.3, "to_y": 0.87}:
@@ -169,7 +194,7 @@ def test_cw_shop_scan_cli_uses_runtime_scanner(cli_runner, fake_runtime, fake_se
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"] == {
-        "items": ["银狼", "希儿"],
+        "items": [{"name": "银狼", "price": 20}, {"name": "希儿", "price": 30}],
         "coins": 40,
         "level": 7,
         "reserve_full": False,
@@ -191,9 +216,7 @@ def test_cw_shop_scan_cli_uses_runtime_scanner(cli_runner, fake_runtime, fake_se
 def test_cw_shop_scan_cli_refreshes_snapshot(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
     import trail.commands.cw as cw_cmd
 
-    from tests.conftest import fake_shop_scan
-
-    monkeypatch.setattr(cw_cmd, "shop_scanner_factory", lambda runtime: fake_shop_scan, raising=False)
+    monkeypatch.setattr(cw_cmd, "shop_scanner_factory", lambda runtime: fake_shop_snapshot, raising=False)
 
     store = SessionStore(tmp_path / ".trail" / "sessions")
     session = store.load(fake_session)
@@ -213,7 +236,7 @@ def test_cw_shop_scan_cli_refreshes_snapshot(cli_runner, fake_runtime, fake_sess
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"] == {
-        "items": ["银狼"],
+        "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
         "reserve_full": False,
@@ -235,6 +258,7 @@ def test_cw_shop_buy_slot_cli_mutates_remaining_purchases(cli_runner, fake_runti
     from tests.conftest import fake_buy_success
 
     monkeypatch.setattr(cw_cmd, "shop_buyer_factory", lambda runtime: fake_buy_success, raising=False)
+    monkeypatch.setattr(cw_cmd, "shop_scanner_factory", lambda runtime: fake_shop_snapshot_after_purchase, raising=False)
 
     store = SessionStore(tmp_path / ".trail" / "sessions")
     session = store.load(fake_session)
@@ -253,7 +277,18 @@ def test_cw_shop_buy_slot_cli_mutates_remaining_purchases(cli_runner, fake_runti
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
-    assert payload["data"] == {"stale": True, "opened": True}
+    assert payload["data"] == {
+        "items": [{"name": "阮·梅", "price": 30}],
+        "coins": 22,
+        "level": 8,
+        "reserve_full": False,
+        "max_team_size": 8,
+        "guide_summary": {
+            "remaining_purchases": {"银狼": 0},
+            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
+        },
+        "stale": False,
+    }
 
     session = store.load(fake_session)
     assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 0}
@@ -293,7 +328,7 @@ def test_cw_shop_refresh_close_and_status_cli_follow_state_contract(cli_runner, 
         "guide": {"remaining_purchases": {"银狼": 1}},
         "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
         "slots": {"stale": False, "hand": ["银狼"]},
-        "shop": {"stale": False, "opened": True, "items": ["银狼"]},
+        "shop": {"stale": False, "opened": True, "items": [{"name": "银狼", "price": 20}]},
         "stage": {"stale": True},
         "metrics": {},
     }
@@ -303,18 +338,18 @@ def test_cw_shop_refresh_close_and_status_cli_follow_state_contract(cli_runner, 
     assert refresh_result.exit_code == 0
     refresh_payload = json.loads(refresh_result.stdout)
     assert refresh_payload["ok"] is True
-    assert refresh_payload["data"] == {"stale": True, "opened": True, "items": ["银狼"]}
+    assert refresh_payload["data"] == {"stale": True, "opened": True, "items": [{"name": "银狼", "price": 20}]}
     assert fake_runtime.keys == [("d", 1, 0.2)]
 
     close_result = cli_runner.invoke(app, ["cw", "shop", "close", "--session", fake_session])
     assert close_result.exit_code == 0
     close_payload = json.loads(close_result.stdout)
     assert close_payload["ok"] is True
-    assert close_payload["data"] == {"stale": True, "opened": False, "items": ["银狼"]}
+    assert close_payload["data"] == {"stale": True, "opened": False, "items": [{"name": "银狼", "price": 20}]}
     assert fake_runtime.clicks == [(0.5, 0.55)]
 
     status_result = cli_runner.invoke(app, ["cw", "shop", "status", "--session", fake_session])
     assert status_result.exit_code == 0
     status_payload = json.loads(status_result.stdout)
     assert status_payload["ok"] is True
-    assert status_payload["data"] == {"stale": True, "opened": False, "items": ["银狼"]}
+    assert status_payload["data"] == {"stale": True, "opened": False, "items": [{"name": "银狼", "price": 20}]}
