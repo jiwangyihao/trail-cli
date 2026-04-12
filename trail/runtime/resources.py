@@ -7,6 +7,10 @@ PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 SCENE_ASSET_ROOT = PACKAGE_ROOT / "scenes"
 
 
+def _get_scene_asset_root(scene: str) -> Path:
+    return (SCENE_ASSET_ROOT / scene / "assets").resolve()
+
+
 def load_scene_aliases(scene: str) -> dict[str, str]:
     if scene == "cw":
         return CW_RESOURCE_ALIASES
@@ -16,4 +20,12 @@ def load_scene_aliases(scene: str) -> dict[str, str]:
 def resolve_scene_asset(scene: str, alias: str) -> Path:
     mapping = load_scene_aliases(scene)
     relative = mapping[alias]
-    return SCENE_ASSET_ROOT / scene / "assets" / relative
+    asset_root = _get_scene_asset_root(scene)
+    resolved = (asset_root / relative).resolve()
+
+    if not resolved.is_relative_to(asset_root):
+        raise ValueError(f"asset alias resolves outside local asset root: {alias}")
+    if not resolved.is_file():
+        raise FileNotFoundError(f"missing local asset for alias: {alias}")
+
+    return resolved

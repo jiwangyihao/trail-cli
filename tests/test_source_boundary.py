@@ -1,22 +1,85 @@
+import ast
 from pathlib import Path
+
+import pytest
 
 from trail.runtime.resources import load_scene_aliases, resolve_scene_asset
 
 
-def test_trail_runtime_does_not_import_sra_task_modules():
-    root = Path("trail")
-    forbidden = ["tasks.currency_wars", "SRACore.cli", "TaskManager"]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = PROJECT_ROOT / "trail"
+CW_ASSET_ROOT = (SOURCE_ROOT / "scenes" / "cw" / "assets").resolve()
+FORBIDDEN_MODULE_PREFIXES = (
+    "SRACore",
+    "tasks",
+    "StarRailAssistant",
+)
+FORBIDDEN_IMPORTED_NAMES = {"TaskManager"}
 
-    for file in root.rglob("*.py"):
-        text = file.read_text(encoding="utf-8")
-        for token in forbidden:
-            assert token not in text
+
+def _iter_python_sources():
+    assert SOURCE_ROOT.is_dir()
+    return SOURCE_ROOT.rglob("*.py")
+
+
+def _iter_import_references(file: Path):
+    tree = ast.parse(file.read_text(encoding="utf-8"), filename=str(file))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                yield alias.name, None
+        elif isinstance(node, ast.ImportFrom):
+            yield node.module or "", {alias.name for alias in node.names}
+
+
+def test_trail_runtime_does_not_import_sra_runtime_modules():
+    for file in _iter_python_sources():
+        for module_name, imported_names in _iter_import_references(file):
+            assert not module_name.startswith(FORBIDDEN_MODULE_PREFIXES), (
+                f"forbidden import {module_name!r} found in {file}"
+            )
+            if imported_names is not None:
+                assert imported_names.isdisjoint(FORBIDDEN_IMPORTED_NAMES), (
+                    f"forbidden imported names {imported_names!r} found in {file}"
+                )
 
 
 def test_cw_resources_are_resolved_from_local_package_assets():
     path = resolve_scene_asset("cw", "stage.shop")
 
-    assert "trail/scenes/cw/assets" in path.as_posix()
+    assert path.is_file()
+    assert path.is_relative_to(CW_ASSET_ROOT)
+
+
+def test_all_cw_aliases_resolve_to_existing_local_assets():
+    aliases = load_scene_aliases("cw")
+
+    for alias, relative_path in aliases.items():
+        resolved = resolve_scene_asset("cw", alias)
+
+        assert resolved == (CW_ASSET_ROOT / relative_path).resolve()
+        assert resolved.is_file()
+        assert resolved.is_relative_to(CW_ASSET_ROOT)
+
+
+def test_resolve_scene_asset_rejects_assets_outside_local_package_root(monkeypatch):
+    monkeypatch.setattr(
+        "trail.runtime.resources.load_scene_aliases",
+        lambda scene: {"stage.escape": "../escape.png"},
+    )
+
+    with pytest.raises(ValueError, match="outside local asset root"):
+        resolve_scene_asset("cw", "stage.escape")
+
+
+def test_resolve_scene_asset_requires_existing_local_asset(monkeypatch):
+    monkeypatch.setattr(
+        "trail.runtime.resources.load_scene_aliases",
+        lambda scene: {"stage.missing": "missing.png"},
+    )
+
+    with pytest.raises(FileNotFoundError, match="missing local asset"):
+        resolve_scene_asset("cw", "stage.missing")
 
 
 def test_cw_stage_aliases_cover_minimum_stage_set():
