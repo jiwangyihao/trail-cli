@@ -92,6 +92,27 @@ def test_apply_guide_populates_cw_scene_state(tmp_path):
     assert cw_state["slots"]["stale"] is True
 
 
+def test_apply_guide_clears_existing_sell_plan(tmp_path):
+    guide_module = load_cw_guide_module()
+    apply_cw_guide = getattr(guide_module, "apply_cw_guide", None)
+    assert apply_cw_guide is not None
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {
+        "guide": None,
+        "constraints": {},
+        "slots": {"stale": False, "hand": ["银狼"]},
+        "sell_plan": {"candidates": [0]},
+        "shop": {"stale": False},
+        "stage": {"stale": False},
+        "metrics": {},
+    }
+
+    refreshed = apply_cw_guide(session, guide_data=fake_guide())
+
+    assert refreshed.scene_state["cw"]["sell_plan"] == {}
+
+
 def test_guide_fetch_cw_cli_creates_artifact_from_remote_payload(cli_runner, fake_runtime, tmp_path, monkeypatch):
     import trail.commands.guide as guide_cmd
     import trail.scenes.cw.guide as guide_scene

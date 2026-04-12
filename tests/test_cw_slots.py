@@ -7,6 +7,7 @@ from copy import deepcopy
 import pytest
 
 from trail.cli import app
+from trail.core.errors import TrailError
 from trail.scenes.cw.models import ensure_cw_state
 from trail.session.store import SessionStore
 
@@ -117,6 +118,22 @@ def test_sell_plan_returns_candidates_and_refreshes_snapshot(tmp_path):
 
     result["candidates"].append(9)
     assert session.scene_state["cw"]["sell_plan"] == {"candidates": [0, 2]}
+
+
+def test_sell_plan_rejects_stale_slots_snapshot(tmp_path):
+    slots_module = load_cw_slots_module()
+    plan_cw_hand_sell = getattr(slots_module, "plan_cw_hand_sell", None)
+    assert plan_cw_hand_sell is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"]["stale"] = True
+    session.scene_state["cw"]["sell_plan"] = {}
+
+    with pytest.raises(TrailError) as exc_info:
+        plan_cw_hand_sell(session)
+
+    assert exc_info.value.code == "SLOTS_STALE"
+    assert session.scene_state["cw"]["sell_plan"] == {}
 
 
 @pytest.mark.parametrize(
@@ -269,6 +286,29 @@ def test_cw_hand_sell_plan_cli_returns_candidates_and_persists_snapshot(cli_runn
         "hand": ["银狼", None, "阮·梅"],
         "stale": False,
     }
+
+
+def test_cw_hand_sell_plan_cli_rejects_stale_slots_snapshot(cli_runner, fake_runtime, fake_session, tmp_path):
+    store = SessionStore(tmp_path / ".trail" / "sessions")
+    session = store.load(fake_session)
+    ensure_cw_state(session)["slots"] = {
+        "front": ["希儿"],
+        "back": ["佩拉"],
+        "hand": ["银狼", None, "阮·梅"],
+        "stale": True,
+    }
+    ensure_cw_state(session)["sell_plan"] = {}
+    store.save(session)
+
+    result = cli_runner.invoke(app, ["cw", "hand", "sell-plan", "--session", fake_session])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "SLOTS_STALE"
+
+    session = store.load(fake_session)
+    assert session.scene_state["cw"]["sell_plan"] == {}
 
 
 def test_cw_hand_sell_plan_then_slots_swap_cli_clears_sell_plan(cli_runner, fake_runtime, fake_session, tmp_path):

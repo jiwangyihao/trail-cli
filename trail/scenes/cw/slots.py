@@ -4,6 +4,7 @@ from copy import deepcopy
 from collections.abc import Callable
 from typing import Any
 
+from trail.core.errors import TrailError
 from trail.scenes.cw.models import ensure_cw_state
 from trail.session.models import SessionModel
 
@@ -53,6 +54,8 @@ def collect_cw_crystals(session: SessionModel) -> SessionModel:
 def plan_cw_hand_sell(session: SessionModel) -> dict:
     cw_state = ensure_cw_state(session)
     slots = cw_state.get("slots", {})
+    if slots.get("stale", True):
+        raise TrailError("SLOTS_STALE", "槽位快照已失效，请先执行 trail cw slots read")
     hand = slots.get("hand", [])
     candidates = [index for index, value in enumerate(hand) if value is not None]
     cw_state["sell_plan"] = {"candidates": candidates}

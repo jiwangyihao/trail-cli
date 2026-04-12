@@ -225,6 +225,7 @@ def apply_cw_guide(session: SessionModel, guide_data: dict) -> SessionModel:
         "positioning": guide_payload.get("positioning", {}),
     }
     cw_state["slots"] = defaults["slots"]
+    cw_state["sell_plan"] = defaults["sell_plan"]
     cw_state["shop"] = defaults["shop"]
     cw_state["stage"] = defaults["stage"]
     return session
