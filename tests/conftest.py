@@ -5,12 +5,18 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from trail.artifacts.store import ArtifactStore
 from trail.session.store import SessionStore
 
 
 @pytest.fixture
 def cli_runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def isolated_workdir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
 
 
 class FakeRuntime:
@@ -49,6 +55,7 @@ class FakeRuntime:
 def fake_runtime(tmp_path, monkeypatch) -> FakeRuntime:
     runtime = FakeRuntime(tmp_path / "after.png")
 
+    import trail.commands.cw as cw_cmd
     import trail.commands.guide as guide_cmd
     import trail.commands.image as image_cmd
     import trail.commands.input as input_cmd
@@ -58,8 +65,12 @@ def fake_runtime(tmp_path, monkeypatch) -> FakeRuntime:
     import trail.commands.state as state_cmd
     import trail.commands.window as window_cmd
 
-    for module in (guide_cmd, image_cmd, input_cmd, ocr_cmd, screen_cmd, session_cmd, state_cmd, window_cmd):
-        monkeypatch.setattr(module, "runtime", runtime)
+    runtime_builder = lambda **kwargs: runtime
+
+    for module in (cw_cmd, guide_cmd, image_cmd, input_cmd, ocr_cmd, screen_cmd, session_cmd, state_cmd, window_cmd):
+        monkeypatch.setattr(module, "runtime_factory", runtime_builder, raising=False)
+
+    monkeypatch.setattr(guide_cmd, "artifact_store_factory", lambda: ArtifactStore(tmp_path / ".trail" / "artifacts"), raising=False)
 
     monkeypatch.setattr(window_cmd, "attach_window", lambda window_title: {"title": window_title, "hwnd": 123})
     return runtime
@@ -74,9 +85,9 @@ def fake_session(tmp_path, monkeypatch):
     import trail.commands.session as session_cmd
     import trail.commands.state as state_cmd
 
-    monkeypatch.setattr(session_cmd, "session_store", store)
-    monkeypatch.setattr(state_cmd, "session_store", store)
-    monkeypatch.setattr(cw_cmd, "session_store", store)
+    monkeypatch.setattr(session_cmd, "session_store_factory", lambda: store, raising=False)
+    monkeypatch.setattr(state_cmd, "session_store_factory", lambda: store, raising=False)
+    monkeypatch.setattr(cw_cmd, "session_store_factory", lambda: store, raising=False)
 
     session = store.create(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
     return session.session_id

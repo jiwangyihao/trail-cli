@@ -4,6 +4,7 @@ from pathlib import Path
 from time import monotonic, sleep
 from typing import Any, Protocol
 
+from trail.core.errors import TrailError
 from trail.runtime.model import Box
 from trail.runtime.window import WindowsWindowController
 
@@ -86,33 +87,36 @@ class RapidOcrAdapter:
 
 
 class PyAutoGuiInputDriver:
-    def click(self, x: float, y: float, **kwargs) -> None:
+    @staticmethod
+    def _load_backend():
         try:
             import pyautogui  # type: ignore
-        except Exception:
-            return None
+        except Exception as exc:
+            raise TrailError("INPUT_BACKEND_UNAVAILABLE", "pyautogui backend unavailable") from exc
+        return pyautogui
+
+    def click(self, x: float, y: float, **kwargs) -> None:
+        pyautogui = self._load_backend()
         pyautogui.click(x, y)
 
     def drag(self, from_x: float, from_y: float, to_x: float, to_y: float) -> None:
-        try:
-            import pyautogui  # type: ignore
-        except Exception:
-            return None
+        pyautogui = self._load_backend()
         pyautogui.moveTo(from_x, from_y)
         pyautogui.dragTo(to_x, to_y, duration=0.5)
 
     def press(self, key: str) -> None:
-        try:
-            import pyautogui  # type: ignore
-        except Exception:
-            return None
+        pyautogui = self._load_backend()
         pyautogui.press(key)
 
 
-def build_window_controller(*, window_title: str = "崩坏：星穹铁道", workspace: Path | None = None) -> WindowController:
+def build_window_controller(
+    *,
+    window_title: str = "崩坏：星穹铁道",
+    window_binding: dict | None = None,
+    workspace: Path | None = None,
+) -> WindowController:
     shots_dir = Path(".trail/shots") if workspace is None else Path(workspace)
-    shots_dir.mkdir(parents=True, exist_ok=True)
-    return WindowsWindowController(window_title=window_title, workspace=shots_dir)
+    return WindowsWindowController(window_title=window_title, window_binding=window_binding, workspace=shots_dir)
 
 
 def build_image_matcher() -> ImageMatcher:
@@ -127,9 +131,14 @@ def build_input_driver() -> InputDriver:
     return PyAutoGuiInputDriver()
 
 
-def build_runtime(*, window_title: str = "崩坏：星穹铁道", workspace: Path | None = None) -> RuntimeOperator:
+def build_runtime(
+    *,
+    window_title: str = "崩坏：星穹铁道",
+    window_binding: dict | None = None,
+    workspace: Path | None = None,
+) -> RuntimeOperator:
     return RuntimeOperator(
-        build_window_controller(window_title=window_title, workspace=workspace),
+        build_window_controller(window_title=window_title, window_binding=window_binding, workspace=workspace),
         build_image_matcher(),
         build_ocr_engine(),
         build_input_driver(),

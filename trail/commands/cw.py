@@ -7,8 +7,8 @@ import typer
 from trail.commands.helpers import build_default_session_store, build_default_runtime, print_json, run_session_command
 
 
-runtime = build_default_runtime()
-session_store = build_default_session_store()
+runtime_factory = build_default_runtime
+session_store_factory = build_default_session_store
 
 cw_app = typer.Typer(no_args_is_help=True)
 cw_guide_app = typer.Typer(no_args_is_help=True)
@@ -75,11 +75,11 @@ def _ensure_cw_state(session) -> dict:
 def _run(session_id: str, command_name: str, action) -> None:
     print_json(
         run_session_command(
-            store=session_store,
+            store=session_store_factory(),
             session_id=session_id,
-            runtime=runtime,
             command_name=command_name,
             action=action,
+            runtime_factory=runtime_factory,
         )
     )
 

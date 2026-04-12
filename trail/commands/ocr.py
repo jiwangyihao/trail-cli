@@ -7,12 +7,14 @@ from trail.core.errors import TrailError
 from trail.output.capture import with_auto_capture
 
 
-runtime = build_default_runtime()
+runtime_factory = build_default_runtime
 ocr_app = typer.Typer(no_args_is_help=True)
 
 
 @ocr_app.command("read")
 def ocr_read() -> None:
+    runtime = runtime_factory()
+
     def action() -> dict:
         result = runtime.ocr()
         if not result:

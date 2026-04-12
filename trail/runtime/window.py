@@ -31,9 +31,20 @@ def attach_window(window_title: str) -> WindowBinding:
     raise TrailError("WINDOW_NOT_FOUND", f"未找到窗口 {window_title}")
 
 
+def normalize_window_binding(window_binding: WindowBinding | dict | None = None, *, window_title: str | None = None) -> WindowBinding:
+    if isinstance(window_binding, WindowBinding):
+        return window_binding
+    if isinstance(window_binding, dict):
+        title = str(window_binding.get("title") or window_title or "崩坏：星穹铁道")
+        hwnd = window_binding.get("hwnd")
+        return WindowBinding(title=title, hwnd=None if hwnd is None else int(hwnd))
+    return WindowBinding(title=window_title or "崩坏：星穹铁道")
+
+
 class WindowsWindowController:
-    def __init__(self, *, window_title: str, workspace: Path):
-        self.window_title = window_title
+    def __init__(self, *, workspace: Path, window_binding: WindowBinding | dict | None = None, window_title: str | None = None):
+        self.window_binding = normalize_window_binding(window_binding, window_title=window_title)
+        self.window_title = self.window_binding.title
         self.workspace = Path(workspace)
         self.workspace.mkdir(parents=True, exist_ok=True)
 

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import importlib
 import json
+import sys
+
+import pytest
 
 from trail.cli import app
 from trail.session.store import SessionStore
@@ -92,7 +96,12 @@ def test_state_dump_returns_session_snapshot(cli_runner, fake_runtime, fake_sess
 def test_state_dump_returns_structured_error_for_missing_session(cli_runner, fake_runtime, tmp_path, monkeypatch):
     import trail.commands.state as state_cmd
 
-    monkeypatch.setattr(state_cmd, "session_store", SessionStore(tmp_path / ".trail" / "sessions"))
+    monkeypatch.setattr(
+        state_cmd,
+        "session_store_factory",
+        lambda: SessionStore(tmp_path / ".trail" / "sessions"),
+        raising=False,
+    )
 
     result = cli_runner.invoke(app, ["state", "dump", "--session", "deadbeefdeadbeefdeadbeefdeadbeef"])
 
@@ -106,6 +115,72 @@ def test_state_dump_returns_structured_error_for_missing_session(cli_runner, fak
     }
     assert payload["screenshot"]
     assert "Traceback" not in result.stdout
+
+
+def test_state_dump_uses_session_window_binding_for_runtime(cli_runner, tmp_path, monkeypatch):
+    import trail.commands.state as state_cmd
+
+    store = SessionStore(tmp_path / ".trail" / "sessions")
+    session = store.create(window_binding={"title": "自定义窗口", "hwnd": 456})
+    built_titles: list[str] = []
+
+    class RuntimeSpy:
+        def __init__(self, shot_path):
+            self._shot = shot_path
+
+        def capture_after_action(self, optional: bool = False):
+            return self._shot
+
+    monkeypatch.setattr(state_cmd, "session_store_factory", lambda: store, raising=False)
+    monkeypatch.setattr(
+        state_cmd,
+        "runtime_factory",
+        lambda **kwargs: built_titles.append(kwargs["window_title"]) or RuntimeSpy(tmp_path / "state-after.png"),
+        raising=False,
+    )
+
+    result = cli_runner.invoke(app, ["state", "dump", "--session", session.session_id])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert built_titles == ["自定义窗口"]
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "trail.commands.session",
+        "trail.commands.guide",
+        "trail.commands.cw",
+        "trail.commands.state",
+        "trail.commands.input",
+    ],
+)
+def test_command_module_import_has_no_trail_workspace_side_effect(module_name, tmp_path, monkeypatch):
+    workdir = tmp_path / module_name.rsplit(".", 1)[-1]
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+
+    module = importlib.import_module(module_name)
+    importlib.reload(module)
+
+    assert not (workdir / ".trail").exists()
+
+
+def test_input_click_returns_structured_error_when_backend_missing(cli_runner, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setitem(sys.modules, "pyautogui", None)
+
+    result = cli_runner.invoke(app, ["input", "click", "10", "20"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "INPUT_BACKEND_UNAVAILABLE",
+        "message": "pyautogui backend unavailable",
+    }
 
 
 def test_cli_help_exposes_top_level_command_groups(cli_runner):

@@ -7,12 +7,14 @@ from trail.core.errors import TrailError
 from trail.output.capture import with_auto_capture
 
 
-runtime = build_default_runtime()
+runtime_factory = build_default_runtime
 image_app = typer.Typer(no_args_is_help=True)
 
 
 @image_app.command("locate")
 def image_locate(template: str) -> None:
+    runtime = runtime_factory()
+
     def action() -> dict:
         box = runtime.locate(template)
         if box is None:
@@ -24,6 +26,8 @@ def image_locate(template: str) -> None:
 
 @image_app.command("wait")
 def image_wait(template: str, timeout: int = typer.Option(10, "--timeout")) -> None:
+    runtime = runtime_factory()
+
     def action() -> dict:
         box = runtime.wait_img(template, timeout=timeout)
         if box is None:

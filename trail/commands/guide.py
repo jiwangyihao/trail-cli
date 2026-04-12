@@ -7,8 +7,8 @@ from trail.core.errors import TrailError
 from trail.output.capture import with_auto_capture
 
 
-artifact_store = build_default_artifact_store()
-runtime = build_default_runtime()
+artifact_store_factory = build_default_artifact_store
+runtime_factory = build_default_runtime
 guide_app = typer.Typer(no_args_is_help=True)
 
 
@@ -25,6 +25,9 @@ def fetch_guide_payload(scene: str, url: str) -> dict:
 
 @guide_app.command("fetch")
 def guide_fetch(scene: str, url: str) -> None:
+    artifact_store = artifact_store_factory()
+    runtime = runtime_factory()
+
     def action() -> dict:
         payload = fetch_guide_payload(scene, url)
         artifact = artifact_store.create(scene=scene, kind="guide", payload=payload)
