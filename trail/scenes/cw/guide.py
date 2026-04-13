@@ -187,21 +187,27 @@ def _build_guide_list_request_payload(
     match_change_job: bool | None,
     match_hard: bool | None,
 ) -> bytes:
+    normalized_order = None
+    if isinstance(order, str) and order:
+        normalized_order = order[:1].upper() + order[1:]
+
+    trait_ids: list[str] = []
+    if trait_id is not None:
+        trait_ids = [str(trait_id), ""]
+
     payload: dict[str, object] = {
         "game": "hkrpg",
-        "page": page,
-        "limit": limit,
+        "page": str(page),
+        "limit": str(limit),
+        "lineup_type": "Tourn",
+        "role_ids": [],
+        "trait_ids": trait_ids,
+        "next_page_token": next_page_token or "",
+        "match_change_job": False if match_change_job is None else match_change_job,
+        "match_hard": False if match_hard is None else match_hard,
     }
-    if trait_id is not None:
-        payload["trait_id"] = trait_id
-    if order:
-        payload["order"] = order
-    if next_page_token:
-        payload["next_page_token"] = next_page_token
-    if match_change_job is not None:
-        payload["match_change_job"] = match_change_job
-    if match_hard is not None:
-        payload["match_hard"] = match_hard
+    if normalized_order:
+        payload["order"] = normalized_order
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
