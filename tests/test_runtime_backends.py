@@ -170,3 +170,37 @@ def test_attach_window_raises_when_backend_missing(monkeypatch):
         window_module.attach_window("Demo Window")
 
     assert exc_info.value.code == "WINDOW_NOT_FOUND"
+
+
+def test_runtime_operator_locate_retries_once_after_initial_miss():
+    import trail.runtime.operator as operator_module
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+    class MatcherStub:
+        def __init__(self):
+            self.calls = 0
+
+        def locate(self, template, image):
+            self.calls += 1
+            if self.calls == 1:
+                return None
+            return Box(left=1, top=2, width=3, height=4, source=template)
+
+    matcher = MatcherStub()
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=matcher,
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(click=lambda *args, **kwargs: None, drag=lambda *args, **kwargs: None, press=lambda *args, **kwargs: None),
+    )
+
+    box = runtime.locate("demo.png")
+
+    assert matcher.calls == 2
+    assert box == Box(left=1, top=2, width=3, height=4, source="demo.png")

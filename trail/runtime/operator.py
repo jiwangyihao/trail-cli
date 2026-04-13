@@ -43,7 +43,13 @@ class RuntimeOperator:
 
     def locate(self, template: str, **kwargs):
         image = self.screenshot(**kwargs)
-        return self.matcher.locate(template, image)
+        box = self.matcher.locate(template, image)
+        if box is not None:
+            return box
+
+        sleep(0.1)
+        retry_image = self.screenshot(**kwargs)
+        return self.matcher.locate(template, retry_image)
 
     def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
         deadline = monotonic() + timeout
