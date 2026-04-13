@@ -8,6 +8,7 @@ from trail.session.models import SessionModel
 
 OptionChooser = Callable[[int], object]
 EventHandler = Callable[[], tuple[str, str]]
+SceneAction = Callable[[], object]
 
 REPLENISH_OPTION_POINTS = {
     1: (0.2, 0.52),
@@ -37,6 +38,10 @@ FORTUNE_CONFIRM_POINT = (0.77, 0.521)
 
 SPECIAL_EVENT_OPTION_POINT = (0.5, 0.25)
 SPECIAL_EVENT_CONFIRM_POINT = (0.77, 0.521)
+BOSS_PREVIEW_CONFIRM_POINT = (0.5, 0.7)
+SETTLE_NEXT_POINT = (0.5, 0.82)
+BATTLE_START_POINT = (0.5, 0.824)
+BATTLE_CONTINUE_POINT = (0.5, 0.824)
 
 
 def _invalidate_cw_stage(session: SessionModel) -> None:
@@ -80,6 +85,22 @@ def build_cw_event_handler(runtime) -> EventHandler:
     return handler
 
 
+def build_cw_boss_preview_confirmer(runtime) -> SceneAction:
+    return lambda: runtime.click_point(*BOSS_PREVIEW_CONFIRM_POINT)
+
+
+def build_cw_settle_continuer(runtime) -> SceneAction:
+    return lambda: runtime.click_point(*SETTLE_NEXT_POINT)
+
+
+def build_cw_battle_starter(runtime) -> SceneAction:
+    return lambda: runtime.click_point(*BATTLE_START_POINT)
+
+
+def build_cw_battle_continuer(runtime) -> SceneAction:
+    return lambda: runtime.click_point(*BATTLE_CONTINUE_POINT)
+
+
 def read_cw_replenish(session: SessionModel) -> dict:
     del session
     return {"options": [1, 2, 3]}
@@ -120,6 +141,30 @@ def read_cw_fortune(session: SessionModel) -> dict:
 
 def choose_cw_fortune(session: SessionModel, *, option: int, chooser: OptionChooser) -> SessionModel:
     chooser(option)
+    _invalidate_cw_stage(session)
+    return session
+
+
+def confirm_cw_boss_preview(session: SessionModel, *, confirmer: SceneAction) -> SessionModel:
+    confirmer()
+    _invalidate_cw_stage(session)
+    return session
+
+
+def settle_cw_next(session: SessionModel, *, continuer: SceneAction) -> SessionModel:
+    continuer()
+    _invalidate_cw_stage(session)
+    return session
+
+
+def start_cw_battle(session: SessionModel, *, starter: SceneAction) -> SessionModel:
+    starter()
+    _invalidate_cw_stage(session)
+    return session
+
+
+def continue_cw_battle(session: SessionModel, *, continuer: SceneAction) -> SessionModel:
+    continuer()
     _invalidate_cw_stage(session)
     return session
 

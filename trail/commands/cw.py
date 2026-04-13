@@ -15,20 +15,28 @@ from trail.commands.helpers import (
 )
 from trail.scenes.cw.entry import enter_cw
 from trail.scenes.cw.events import (
+    build_cw_battle_continuer,
+    build_cw_battle_starter,
+    build_cw_boss_preview_confirmer,
     build_cw_encounter_chooser,
     build_cw_event_handler,
     build_cw_fortune_chooser,
     build_cw_invest_chooser,
     build_cw_replenish_chooser,
+    build_cw_settle_continuer,
     choose_cw_encounter,
     choose_cw_fortune,
     choose_cw_invest,
     choose_cw_replenish,
+    confirm_cw_boss_preview,
+    continue_cw_battle,
     handle_cw_event,
     read_cw_encounter,
     read_cw_fortune,
     read_cw_invest,
     read_cw_replenish,
+    settle_cw_next,
+    start_cw_battle,
 )
 from trail.scenes.cw.guide import apply_cw_guide, resolve_guide_input
 from trail.scenes.cw.shop import (
@@ -76,6 +84,10 @@ invest_chooser_factory = build_cw_invest_chooser
 encounter_chooser_factory = build_cw_encounter_chooser
 fortune_chooser_factory = build_cw_fortune_chooser
 event_handler_factory = build_cw_event_handler
+boss_preview_confirmer_factory = build_cw_boss_preview_confirmer
+battle_starter_factory = build_cw_battle_starter
+battle_continuer_factory = build_cw_battle_continuer
+settle_continuer_factory = build_cw_settle_continuer
 
 cw_app = typer.Typer(no_args_is_help=True)
 cw_guide_app = typer.Typer(no_args_is_help=True)
@@ -424,22 +436,46 @@ def cw_fortune_choose(session: str = typer.Option(..., "--session"), option: int
 
 @boss_preview_app.command("confirm")
 def cw_boss_preview_confirm(session: str = typer.Option(..., "--session")) -> None:
-    _run(session, "cw.boss-preview.confirm", lambda loaded: {"confirmed": True, "status": "stub"})
+    runtime = _runtime_for_session(session)
+
+    def action(loaded):
+        refreshed = confirm_cw_boss_preview(loaded, confirmer=boss_preview_confirmer_factory(runtime))
+        return refreshed.scene_state["cw"]["stage"]
+
+    _run(session, "cw.boss-preview.confirm", action, runtime=runtime)
 
 
 @battle_app.command("start")
 def cw_battle_start(session: str = typer.Option(..., "--session")) -> None:
-    _run(session, "cw.battle.start", lambda loaded: {"started": True, "status": "stub"})
+    runtime = _runtime_for_session(session)
+
+    def action(loaded):
+        refreshed = start_cw_battle(loaded, starter=battle_starter_factory(runtime))
+        return refreshed.scene_state["cw"]["stage"]
+
+    _run(session, "cw.battle.start", action, runtime=runtime)
 
 
 @battle_app.command("continue")
 def cw_battle_continue(session: str = typer.Option(..., "--session")) -> None:
-    _run(session, "cw.battle.continue", lambda loaded: {"continued": True, "status": "stub"})
+    runtime = _runtime_for_session(session)
+
+    def action(loaded):
+        refreshed = continue_cw_battle(loaded, continuer=battle_continuer_factory(runtime))
+        return refreshed.scene_state["cw"]["stage"]
+
+    _run(session, "cw.battle.continue", action, runtime=runtime)
 
 
 @settle_app.command("next")
 def cw_settle_next(session: str = typer.Option(..., "--session")) -> None:
-    _run(session, "cw.settle.next", lambda loaded: {"next": True, "status": "stub"})
+    runtime = _runtime_for_session(session)
+
+    def action(loaded):
+        refreshed = settle_cw_next(loaded, continuer=settle_continuer_factory(runtime))
+        return refreshed.scene_state["cw"]["stage"]
+
+    _run(session, "cw.settle.next", action, runtime=runtime)
 
 
 @event_app.command("handle")
