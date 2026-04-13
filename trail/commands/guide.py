@@ -31,11 +31,9 @@ def guide_fetch(scene: str, url: str) -> None:
 
 @guide_app.command("config")
 def guide_config(scene: str) -> None:
-    runtime = runtime_factory()
-
     def action() -> dict:
         if scene != "cw":
             raise TrailError("SCENE_NOT_SUPPORTED", f"暂不支持场景 {scene}")
         return to_jsonable(fetch_cw_guide_config())
 
-    print_json(with_auto_capture(runtime, action))
+    print_json(with_auto_capture(None, action))

@@ -500,7 +500,8 @@ def test_cw_guide_apply_cli_runs_runtime_action_chain_and_persists_scene_state(
     assert session.scene_state["cw"]["shop"]["stale"] is True
 
 
-def test_guide_config_cw_cli_returns_envelope_with_catalog(cli_runner, fake_runtime, monkeypatch):
+def test_guide_config_cw_cli_returns_envelope_with_catalog_without_runtime_side_effects(cli_runner, monkeypatch):
+    import trail.commands.guide as guide_cmd
     import trail.scenes.cw.guide as guide_scene
 
     captured_request: dict[str, object] = {}
@@ -510,6 +511,12 @@ def test_guide_config_cw_cli_returns_envelope_with_catalog(cli_runner, fake_runt
         captured_request["headers"] = {key.lower(): value for key, value in request.header_items()}
         return FakeHttpResponse(fake_cw_config_response())
 
+    monkeypatch.setattr(
+        guide_cmd,
+        "runtime_factory",
+        lambda **kwargs: pytest.fail("guide config should not initialize runtime"),
+        raising=False,
+    )
     monkeypatch.setattr(guide_scene, "urlopen", fake_urlopen, raising=False)
 
     result = cli_runner.invoke(app, ["guide", "config", "cw"])
@@ -548,6 +555,36 @@ def test_guide_config_cw_cli_returns_envelope_with_catalog(cli_runner, fake_runt
             "x-rpc-platform": "pc",
         },
     }
+    assert not Path(".trail/shots").exists()
+
+
+def test_guide_config_invalid_scene_does_not_initialize_runtime_or_create_shots(cli_runner, monkeypatch):
+    import trail.commands.guide as guide_cmd
+    import trail.scenes.cw.guide as guide_scene
+
+    monkeypatch.setattr(
+        guide_cmd,
+        "runtime_factory",
+        lambda **kwargs: pytest.fail("guide config should not initialize runtime for invalid scene"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        guide_scene,
+        "urlopen",
+        lambda request, timeout=10: pytest.fail("invalid scene should fail before requesting api"),
+        raising=False,
+    )
+
+    result = cli_runner.invoke(app, ["guide", "config", "ocr"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "SCENE_NOT_SUPPORTED",
+        "message": "暂不支持场景 ocr",
+    }
+    assert not Path(".trail/shots").exists()
 
 
 def test_cw_guide_apply_cli_rejects_invalid_artifact(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
