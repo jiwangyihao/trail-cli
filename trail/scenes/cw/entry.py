@@ -4,7 +4,6 @@ from collections.abc import Mapping
 
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
-from trail.scenes.cw.events import build_cw_invest_chooser
 from trail.scenes.cw.models import ensure_cw_state
 from trail.session.models import SessionModel
 
@@ -18,7 +17,6 @@ CURRENCY_WARS_ENTRY_POINT = (int(CW_WIDTH * 0.242), int(CW_HEIGHT * 0.30))
 CURRENCY_WARS_PARTICIPATE_POINT = (int(CW_WIDTH * 0.7786), int(CW_HEIGHT * 0.8194))
 STANDARD_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.2315))
 OVERCLOCK_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.4167))
-BOSS_INFO_DISMISS_POINT = (int(CW_WIDTH * 0.5), int(CW_HEIGHT * 0.5))
 
 
 def _asset(alias: str) -> str:
@@ -110,8 +108,7 @@ def _consume_click_blank_prompt(runtime) -> None:
 
 
 def _handle_invest_environment_flow(runtime) -> None:
-    _wait(runtime, "stage.invest")
-    build_cw_invest_chooser(runtime)(1)
+    _wait(runtime, "entry.invest_environment")
 
 
 def _enter_from_start_page(runtime, *, mode: str, difficulty: str, battle_mode: str, start_box=None) -> None:
@@ -166,7 +163,9 @@ def _run_entry_chain(runtime, *, mode: str, difficulty: str, battle_mode: str) -
         return
 
     if _locate(runtime, "stage.invest") is not None:
-        _handle_invest_environment_flow(runtime)
+        return
+
+    if _locate(runtime, "entry.invest_environment") is not None:
         return
 
     _enter_from_world(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode)

@@ -5,6 +5,7 @@ CW_RESOURCE_ALIASES = {
     "entry.new": "enter_game.png",
     "entry.continue": "continue_progress.png",
     "entry.start_game": "start_game.png",
+    "entry.invest_environment": "invest_environment.png",
     "entry.difficulty.highest": "return_highest_rank.png",
     "entry.difficulty.lowest": "down_arrow.png",
     "guide.strategy": "strategy.png",
