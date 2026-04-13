@@ -176,14 +176,17 @@ def fake_lineup_index_response() -> dict:
                         "role_stages": [
                             {
                                 "stage": "Opening",
-                                "front_roles": [{"name": "黑塔"}],
-                                "back_roles": [{"name": "艾丝妲"}],
+                                "front_roles": [{"name": "黑塔", "star": 4, "rarity": 2, "is_carry": False}],
+                                "back_roles": [{"name": "艾丝妲", "star": 4, "rarity": 2, "is_carry": False}],
                                 "traits": [{"name": "智识"}],
                             },
                             {
                                 "stage": "Final",
-                                "front_roles": [{"name": "希儿"}, {"name": "布洛妮娅"}],
-                                "back_roles": [{"name": "佩拉"}],
+                                "front_roles": [
+                                    {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
+                                    {"name": "布洛妮娅", "star": 5, "rarity": 3, "is_carry": False},
+                                ],
+                                "back_roles": [{"name": "佩拉", "star": 4, "rarity": 2, "is_carry": False}],
                                 "traits": [{"name": "巡猎"}, {"name": "量子"}],
                             },
                         ],
@@ -468,6 +471,11 @@ def test_fetch_cw_guide_list_posts_filters_and_normalizes_response(monkeypatch):
                 "description": "高分稳定上分阵容",
                 "labels": ["9级搜牌", "银河学者"],
                 "final_traits": ["巡猎", "量子"],
+                "final_role_cards": [
+                    {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
+                    {"name": "布洛妮娅", "star": 5, "rarity": 3, "is_carry": False},
+                    {"name": "佩拉", "star": 4, "rarity": 2, "is_carry": False},
+                ],
                 "has_change_equip": True,
                 "has_expert": True,
                 "version": "3.1",
@@ -778,6 +786,11 @@ def test_guide_list_cw_cli_returns_envelope_without_runtime_side_effects(cli_run
                 "description": "高分稳定上分阵容",
                 "labels": ["9级搜牌", "银河学者"],
                 "final_traits": ["巡猎", "量子"],
+                "final_role_cards": [
+                    {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
+                    {"name": "布洛妮娅", "star": 5, "rarity": 3, "is_carry": False},
+                    {"name": "佩拉", "star": 4, "rarity": 2, "is_carry": False},
+                ],
                 "has_change_equip": True,
                 "has_expert": True,
                 "version": "3.1",

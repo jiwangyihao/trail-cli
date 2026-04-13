@@ -424,6 +424,27 @@ def _normalize_named_list(values: object) -> list[str]:
     return result
 
 
+def _append_role_cards(target: list[dict[str, object]], values: object) -> None:
+    if not isinstance(values, list):
+        return
+    seen: set[str] = {str(item.get("name")) for item in target if isinstance(item, Mapping)}
+    for item in values:
+        if not isinstance(item, Mapping):
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name or name in seen:
+            continue
+        seen.add(name)
+        target.append(
+            {
+                "name": name,
+                "star": item.get("star"),
+                "rarity": item.get("rarity"),
+                "is_carry": bool(item.get("is_carry")),
+            }
+        )
+
+
 def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
     if not isinstance(lineup, Mapping):
         return {
@@ -433,6 +454,7 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
             "description": "",
             "labels": [],
             "final_traits": [],
+            "final_role_cards": [],
             "has_change_equip": False,
             "has_expert": False,
             "version": "",
@@ -448,11 +470,11 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
     game_data = lineup.get("game_data") if isinstance(lineup.get("game_data"), Mapping) else {}
     final_stage = _pick_final_stage(tourn_detail.get("role_stages"))
     final_traits: list[str] = []
-    final_roles: list[str] = []
+    final_role_cards: list[dict[str, object]] = []
     if isinstance(final_stage, Mapping):
         _append_unique_names(final_traits, final_stage.get("traits"))
-        _append_unique_names(final_roles, final_stage.get("front_roles"))
-        _append_unique_names(final_roles, final_stage.get("back_roles"))
+        _append_role_cards(final_role_cards, final_stage.get("front_roles"))
+        _append_role_cards(final_role_cards, final_stage.get("back_roles"))
 
     return {
         "id": lineup.get("id"),
@@ -461,6 +483,7 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
         "description": str(lineup.get("description") or ""),
         "labels": _normalize_lineup_labels(tourn_detail.get("labels")),
         "final_traits": final_traits,
+        "final_role_cards": final_role_cards,
         "has_change_equip": bool(lineup.get("has_change_equip")),
         "has_expert": bool(lineup.get("has_expert")),
         "version": str(tourn_detail.get("rpg_game_big_version") or ""),
