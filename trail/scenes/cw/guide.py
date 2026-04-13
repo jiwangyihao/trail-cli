@@ -159,7 +159,8 @@ def _fetch_lineup_detail(url: str, *, timeout: int = 10) -> tuple[str, dict]:
     lineup_id = _extract_lineup_id(url)
     request = Request(f"{CW_GUIDE_DETAIL_API}?id={lineup_id}&game=hkrpg", headers=CW_GUIDE_HEADERS)
     payload = _read_json_response(request, timeout=timeout)
-    lineup = payload.get("data", {}).get("lineup")
+    data = payload.get("data")
+    lineup = data.get("lineup") if isinstance(data, Mapping) else None
     if payload.get("retcode") != 0 or not isinstance(lineup, Mapping):
         raise TrailError("GUIDE_FETCH_FAILED", f"guide fetch failed: {payload.get('message', 'unknown error')}")
     return lineup_id, dict(lineup)

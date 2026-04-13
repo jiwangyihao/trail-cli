@@ -265,6 +265,25 @@ def test_fetch_cw_guide_payload_rejects_article_url(monkeypatch):
     assert exc_info.value.code == "GUIDE_URL_INVALID"
 
 
+def test_fetch_cw_guide_payload_classifies_lineup_api_error_shape(monkeypatch):
+    guide_module = load_cw_guide_module()
+    fetch_cw_guide_payload = getattr(guide_module, "fetch_cw_guide_payload", None)
+    assert fetch_cw_guide_payload is not None
+
+    monkeypatch.setattr(
+        guide_module,
+        "urlopen",
+        lambda request, timeout=10: FakeHttpResponse({"retcode": 1, "message": "lineup not found", "data": None}),
+        raising=False,
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        fetch_cw_guide_payload(fake_lineup_url())
+
+    assert exc_info.value.code == "GUIDE_FETCH_FAILED"
+    assert str(exc_info.value) == "guide fetch failed: lineup not found"
+
+
 def test_fetch_cw_guide_returns_artifact_meta(tmp_path):
     guide_module = load_cw_guide_module()
     fetch_cw_guide = getattr(guide_module, "fetch_cw_guide", None)
