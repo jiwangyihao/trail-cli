@@ -134,6 +134,42 @@ def fake_cw_config_response() -> dict:
     }
 
 
+def fake_lineup_index_response() -> dict:
+    return {
+        "retcode": 0,
+        "message": "OK",
+        "data": {
+            "list": [
+                {
+                    "id": "lineup-demo",
+                    "title": "7群攻2银河学者",
+                    "nickname": "测试作者",
+                    "tourn_detail": {
+                        "share_code": "LIST-CODE",
+                        "labels": [{"text": "9级搜牌"}, {"text": "银河学者"}],
+                        "support_hard": True,
+                        "role_stages": [
+                            {
+                                "stage": "Opening",
+                                "front_roles": [{"name": "黑塔"}],
+                                "back_roles": [{"name": "艾丝妲"}],
+                                "traits": [{"name": "智识"}],
+                            },
+                            {
+                                "stage": "Final",
+                                "front_roles": [{"name": "希儿"}, {"name": "布洛妮娅"}],
+                                "back_roles": [{"name": "佩拉"}],
+                                "traits": [{"name": "巡猎"}, {"name": "量子"}],
+                            },
+                        ],
+                    },
+                }
+            ],
+            "next_page_token": "next-token-demo",
+        },
+    }
+
+
 def load_cw_guide_module():
     try:
         return importlib.import_module("trail.scenes.cw.guide")
@@ -345,6 +381,71 @@ def test_fetch_cw_guide_config_returns_minimal_catalog(monkeypatch):
             {"id": 1003, "name": "布洛妮娅", "front_back_type": "back", "trait_ids": [2001]},
         ],
         "role_tags": ["输出", "辅助", "减防", "量子"],
+    }
+
+
+def test_fetch_cw_guide_list_posts_filters_and_normalizes_response(monkeypatch):
+    guide_module = load_cw_guide_module()
+    fetch_cw_guide_list = getattr(guide_module, "fetch_cw_guide_list", None)
+    assert fetch_cw_guide_list is not None
+
+    captured_request: dict[str, object] = {}
+
+    def fake_urlopen(request, timeout=10):
+        captured_request["url"] = request.full_url
+        captured_request["timeout"] = timeout
+        captured_request["method"] = request.get_method()
+        captured_request["headers"] = {key.lower(): value for key, value in request.header_items()}
+        captured_request["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeHttpResponse(fake_lineup_index_response())
+
+    monkeypatch.setattr(guide_module, "urlopen", fake_urlopen, raising=False)
+
+    payload = fetch_cw_guide_list(
+        page=2,
+        limit=10,
+        trait_id=321,
+        order="hot",
+        next_page_token="cursor-demo",
+        match_change_job=True,
+        match_hard=False,
+    )
+
+    assert captured_request == {
+        "url": "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/index",
+        "timeout": 10,
+        "method": "POST",
+        "headers": {
+            "accept": "application/json, text/plain, */*",
+            "content-type": "application/json",
+            "x-rpc-currencywar-tourn": "tourn",
+            "x-rpc-platform": "pc",
+        },
+        "body": {
+            "game": "hkrpg",
+            "page": 2,
+            "limit": 10,
+            "trait_id": 321,
+            "order": "hot",
+            "next_page_token": "cursor-demo",
+            "match_change_job": True,
+            "match_hard": False,
+        },
+    }
+    assert payload == {
+        "list": [
+            {
+                "id": "lineup-demo",
+                "title": "7群攻2银河学者",
+                "nickname": "测试作者",
+                "share_code": "LIST-CODE",
+                "labels": ["9级搜牌", "银河学者"],
+                "final_traits": ["巡猎", "量子"],
+                "final_roles": ["希儿", "布洛妮娅", "佩拉"],
+                "support_hard": True,
+            }
+        ],
+        "next_page_token": "next-token-demo",
     }
 
 
@@ -583,6 +684,91 @@ def test_guide_config_invalid_scene_does_not_initialize_runtime_or_create_shots(
     assert payload["error"] == {
         "code": "SCENE_NOT_SUPPORTED",
         "message": "暂不支持场景 ocr",
+    }
+    assert not Path(".trail/shots").exists()
+
+
+def test_guide_list_cw_cli_returns_envelope_without_runtime_side_effects(cli_runner, monkeypatch):
+    import trail.commands.guide as guide_cmd
+    import trail.scenes.cw.guide as guide_scene
+
+    captured_request: dict[str, object] = {}
+
+    def fake_urlopen(request, timeout=10):
+        captured_request["url"] = request.full_url
+        captured_request["method"] = request.get_method()
+        captured_request["headers"] = {key.lower(): value for key, value in request.header_items()}
+        captured_request["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeHttpResponse(fake_lineup_index_response())
+
+    monkeypatch.setattr(
+        guide_cmd,
+        "runtime_factory",
+        lambda **kwargs: pytest.fail("guide list should not initialize runtime"),
+        raising=False,
+    )
+    monkeypatch.setattr(guide_scene, "urlopen", fake_urlopen, raising=False)
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "guide",
+            "list",
+            "cw",
+            "--page",
+            "3",
+            "--limit",
+            "5",
+            "--trait-id",
+            "1001",
+            "--order",
+            "new",
+            "--next-page-token",
+            "cursor-next",
+            "--match-change-job",
+            "true",
+            "--match-hard",
+            "false",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"] == {
+        "list": [
+            {
+                "id": "lineup-demo",
+                "title": "7群攻2银河学者",
+                "nickname": "测试作者",
+                "share_code": "LIST-CODE",
+                "labels": ["9级搜牌", "银河学者"],
+                "final_traits": ["巡猎", "量子"],
+                "final_roles": ["希儿", "布洛妮娅", "佩拉"],
+                "support_hard": True,
+            }
+        ],
+        "next_page_token": "next-token-demo",
+    }
+    assert captured_request == {
+        "url": "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/index",
+        "method": "POST",
+        "headers": {
+            "accept": "application/json, text/plain, */*",
+            "content-type": "application/json",
+            "x-rpc-currencywar-tourn": "tourn",
+            "x-rpc-platform": "pc",
+        },
+        "body": {
+            "game": "hkrpg",
+            "page": 3,
+            "limit": 5,
+            "trait_id": 1001,
+            "order": "new",
+            "next_page_token": "cursor-next",
+            "match_change_job": True,
+            "match_hard": False,
+        },
     }
     assert not Path(".trail/shots").exists()
 

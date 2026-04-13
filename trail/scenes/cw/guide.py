@@ -17,6 +17,7 @@ from trail.session.models import SessionModel
 
 
 CW_GUIDE_DETAIL_API = "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/detail"
+CW_GUIDE_LIST_API = "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/index"
 CW_GUIDE_CONFIG_API = "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/config?game=hkrpg"
 CW_GUIDE_HEADERS = {
     "accept": "application/json, text/plain, */*",
@@ -176,6 +177,70 @@ def _fetch_cw_config_data(*, timeout: int = 10) -> dict:
     return dict(data)
 
 
+def _build_guide_list_request_payload(
+    *,
+    page: int,
+    limit: int,
+    trait_id: int | None,
+    order: str | None,
+    next_page_token: str | None,
+    match_change_job: bool | None,
+    match_hard: bool | None,
+) -> bytes:
+    payload: dict[str, object] = {
+        "game": "hkrpg",
+        "page": page,
+        "limit": limit,
+    }
+    if trait_id is not None:
+        payload["trait_id"] = trait_id
+    if order:
+        payload["order"] = order
+    if next_page_token:
+        payload["next_page_token"] = next_page_token
+    if match_change_job is not None:
+        payload["match_change_job"] = match_change_job
+    if match_hard is not None:
+        payload["match_hard"] = match_hard
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
+def _fetch_cw_guide_list_data(
+    *,
+    page: int,
+    limit: int,
+    trait_id: int | None,
+    order: str | None,
+    next_page_token: str | None,
+    match_change_job: bool | None,
+    match_hard: bool | None,
+    timeout: int = 10,
+) -> dict:
+    headers = {
+        **CW_GUIDE_HEADERS,
+        "content-type": "application/json",
+    }
+    request = Request(
+        CW_GUIDE_LIST_API,
+        headers=headers,
+        data=_build_guide_list_request_payload(
+            page=page,
+            limit=limit,
+            trait_id=trait_id,
+            order=order,
+            next_page_token=next_page_token,
+            match_change_job=match_change_job,
+            match_hard=match_hard,
+        ),
+    )
+    payload = _read_json_response(request, timeout=timeout)
+    data = payload.get("data")
+    lineup_list = data.get("list") if isinstance(data, Mapping) else None
+    if payload.get("retcode") != 0 or not isinstance(lineup_list, list):
+        raise TrailError("GUIDE_FETCH_FAILED", f"guide fetch failed: {payload.get('message', 'unknown error')}")
+    return dict(data)
+
+
 def _normalize_lineup_levels(label_list: object) -> list[dict[str, object]]:
     result: list[dict[str, object]] = []
     if not isinstance(label_list, list):
@@ -259,6 +324,79 @@ def _normalize_role_tags(data: Mapping) -> list[object]:
     return tags
 
 
+def _normalize_lineup_labels(labels: object) -> list[str]:
+    result: list[str] = []
+    if not isinstance(labels, list):
+        return result
+    for item in labels:
+        if isinstance(item, Mapping):
+            text = item.get("text") or item.get("name")
+        else:
+            text = item
+        if not isinstance(text, str) or not text:
+            continue
+        result.append(text)
+    return result
+
+
+def _pick_final_stage(role_stages: object) -> Mapping | None:
+    if not isinstance(role_stages, list) or not role_stages:
+        return None
+    for stage in role_stages:
+        if isinstance(stage, Mapping) and stage.get("stage") == "Final":
+            return stage
+    fallback = role_stages[-1]
+    return fallback if isinstance(fallback, Mapping) else None
+
+
+def _append_unique_names(target: list[str], values: object) -> None:
+    if not isinstance(values, list):
+        return
+    seen = set(target)
+    for item in values:
+        if not isinstance(item, Mapping):
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name or name in seen:
+            continue
+        seen.add(name)
+        target.append(name)
+
+
+def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
+    if not isinstance(lineup, Mapping):
+        return {
+            "id": None,
+            "title": "",
+            "nickname": "",
+            "share_code": "",
+            "labels": [],
+            "final_traits": [],
+            "final_roles": [],
+            "support_hard": False,
+        }
+
+    tourn_detail = lineup.get("tourn_detail") if isinstance(lineup.get("tourn_detail"), Mapping) else {}
+    final_stage = _pick_final_stage(tourn_detail.get("role_stages"))
+    final_traits: list[str] = []
+    final_roles: list[str] = []
+    if isinstance(final_stage, Mapping):
+        _append_unique_names(final_traits, final_stage.get("traits"))
+        _append_unique_names(final_roles, final_stage.get("front_roles"))
+        _append_unique_names(final_roles, final_stage.get("back_roles"))
+
+    return {
+        "id": lineup.get("id"),
+        "title": str(lineup.get("title") or ""),
+        "nickname": str(lineup.get("nickname") or ""),
+        "share_code": str(tourn_detail.get("share_code") or ""),
+        "labels": _normalize_lineup_labels(tourn_detail.get("labels")),
+        "final_traits": final_traits,
+        "final_roles": final_roles,
+        "support_hard": bool(tourn_detail.get("support_hard")),
+    }
+
+
 def fetch_cw_guide_config(*, timeout: int = 10) -> dict:
     data = _fetch_cw_config_data(timeout=timeout)
     return {
@@ -273,6 +411,34 @@ def fetch_cw_guide_config(*, timeout: int = 10) -> dict:
         "traits": _normalize_traits(data.get("trait_info_list")),
         "roles": _normalize_roles(data.get("role_list")),
         "role_tags": _normalize_role_tags(data),
+    }
+
+
+def fetch_cw_guide_list(
+    *,
+    page: int,
+    limit: int,
+    trait_id: int | None,
+    order: str | None,
+    next_page_token: str | None,
+    match_change_job: bool | None,
+    match_hard: bool | None,
+    timeout: int = 10,
+) -> dict:
+    data = _fetch_cw_guide_list_data(
+        page=page,
+        limit=limit,
+        trait_id=trait_id,
+        order=order,
+        next_page_token=next_page_token,
+        match_change_job=match_change_job,
+        match_hard=match_hard,
+        timeout=timeout,
+    )
+    lineup_list = data.get("list")
+    return {
+        "list": [_normalize_lineup_summary(item) for item in lineup_list] if isinstance(lineup_list, list) else [],
+        "next_page_token": data.get("next_page_token"),
     }
 
 
