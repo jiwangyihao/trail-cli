@@ -384,6 +384,29 @@ def _append_unique_names(target: list[str], values: object) -> None:
         target.append(name)
 
 
+def _read_interact_value(payload: Mapping, *keys: str) -> int:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return 0
+
+
+def _normalize_interact(payload: object) -> dict[str, int]:
+    if not isinstance(payload, Mapping):
+        return {"like": 0, "favour": 0, "view": 0, "use": 0}
+    return {
+        "like": _read_interact_value(payload, "like", "like_num", "like_count"),
+        "favour": _read_interact_value(payload, "favour", "favour_num", "favour_count"),
+        "view": _read_interact_value(payload, "view", "view_num", "view_count"),
+        "use": _read_interact_value(payload, "use", "use_num", "use_count"),
+    }
+
+
 def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
     if not isinstance(lineup, Mapping):
         return {
@@ -394,10 +417,20 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
             "labels": [],
             "final_traits": [],
             "final_roles": [],
+            "has_change_equip": False,
+            "certified": False,
+            "version": "",
+            "created_at": None,
+            "last_edit": None,
+            "is_like": False,
+            "is_favour": False,
+            "interact": _normalize_interact(None),
+            "recent_interact": _normalize_interact(None),
             "support_hard": False,
         }
 
     tourn_detail = lineup.get("tourn_detail") if isinstance(lineup.get("tourn_detail"), Mapping) else {}
+    game_data = lineup.get("game_data") if isinstance(lineup.get("game_data"), Mapping) else {}
     final_stage = _pick_final_stage(tourn_detail.get("role_stages"))
     final_traits: list[str] = []
     final_roles: list[str] = []
@@ -414,6 +447,15 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
         "labels": _normalize_lineup_labels(tourn_detail.get("labels")),
         "final_traits": final_traits,
         "final_roles": final_roles,
+        "has_change_equip": bool(lineup.get("has_change_equip")),
+        "certified": bool(lineup.get("certification")),
+        "version": str(tourn_detail.get("rpg_game_big_version") or ""),
+        "created_at": lineup.get("created_at"),
+        "last_edit": lineup.get("last_edit"),
+        "is_like": bool(lineup.get("is_like")),
+        "is_favour": bool(lineup.get("is_favour")),
+        "interact": _normalize_interact(game_data.get("interact")),
+        "recent_interact": _normalize_interact(game_data.get("recent_interact")),
         "support_hard": bool(tourn_detail.get("support_hard")),
     }
 
