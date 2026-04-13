@@ -27,6 +27,8 @@ ShopScanner = Callable[[], tuple[list[Any], int | None, int | None, bool, int | 
 ShopBuyer = Callable[..., object]
 ShopAction = Callable[[], object]
 
+SHOP_SUMMARY_CONSTRAINT_KEYS = ("min_coins", "min_level", "mid_level")
+
 
 def _read_ocr_text(item: Any) -> str:
     if isinstance(item, dict):
@@ -79,6 +81,86 @@ def _parse_shop_items(raw_items: list[Any] | None) -> tuple[list[dict[str, Any]]
     return items, reserve_full
 
 
+def _guide_state(cw_state: dict) -> dict | None:
+    guide = cw_state.get("guide")
+    return guide if isinstance(guide, dict) else None
+
+
+def _remaining_purchases(cw_state: dict) -> dict[str, Any]:
+    guide = _guide_state(cw_state)
+    if guide is None:
+        return {}
+    remaining = guide.get("remaining_purchases")
+    return remaining if isinstance(remaining, dict) else {}
+
+
+def _stable_constraints_summary(cw_state: dict) -> dict[str, Any]:
+    constraints = cw_state.get("constraints")
+    if not isinstance(constraints, dict):
+        return {}
+    return {key: deepcopy(constraints.get(key)) for key in SHOP_SUMMARY_CONSTRAINT_KEYS if key in constraints}
+
+
+def _shop_state(cw_state: dict) -> dict[str, Any]:
+    shop_state = cw_state.get("shop")
+    return shop_state if isinstance(shop_state, dict) else {}
+
+
+def _preserved_shop_flags(cw_state: dict) -> dict[str, Any]:
+    shop_state = _shop_state(cw_state)
+    if "opened" not in shop_state:
+        return {}
+    return {"opened": shop_state["opened"]}
+
+
+def _normalized_shop_items(items: Any) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    if not isinstance(items, list):
+        return normalized
+    for item in items:
+        if isinstance(item, dict):
+            normalized.append({"name": item.get("name"), "price": item.get("price")})
+            continue
+        if isinstance(item, str):
+            normalized.append({"name": item, "price": None})
+    return normalized
+
+
+def _require_fresh_shop_item(cw_state: dict, *, slot: int, expect: str) -> dict[str, Any]:
+    shop_state = _shop_state(cw_state)
+    if shop_state.get("stale", True):
+        raise TrailError("SHOP_STALE", "商店快照已失效，请先执行 trail cw shop scan")
+
+    items = _normalized_shop_items(shop_state.get("items"))
+    index = slot - 1
+    if index < 0 or index >= len(items):
+        raise TrailError("SHOP_SLOT_MISMATCH", f"shop slot {slot} expected {expect}, got: empty")
+
+    current = items[index]
+    if current.get("name") != expect:
+        actual = current.get("name") or "empty"
+        raise TrailError("SHOP_SLOT_MISMATCH", f"shop slot {slot} expected {expect}, got: {actual}")
+    return current
+
+
+def _purchase_confirmed(*, before_items: list[dict[str, Any]], after_items: list[dict[str, Any]], slot: int) -> bool:
+    index = slot - 1
+    before_item = before_items[index] if 0 <= index < len(before_items) else None
+    after_item = after_items[index] if 0 <= index < len(after_items) else None
+    return before_item != after_item or before_items != after_items
+
+
+def _decrement_remaining_purchase(cw_state: dict, *, expect: str) -> None:
+    guide = _guide_state(cw_state)
+    if guide is None:
+        return
+    remaining = guide.get("remaining_purchases")
+    if not isinstance(remaining, dict):
+        remaining = {}
+        guide["remaining_purchases"] = remaining
+    remaining[expect] = max(0, remaining.get(expect, 0) - 1)
+
+
 def build_cw_shop_opener(runtime) -> ShopAction:
     return lambda: runtime.click_point(*SHOP_OPEN_POINT)
 
@@ -125,14 +207,15 @@ def scan_cw_shop(session: SessionModel, *, scanner: ShopScanner) -> SessionModel
     items, coins, level, reserve_full, max_team_size = scanner()
     cw_state = ensure_cw_state(session)
     cw_state["shop"] = {
+        **_preserved_shop_flags(cw_state),
         "items": deepcopy(items),
         "coins": coins,
         "level": level,
         "reserve_full": reserve_full,
         "max_team_size": max_team_size,
         "guide_summary": {
-            "remaining_purchases": deepcopy(cw_state.get("guide", {}).get("remaining_purchases", {})),
-            "constraints": deepcopy(cw_state.get("constraints", {})),
+            "remaining_purchases": deepcopy(_remaining_purchases(cw_state)),
+            "constraints": _stable_constraints_summary(cw_state),
         },
         "stale": False,
     }
@@ -140,12 +223,20 @@ def scan_cw_shop(session: SessionModel, *, scanner: ShopScanner) -> SessionModel
 
 
 def buy_cw_shop_slot(session: SessionModel, *, slot: int, expect: str, buyer: ShopBuyer, scanner: ShopScanner) -> SessionModel:
-    buyer(slot=slot, expect=expect)
     cw_state = ensure_cw_state(session)
-    guide_state = cw_state.setdefault("guide", {})
-    remaining = guide_state.setdefault("remaining_purchases", {})
-    remaining[expect] = max(0, remaining.get(expect, 0) - 1)
+    before_items = _normalized_shop_items(_shop_state(cw_state).get("items"))
+    _require_fresh_shop_item(cw_state, slot=slot, expect=expect)
+    buyer(slot=slot, expect=expect)
     scan_cw_shop(session, scanner=scanner)
+    cw_state = ensure_cw_state(session)
+    after_items = _normalized_shop_items(_shop_state(cw_state).get("items"))
+    if not _purchase_confirmed(before_items=before_items, after_items=after_items, slot=slot):
+        raise TrailError("SHOP_BUY_NOT_CONFIRMED", f"shop purchase not confirmed for slot {slot}: {expect}")
+    _decrement_remaining_purchase(cw_state, expect=expect)
+    cw_state["shop"]["guide_summary"] = {
+        "remaining_purchases": deepcopy(_remaining_purchases(cw_state)),
+        "constraints": _stable_constraints_summary(cw_state),
+    }
     cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
     return session
 

@@ -6,6 +6,7 @@ import json
 import pytest
 
 from trail.cli import app
+from trail.core.errors import TrailError
 from trail.session.store import SessionStore
 
 
@@ -66,6 +67,43 @@ def test_shop_scan_refreshes_store_snapshot(tmp_path):
     }
 
 
+def test_shop_scan_without_guide_keeps_opened_and_filters_guide_summary(tmp_path):
+    shop_module = load_cw_shop_module()
+    open_cw_shop = getattr(shop_module, "open_cw_shop", None)
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    assert open_cw_shop is not None
+    assert scan_cw_shop is not None
+
+    from tests.conftest import build_fake_cw_session
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = None
+    session.scene_state["cw"]["constraints"] = {
+        "min_coins": 40,
+        "min_level": 7,
+        "mid_level": 7,
+        "priority": {"银狼": 99},
+        "positioning": {"银狼": "on_field"},
+    }
+
+    open_cw_shop(session, opener=lambda: None)
+    refreshed = scan_cw_shop(session, scanner=fake_shop_snapshot)
+
+    assert refreshed.scene_state["cw"]["shop"] == {
+        "opened": True,
+        "items": [{"name": "银狼", "price": 20}],
+        "coins": 40,
+        "level": 7,
+        "reserve_full": False,
+        "max_team_size": 8,
+        "guide_summary": {
+            "remaining_purchases": {},
+            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
+        },
+        "stale": False,
+    }
+
+
 def test_shop_status_returns_current_snapshot(tmp_path):
     shop_module = load_cw_shop_module()
     shop_cw_status = getattr(shop_module, "shop_cw_status", None)
@@ -87,9 +125,11 @@ def test_shop_buy_slot_mutates_remaining_purchases(tmp_path):
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
     session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    getattr(shop_module, "scan_cw_shop")(session, scanner=fake_shop_snapshot)
     refreshed = buy_cw_shop_slot(
         session,
-        slot=3,
+        slot=1,
         expect="银狼",
         buyer=fake_buy_success,
         scanner=fake_shop_snapshot_after_purchase,
@@ -102,6 +142,7 @@ def test_shop_buy_slot_mutates_remaining_purchases(tmp_path):
         "level": 8,
         "reserve_full": False,
         "max_team_size": 8,
+        "opened": True,
         "guide_summary": {
             "remaining_purchases": {"银狼": 0},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -109,6 +150,68 @@ def test_shop_buy_slot_mutates_remaining_purchases(tmp_path):
         "stale": False,
     }
     assert refreshed.scene_state["cw"]["slots"]["stale"] is True
+
+
+def test_shop_buy_slot_without_guide_does_not_crash_or_create_guide(tmp_path):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert scan_cw_shop is not None
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session, fake_buy_success
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = None
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    scan_cw_shop(session, scanner=fake_shop_snapshot)
+
+    refreshed = buy_cw_shop_slot(
+        session,
+        slot=1,
+        expect="银狼",
+        buyer=fake_buy_success,
+        scanner=fake_shop_snapshot_after_purchase,
+    )
+
+    assert refreshed.scene_state["cw"]["guide"] is None
+    assert refreshed.scene_state["cw"]["shop"]["opened"] is True
+    assert refreshed.scene_state["cw"]["shop"]["items"] == [{"name": "阮·梅", "price": 30}]
+    assert refreshed.scene_state["cw"]["slots"]["stale"] is True
+
+
+@pytest.mark.parametrize(
+    ("slot", "expect", "scanner", "code"),
+    [
+        (1, "希儿", fake_shop_snapshot_after_purchase, "SHOP_SLOT_MISMATCH"),
+        (1, "银狼", fake_shop_snapshot, "SHOP_BUY_NOT_CONFIRMED"),
+    ],
+)
+def test_shop_buy_slot_rejects_invalid_purchase_without_consuming_purchase(tmp_path, slot, expect, scanner, code):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert scan_cw_shop is not None
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session, fake_buy_success
+
+    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    scan_cw_shop(session, scanner=fake_shop_snapshot)
+
+    with pytest.raises(TrailError) as exc_info:
+        buy_cw_shop_slot(
+            session,
+            slot=slot,
+            expect=expect,
+            buyer=fake_buy_success,
+            scanner=scanner,
+        )
+
+    assert exc_info.value.code == code
+    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
+    assert session.scene_state["cw"]["shop"]["items"] == [{"name": "银狼", "price": 20}]
 
 
 def test_shop_refresh_invalidates_snapshot(tmp_path):
@@ -194,6 +297,7 @@ def test_cw_shop_scan_cli_uses_runtime_scanner(cli_runner, fake_runtime, fake_se
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"] == {
+        "opened": True,
         "items": [{"name": "银狼", "price": 20}, {"name": "希儿", "price": 30}],
         "coins": 40,
         "level": 7,
@@ -236,6 +340,7 @@ def test_cw_shop_scan_cli_refreshes_snapshot(cli_runner, fake_runtime, fake_sess
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"] == {
+        "opened": True,
         "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
@@ -266,18 +371,19 @@ def test_cw_shop_buy_slot_cli_mutates_remaining_purchases(cli_runner, fake_runti
         "guide": {"remaining_purchases": {"银狼": 1}},
         "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
         "slots": {"stale": False, "hand": ["银狼"]},
-        "shop": {"stale": False, "opened": True},
+        "shop": {"stale": False, "opened": True, "items": [{"name": "银狼", "price": 20}]},
         "stage": {"stale": True},
         "metrics": {},
     }
     store.save(session)
 
-    result = cli_runner.invoke(app, ["cw", "shop", "buy-slot", "--session", fake_session, "--slot", "3", "--expect", "银狼"])
+    result = cli_runner.invoke(app, ["cw", "shop", "buy-slot", "--session", fake_session, "--slot", "1", "--expect", "银狼"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"] == {
+        "opened": True,
         "items": [{"name": "阮·梅", "price": 30}],
         "coins": 22,
         "level": 8,
@@ -296,14 +402,90 @@ def test_cw_shop_buy_slot_cli_mutates_remaining_purchases(cli_runner, fake_runti
     assert session.scene_state["cw"]["slots"]["stale"] is True
 
 
-def test_cw_shop_buy_slot_cli_clicks_requested_slot(cli_runner, fake_runtime, fake_session, tmp_path):
+def test_cw_shop_buy_slot_cli_without_guide_refreshes_without_crashing(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
+    import trail.commands.cw as cw_cmd
+
+    from tests.conftest import fake_buy_success
+
+    monkeypatch.setattr(cw_cmd, "shop_buyer_factory", lambda runtime: fake_buy_success, raising=False)
+    monkeypatch.setattr(cw_cmd, "shop_scanner_factory", lambda runtime: fake_shop_snapshot_after_purchase, raising=False)
+
+    store = SessionStore(tmp_path / ".trail" / "sessions")
+    session = store.load(fake_session)
+    session.scene_state["cw"] = {
+        "guide": None,
+        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
+        "slots": {"stale": False, "hand": ["银狼"]},
+        "shop": {"stale": False, "opened": True, "items": [{"name": "银狼", "price": 20}]},
+        "stage": {"stale": True},
+        "metrics": {},
+    }
+    store.save(session)
+
+    result = cli_runner.invoke(app, ["cw", "shop", "buy-slot", "--session", fake_session, "--slot", "1", "--expect", "银狼"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"]["opened"] is True
+    assert payload["data"]["items"] == [{"name": "阮·梅", "price": 30}]
+
+    session = store.load(fake_session)
+    assert session.scene_state["cw"]["guide"] is None
+
+
+def test_cw_shop_buy_slot_cli_noop_does_not_decrement_remaining_purchases(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
+    import trail.commands.cw as cw_cmd
+
+    from tests.conftest import fake_buy_success
+
+    monkeypatch.setattr(cw_cmd, "shop_buyer_factory", lambda runtime: fake_buy_success, raising=False)
+    monkeypatch.setattr(cw_cmd, "shop_scanner_factory", lambda runtime: fake_shop_snapshot, raising=False)
+
     store = SessionStore(tmp_path / ".trail" / "sessions")
     session = store.load(fake_session)
     session.scene_state["cw"] = {
         "guide": {"remaining_purchases": {"银狼": 1}},
         "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
         "slots": {"stale": False, "hand": ["银狼"]},
-        "shop": {"stale": False, "opened": True},
+        "shop": {"stale": False, "opened": True, "items": [{"name": "银狼", "price": 20}]},
+        "stage": {"stale": True},
+        "metrics": {},
+    }
+    store.save(session)
+
+    result = cli_runner.invoke(app, ["cw", "shop", "buy-slot", "--session", fake_session, "--slot", "1", "--expect", "银狼"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "SHOP_BUY_NOT_CONFIRMED"
+
+    session = store.load(fake_session)
+    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
+    assert session.scene_state["cw"]["shop"]["items"] == [{"name": "银狼", "price": 20}]
+
+
+def test_cw_shop_buy_slot_cli_clicks_requested_slot(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
+    import trail.commands.cw as cw_cmd
+
+    monkeypatch.setattr(cw_cmd, "shop_scanner_factory", lambda runtime: fake_shop_snapshot_after_purchase, raising=False)
+
+    store = SessionStore(tmp_path / ".trail" / "sessions")
+    session = store.load(fake_session)
+    session.scene_state["cw"] = {
+        "guide": {"remaining_purchases": {"银狼": 1}},
+        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
+        "slots": {"stale": False, "hand": ["银狼"]},
+        "shop": {
+            "stale": False,
+            "opened": True,
+            "items": [
+                {"name": "希儿", "price": 10},
+                {"name": "卡芙卡", "price": 15},
+                {"name": "银狼", "price": 20},
+            ],
+        },
         "stage": {"stale": True},
         "metrics": {},
     }
