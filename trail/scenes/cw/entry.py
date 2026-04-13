@@ -64,6 +64,14 @@ def _invalidate_stage(session: SessionModel) -> None:
     session.last_stage = None
 
 
+def _invalidate_entry_snapshots(session: SessionModel) -> None:
+    cw_state = ensure_cw_state(session)
+    cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
+    cw_state["shop"] = {**cw_state.get("shop", {}), "stale": True}
+    cw_state["sell_plan"] = {"stale": True}
+    _invalidate_stage(session)
+
+
 def _select_battle_mode(runtime, *, battle_mode: str) -> None:
     target = OVERCLOCK_BATTLE_MODE_POINT if battle_mode == "overclock" else STANDARD_BATTLE_MODE_POINT
     runtime.click_point(*target)
@@ -120,7 +128,8 @@ def _enter_from_world(runtime, *, mode: str, difficulty: str, battle_mode: str) 
     _click_box_center(runtime, _wait(runtime, "entry.cosmic_strife"))
     runtime.click_point(*CURRENCY_WARS_ENTRY_POINT)
     runtime.click_point(*CURRENCY_WARS_PARTICIPATE_POINT)
-    _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode)
+    start_box = _wait(runtime, "entry.start")
+    _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode, start_box=start_box)
 
 
 def _enter_new_game(runtime, *, difficulty: str) -> None:
@@ -150,11 +159,6 @@ def _run_entry_chain(runtime, *, mode: str, difficulty: str, battle_mode: str) -
             _enter_new_game(runtime, difficulty=difficulty)
         else:
             _enter_continue_game(runtime)
-        return
-
-    if _locate(runtime, "stage.settle") is not None:
-        _handle_boss_info_flow(runtime)
-        _handle_invest_environment_flow(runtime)
         return
 
     if _locate(runtime, "stage.invest") is not None:
@@ -188,5 +192,5 @@ def enter_cw(
 
     cw_state = ensure_cw_state(session)
     cw_state["entry"] = entry
-    _invalidate_stage(session)
+    _invalidate_entry_snapshots(session)
     return session

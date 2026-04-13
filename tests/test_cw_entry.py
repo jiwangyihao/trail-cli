@@ -37,6 +37,12 @@ def _install_template_runtime(runtime, *, locate_results: dict[str, object] | No
 
 def test_enter_cw_records_entry_snapshot_and_invalidates_stage(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {
+        "slots": {"stale": False, "hand": ["希儿"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"steps": [1], "stale": False},
+        "stage": {"stale": False, "value": "shop"},
+    }
 
     refreshed = enter_cw(session, mode="continue", difficulty="highest", battle_mode="overclock")
 
@@ -46,6 +52,9 @@ def test_enter_cw_records_entry_snapshot_and_invalidates_stage(tmp_path):
         "battle_mode": "overclock",
     }
     assert refreshed.scene_state["cw"]["stage"] == {"stale": True}
+    assert refreshed.scene_state["cw"]["slots"] == {"stale": True, "hand": ["希儿"]}
+    assert refreshed.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
+    assert refreshed.scene_state["cw"]["sell_plan"] == {"stale": True}
 
 
 def test_enter_cw_runs_new_mode_ui_flow_from_start_related_pages(tmp_path):
@@ -169,6 +178,81 @@ def test_enter_cw_runs_world_to_currency_wars_entry_chain_before_continue_flow(t
     }
     assert refreshed.scene_state["cw"]["stage"] == {"stale": True}
     assert runtime.keys == [("f4", 1, 0.2)]
+    assert runtime.clicks == [
+        cosmic_box.center,
+        (464, 324),
+        (1494, 884),
+        start_box.center,
+        (300, 250),
+        continue_box.center,
+        blank_box.center,
+    ]
+    assert runtime.wait_calls == [
+        _asset("entry.menu"),
+        _asset("entry.cosmic_strife"),
+        _asset("entry.start"),
+        _asset("entry.continue"),
+        _asset("stage.boss_preview"),
+    ]
+
+
+def test_enter_cw_does_not_treat_generic_settle_template_as_top_level_entry_recovery(tmp_path):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+
+    menu_box = _box("entry.menu", left=20, top=32)
+    cosmic_box = _box("entry.cosmic_strife", left=44, top=56)
+    start_box = _box("entry.start", left=92, top=104)
+    continue_box = _box("entry.continue", left=128, top=140)
+    blank_box = _box("stage.boss_preview", left=176, top=188)
+    next_step_box = _box("stage.settle", left=224, top=236)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.keys: list[tuple[str, int, float]] = []
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            self.keys.append((key, presses, interval))
+
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={
+            _asset("stage.preparation"): None,
+            _asset("entry.start"): None,
+            _asset("entry.new"): None,
+            _asset("entry.continue"): None,
+            _asset("stage.settle"): next_step_box,
+            _asset("stage.invest"): None,
+        },
+        wait_results={
+            _asset("entry.menu"): menu_box,
+            _asset("entry.cosmic_strife"): cosmic_box,
+            _asset("entry.start"): start_box,
+            _asset("entry.continue"): continue_box,
+            _asset("stage.boss_preview"): blank_box,
+        },
+    )
+
+    refreshed = enter_cw(session, mode="continue", runtime=runtime)
+
+    assert refreshed.scene_state["cw"]["entry"] == {
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+    assert runtime.keys == [("f4", 1, 0.2)]
+    assert next_step_box.center not in runtime.clicks
     assert runtime.clicks == [
         cosmic_box.center,
         (464, 324),
