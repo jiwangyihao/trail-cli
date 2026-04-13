@@ -13,6 +13,9 @@ CW_WIDTH = 1920
 CW_HEIGHT = 1080
 ENTRY_UI_WAIT_TIMEOUT = 10
 LOWEST_DIFFICULTY_MAX_CLICKS = 10
+ENTRY_GUIDE_HOTKEY = "f4"
+CURRENCY_WARS_ENTRY_POINT = (int(CW_WIDTH * 0.242), int(CW_HEIGHT * 0.30))
+CURRENCY_WARS_PARTICIPATE_POINT = (int(CW_WIDTH * 0.7786), int(CW_HEIGHT * 0.8194))
 STANDARD_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.2315))
 OVERCLOCK_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.4167))
 BOSS_INFO_DISMISS_POINT = (int(CW_WIDTH * 0.5), int(CW_HEIGHT * 0.5))
@@ -100,6 +103,26 @@ def _handle_invest_environment_flow(runtime) -> None:
     build_cw_invest_chooser(runtime)(1)
 
 
+def _enter_from_start_page(runtime, *, mode: str, difficulty: str, battle_mode: str, start_box=None) -> None:
+    if start_box is None:
+        start_box = _wait(runtime, "entry.start")
+    _click_box_center(runtime, start_box)
+    _select_battle_mode(runtime, battle_mode=battle_mode)
+    if mode == "new":
+        _enter_new_game(runtime, difficulty=difficulty)
+        return
+    _enter_continue_game(runtime)
+
+
+def _enter_from_world(runtime, *, mode: str, difficulty: str, battle_mode: str) -> None:
+    runtime.press_key(ENTRY_GUIDE_HOTKEY)
+    _wait(runtime, "entry.menu")
+    _click_box_center(runtime, _wait(runtime, "entry.cosmic_strife"))
+    runtime.click_point(*CURRENCY_WARS_ENTRY_POINT)
+    runtime.click_point(*CURRENCY_WARS_PARTICIPATE_POINT)
+    _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode)
+
+
 def _enter_new_game(runtime, *, difficulty: str) -> None:
     _click_box_center(runtime, _wait(runtime, "entry.new"))
     _select_difficulty(runtime, difficulty=difficulty)
@@ -119,12 +142,7 @@ def _run_entry_chain(runtime, *, mode: str, difficulty: str, battle_mode: str) -
 
     start_box = _locate(runtime, "entry.start")
     if start_box is not None:
-        _click_box_center(runtime, start_box)
-        _select_battle_mode(runtime, battle_mode=battle_mode)
-        if mode == "new":
-            _enter_new_game(runtime, difficulty=difficulty)
-        else:
-            _enter_continue_game(runtime)
+        _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode, start_box=start_box)
         return
 
     if _locate(runtime, "entry.new") is not None or _locate(runtime, "entry.continue") is not None:
@@ -143,11 +161,7 @@ def _run_entry_chain(runtime, *, mode: str, difficulty: str, battle_mode: str) -
         _handle_invest_environment_flow(runtime)
         return
 
-    _select_battle_mode(runtime, battle_mode=battle_mode)
-    if mode == "new":
-        _enter_new_game(runtime, difficulty=difficulty)
-        return
-    _enter_continue_game(runtime)
+    _enter_from_world(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode)
 
 
 def enter_cw(

@@ -1,4 +1,6 @@
 CW_RESOURCE_ALIASES = {
+    "entry.menu": "f4.png",
+    "entry.cosmic_strife": "cosmic_strife.png",
     "entry.start": "start_currency_wars.png",
     "entry.new": "enter_game.png",
     "entry.continue": "continue_progress.png",
