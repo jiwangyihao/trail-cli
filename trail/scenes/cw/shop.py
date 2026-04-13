@@ -113,6 +113,42 @@ def _preserved_shop_flags(cw_state: dict) -> dict[str, Any]:
     return {"opened": shop_state["opened"]}
 
 
+def _build_shop_snapshot(
+    cw_state: dict,
+    *,
+    items: list[Any],
+    coins: int | None,
+    level: int | None,
+    reserve_full: bool,
+    max_team_size: int | None,
+) -> dict[str, Any]:
+    return {
+        **_preserved_shop_flags(cw_state),
+        "items": deepcopy(items),
+        "coins": coins,
+        "level": level,
+        "reserve_full": reserve_full,
+        "max_team_size": max_team_size,
+        "guide_summary": {
+            "remaining_purchases": deepcopy(_remaining_purchases(cw_state)),
+            "constraints": _stable_constraints_summary(cw_state),
+        },
+        "stale": False,
+    }
+
+
+def _scan_shop_snapshot(cw_state: dict, *, scanner: ShopScanner) -> dict[str, Any]:
+    items, coins, level, reserve_full, max_team_size = scanner()
+    return _build_shop_snapshot(
+        cw_state,
+        items=items,
+        coins=coins,
+        level=level,
+        reserve_full=reserve_full,
+        max_team_size=max_team_size,
+    )
+
+
 def _normalized_shop_items(items: Any) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     if not isinstance(items, list):
@@ -143,11 +179,12 @@ def _require_fresh_shop_item(cw_state: dict, *, slot: int, expect: str) -> dict[
     return current
 
 
-def _purchase_confirmed(*, before_items: list[dict[str, Any]], after_items: list[dict[str, Any]], slot: int) -> bool:
+def _purchase_confirmed(*, before_items: list[dict[str, Any]], after_items: list[dict[str, Any]], slot: int, expect: str) -> bool:
     index = slot - 1
     before_item = before_items[index] if 0 <= index < len(before_items) else None
     after_item = after_items[index] if 0 <= index < len(after_items) else None
-    return before_item != after_item or before_items != after_items
+    after_name = after_item.get("name") if isinstance(after_item, dict) else None
+    return before_item != after_item and after_name != expect
 
 
 def _decrement_remaining_purchase(cw_state: dict, *, expect: str) -> None:
@@ -204,21 +241,8 @@ def open_cw_shop(session: SessionModel, *, opener: ShopAction | None = None) -> 
 
 
 def scan_cw_shop(session: SessionModel, *, scanner: ShopScanner) -> SessionModel:
-    items, coins, level, reserve_full, max_team_size = scanner()
     cw_state = ensure_cw_state(session)
-    cw_state["shop"] = {
-        **_preserved_shop_flags(cw_state),
-        "items": deepcopy(items),
-        "coins": coins,
-        "level": level,
-        "reserve_full": reserve_full,
-        "max_team_size": max_team_size,
-        "guide_summary": {
-            "remaining_purchases": deepcopy(_remaining_purchases(cw_state)),
-            "constraints": _stable_constraints_summary(cw_state),
-        },
-        "stale": False,
-    }
+    cw_state["shop"] = _scan_shop_snapshot(cw_state, scanner=scanner)
     return session
 
 
@@ -227,16 +251,16 @@ def buy_cw_shop_slot(session: SessionModel, *, slot: int, expect: str, buyer: Sh
     before_items = _normalized_shop_items(_shop_state(cw_state).get("items"))
     _require_fresh_shop_item(cw_state, slot=slot, expect=expect)
     buyer(slot=slot, expect=expect)
-    scan_cw_shop(session, scanner=scanner)
-    cw_state = ensure_cw_state(session)
-    after_items = _normalized_shop_items(_shop_state(cw_state).get("items"))
-    if not _purchase_confirmed(before_items=before_items, after_items=after_items, slot=slot):
+    updated_shop = _scan_shop_snapshot(cw_state, scanner=scanner)
+    after_items = _normalized_shop_items(updated_shop.get("items"))
+    if not _purchase_confirmed(before_items=before_items, after_items=after_items, slot=slot, expect=expect):
         raise TrailError("SHOP_BUY_NOT_CONFIRMED", f"shop purchase not confirmed for slot {slot}: {expect}")
     _decrement_remaining_purchase(cw_state, expect=expect)
-    cw_state["shop"]["guide_summary"] = {
+    updated_shop["guide_summary"] = {
         "remaining_purchases": deepcopy(_remaining_purchases(cw_state)),
         "constraints": _stable_constraints_summary(cw_state),
     }
+    cw_state["shop"] = updated_shop
     cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
     return session
 

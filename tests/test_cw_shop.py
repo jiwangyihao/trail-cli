@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import importlib
 import json
 
@@ -16,6 +17,10 @@ def fake_shop_snapshot():
 
 def fake_shop_snapshot_after_purchase():
     return ([{"name": "阮·梅", "price": 30}], 22, 8, False, 8)
+
+
+def fake_shop_snapshot_target_unchanged_other_changed():
+    return ([{"name": "银狼", "price": 20}, {"name": "阮·梅", "price": 30}], 22, 8, False, 8)
 
 
 def load_cw_shop_module():
@@ -212,6 +217,62 @@ def test_shop_buy_slot_rejects_invalid_purchase_without_consuming_purchase(tmp_p
     assert exc_info.value.code == code
     assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
     assert session.scene_state["cw"]["shop"]["items"] == [{"name": "银狼", "price": 20}]
+
+
+def test_shop_buy_slot_rejects_other_slot_change_without_target_change(tmp_path):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert scan_cw_shop is not None
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session, fake_buy_success
+
+    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    scan_cw_shop(session, scanner=fake_shop_snapshot)
+    before_shop = deepcopy(session.scene_state["cw"]["shop"])
+
+    with pytest.raises(TrailError) as exc_info:
+        buy_cw_shop_slot(
+            session,
+            slot=1,
+            expect="银狼",
+            buyer=fake_buy_success,
+            scanner=fake_shop_snapshot_target_unchanged_other_changed,
+        )
+
+    assert exc_info.value.code == "SHOP_BUY_NOT_CONFIRMED"
+    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
+    assert session.scene_state["cw"]["shop"] == before_shop
+
+
+def test_shop_buy_slot_noop_failure_keeps_shop_snapshot_unchanged(tmp_path):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert scan_cw_shop is not None
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session, fake_buy_success
+
+    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    scan_cw_shop(session, scanner=fake_shop_snapshot)
+    before_shop = deepcopy(session.scene_state["cw"]["shop"])
+
+    with pytest.raises(TrailError) as exc_info:
+        buy_cw_shop_slot(
+            session,
+            slot=1,
+            expect="银狼",
+            buyer=fake_buy_success,
+            scanner=fake_shop_snapshot,
+        )
+
+    assert exc_info.value.code == "SHOP_BUY_NOT_CONFIRMED"
+    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
+    assert session.scene_state["cw"]["shop"] == before_shop
 
 
 def test_shop_refresh_invalidates_snapshot(tmp_path):
@@ -453,6 +514,7 @@ def test_cw_shop_buy_slot_cli_noop_does_not_decrement_remaining_purchases(cli_ru
         "metrics": {},
     }
     store.save(session)
+    before_shop = deepcopy(session.scene_state["cw"]["shop"])
 
     result = cli_runner.invoke(app, ["cw", "shop", "buy-slot", "--session", fake_session, "--slot", "1", "--expect", "银狼"])
 
@@ -463,7 +525,7 @@ def test_cw_shop_buy_slot_cli_noop_does_not_decrement_remaining_purchases(cli_ru
 
     session = store.load(fake_session)
     assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
-    assert session.scene_state["cw"]["shop"]["items"] == [{"name": "银狼", "price": 20}]
+    assert session.scene_state["cw"]["shop"] == before_shop
 
 
 def test_cw_shop_buy_slot_cli_clicks_requested_slot(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
