@@ -84,6 +84,56 @@ def fake_lineup_detail_response(share_code: str = "REAL-CODE", lineup_id: str = 
     }
 
 
+def fake_cw_config_response() -> dict:
+    return {
+        "retcode": 0,
+        "message": "OK",
+        "data": {
+            "season_id": 12,
+            "sub_season_id": 3,
+            "rpg_game_big_version": "3.2",
+            "rpg_game_lineup_tourn_filter": "lineup-filter-v2",
+            "label_list": [
+                {"id": 7, "name": "7级搜牌"},
+                {"id": 9, "name": "9级搜牌"},
+            ],
+            "trait_info_list": [
+                {"id": 2001, "name": "巡猎", "type": "path"},
+                {"id": 2002, "name": "量子", "type": "element"},
+            ],
+            "role_list": [
+                {
+                    "id": 1001,
+                    "name": "希儿",
+                    "front_back_type": "front",
+                    "trait_ids": [2001, 2002],
+                    "role_tags": ["输出", "量子"],
+                },
+                {
+                    "id": 1002,
+                    "name": "佩拉",
+                    "front_back_type": "back",
+                    "trait_ids": [2002],
+                    "role_tags": ["辅助", "减防"],
+                },
+                {
+                    "id": 1003,
+                    "name": "布洛妮娅",
+                    "front_back_type": "back",
+                    "trait_ids": [2001],
+                    "role_tags": ["辅助"],
+                },
+            ],
+            "role_tag_list": [
+                {"id": 1, "name": "输出"},
+                {"id": 2, "name": "辅助"},
+                {"id": 3, "name": "减防"},
+                {"id": 4, "name": "量子"},
+            ],
+        },
+    }
+
+
 def load_cw_guide_module():
     try:
         return importlib.import_module("trail.scenes.cw.guide")
@@ -247,6 +297,57 @@ def test_fetch_cw_guide_payload_builds_payload_from_lineup_detail(monkeypatch):
     }
 
 
+def test_fetch_cw_guide_config_returns_minimal_catalog(monkeypatch):
+    guide_module = load_cw_guide_module()
+    fetch_cw_guide_config = getattr(guide_module, "fetch_cw_guide_config", None)
+    assert fetch_cw_guide_config is not None
+
+    captured_request: dict[str, object] = {}
+
+    def fake_urlopen(request, timeout=10):
+        captured_request["url"] = request.full_url
+        captured_request["timeout"] = timeout
+        captured_request["headers"] = {key.lower(): value for key, value in request.header_items()}
+        return FakeHttpResponse(fake_cw_config_response())
+
+    monkeypatch.setattr(guide_module, "urlopen", fake_urlopen, raising=False)
+
+    payload = fetch_cw_guide_config()
+
+    assert captured_request == {
+        "url": "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/config?game=hkrpg",
+        "timeout": 10,
+        "headers": {
+            "accept": "application/json, text/plain, */*",
+            "x-rpc-currencywar-tourn": "tourn",
+            "x-rpc-platform": "pc",
+        },
+    }
+    assert payload == {
+        "meta": {
+            "game": "hkrpg",
+            "season_id": 12,
+            "sub_season_id": 3,
+            "big_version": "3.2",
+            "lineup_filter_version": "lineup-filter-v2",
+        },
+        "lineup_levels": [
+            {"id": 7, "name": "7级搜牌"},
+            {"id": 9, "name": "9级搜牌"},
+        ],
+        "traits": [
+            {"id": 2001, "name": "巡猎", "type": "path"},
+            {"id": 2002, "name": "量子", "type": "element"},
+        ],
+        "roles": [
+            {"id": 1001, "name": "希儿", "front_back_type": "front", "trait_ids": [2001, 2002]},
+            {"id": 1002, "name": "佩拉", "front_back_type": "back", "trait_ids": [2002]},
+            {"id": 1003, "name": "布洛妮娅", "front_back_type": "back", "trait_ids": [2001]},
+        ],
+        "role_tags": ["输出", "辅助", "减防", "量子"],
+    }
+
+
 def test_fetch_cw_guide_payload_rejects_article_url(monkeypatch):
     guide_module = load_cw_guide_module()
     fetch_cw_guide_payload = getattr(guide_module, "fetch_cw_guide_payload", None)
@@ -397,6 +498,56 @@ def test_cw_guide_apply_cli_runs_runtime_action_chain_and_persists_scene_state(
     assert session.scene_state["cw"]["constraints"]["min_level"] == 7
     assert session.scene_state["cw"]["constraints"]["mid_level"] == 9
     assert session.scene_state["cw"]["shop"]["stale"] is True
+
+
+def test_guide_config_cw_cli_returns_envelope_with_catalog(cli_runner, fake_runtime, monkeypatch):
+    import trail.scenes.cw.guide as guide_scene
+
+    captured_request: dict[str, object] = {}
+
+    def fake_urlopen(request, timeout=10):
+        captured_request["url"] = request.full_url
+        captured_request["headers"] = {key.lower(): value for key, value in request.header_items()}
+        return FakeHttpResponse(fake_cw_config_response())
+
+    monkeypatch.setattr(guide_scene, "urlopen", fake_urlopen, raising=False)
+
+    result = cli_runner.invoke(app, ["guide", "config", "cw"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"] == {
+        "meta": {
+            "game": "hkrpg",
+            "season_id": 12,
+            "sub_season_id": 3,
+            "big_version": "3.2",
+            "lineup_filter_version": "lineup-filter-v2",
+        },
+        "lineup_levels": [
+            {"id": 7, "name": "7级搜牌"},
+            {"id": 9, "name": "9级搜牌"},
+        ],
+        "traits": [
+            {"id": 2001, "name": "巡猎", "type": "path"},
+            {"id": 2002, "name": "量子", "type": "element"},
+        ],
+        "roles": [
+            {"id": 1001, "name": "希儿", "front_back_type": "front", "trait_ids": [2001, 2002]},
+            {"id": 1002, "name": "佩拉", "front_back_type": "back", "trait_ids": [2002]},
+            {"id": 1003, "name": "布洛妮娅", "front_back_type": "back", "trait_ids": [2001]},
+        ],
+        "role_tags": ["输出", "辅助", "减防", "量子"],
+    }
+    assert captured_request == {
+        "url": "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/config?game=hkrpg",
+        "headers": {
+            "accept": "application/json, text/plain, */*",
+            "x-rpc-currencywar-tourn": "tourn",
+            "x-rpc-platform": "pc",
+        },
+    }
 
 
 def test_cw_guide_apply_cli_rejects_invalid_artifact(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):

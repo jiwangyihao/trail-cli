@@ -17,6 +17,7 @@ from trail.session.models import SessionModel
 
 
 CW_GUIDE_DETAIL_API = "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/detail"
+CW_GUIDE_CONFIG_API = "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/config?game=hkrpg"
 CW_GUIDE_HEADERS = {
     "accept": "application/json, text/plain, */*",
     "x-rpc-currencywar-tourn": "tourn",
@@ -164,6 +165,115 @@ def _fetch_lineup_detail(url: str, *, timeout: int = 10) -> tuple[str, dict]:
     if payload.get("retcode") != 0 or not isinstance(lineup, Mapping):
         raise TrailError("GUIDE_FETCH_FAILED", f"guide fetch failed: {payload.get('message', 'unknown error')}")
     return lineup_id, dict(lineup)
+
+
+def _fetch_cw_config_data(*, timeout: int = 10) -> dict:
+    request = Request(CW_GUIDE_CONFIG_API, headers=CW_GUIDE_HEADERS)
+    payload = _read_json_response(request, timeout=timeout)
+    data = payload.get("data")
+    if payload.get("retcode") != 0 or not isinstance(data, Mapping):
+        raise TrailError("GUIDE_FETCH_FAILED", f"guide fetch failed: {payload.get('message', 'unknown error')}")
+    return dict(data)
+
+
+def _normalize_lineup_levels(label_list: object) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    if not isinstance(label_list, list):
+        return result
+    for item in label_list:
+        if not isinstance(item, Mapping):
+            continue
+        result.append({
+            "id": item.get("id"),
+            "name": str(item.get("name") or item.get("text") or ""),
+        })
+    return result
+
+
+def _normalize_traits(trait_info_list: object) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    if not isinstance(trait_info_list, list):
+        return result
+    for item in trait_info_list:
+        if not isinstance(item, Mapping):
+            continue
+        result.append({
+            "id": item.get("id"),
+            "name": str(item.get("name") or ""),
+            "type": item.get("type"),
+        })
+    return result
+
+
+def _normalize_roles(role_list: object) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    if not isinstance(role_list, list):
+        return result
+    for item in role_list:
+        if not isinstance(item, Mapping):
+            continue
+        trait_ids = item.get("trait_ids")
+        normalized_trait_ids = list(trait_ids) if isinstance(trait_ids, list) else []
+        result.append({
+            "id": item.get("id"),
+            "name": str(item.get("name") or ""),
+            "front_back_type": item.get("front_back_type"),
+            "trait_ids": normalized_trait_ids,
+        })
+    return result
+
+
+def _normalize_role_tags(data: Mapping) -> list[object]:
+    role_tag_list = data.get("role_tag_list")
+    if isinstance(role_tag_list, list):
+        tags: list[object] = []
+        seen: set[str] = set()
+        for item in role_tag_list:
+            if not isinstance(item, Mapping):
+                continue
+            name = str(item.get("name") or "")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            tags.append(name)
+        if tags:
+            return tags
+
+    tags = []
+    seen: set[str] = set()
+    role_list = data.get("role_list")
+    if not isinstance(role_list, list):
+        return tags
+    for item in role_list:
+        if not isinstance(item, Mapping):
+            continue
+        role_tags = item.get("role_tags")
+        if not isinstance(role_tags, list):
+            continue
+        for tag in role_tags:
+            name = str(tag or "")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            tags.append(name)
+    return tags
+
+
+def fetch_cw_guide_config(*, timeout: int = 10) -> dict:
+    data = _fetch_cw_config_data(timeout=timeout)
+    return {
+        "meta": {
+            "game": "hkrpg",
+            "season_id": data.get("season_id"),
+            "sub_season_id": data.get("sub_season_id"),
+            "big_version": data.get("rpg_game_big_version"),
+            "lineup_filter_version": data.get("rpg_game_lineup_tourn_filter"),
+        },
+        "lineup_levels": _normalize_lineup_levels(data.get("label_list")),
+        "traits": _normalize_traits(data.get("trait_info_list")),
+        "roles": _normalize_roles(data.get("role_list")),
+        "role_tags": _normalize_role_tags(data),
+    }
 
 
 def _wrap_share_code(share_code: object, *, source_url: str) -> str:
