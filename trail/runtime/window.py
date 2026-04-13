@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from base64 import b64decode
 from pathlib import Path
+from io import BytesIO
+
+from PIL import ImageGrab
 
 from trail.core.errors import TrailError
-from trail.runtime.model import WindowBinding
-
-
-_PNG_PLACEHOLDER = b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9pQ1d1sAAAAASUVORK5CYII="
-)
+from trail.runtime.model import Region, WindowBinding
 
 
 def attach_window(window_title: str) -> WindowBinding:
@@ -48,8 +45,49 @@ class WindowsWindowController:
         self.workspace = Path(workspace)
         self.workspace.mkdir(parents=True, exist_ok=True)
 
+    def _resolve_window(self):
+        try:
+            import pygetwindow  # type: ignore
+        except Exception as exc:
+            raise TrailError("WINDOW_NOT_FOUND", f"未找到窗口 {self.window_title}") from exc
+
+        windows = pygetwindow.getWindowsWithTitle(self.window_title)
+        for window in windows:
+            if getattr(window, "title", None) != self.window_title:
+                continue
+            hwnd = getattr(window, "_hWnd", None)
+            if self.window_binding.hwnd is not None and hwnd != self.window_binding.hwnd:
+                continue
+            return window
+
+        raise TrailError("WINDOW_NOT_FOUND", f"未找到窗口 {self.window_title}")
+
+    def _resolve_region(self) -> Region:
+        window = self._resolve_window()
+        left = int(getattr(window, "left", 0))
+        top = int(getattr(window, "top", 0))
+        width = int(getattr(window, "width", 0))
+        height = int(getattr(window, "height", 0))
+        if width <= 0 or height <= 0:
+            raise TrailError("WINDOW_REGION_INVALID", f"无法获取窗口区域 {self.window_title}")
+        return Region(left=left, top=top, width=width, height=height)
+
     def capture(self, *, from_x=None, from_y=None, to_x=None, to_y=None) -> bytes:
-        return _PNG_PLACEHOLDER
+        region = self._resolve_region()
+        if all(value is not None for value in (from_x, from_y, to_x, to_y)):
+            region = region.sub_region(from_x, from_y, to_x, to_y)
+
+        image = ImageGrab.grab(
+            bbox=(
+                region.left,
+                region.top,
+                region.left + region.width,
+                region.top + region.height,
+            )
+        )
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
 
     def capture_to_workspace(self) -> Path:
         path = self.workspace / "last-action.png"

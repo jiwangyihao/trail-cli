@@ -1,4 +1,6 @@
-from importlib.metadata import version as distribution_version
+from importlib.metadata import PackageNotFoundError, version as distribution_version
+from pathlib import Path
+import tomllib
 
 import typer
 
@@ -22,7 +24,12 @@ def main() -> None:
 
 @app.command()
 def version() -> None:
-    print(f"trail {distribution_version('trail-cli')}")
+    try:
+        resolved = distribution_version("trail-cli")
+    except PackageNotFoundError:
+        pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        resolved = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))["project"]["version"]
+    print(f"trail {resolved}")
 
 
 app.add_typer(session_app, name="session")

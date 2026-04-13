@@ -30,7 +30,25 @@ def test_build_cw_stage_detector_maps_resource_aliases_to_stage_values():
     assert any(str(template).endswith("fortune_teller.png") for template in runtime.templates)
 
 
-def test_build_cw_stage_detector_raises_for_ambiguous_shared_template():
+def test_build_cw_stage_detector_maps_fold_to_shop():
+    class RuntimeSpy:
+        def __init__(self):
+            self.templates: list[str] = []
+
+        def locate(self, template: str, **kwargs):
+            self.templates.append(template)
+            if str(template).endswith("fold.png"):
+                return {"left": 1, "top": 2, "width": 3, "height": 4}
+            return None
+
+    runtime = RuntimeSpy()
+
+    detector = stage_scene.build_cw_stage_detector(runtime)
+
+    assert detector() == "shop"
+
+
+def test_build_cw_stage_detector_maps_replenish_template_to_replenish():
     class RuntimeSpy:
         def __init__(self):
             self.templates: list[str] = []
@@ -45,11 +63,7 @@ def test_build_cw_stage_detector_raises_for_ambiguous_shared_template():
 
     detector = stage_scene.build_cw_stage_detector(runtime)
 
-    with pytest.raises(TrailError) as exc_info:
-        detector()
-
-    assert exc_info.value.code == "STAGE_AMBIGUOUS"
-    assert str(exc_info.value) == "当前资源无法区分阶段: shop, replenish"
+    assert detector() == "replenish"
 
 
 def test_detect_cw_stage_refreshes_stage_snapshot(tmp_path):
@@ -61,31 +75,6 @@ def test_detect_cw_stage_refreshes_stage_snapshot(tmp_path):
     assert refreshed.last_stage == {"scene": "cw", "value": "shop"}
 
 
-def test_detect_cw_stage_invalidates_snapshot_when_detector_is_ambiguous(tmp_path):
-    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
-    state = ensure_cw_state(session)
-    state["stage"] = {"value": "event", "stale": False}
-    session.last_stage = {"scene": "cw", "value": "event"}
-
-    with pytest.raises(TrailError) as exc_info:
-        stage_scene.detect_cw_stage(
-            session,
-            detector=lambda: (_ for _ in ()).throw(
-                TrailError("STAGE_AMBIGUOUS", "当前资源无法区分阶段: shop, replenish")
-            ),
-        )
-
-    assert exc_info.value.code == "STAGE_AMBIGUOUS"
-    assert session.scene_state["cw"]["stage"] == {
-        "stale": True,
-        "error": {
-            "code": "STAGE_AMBIGUOUS",
-            "message": "当前资源无法区分阶段: shop, replenish",
-        },
-    }
-    assert session.last_stage is None
-
-
 def test_wait_cw_stage_retries_until_stage_is_detected(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
     stages = iter([None, None, "settle"])
@@ -94,32 +83,6 @@ def test_wait_cw_stage_retries_until_stage_is_detected(tmp_path):
 
     assert refreshed.scene_state["cw"]["stage"] == {"value": "settle", "stale": False}
     assert refreshed.last_stage == {"scene": "cw", "value": "settle"}
-
-
-def test_wait_cw_stage_raises_ambiguous_immediately_without_retry(tmp_path):
-    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
-    state = ensure_cw_state(session)
-    state["stage"] = {"value": "event", "stale": False}
-    session.last_stage = {"scene": "cw", "value": "event"}
-    attempts = {"count": 0}
-
-    def detector():
-        attempts["count"] += 1
-        raise TrailError("STAGE_AMBIGUOUS", "当前资源无法区分阶段: shop, replenish")
-
-    with pytest.raises(TrailError) as exc_info:
-        stage_scene.wait_cw_stage(session, detector=detector, timeout=1)
-
-    assert exc_info.value.code == "STAGE_AMBIGUOUS"
-    assert attempts["count"] == 1
-    assert session.scene_state["cw"]["stage"] == {
-        "stale": True,
-        "error": {
-            "code": "STAGE_AMBIGUOUS",
-            "message": "当前资源无法区分阶段: shop, replenish",
-        },
-    }
-    assert session.last_stage is None
 
 
 def test_wait_cw_stage_raises_timeout_when_stage_missing(tmp_path, monkeypatch):
@@ -153,15 +116,10 @@ def test_cw_stage_detect_cli_refreshes_stage_snapshot(cli_runner, fake_runtime, 
     assert session.last_stage == {"scene": "cw", "value": "event"}
 
 
-def test_cw_stage_detect_cli_returns_ambiguous_error_for_shared_template(cli_runner, fake_session, tmp_path, monkeypatch):
+def test_cw_stage_detect_cli_refreshes_replenish_stage(cli_runner, fake_session, tmp_path, monkeypatch):
     import trail.commands.cw as cw_cmd
 
     store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    state = ensure_cw_state(session)
-    state["stage"] = {"value": "event", "stale": False}
-    session.last_stage = {"scene": "cw", "value": "event"}
-    store.save(session)
 
     class RuntimeSpy:
         def __init__(self, screenshot_path):
@@ -186,22 +144,13 @@ def test_cw_stage_detect_cli_returns_ambiguous_error_for_shared_template(cli_run
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"] == {
-        "code": "STAGE_AMBIGUOUS",
-        "message": "当前资源无法区分阶段: shop, replenish",
-    }
+    assert payload["ok"] is True
+    assert payload["data"] == {"value": "replenish", "stale": False}
     assert payload["screenshot"]
 
     session = store.load(fake_session)
-    assert session.scene_state["cw"]["stage"] == {
-        "stale": True,
-        "error": {
-            "code": "STAGE_AMBIGUOUS",
-            "message": "当前资源无法区分阶段: shop, replenish",
-        },
-    }
-    assert session.last_stage is None
+    assert session.scene_state["cw"]["stage"] == {"value": "replenish", "stale": False}
+    assert session.last_stage == {"scene": "cw", "value": "replenish"}
 
 
 def test_cw_stage_wait_cli_returns_timeout_error(cli_runner, fake_runtime, fake_session, monkeypatch):

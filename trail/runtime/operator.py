@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Any, Protocol
+
+from PIL import Image
 
 from trail.core.errors import TrailError
 from trail.runtime.model import Box
@@ -78,12 +81,35 @@ class RuntimeOperator:
 
 class PyScreezeMatcher:
     def locate(self, template: str, image) -> Box | None:
-        return None
+        try:
+            import pyscreeze  # type: ignore
+        except Exception as exc:
+            raise TrailError("IMAGE_BACKEND_UNAVAILABLE", "pyscreeze backend unavailable") from exc
+
+        screenshot = Image.open(BytesIO(image)) if isinstance(image, (bytes, bytearray)) else image
+        box = pyscreeze.locate(template, screenshot, confidence=0.9)
+        if box is None:
+            return None
+        left, top, width, height = box
+        return Box(left=left, top=top, width=width, height=height, source=template)
 
 
 class RapidOcrAdapter:
+    def __init__(self):
+        self._engine = None
+
     def run(self, image) -> list[Any]:
-        return []
+        try:
+            from rapidocr_onnxruntime import RapidOCR  # type: ignore
+        except Exception as exc:
+            raise TrailError("OCR_BACKEND_UNAVAILABLE", "rapidocr backend unavailable") from exc
+
+        if self._engine is None:
+            self._engine = RapidOCR()
+
+        screenshot = Image.open(BytesIO(image)) if isinstance(image, (bytes, bytearray)) else image
+        result, _ = self._engine(screenshot, use_det=True, use_cls=False, use_rec=True)
+        return result or []
 
 
 class PyAutoGuiInputDriver:

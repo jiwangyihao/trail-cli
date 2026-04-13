@@ -1,6 +1,6 @@
 CW_RESOURCE_ALIASES = {
-    "stage.preparation": "fold.png",
-    "stage.shop": "replenish_stage.png",
+    "stage.preparation": "preparation_stage.png",
+    "stage.shop": "fold.png",
     "stage.replenish": "replenish_stage.png",
     "stage.encounter": "encounter_node.png",
     "stage.invest": "select_invest_strategy.png",
