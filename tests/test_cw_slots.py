@@ -61,6 +61,24 @@ def test_slots_read_refreshes_snapshot(tmp_path):
     assert refreshed.scene_state["cw"]["sell_plan"] == {}
 
 
+def test_slots_read_rejects_empty_snapshot_and_preserves_previous_state(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    previous = deepcopy(session.scene_state["cw"])
+
+    with pytest.raises(TrailError) as exc_info:
+        read_cw_slots(
+            session,
+            reader=lambda: ([None, None, None, None], [None, None, None, None, None, None], [None] * 9),
+        )
+
+    assert exc_info.value.code == "SLOTS_READ_EMPTY"
+    assert session.scene_state["cw"] == previous
+
+
 def test_build_cw_slots_reader_reads_runtime_slot_snapshots_and_closes_overlay():
     slots_module = load_cw_slots_module()
     build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
@@ -120,6 +138,35 @@ def test_build_cw_slots_reader_reads_runtime_slot_snapshots_and_closes_overlay()
     assert runtime.clicks[0] == (25, 40)
     assert runtime.clicks[1] == slots_module.HAND_EXPAND_DISMISS_POINT
     assert len(runtime.ocr_calls) == 19
+
+
+def test_collapse_expanded_hand_card_rejects_stuck_open_overlay():
+    slots_module = load_cw_slots_module()
+    collapse = getattr(slots_module, "_collapse_expanded_hand_card", None)
+    assert collapse is not None
+
+    class RuntimeSpy:
+        def __init__(self):
+            self.locate_calls = 0
+            self.clicks: list[tuple[int, int]] = []
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            self.locate_calls += 1
+            return Box(left=10, top=20, width=30, height=40)
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    runtime = RuntimeSpy()
+
+    with pytest.raises(TrailError) as exc_info:
+        collapse(runtime)
+
+    assert exc_info.value.code == "SLOTS_OPEN_STUCK"
+    assert runtime.locate_calls == slots_module.HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS
+    assert runtime.clicks == [(25, 40), slots_module.HAND_EXPAND_DISMISS_POINT] * slots_module.HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS
 
 
 def test_slots_swap_invalidates_existing_snapshot(tmp_path):
@@ -340,6 +387,21 @@ def test_cw_slots_read_cli_refreshes_snapshot(cli_runner, fake_runtime, fake_ses
 
     session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
     assert session.scene_state["cw"]["slots"] == payload["data"]
+
+
+def test_cw_slots_read_cli_rejects_empty_snapshot_without_polluting_session(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
+    monkeypatch.setattr(fake_runtime, "locate", lambda template, **kwargs: None, raising=False)
+    monkeypatch.setattr(fake_runtime, "ocr", lambda **kwargs: [], raising=False)
+
+    result = cli_runner.invoke(app, ["cw", "slots", "read", "--session", fake_session])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "SLOTS_READ_EMPTY"
+
+    session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
+    assert "cw" not in session.scene_state
 
 
 def test_cw_slots_swap_cli_marks_snapshot_stale(cli_runner, fake_runtime, fake_session, tmp_path):

@@ -77,10 +77,15 @@ CRYSTAL_DRAG_PATHS = [
 
 OPEN_TEMPLATE_ALIAS = "slots.open"
 CANNOT_BE_FIELDED_ALIAS = "slots.cannot_be_fielded"
+HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS = 5
 
 
 def _clear_sell_plan(cw_state: dict) -> None:
     cw_state["sell_plan"] = {}
+
+
+def _snapshot_has_any_name(*areas: list[Any]) -> bool:
+    return any(value is not None and str(value).strip() for area in areas for value in area)
 
 
 def _template(scene_alias: str) -> str:
@@ -129,12 +134,13 @@ def _read_slot_name(runtime, *, point: tuple[int, int]) -> str | None:
 
 def _collapse_expanded_hand_card(runtime) -> None:
     template = _template(OPEN_TEMPLATE_ALIAS)
-    while True:
+    for _ in range(HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS):
         box = runtime.locate(template)
         if box is None:
             return
         runtime.click_point(*_box_center(box))
         runtime.click_point(*HAND_EXPAND_DISMISS_POINT)
+    raise TrailError("SLOTS_OPEN_STUCK", "手牌展开卡片未关闭，请确认当前在编队界面")
 
 
 def _slot_points(area: str) -> list[tuple[int, int]]:
@@ -207,6 +213,8 @@ def build_cw_crystal_collector(runtime) -> CrystalCollector:
 
 def read_cw_slots(session: SessionModel, *, reader: SlotsSnapshotReader) -> SessionModel:
     front, back, hand = reader()
+    if not _snapshot_has_any_name(front, back, hand):
+        raise TrailError("SLOTS_READ_EMPTY", "未读取到任何货币战争槽位角色，请确认当前在编队界面")
     cw_state = ensure_cw_state(session)
     cw_state["slots"] = {
         "front": deepcopy(front),
