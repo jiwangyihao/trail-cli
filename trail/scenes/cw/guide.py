@@ -19,12 +19,14 @@ from trail.session.models import SessionModel
 CW_GUIDE_DETAIL_API = "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/detail"
 CW_GUIDE_LIST_API = "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/index"
 CW_GUIDE_CONFIG_API = "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/config?game=hkrpg"
+CW_GUIDE_LINEUP_URL_TEMPLATE = "https://act.miyoushe.com/sr/event/e20241220rpg-3Tii9M/index.html#/lineup/{lineup_id}"
 CW_GUIDE_HEADERS = {
     "accept": "application/json, text/plain, */*",
     "x-rpc-currencywar-tourn": "tourn",
     "x-rpc-platform": "pc",
 }
 LINEUP_ID_PATTERN = re.compile(r"#/lineup/([^/?]+)")
+LINEUP_ID_ONLY_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 SHARE_CODE_PATTERN = re.compile(r"##[^#\s]+##")
 LINEUP_LEVEL_PATTERN = re.compile(r"(\d+)级搜牌")
 PURCHASE_COUNT_BY_STAR = {
@@ -137,11 +139,17 @@ def apply_cw_guide_via_ui(runtime, *, share_code: str) -> None:
     runtime.press_key("esc", presses=GUIDE_ESC_PRESSES, interval=GUIDE_ESC_INTERVAL)
 
 
-def _extract_lineup_id(url: str) -> str:
-    match = LINEUP_ID_PATTERN.search(url)
-    if match is None:
-        raise TrailError("GUIDE_URL_INVALID", f"unsupported cw guide url: {url}")
-    return match.group(1)
+def _build_lineup_url(lineup_id: str) -> str:
+    return CW_GUIDE_LINEUP_URL_TEMPLATE.format(lineup_id=lineup_id)
+
+
+def _resolve_lineup_reference(value: str) -> tuple[str, str]:
+    match = LINEUP_ID_PATTERN.search(value)
+    if match is not None:
+        return match.group(1), value
+    if LINEUP_ID_ONLY_PATTERN.fullmatch(value):
+        return value, _build_lineup_url(value)
+    raise TrailError("GUIDE_URL_INVALID", f"unsupported cw guide url: {value}")
 
 
 def _read_json_response(request: Request, *, timeout: int) -> dict:
@@ -158,14 +166,14 @@ def _read_json_response(request: Request, *, timeout: int) -> dict:
 
 
 def _fetch_lineup_detail(url: str, *, timeout: int = 10) -> tuple[str, dict]:
-    lineup_id = _extract_lineup_id(url)
+    lineup_id, source_url = _resolve_lineup_reference(url)
     request = Request(f"{CW_GUIDE_DETAIL_API}?id={lineup_id}&game=hkrpg", headers=CW_GUIDE_HEADERS)
     payload = _read_json_response(request, timeout=timeout)
     data = payload.get("data")
     lineup = data.get("lineup") if isinstance(data, Mapping) else None
     if payload.get("retcode") != 0 or not isinstance(lineup, Mapping):
         raise TrailError("GUIDE_FETCH_FAILED", f"guide fetch failed: {payload.get('message', 'unknown error')}")
-    return lineup_id, dict(lineup)
+    return lineup_id, source_url, dict(lineup)
 
 
 def _fetch_cw_config_data(*, timeout: int = 10) -> dict:
@@ -644,14 +652,14 @@ def _build_roles_from_lineup(lineup: Mapping) -> tuple[dict[str, int], dict[str,
 
 
 def fetch_cw_guide_payload(url: str) -> dict:
-    lineup_id, lineup = _fetch_lineup_detail(url)
+    lineup_id, source_url, lineup = _fetch_lineup_detail(url)
     on_field, off_field = _build_roles_from_lineup(lineup)
     min_level = _get_lineup_level(lineup)
     tourn_detail = lineup.get("tourn_detail") if isinstance(lineup.get("tourn_detail"), Mapping) else {}
     payload = {
         "scene": "cw",
         "kind": "guide",
-        "source_url": url,
+        "source_url": source_url,
         "lineup_id": lineup_id,
         "title": str(lineup.get("title") or "货币战争攻略码"),
         "author": str(lineup.get("nickname") or ""),

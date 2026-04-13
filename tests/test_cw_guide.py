@@ -379,6 +379,31 @@ def test_guide_fetch_cw_cli_creates_artifact_from_remote_payload(cli_runner, fak
     assert "account_uid" not in saved
 
 
+def test_guide_fetch_cw_cli_accepts_raw_lineup_id(cli_runner, fake_runtime, tmp_path, monkeypatch):
+    import trail.commands.guide as guide_cmd
+    import trail.scenes.cw.guide as guide_scene
+
+    store = ArtifactStore(tmp_path / ".trail" / "artifacts")
+    captured_request: dict[str, object] = {}
+
+    def fake_urlopen(request, timeout=10):
+        captured_request["url"] = request.full_url
+        return FakeHttpResponse(fake_lineup_detail_response(lineup_id="69c9014f24546dfbd2b26227"))
+
+    monkeypatch.setattr(guide_cmd, "artifact_store_factory", lambda: store, raising=False)
+    monkeypatch.setattr(guide_scene, "urlopen", fake_urlopen, raising=False)
+
+    result = cli_runner.invoke(app, ["guide", "fetch", "cw", "69c9014f24546dfbd2b26227"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    saved = json.loads(Path(payload["data"]["path"]).read_text(encoding="utf-8"))
+    assert captured_request["url"] == "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/detail?id=69c9014f24546dfbd2b26227&game=hkrpg"
+    assert saved["lineup_id"] == "69c9014f24546dfbd2b26227"
+    assert saved["source_url"] == fake_lineup_url("69c9014f24546dfbd2b26227")
+
+
 def test_fetch_cw_guide_payload_builds_payload_from_lineup_detail(monkeypatch):
     guide_module = load_cw_guide_module()
     fetch_cw_guide_payload = getattr(guide_module, "fetch_cw_guide_payload", None)
@@ -432,6 +457,26 @@ def test_fetch_cw_guide_payload_builds_payload_from_lineup_detail(monkeypatch):
         "order_basic": ["抢前排输出", "补减防"],
         "order_compose": ["推进器"],
     }
+
+
+def test_fetch_cw_guide_payload_accepts_raw_lineup_id(monkeypatch):
+    guide_module = load_cw_guide_module()
+    fetch_cw_guide_payload = getattr(guide_module, "fetch_cw_guide_payload", None)
+    assert fetch_cw_guide_payload is not None
+
+    captured_request: dict[str, object] = {}
+
+    def fake_urlopen(request, timeout=10):
+        captured_request["url"] = request.full_url
+        return FakeHttpResponse(fake_lineup_detail_response(lineup_id="69c9014f24546dfbd2b26227"))
+
+    monkeypatch.setattr(guide_module, "urlopen", fake_urlopen, raising=False)
+
+    payload = fetch_cw_guide_payload("69c9014f24546dfbd2b26227")
+
+    assert captured_request["url"] == "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/detail?id=69c9014f24546dfbd2b26227&game=hkrpg"
+    assert payload["lineup_id"] == "69c9014f24546dfbd2b26227"
+    assert payload["source_url"] == fake_lineup_url("69c9014f24546dfbd2b26227")
 
 
 def test_fetch_cw_guide_config_returns_minimal_catalog(monkeypatch):
