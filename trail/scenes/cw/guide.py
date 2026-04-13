@@ -407,23 +407,38 @@ def _normalize_interact(payload: object) -> dict[str, int]:
     }
 
 
+def _normalize_named_list(values: object) -> list[str]:
+    result: list[str] = []
+    if not isinstance(values, list):
+        return result
+    seen: set[str] = set()
+    for item in values:
+        if isinstance(item, Mapping):
+            name = item.get("name")
+        else:
+            name = item
+        if not isinstance(name, str) or not name or name in seen:
+            continue
+        seen.add(name)
+        result.append(name)
+    return result
+
+
 def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
     if not isinstance(lineup, Mapping):
         return {
             "id": None,
             "title": "",
             "nickname": "",
-            "share_code": "",
+            "description": "",
             "labels": [],
             "final_traits": [],
-            "final_roles": [],
             "has_change_equip": False,
-            "certified": False,
+            "has_expert": False,
             "version": "",
             "created_at": None,
             "last_edit": None,
-            "is_like": False,
-            "is_favour": False,
+            "carry_roles": [],
             "interact": _normalize_interact(None),
             "recent_interact": _normalize_interact(None),
             "support_hard": False,
@@ -443,17 +458,15 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
         "id": lineup.get("id"),
         "title": str(lineup.get("title") or ""),
         "nickname": str(lineup.get("nickname") or ""),
-        "share_code": str(tourn_detail.get("share_code") or ""),
+        "description": str(lineup.get("description") or ""),
         "labels": _normalize_lineup_labels(tourn_detail.get("labels")),
         "final_traits": final_traits,
-        "final_roles": final_roles,
         "has_change_equip": bool(lineup.get("has_change_equip")),
-        "certified": bool(lineup.get("certification")),
+        "has_expert": bool(lineup.get("has_expert")),
         "version": str(tourn_detail.get("rpg_game_big_version") or ""),
         "created_at": lineup.get("created_at"),
         "last_edit": lineup.get("last_edit"),
-        "is_like": bool(lineup.get("is_like")),
-        "is_favour": bool(lineup.get("is_favour")),
+        "carry_roles": _normalize_named_list(tourn_detail.get("carry_list")),
         "interact": _normalize_interact(game_data.get("interact")),
         "recent_interact": _normalize_interact(game_data.get("recent_interact")),
         "support_hard": bool(tourn_detail.get("support_hard")),
