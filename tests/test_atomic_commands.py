@@ -4,9 +4,11 @@ import importlib
 import json
 import sys
 
+import numpy as np
 import pytest
 
 from trail.cli import app
+from trail.runtime.model import Box
 from trail.session.store import SessionStore
 
 
@@ -50,6 +52,23 @@ def test_image_locate_returns_box_payload(cli_runner, fake_runtime):
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"]["box"] == {"left": 1, "top": 2, "width": 3, "height": 4}
+
+
+def test_image_locate_serializes_numpy_box_values(cli_runner, fake_runtime):
+    fake_runtime.locate_result = Box(np.int64(1), np.int64(2), np.int64(3), np.int64(4), source="demo.png")
+
+    result = cli_runner.invoke(app, ["image", "locate", "demo.png"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"]["box"] == {
+        "left": 1,
+        "top": 2,
+        "width": 3,
+        "height": 4,
+        "source": "demo.png",
+    }
 
 
 def test_image_wait_returns_error_when_template_missing(cli_runner, fake_runtime):

@@ -35,6 +35,11 @@ def build_default_artifact_store() -> ArtifactStore:
 def to_jsonable(value):
     if isinstance(value, Path):
         return str(value)
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            return to_jsonable(value.item())
+        except Exception:
+            pass
     if isinstance(value, dict):
         return {key: to_jsonable(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
