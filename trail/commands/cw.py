@@ -14,6 +14,17 @@ from trail.commands.helpers import (
     run_session_command,
 )
 from trail.scenes.cw.entry import enter_cw
+from trail.scenes.cw.events import (
+    choose_cw_encounter,
+    choose_cw_fortune,
+    choose_cw_invest,
+    choose_cw_replenish,
+    handle_cw_event,
+    read_cw_encounter,
+    read_cw_fortune,
+    read_cw_invest,
+    read_cw_replenish,
+)
 from trail.scenes.cw.guide import apply_cw_guide, resolve_guide_input
 from trail.scenes.cw.shop import (
     build_cw_shop_buyer,
@@ -55,6 +66,31 @@ shop_scanner_factory = build_cw_shop_scanner
 shop_buyer_factory = build_cw_shop_buyer
 shop_refresher_factory = build_cw_shop_refresher
 shop_closer_factory = build_cw_shop_closer
+
+
+def _default_option_chooser(option: int) -> None:
+    del option
+
+
+def _default_option_chooser_factory(runtime):
+    del runtime
+    return _default_option_chooser
+
+
+def _default_event_handler() -> tuple[str, str]:
+    return "unknown", "noop"
+
+
+def _default_event_handler_factory(runtime):
+    del runtime
+    return _default_event_handler
+
+
+replenish_chooser_factory = _default_option_chooser_factory
+invest_chooser_factory = _default_option_chooser_factory
+encounter_chooser_factory = _default_option_chooser_factory
+fortune_chooser_factory = _default_option_chooser_factory
+event_handler_factory = _default_event_handler_factory
 
 cw_app = typer.Typer(no_args_is_help=True)
 cw_guide_app = typer.Typer(no_args_is_help=True)
@@ -339,42 +375,66 @@ def cw_shop_status(session: str = typer.Option(..., "--session")) -> None:
 
 @replenish_app.command("read")
 def cw_replenish_read(session: str = typer.Option(..., "--session")) -> None:
-    _run(session, "cw.replenish.read", lambda loaded: {"options": [], "status": "stub"})
+    _run(session, "cw.replenish.read", read_cw_replenish)
 
 
 @replenish_app.command("choose")
 def cw_replenish_choose(session: str = typer.Option(..., "--session"), option: int = typer.Option(..., "--option")) -> None:
-    _run(session, "cw.replenish.choose", lambda loaded: {"option": option, "status": "stub"})
+    runtime = _runtime_for_session(session)
+
+    def action(loaded):
+        refreshed = choose_cw_replenish(loaded, option=option, chooser=replenish_chooser_factory(runtime))
+        return refreshed.scene_state["cw"]["stage"]
+
+    _run(session, "cw.replenish.choose", action, runtime=runtime)
 
 
 @invest_app.command("read")
 def cw_invest_read(session: str = typer.Option(..., "--session")) -> None:
-    _run(session, "cw.invest.read", lambda loaded: {"options": [], "status": "stub"})
+    _run(session, "cw.invest.read", read_cw_invest)
 
 
 @invest_app.command("choose")
 def cw_invest_choose(session: str = typer.Option(..., "--session"), option: int = typer.Option(..., "--option")) -> None:
-    _run(session, "cw.invest.choose", lambda loaded: {"option": option, "status": "stub"})
+    runtime = _runtime_for_session(session)
+
+    def action(loaded):
+        refreshed = choose_cw_invest(loaded, option=option, chooser=invest_chooser_factory(runtime))
+        return refreshed.scene_state["cw"]["stage"]
+
+    _run(session, "cw.invest.choose", action, runtime=runtime)
 
 
 @encounter_app.command("read")
 def cw_encounter_read(session: str = typer.Option(..., "--session")) -> None:
-    _run(session, "cw.encounter.read", lambda loaded: {"options": [], "status": "stub"})
+    _run(session, "cw.encounter.read", read_cw_encounter)
 
 
 @encounter_app.command("choose")
 def cw_encounter_choose(session: str = typer.Option(..., "--session"), option: int = typer.Option(..., "--option")) -> None:
-    _run(session, "cw.encounter.choose", lambda loaded: {"option": option, "status": "stub"})
+    runtime = _runtime_for_session(session)
+
+    def action(loaded):
+        refreshed = choose_cw_encounter(loaded, option=option, chooser=encounter_chooser_factory(runtime))
+        return refreshed.scene_state["cw"]["stage"]
+
+    _run(session, "cw.encounter.choose", action, runtime=runtime)
 
 
 @fortune_app.command("read")
 def cw_fortune_read(session: str = typer.Option(..., "--session")) -> None:
-    _run(session, "cw.fortune.read", lambda loaded: {"options": [], "status": "stub"})
+    _run(session, "cw.fortune.read", read_cw_fortune)
 
 
 @fortune_app.command("choose")
 def cw_fortune_choose(session: str = typer.Option(..., "--session"), option: int = typer.Option(..., "--option")) -> None:
-    _run(session, "cw.fortune.choose", lambda loaded: {"option": option, "status": "stub"})
+    runtime = _runtime_for_session(session)
+
+    def action(loaded):
+        refreshed = choose_cw_fortune(loaded, option=option, chooser=fortune_chooser_factory(runtime))
+        return refreshed.scene_state["cw"]["stage"]
+
+    _run(session, "cw.fortune.choose", action, runtime=runtime)
 
 
 @boss_preview_app.command("confirm")
@@ -399,4 +459,9 @@ def cw_settle_next(session: str = typer.Option(..., "--session")) -> None:
 
 @event_app.command("handle")
 def cw_event_handle(session: str = typer.Option(..., "--session")) -> None:
-    _run(session, "cw.event.handle", lambda loaded: {"event_type": "unknown", "handled_action": "noop", "status": "stub"})
+    runtime = _runtime_for_session(session)
+
+    def action(loaded):
+        return handle_cw_event(loaded, handler=event_handler_factory(runtime))
+
+    _run(session, "cw.event.handle", action, runtime=runtime)
