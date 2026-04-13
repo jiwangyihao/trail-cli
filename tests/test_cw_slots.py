@@ -8,6 +8,7 @@ import pytest
 
 from trail.cli import app
 from trail.core.errors import TrailError
+from trail.runtime.model import Box
 from trail.scenes.cw.models import ensure_cw_state
 from trail.session.store import SessionStore
 
@@ -60,6 +61,67 @@ def test_slots_read_refreshes_snapshot(tmp_path):
     assert refreshed.scene_state["cw"]["sell_plan"] == {}
 
 
+def test_build_cw_slots_reader_reads_runtime_slot_snapshots_and_closes_overlay():
+    slots_module = load_cw_slots_module()
+    build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
+    assert build_cw_slots_reader is not None
+
+    class RuntimeSpy:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.locate_calls = 0
+            self.ocr_calls: list[dict] = []
+            self._ocr_results = iter(
+                [
+                    [([0, 0], "希儿", 0.99)],
+                    [],
+                    [],
+                    [],
+                    [([0, 0], "佩拉", 0.99)],
+                    [],
+                    [],
+                    [],
+                    [],
+                    [],
+                    [([0, 0], "银狼", 0.99)],
+                    [],
+                    [([0, 0], "阮·梅", 0.99)],
+                    [],
+                    [],
+                    [],
+                    [],
+                    [],
+                    [],
+                ]
+            )
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            self.locate_calls += 1
+            if self.locate_calls == 1:
+                return Box(left=10, top=20, width=30, height=40)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            return next(self._ocr_results)
+
+    runtime = RuntimeSpy()
+
+    front, back, hand = build_cw_slots_reader(runtime)()
+
+    assert front == ["希儿", None, None, None]
+    assert back == ["佩拉", None, None, None, None, None]
+    assert hand == ["银狼", None, "阮·梅", None, None, None, None, None, None]
+    assert runtime.clicks[0] == (25, 40)
+    assert runtime.clicks[1] == slots_module.HAND_EXPAND_DISMISS_POINT
+    assert len(runtime.ocr_calls) == 19
+
+
 def test_slots_swap_invalidates_existing_snapshot(tmp_path):
     slots_module = load_cw_slots_module()
     swap_cw_slots = getattr(slots_module, "swap_cw_slots", None)
@@ -74,6 +136,45 @@ def test_slots_swap_invalidates_existing_snapshot(tmp_path):
         "hand": ["银狼", None, "阮·梅"],
         "stale": True,
     }
+
+
+def test_build_cw_slot_swapper_drags_between_slot_points_and_rejects_cannot_be_fielded():
+    slots_module = load_cw_slots_module()
+    build_cw_slot_swapper = getattr(slots_module, "build_cw_slot_swapper", None)
+    assert build_cw_slot_swapper is not None
+
+    class RuntimeSpy:
+        def __init__(self, *, blocked: bool):
+            self.blocked = blocked
+            self.drags: list[tuple[int, int, int, int]] = []
+            self.clicks: list[tuple[int, int]] = []
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int):
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            if self.blocked:
+                return Box(left=0, top=0, width=10, height=10)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    runtime = RuntimeSpy(blocked=False)
+    build_cw_slot_swapper(runtime)(source="hand:0", target="front:1")
+
+    assert runtime.drags == [
+        (*slots_module.HAND_SLOT_POINTS[0], *slots_module.FRONT_SLOT_POINTS[1]),
+    ]
+
+    blocked_runtime = RuntimeSpy(blocked=True)
+    with pytest.raises(TrailError) as exc_info:
+        build_cw_slot_swapper(blocked_runtime)(source="hand:0", target="front:1")
+
+    assert exc_info.value.code == "SLOTS_CANNOT_BE_FIELDED"
+    assert blocked_runtime.clicks == [slots_module.INFO_DISMISS_POINT]
 
 
 def test_slots_place_one_invalidates_existing_snapshot(tmp_path):
@@ -101,6 +202,29 @@ def test_collect_cw_crystals_records_metric(tmp_path):
     refreshed = collect_cw_crystals(session)
 
     assert refreshed.scene_state["cw"]["metrics"]["last_crystal_collection"] == "done"
+
+
+def test_build_cw_hand_seller_and_crystal_collector_use_runtime_drags():
+    slots_module = load_cw_slots_module()
+    build_cw_hand_seller = getattr(slots_module, "build_cw_hand_seller", None)
+    build_cw_crystal_collector = getattr(slots_module, "build_cw_crystal_collector", None)
+    assert build_cw_hand_seller is not None
+    assert build_cw_crystal_collector is not None
+
+    class RuntimeSpy:
+        def __init__(self):
+            self.drags: list[tuple[int, int, int, int]] = []
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int):
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+    runtime = RuntimeSpy()
+
+    build_cw_hand_seller(runtime)(slot=2)
+    build_cw_crystal_collector(runtime)()
+
+    assert runtime.drags[0] == (*slots_module.HAND_SLOT_POINTS[2], *slots_module.SELL_SLOT_POINT)
+    assert runtime.drags[1:] == slots_module.CRYSTAL_DRAG_PATHS
 
 
 def test_sell_plan_returns_candidates_and_refreshes_snapshot(tmp_path):
@@ -174,9 +298,33 @@ def test_sell_one_marks_slots_snapshot_stale(tmp_path):
 
 
 def test_cw_slots_read_cli_refreshes_snapshot(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    import trail.commands.cw as cw_cmd
+    locate_results = iter([Box(left=10, top=20, width=30, height=40), None])
+    ocr_results = iter(
+        [
+            [([0, 0], "希儿", 0.99)],
+            [],
+            [],
+            [],
+            [([0, 0], "佩拉", 0.99)],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [([0, 0], "银狼", 0.99)],
+            [],
+            [([0, 0], "阮·梅", 0.99)],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+        ]
+    )
 
-    monkeypatch.setattr(cw_cmd, "slots_reader", fake_reader, raising=False)
+    monkeypatch.setattr(fake_runtime, "locate", lambda template, **kwargs: next(locate_results), raising=False)
+    monkeypatch.setattr(fake_runtime, "ocr", lambda **kwargs: next(ocr_results), raising=False)
 
     result = cli_runner.invoke(app, ["cw", "slots", "read", "--session", fake_session])
 
@@ -184,9 +332,9 @@ def test_cw_slots_read_cli_refreshes_snapshot(cli_runner, fake_runtime, fake_ses
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"] == {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
+        "front": ["希儿", None, None, None],
+        "back": ["佩拉", None, None, None, None, None],
+        "hand": ["银狼", None, "阮·梅", None, None, None, None, None, None],
         "stale": False,
     }
 
@@ -216,6 +364,9 @@ def test_cw_slots_swap_cli_marks_snapshot_stale(cli_runner, fake_runtime, fake_s
         "hand": ["银狼", None, "阮·梅"],
         "stale": True,
     }
+    assert fake_runtime.drags == [
+        (439, 911, 741, 394),
+    ]
 
     session = store.load(fake_session)
     assert session.scene_state["cw"]["slots"] == payload["data"]
@@ -243,6 +394,9 @@ def test_cw_slots_place_one_cli_marks_snapshot_stale(cli_runner, fake_runtime, f
         "hand": ["银狼", None, "阮·梅"],
         "stale": True,
     }
+    assert fake_runtime.drags == [
+        (687, 911, 586, 669),
+    ]
 
     session = store.load(fake_session)
     assert session.scene_state["cw"]["slots"] == payload["data"]
@@ -255,6 +409,13 @@ def test_cw_crystals_collect_cli_records_metric(cli_runner, fake_runtime, fake_s
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"] == {"last_crystal_collection": "done"}
+    assert fake_runtime.drags == [
+        (1305, 194, 1574, 194),
+        (1305, 270, 1574, 270),
+        (1305, 324, 1593, 324),
+        (1305, 378, 1612, 378),
+        (1305, 432, 1593, 432),
+    ]
 
     session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
     assert session.scene_state["cw"]["metrics"] == payload["data"]
@@ -354,6 +515,9 @@ def test_cw_hand_sell_one_cli_marks_slots_stale(cli_runner, fake_runtime, fake_s
         "hand": ["银狼", None, "阮·梅"],
         "stale": True,
     }
+    assert fake_runtime.drags == [
+        (687, 911, 96, 928),
+    ]
 
     session = store.load(fake_session)
     assert session.scene_state["cw"]["slots"] == payload["data"]
