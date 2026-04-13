@@ -250,7 +250,7 @@ def _normalize_lineup_levels(label_list: object) -> list[dict[str, object]]:
             continue
         result.append({
             "id": item.get("id"),
-            "name": str(item.get("name") or item.get("text") or ""),
+            "name": str(item.get("text") or item.get("name") or ""),
         })
     return result
 
@@ -263,11 +263,28 @@ def _normalize_traits(trait_info_list: object) -> list[dict[str, object]]:
         if not isinstance(item, Mapping):
             continue
         result.append({
-            "id": item.get("id"),
-            "name": str(item.get("name") or ""),
-            "type": item.get("type"),
+            "id": item.get("trait_id", item.get("id")),
+            "name": str(item.get("trait_name") or item.get("name") or ""),
+            "type": item.get("trait_type", item.get("type")),
         })
     return result
+
+
+def _normalize_role_trait_ids(role: Mapping) -> list[object]:
+    trait_details = role.get("trait_details")
+    if isinstance(trait_details, list):
+        trait_ids: list[object] = []
+        for item in trait_details:
+            if not isinstance(item, Mapping):
+                continue
+            trait_id = item.get("id")
+            if trait_id is None:
+                continue
+            trait_ids.append(trait_id)
+        return trait_ids
+
+    trait_ids = role.get("trait_ids")
+    return list(trait_ids) if isinstance(trait_ids, list) else []
 
 
 def _normalize_roles(role_list: object) -> list[dict[str, object]]:
@@ -277,13 +294,11 @@ def _normalize_roles(role_list: object) -> list[dict[str, object]]:
     for item in role_list:
         if not isinstance(item, Mapping):
             continue
-        trait_ids = item.get("trait_ids")
-        normalized_trait_ids = list(trait_ids) if isinstance(trait_ids, list) else []
         result.append({
             "id": item.get("id"),
             "name": str(item.get("name") or ""),
             "front_back_type": item.get("front_back_type"),
-            "trait_ids": normalized_trait_ids,
+            "trait_ids": _normalize_role_trait_ids(item),
         })
     return result
 
