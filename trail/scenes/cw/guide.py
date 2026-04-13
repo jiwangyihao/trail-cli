@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from contextlib import contextmanager
-import ctypes
 import html
 import json
 import re
@@ -37,11 +35,9 @@ GUIDE_ESC_PRESSES = 3
 GUIDE_ESC_INTERVAL = 1.0
 GUIDE_UI_WAIT_TIMEOUT = 10
 GUIDE_INPUT_FOCUS_DELAY = 0.2
-GUIDE_PASTE_SETTLE_DELAY = 0.2
+GUIDE_TEXT_SETTLE_DELAY = 0.2
 GUIDE_APPLY_SETTLE_TIMEOUT = 1.5
 GUIDE_APPLY_SETTLE_INTERVAL = 0.2
-CF_UNICODETEXT = 13
-GMEM_MOVEABLE = 0x0002
 
 
 def _guide_artifact_invalid(target: str) -> TrailError:
@@ -108,100 +104,6 @@ def _click_required_template(runtime, *, alias: str) -> None:
     runtime.click_point(*_box_center(box))
 
 
-def _get_clipboard_backends() -> tuple[object, object]:
-    user32 = getattr(ctypes, "windll", None)
-    if user32 is None or not hasattr(user32, "user32") or not hasattr(user32, "kernel32"):
-        raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "clipboard backend unavailable")
-
-    return user32.user32, user32.kernel32
-
-
-@contextmanager
-def _open_clipboard() -> tuple[object, object]:
-    user32_lib, kernel32_lib = _get_clipboard_backends()
-    if user32_lib.OpenClipboard(None) == 0:
-        raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to open clipboard")
-
-    try:
-        yield user32_lib, kernel32_lib
-    finally:
-        user32_lib.CloseClipboard()
-
-
-def _read_clipboard_text() -> str | None:
-    with _open_clipboard() as (user32_lib, kernel32_lib):
-        if user32_lib.IsClipboardFormatAvailable(CF_UNICODETEXT) == 0:
-            if user32_lib.CountClipboardFormats() == 0:
-                return None
-            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "clipboard text backup unavailable")
-
-        handle = user32_lib.GetClipboardData(CF_UNICODETEXT)
-        if handle == 0:
-            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to get clipboard text")
-
-        locked = kernel32_lib.GlobalLock(handle)
-        if locked == 0:
-            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to lock clipboard text")
-
-        try:
-            return ctypes.wstring_at(locked)
-        finally:
-            kernel32_lib.GlobalUnlock(handle)
-
-
-def _write_clipboard_text(text: str) -> None:
-    if not isinstance(text, str):
-        raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "clipboard text must be a string")
-
-    user32_lib, kernel32_lib = _get_clipboard_backends()
-
-    handle = None
-    with _open_clipboard() as (user32_lib, kernel32_lib):
-        if user32_lib.EmptyClipboard() == 0:
-            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to clear clipboard")
-
-        buffer = ctypes.create_unicode_buffer(text)
-        size = ctypes.sizeof(buffer)
-        handle = kernel32_lib.GlobalAlloc(GMEM_MOVEABLE, size)
-        if handle == 0:
-            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to allocate clipboard buffer")
-
-        locked = kernel32_lib.GlobalLock(handle)
-        if locked == 0:
-            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to lock clipboard buffer")
-
-        try:
-            ctypes.memmove(locked, ctypes.addressof(buffer), size)
-        finally:
-            kernel32_lib.GlobalUnlock(handle)
-
-        if user32_lib.SetClipboardData(CF_UNICODETEXT, handle) == 0:
-            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to set clipboard text")
-        handle = None
-
-        if handle:
-            kernel32_lib.GlobalFree(handle)
-
-
-def _clear_clipboard() -> None:
-    with _open_clipboard() as (user32_lib, _):
-        if user32_lib.EmptyClipboard() == 0:
-            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to clear clipboard")
-
-
-@contextmanager
-def _temporary_clipboard_text(text: str):
-    original_text = _read_clipboard_text()
-    _write_clipboard_text(text)
-    try:
-        yield
-    finally:
-        if original_text is None:
-            _clear_clipboard()
-        else:
-            _write_clipboard_text(original_text)
-
-
 def _wait_for_template_to_clear(runtime, *, alias: str, timeout: float, interval: float) -> None:
     template = str(resolve_scene_asset("cw", alias))
     deadline = monotonic() + timeout
@@ -209,6 +111,7 @@ def _wait_for_template_to_clear(runtime, *, alias: str, timeout: float, interval
         if runtime.locate(template) is None:
             return
         sleep(interval)
+    raise TrailError("GUIDE_APPLY_NOT_CONFIRMED", f"guide ui element still visible: {alias}")
 
 
 def apply_cw_guide_via_ui(runtime, *, share_code: str) -> None:
@@ -216,9 +119,8 @@ def apply_cw_guide_via_ui(runtime, *, share_code: str) -> None:
     _click_required_template(runtime, alias="guide.enter_code")
     runtime.click_point(*GUIDE_INPUT_POINT)
     sleep(GUIDE_INPUT_FOCUS_DELAY)
-    with _temporary_clipboard_text(share_code):
-        runtime.hotkey("ctrl", "v")
-    sleep(GUIDE_PASTE_SETTLE_DELAY)
+    runtime.type_text(share_code)
+    sleep(GUIDE_TEXT_SETTLE_DELAY)
     _click_required_template(runtime, alias="guide.confirm")
     _click_required_template(runtime, alias="guide.apply")
     _wait_for_template_to_clear(

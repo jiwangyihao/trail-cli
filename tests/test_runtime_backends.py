@@ -304,6 +304,46 @@ def test_runtime_operator_prepares_window_before_hotkey_actions():
     ]
 
 
+def test_runtime_operator_prepares_window_before_type_text_actions():
+    import trail.runtime.operator as operator_module
+
+    calls: list[tuple] = []
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+        def prepare_input(self):
+            calls.append(("prepare_input",))
+
+    input_driver = SimpleNamespace(
+        ensure_available=lambda: calls.append(("ensure_available",)),
+        click=lambda x, y, **kwargs: calls.append(("click", x, y)),
+        drag=lambda from_x, from_y, to_x, to_y: calls.append(("drag", from_x, from_y, to_x, to_y)),
+        press=lambda key: calls.append(("press", key)),
+        hotkey=lambda *keys: calls.append(("hotkey", keys)),
+        type_text=lambda text: calls.append(("type_text", text)),
+    )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=input_driver,
+    )
+
+    runtime.type_text("##demo##")
+
+    assert calls == [
+        ("ensure_available",),
+        ("prepare_input",),
+        ("type_text", "##demo##"),
+    ]
+
+
 def test_runtime_operator_click_and_drag_translate_window_relative_pixels():
     import trail.runtime.operator as operator_module
 

@@ -34,6 +34,7 @@ class InputDriver(Protocol):
     def drag(self, from_x: float, from_y: float, to_x: float, to_y: float) -> None: ...
     def press(self, key: str) -> None: ...
     def hotkey(self, *keys: str) -> None: ...
+    def type_text(self, text: str) -> None: ...
 
 
 class RuntimeOperator:
@@ -140,6 +141,10 @@ class RuntimeOperator:
         self._prepare_input_target()
         self.input.hotkey(*keys)
 
+    def type_text(self, text: str):
+        self._prepare_input_target()
+        self.input.type_text(text)
+
     def capture_after_action(self, optional: bool = False):
         try:
             return self.window.capture_to_workspace()
@@ -216,6 +221,10 @@ class PyAutoGuiInputDriver:
     def hotkey(self, *keys: str) -> None:
         pyautogui = self._load_backend()
         pyautogui.hotkey(*keys)
+
+    def type_text(self, text: str) -> None:
+        pyautogui = self._load_backend()
+        pyautogui.write(text, interval=0)
 
 
 def build_window_controller(

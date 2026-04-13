@@ -31,6 +31,7 @@ class FakeRuntime:
         self.drags: list[tuple[float, float, float, float]] = []
         self.keys: list[tuple[str, int, float]] = []
         self.hotkeys: list[tuple[str, ...]] = []
+        self.texts: list[str] = []
 
     def capture_after_action(self, optional: bool = False):
         return self._shot
@@ -57,6 +58,9 @@ class FakeRuntime:
 
     def hotkey(self, *keys: str):
         self.hotkeys.append(tuple(keys))
+
+    def type_text(self, text: str):
+        self.texts.append(text)
 
 
 @pytest.fixture
