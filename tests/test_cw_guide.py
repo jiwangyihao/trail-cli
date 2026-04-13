@@ -9,7 +9,12 @@ import pytest
 from trail.artifacts.store import ArtifactStore
 from trail.cli import app
 from trail.core.errors import TrailError
+from trail.runtime.model import Box
 from trail.session.store import SessionStore
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CW_ASSET_ROOT = (PROJECT_ROOT / "trail" / "scenes" / "cw" / "assets").resolve()
 
 
 def fake_fetcher(url: str):
@@ -203,12 +208,24 @@ def test_apply_cw_guide_rejects_non_cw_guide_payload(tmp_path, scene, kind, code
     assert exc_info.value.code == code
 
 
-def test_cw_guide_apply_resolves_artifact_and_persists_scene_state(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
+def test_cw_guide_apply_cli_runs_runtime_action_chain_and_persists_scene_state(
+    cli_runner,
+    fake_runtime,
+    fake_session,
+    tmp_path,
+    monkeypatch,
+):
     import trail.commands.cw as cw_cmd
+    import trail.scenes.cw.guide as guide_scene
 
     artifact_store = ArtifactStore(tmp_path / ".trail" / "artifacts")
     meta = artifact_store.create(scene="cw", kind="guide", payload=fake_guide())
     monkeypatch.setattr(cw_cmd, "artifact_store_factory", lambda: artifact_store, raising=False)
+    copied: list[str] = []
+    pasted: list[str] = []
+    monkeypatch.setattr(guide_scene, "_copy_text_to_clipboard", lambda text: copied.append(text), raising=False)
+    monkeypatch.setattr(guide_scene, "_paste_clipboard_text", lambda: pasted.append("paste"), raising=False)
+    fake_runtime.wait_result = Box(left=10, top=20, width=40, height=20, source="guide.png")
 
     result = cli_runner.invoke(app, ["cw", "guide", "apply", "--session", fake_session, "--guide", meta.artifact_id])
 
@@ -217,6 +234,22 @@ def test_cw_guide_apply_resolves_artifact_and_persists_scene_state(cli_runner, f
     assert payload["ok"] is True
     assert payload["data"]["artifact"] == meta.artifact_id
     assert payload["data"]["share_code"] == "##demo##"
+    assert fake_runtime.wait_calls == [
+        str((CW_ASSET_ROOT / "strategy.png").resolve()),
+        str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve()),
+        str((CW_ASSET_ROOT / "ensure2.png").resolve()),
+        str((CW_ASSET_ROOT / "apply_strategy.png").resolve()),
+    ]
+    assert fake_runtime.clicks == [
+        (30, 30),
+        (30, 30),
+        (960, 540),
+        (30, 30),
+        (30, 30),
+    ]
+    assert fake_runtime.keys == [("esc", 3, 1)]
+    assert copied == ["##demo##"]
+    assert pasted == ["paste"]
 
     session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
     assert session.scene_state["cw"]["guide"]["artifact"] == meta.artifact_id
@@ -229,10 +262,15 @@ def test_cw_guide_apply_resolves_artifact_and_persists_scene_state(cli_runner, f
 
 def test_cw_guide_apply_cli_rejects_invalid_artifact(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
     import trail.commands.cw as cw_cmd
+    import trail.scenes.cw.guide as guide_scene
 
     artifact_store = ArtifactStore(tmp_path / ".trail" / "artifacts")
     meta = artifact_store.create(scene="ocr", kind="guide", payload={"share_code": "##wrong##"})
     monkeypatch.setattr(cw_cmd, "artifact_store_factory", lambda: artifact_store, raising=False)
+    copied: list[str] = []
+    pasted: list[str] = []
+    monkeypatch.setattr(guide_scene, "_copy_text_to_clipboard", lambda text: copied.append(text), raising=False)
+    monkeypatch.setattr(guide_scene, "_paste_clipboard_text", lambda: pasted.append("paste"), raising=False)
 
     result = cli_runner.invoke(app, ["cw", "guide", "apply", "--session", fake_session, "--guide", meta.artifact_id])
 
@@ -243,6 +281,11 @@ def test_cw_guide_apply_cli_rejects_invalid_artifact(cli_runner, fake_runtime, f
         "code": "GUIDE_SCENE_MISMATCH",
         "message": "guide artifact scene must be cw, got: ocr",
     }
+    assert fake_runtime.wait_calls == []
+    assert fake_runtime.clicks == []
+    assert fake_runtime.keys == []
+    assert copied == []
+    assert pasted == []
 
 
 @pytest.mark.parametrize(

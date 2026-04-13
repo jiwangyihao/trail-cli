@@ -38,7 +38,7 @@ from trail.scenes.cw.events import (
     settle_cw_next,
     start_cw_battle,
 )
-from trail.scenes.cw.guide import apply_cw_guide, resolve_guide_input
+from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, resolve_guide_input
 from trail.scenes.cw.shop import (
     build_cw_shop_buyer,
     build_cw_shop_closer,
@@ -200,12 +200,15 @@ def cw_enter(
 
 @cw_guide_app.command("apply")
 def cw_guide_apply(session: str = typer.Option(..., "--session"), guide: str = typer.Option(..., "--guide")) -> None:
+    runtime = _runtime_for_session(session)
+
     def action(loaded):
         guide_data = resolve_guide_input(guide, artifact_store=artifact_store_factory())
+        apply_cw_guide_via_ui(runtime, share_code=guide_data["share_code"])
         refreshed = apply_cw_guide(loaded, guide_data=guide_data)
         return refreshed.scene_state["cw"]["guide"]
 
-    _run(session, "cw.guide.apply", action)
+    _run(session, "cw.guide.apply", action, runtime=runtime)
 
 
 @stage_app.command("detect")

@@ -24,6 +24,7 @@ class FakeRuntime:
         self._shot = screenshot_path or Path("shot.png")
         self.locate_result = None
         self.wait_result = None
+        self.wait_calls: list[str] = []
         self.ocr_result = []
         self.clicks: list[tuple[float, float]] = []
         self.drags: list[tuple[float, float, float, float]] = []
@@ -39,6 +40,7 @@ class FakeRuntime:
         return self.locate_result
 
     def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+        self.wait_calls.append(template)
         return self.wait_result
 
     def click_point(self, x: float, y: float, **kwargs):

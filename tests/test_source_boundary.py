@@ -98,3 +98,15 @@ def test_cw_stage_aliases_cover_minimum_stage_set():
     }
 
     assert required.issubset(set(aliases))
+
+
+def test_cw_guide_aliases_cover_import_chain():
+    aliases = load_scene_aliases("cw")
+    required = {
+        "guide.strategy",
+        "guide.enter_code",
+        "guide.confirm",
+        "guide.apply",
+    }
+
+    assert required.issubset(set(aliases))

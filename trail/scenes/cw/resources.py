@@ -1,4 +1,8 @@
 CW_RESOURCE_ALIASES = {
+    "guide.strategy": "strategy.png",
+    "guide.enter_code": "enter_strategy_code.png",
+    "guide.confirm": "ensure2.png",
+    "guide.apply": "apply_strategy.png",
     "stage.preparation": "preparation_stage.png",
     "stage.shop": "fold.png",
     "stage.replenish": "replenish_stage.png",

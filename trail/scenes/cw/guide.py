@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import ctypes
 import html
 import json
 import re
 from pathlib import Path
+from time import sleep
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -12,6 +14,7 @@ from urllib.request import Request, urlopen
 from trail.artifacts.models import ArtifactMeta
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
+from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.models import CwSceneState, ensure_cw_state
 from trail.session.models import SessionModel
 
@@ -25,6 +28,15 @@ CW_GUIDE_HEADERS = {
 ARTICLE_ID_PATTERN = re.compile(r"(?:/article/|post_id=)(\d+)")
 SHARE_CODE_PATTERN = re.compile(r"##[^#\s]+##")
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+
+CW_WIDTH = 1920
+CW_HEIGHT = 1080
+GUIDE_INPUT_POINT = (int(CW_WIDTH * 0.5), int(CW_HEIGHT * 0.5))
+GUIDE_ESC_PRESSES = 3
+GUIDE_ESC_INTERVAL = 1.0
+GUIDE_UI_WAIT_TIMEOUT = 10
+CF_UNICODETEXT = 13
+GMEM_MOVEABLE = 0x0002
 
 
 def _guide_artifact_invalid(target: str) -> TrailError:
@@ -62,6 +74,93 @@ def normalize_cw_guide_payload(guide_data: dict) -> dict:
     payload["priority"] = _require_mapping(payload.get("priority"), field_name="priority")
     payload["positioning"] = _require_mapping(payload.get("positioning"), field_name="positioning")
     return payload
+
+
+def _box_center(box: object) -> tuple[int, int]:
+    if hasattr(box, "center"):
+        center = box.center
+        if isinstance(center, tuple) and len(center) == 2:
+            return int(center[0]), int(center[1])
+
+    if isinstance(box, Mapping):
+        try:
+            left = int(box["left"])
+            top = int(box["top"])
+            width = int(box["width"])
+            height = int(box["height"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise TrailError("GUIDE_UI_INVALID", "guide ui match result missing box coordinates") from exc
+        return left + width // 2, top + height // 2
+
+    raise TrailError("GUIDE_UI_INVALID", "guide ui match result missing box coordinates")
+
+
+def _click_required_template(runtime, *, alias: str) -> None:
+    template = str(resolve_scene_asset("cw", alias))
+    box = runtime.wait_img(template, timeout=GUIDE_UI_WAIT_TIMEOUT)
+    if box is None:
+        raise TrailError("GUIDE_UI_NOT_FOUND", f"guide ui element not found: {alias}")
+    runtime.click_point(*_box_center(box))
+
+
+def _copy_text_to_clipboard(text: str) -> None:
+    user32 = getattr(ctypes, "windll", None)
+    if user32 is None or not hasattr(user32, "user32") or not hasattr(user32, "kernel32"):
+        raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "clipboard backend unavailable")
+
+    user32_lib = user32.user32
+    kernel32_lib = user32.kernel32
+    handle = None
+    if user32_lib.OpenClipboard(None) == 0:
+        raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to open clipboard")
+
+    try:
+        if user32_lib.EmptyClipboard() == 0:
+            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to clear clipboard")
+
+        buffer = ctypes.create_unicode_buffer(text)
+        size = ctypes.sizeof(buffer)
+        handle = kernel32_lib.GlobalAlloc(GMEM_MOVEABLE, size)
+        if handle == 0:
+            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to allocate clipboard buffer")
+
+        locked = kernel32_lib.GlobalLock(handle)
+        if locked == 0:
+            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to lock clipboard buffer")
+
+        try:
+            ctypes.memmove(locked, ctypes.addressof(buffer), size)
+        finally:
+            kernel32_lib.GlobalUnlock(handle)
+
+        if user32_lib.SetClipboardData(CF_UNICODETEXT, handle) == 0:
+            raise TrailError("GUIDE_CLIPBOARD_UNAVAILABLE", "failed to set clipboard text")
+        handle = None
+    finally:
+        if handle:
+            kernel32_lib.GlobalFree(handle)
+        user32_lib.CloseClipboard()
+
+
+def _paste_clipboard_text() -> None:
+    try:
+        import pyautogui  # type: ignore
+    except Exception as exc:
+        raise TrailError("INPUT_BACKEND_UNAVAILABLE", "pyautogui backend unavailable") from exc
+
+    pyautogui.hotkey("ctrl", "v")
+
+
+def apply_cw_guide_via_ui(runtime, *, share_code: str) -> None:
+    _click_required_template(runtime, alias="guide.strategy")
+    _click_required_template(runtime, alias="guide.enter_code")
+    runtime.click_point(*GUIDE_INPUT_POINT)
+    _copy_text_to_clipboard(share_code)
+    _paste_clipboard_text()
+    sleep(0.2)
+    _click_required_template(runtime, alias="guide.confirm")
+    _click_required_template(runtime, alias="guide.apply")
+    runtime.press_key("esc", presses=GUIDE_ESC_PRESSES, interval=GUIDE_ESC_INTERVAL)
 
 
 def _extract_article_id(url: str) -> str:
