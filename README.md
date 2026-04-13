@@ -4,6 +4,13 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 
 ## Quick Start
 
+推荐入口：
+
+- 先用 `trail-hsr` 创建 session、检查窗口，并把流程切到 `trail-cw`
+- 再由 `trail-cw` 负责编排完整一局货币战争
+
+手工 CLI 冒烟顺序：
+
 - `trail session create`
 - `trail guide fetch cw <url>`
 - `trail cw enter --session <id> --mode new`
@@ -34,6 +41,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `skills/trail-hsr` 负责 session、窗口检查与场景切换
 - `skills/trail-cw` 负责整局货币战争循环
 - `skills/trail-cw-*` 负责攻略、商店、补给、编队、事件等子流程
+- README 里的 CLI 序列只用于手工检查命令面，不是推荐的整局自动化入口
 
 ## 项目边界
 
