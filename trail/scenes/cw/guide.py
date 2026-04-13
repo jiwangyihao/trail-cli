@@ -8,7 +8,6 @@ from time import monotonic, sleep
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from trail.artifacts.models import ArtifactMeta
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
@@ -685,9 +684,8 @@ def fetch_cw_guide_payload(url: str) -> dict:
     return payload
 
 
-def fetch_cw_guide(url: str, *, artifact_store: ArtifactStore, fetcher) -> ArtifactMeta:
-    payload = normalize_cw_guide_payload(fetcher(url))
-    return artifact_store.create(scene="cw", kind="guide", payload=payload)
+def fetch_cw_guide(url: str, *, fetcher) -> dict:
+    return normalize_cw_guide_payload(fetcher(url))
 
 
 def _read_guide_payload(path: Path) -> dict:
@@ -736,14 +734,25 @@ def apply_cw_guide(session: SessionModel, guide_data: dict) -> SessionModel:
     off_field = dict(guide_payload.get("off_field", {}))
     cw_state["guide"] = {
         "artifact": guide_payload.get("artifact_id"),
+        "lineup_id": guide_payload.get("lineup_id"),
         "share_code": guide_payload["share_code"],
         "source_url": guide_payload.get("source_url"),
-        "article_id": guide_payload.get("article_id"),
         "title": guide_payload.get("title"),
         "author": guide_payload.get("author"),
         "uploader": guide_payload.get("uploader"),
+        "labels": guide_payload.get("labels", []),
+        "support_hard": bool(guide_payload.get("support_hard")),
+        "has_change_equip": bool(guide_payload.get("has_change_equip")),
+        "has_expert": bool(guide_payload.get("has_expert")),
+        "version": guide_payload.get("version"),
         "on_field": on_field,
         "off_field": off_field,
+        "role_stages": guide_payload.get("role_stages", []),
+        "first_fight_augments": guide_payload.get("first_fight_augments", []),
+        "second_fight_augments": guide_payload.get("second_fight_augments", []),
+        "portals": guide_payload.get("portals", []),
+        "order_basic": guide_payload.get("order_basic", []),
+        "order_compose": guide_payload.get("order_compose", []),
         "remaining_purchases": {
             **on_field,
             **off_field,

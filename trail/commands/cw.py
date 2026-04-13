@@ -13,6 +13,8 @@ from trail.commands.helpers import (
     print_json,
     run_session_command,
 )
+from trail.core.errors import TrailError
+from trail.output.capture import with_auto_capture
 from trail.scenes.cw.entry import enter_cw
 from trail.scenes.cw.events import (
     build_cw_battle_continuer,
@@ -38,7 +40,7 @@ from trail.scenes.cw.events import (
     settle_cw_next,
     start_cw_battle,
 )
-from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, resolve_guide_input
+from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, fetch_cw_guide, fetch_cw_guide_payload
 from trail.scenes.cw.shop import (
     build_cw_shop_buyer,
     build_cw_shop_closer,
@@ -208,12 +210,30 @@ def cw_guide_apply(session: str = typer.Option(..., "--session"), guide: str = t
     runtime = _runtime_for_session(session)
 
     def action(loaded):
-        guide_data = resolve_guide_input(guide, artifact_store=artifact_store_factory())
+        guide_data = fetch_cw_guide(guide, fetcher=fetch_cw_guide_payload)
         apply_cw_guide_via_ui(runtime, share_code=guide_data["share_code"])
-        refreshed = apply_cw_guide(loaded, guide_data=guide_data)
+        artifact = artifact_store_factory().create(scene="cw", kind="guide", payload=guide_data)
+        refreshed = apply_cw_guide(loaded, guide_data={**guide_data, "artifact_id": artifact.artifact_id})
         return refreshed.scene_state["cw"]["guide"]
 
     _run(session, "cw.guide.apply", action, runtime=runtime)
+
+
+@cw_guide_app.command("current")
+def cw_guide_current(session: str = typer.Option(..., "--session")) -> None:
+    store = session_store_factory()
+
+    def action() -> dict | None:
+        try:
+            loaded = store.load(session)
+        except FileNotFoundError as exc:
+            raise TrailError("SESSION_NOT_FOUND", f"session not found: {session}") from exc
+        except (json.JSONDecodeError, ValueError, OSError) as exc:
+            raise TrailError("SESSION_INVALID", f"session invalid: {session}") from exc
+        guide_state = loaded.scene_state.get("cw", {}).get("guide")
+        return guide_state if isinstance(guide_state, dict) else None
+
+    print_json(with_auto_capture(None, action))
 
 
 @stage_app.command("detect")
