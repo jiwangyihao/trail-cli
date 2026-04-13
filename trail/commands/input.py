@@ -11,7 +11,7 @@ input_app = typer.Typer(no_args_is_help=True)
 
 
 @input_app.command("click")
-def input_click(x: float, y: float) -> None:
+def input_click(x: int, y: int) -> None:
     runtime = runtime_factory()
 
     def action() -> dict:
@@ -22,7 +22,7 @@ def input_click(x: float, y: float) -> None:
 
 
 @input_app.command("drag")
-def input_drag(from_x: float, from_y: float, to_x: float, to_y: float) -> None:
+def input_drag(from_x: int, from_y: int, to_x: int, to_y: int) -> None:
     runtime = runtime_factory()
 
     def action() -> dict:

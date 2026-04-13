@@ -9,19 +9,36 @@ from trail.core.errors import TrailError
 from trail.scenes.cw.models import ensure_cw_state
 from trail.session.models import SessionModel
 
-SHOP_OPEN_POINT = (0.8438, 0.8481)
-SHOP_CLOSE_POINT = (0.5, 0.55)
+CW_WIDTH = 1920
+CW_HEIGHT = 1080
+
+
+def _point(x_ratio: float, y_ratio: float) -> tuple[int, int]:
+    return int(CW_WIDTH * x_ratio), int(CW_HEIGHT * y_ratio)
+
+
+def _region(from_x: float, from_y: float, to_x: float, to_y: float) -> dict[str, int]:
+    return {
+        "from_x": int(CW_WIDTH * from_x),
+        "from_y": int(CW_HEIGHT * from_y),
+        "to_x": int(CW_WIDTH * to_x),
+        "to_y": int(CW_HEIGHT * to_y),
+    }
+
+
+SHOP_OPEN_POINT = _point(0.8438, 0.8481)
+SHOP_CLOSE_POINT = _point(0.5, 0.55)
 SHOP_SLOT_POINTS = {
-    1: (0.25, 0.18),
-    2: (0.40, 0.18),
-    3: (0.55, 0.18),
-    4: (0.68, 0.18),
-    5: (0.80, 0.18),
+    1: _point(0.25, 0.18),
+    2: _point(0.40, 0.18),
+    3: _point(0.55, 0.18),
+    4: _point(0.68, 0.18),
+    5: _point(0.80, 0.18),
 }
-SHOP_SCAN_REGION = {"from_x": 0.19, "from_y": 0.26, "to_x": 0.88, "to_y": 0.31}
-SHOP_COINS_REGION = {"from_x": 0.84, "from_y": 0.81, "to_x": 0.89, "to_y": 0.89}
-SHOP_LEVEL_REGION = {"from_x": 0.05, "from_y": 0.815, "to_x": 0.3, "to_y": 0.87}
-SHOP_MAX_TEAM_SIZE_REGION = {"from_x": 0.505, "from_y": 0.18, "to_x": 0.608, "to_y": 0.27}
+SHOP_SCAN_REGION = _region(0.19, 0.26, 0.88, 0.31)
+SHOP_COINS_REGION = _region(0.84, 0.81, 0.89, 0.89)
+SHOP_LEVEL_REGION = _region(0.05, 0.815, 0.3, 0.87)
+SHOP_MAX_TEAM_SIZE_REGION = _region(0.505, 0.18, 0.608, 0.27)
 
 ShopScanner = Callable[[], tuple[list[Any], int | None, int | None, bool, int | None]]
 ShopBuyer = Callable[..., object]

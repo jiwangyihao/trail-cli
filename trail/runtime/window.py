@@ -13,6 +13,18 @@ from trail.core.errors import TrailError
 from trail.runtime.model import Region, WindowBinding
 
 
+def _enable_dpi_awareness() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        return
+
+
+_enable_dpi_awareness()
+
+
 def _capture_win32_window(hwnd: int, region: Region):
     import win32gui  # type: ignore
     import win32ui  # type: ignore
@@ -138,6 +150,19 @@ class WindowsWindowController:
         if width <= 0 or height <= 0:
             raise TrailError("WINDOW_REGION_INVALID", f"无法获取窗口区域 {self.window_title}")
         return Region(left=left, top=top, width=width, height=height)
+
+    def client_region(self) -> Region:
+        return self._resolve_region()
+
+    def to_screen_point(self, x: int | float, y: int | float) -> tuple[int, int]:
+        region = self.client_region()
+
+        def _convert(value: int | float, size: int, origin: int) -> int:
+            if isinstance(value, float) and 0.0 <= value <= 1.0:
+                return origin + round(size * value)
+            return origin + round(value)
+
+        return _convert(x, region.width, region.left), _convert(y, region.height, region.top)
 
     def prepare_input(self) -> None:
         window = self._resolve_window()

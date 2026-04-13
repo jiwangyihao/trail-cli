@@ -14,11 +14,21 @@ class Region:
     def tuple(self) -> tuple[int, int, int, int]:
         return self.left, self.top, self.width, self.height
 
-    def sub_region(self, from_x: float, from_y: float, to_x: float, to_y: float) -> Region:
-        new_left = self.left + int(self.width * from_x)
-        new_top = self.top + int(self.height * from_y)
-        new_width = int(self.width * (to_x - from_x))
-        new_height = int(self.height * (to_y - from_y))
+    def sub_region(self, from_x: int | float, from_y: int | float, to_x: int | float, to_y: int | float) -> Region:
+        def _convert(value: int | float, size: int) -> int:
+            if isinstance(value, float) and 0.0 <= value <= 1.0:
+                return int(size * value)
+            return int(value)
+
+        left_offset = _convert(from_x, self.width)
+        top_offset = _convert(from_y, self.height)
+        right_offset = _convert(to_x, self.width)
+        bottom_offset = _convert(to_y, self.height)
+
+        new_left = self.left + left_offset
+        new_top = self.top + top_offset
+        new_width = right_offset - left_offset
+        new_height = bottom_offset - top_offset
         return Region(new_left, new_top, new_width, new_height)
 
     def to_dict(self) -> dict[str, int]:

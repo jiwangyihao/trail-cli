@@ -317,7 +317,7 @@ def test_cw_shop_open_cli_persists_snapshot(cli_runner, fake_runtime, fake_sessi
     assert payload["ok"] is True
     assert payload["data"]["stale"] is True
     assert payload["data"]["opened"] is True
-    assert fake_runtime.clicks == [(0.8438, 0.8481)]
+    assert fake_runtime.clicks == [(1620, 915)]
 
     session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
     assert session.scene_state["cw"]["shop"] == payload["data"]
@@ -328,13 +328,13 @@ def test_cw_shop_scan_cli_uses_runtime_scanner(cli_runner, fake_runtime, fake_se
 
     def fake_ocr(**kwargs):
         calls.append(kwargs)
-        if kwargs == {"from_x": 0.19, "from_y": 0.26, "to_x": 0.88, "to_y": 0.31}:
+        if kwargs == {"from_x": 364, "from_y": 280, "to_x": 1689, "to_y": 334}:
             return [(None, "银狼"), (None, "20"), (None, "希儿"), (None, "30")]
-        if kwargs == {"from_x": 0.84, "from_y": 0.81, "to_x": 0.89, "to_y": 0.89}:
+        if kwargs == {"from_x": 1612, "from_y": 874, "to_x": 1708, "to_y": 961}:
             return [(None, "40")]
-        if kwargs == {"from_x": 0.05, "from_y": 0.815, "to_x": 0.3, "to_y": 0.87}:
+        if kwargs == {"from_x": 96, "from_y": 880, "to_x": 576, "to_y": 939}:
             return [(None, "等级.7")]
-        if kwargs == {"from_x": 0.505, "from_y": 0.18, "to_x": 0.608, "to_y": 0.27}:
+        if kwargs == {"from_x": 969, "from_y": 194, "to_x": 1167, "to_y": 291}:
             return [(None, "8")]
         return []
 
@@ -371,10 +371,10 @@ def test_cw_shop_scan_cli_uses_runtime_scanner(cli_runner, fake_runtime, fake_se
         "stale": False,
     }
     assert calls == [
-        {"from_x": 0.19, "from_y": 0.26, "to_x": 0.88, "to_y": 0.31},
-        {"from_x": 0.84, "from_y": 0.81, "to_x": 0.89, "to_y": 0.89},
-        {"from_x": 0.05, "from_y": 0.815, "to_x": 0.3, "to_y": 0.87},
-        {"from_x": 0.505, "from_y": 0.18, "to_x": 0.608, "to_y": 0.27},
+        {"from_x": 364, "from_y": 280, "to_x": 1689, "to_y": 334},
+        {"from_x": 1612, "from_y": 874, "to_x": 1708, "to_y": 961},
+        {"from_x": 96, "from_y": 880, "to_x": 576, "to_y": 939},
+        {"from_x": 969, "from_y": 194, "to_x": 1167, "to_y": 291},
     ]
 
 
@@ -558,7 +558,7 @@ def test_cw_shop_buy_slot_cli_clicks_requested_slot(cli_runner, fake_runtime, fa
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
-    assert fake_runtime.clicks == [(0.55, 0.18)]
+    assert fake_runtime.clicks == [(1056, 194)]
 
     session = store.load(fake_session)
     assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 0}
@@ -590,7 +590,7 @@ def test_cw_shop_refresh_close_and_status_cli_follow_state_contract(cli_runner, 
     close_payload = json.loads(close_result.stdout)
     assert close_payload["ok"] is True
     assert close_payload["data"] == {"stale": True, "opened": False, "items": [{"name": "银狼", "price": 20}]}
-    assert fake_runtime.clicks == [(0.5, 0.55)]
+    assert fake_runtime.clicks == [(960, 594)]
 
     status_result = cli_runner.invoke(app, ["cw", "shop", "status", "--session", fake_session])
     assert status_result.exit_code == 0

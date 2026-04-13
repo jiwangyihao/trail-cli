@@ -189,10 +189,10 @@ def test_cw_event_choose_cli_invalidates_stage_snapshot(
 @pytest.mark.parametrize(
     ("argv", "option", "expected_clicks"),
     [
-        (["cw", "replenish", "choose"], 1, [(0.2, 0.52), (0.88, 0.91)]),
-        (["cw", "invest", "choose"], 2, [(0.5, 0.3), (0.77, 0.521)]),
-        (["cw", "encounter", "choose"], 1, [(0.35, 0.5), (0.5, 0.84)]),
-        (["cw", "fortune", "choose"], 2, [(0.8, 0.3), (0.77, 0.521)]),
+        (["cw", "replenish", "choose"], 1, [(384, 561), (1689, 982)]),
+        (["cw", "invest", "choose"], 2, [(960, 324), (1478, 562)]),
+        (["cw", "encounter", "choose"], 1, [(672, 540), (960, 907)]),
+        (["cw", "fortune", "choose"], 2, [(1536, 324), (1478, 562)]),
     ],
 )
 def test_cw_event_choose_cli_uses_default_runtime_actions_and_clears_last_stage(
@@ -301,7 +301,7 @@ def test_cw_event_handle_cli_uses_default_handler_and_clears_last_stage(cli_runn
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"] == {"event_type": "special", "handled_action": "confirm"}
-    assert fake_runtime.clicks == [(0.5, 0.25), (0.77, 0.521)]
+    assert fake_runtime.clicks == [(960, 270), (1478, 562)]
 
     session = store.load(fake_session)
     assert session.scene_state["cw"]["stage"] == {"stale": True}
@@ -311,10 +311,10 @@ def test_cw_event_handle_cli_uses_default_handler_and_clears_last_stage(cli_runn
 @pytest.mark.parametrize(
     ("argv", "expected_clicks"),
     [
-        (["cw", "boss-preview", "confirm"], [(0.5, 0.7)]),
-        (["cw", "settle", "next"], [(0.5, 0.82)]),
-        (["cw", "battle", "start"], [(0.5, 0.824)]),
-        (["cw", "battle", "continue"], [(0.5, 0.824)]),
+        (["cw", "boss-preview", "confirm"], [(960, 756)]),
+        (["cw", "settle", "next"], [(960, 885)]),
+        (["cw", "battle", "start"], [(960, 889)]),
+        (["cw", "battle", "continue"], [(960, 889)]),
     ],
 )
 def test_cw_boss_preview_settle_and_battle_cli_uses_default_runtime_actions_and_clears_last_stage(

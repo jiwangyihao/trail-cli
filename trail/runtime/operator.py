@@ -8,7 +8,7 @@ from typing import Any, Protocol
 from PIL import Image
 
 from trail.core.errors import TrailError
-from trail.runtime.model import Box
+from trail.runtime.model import Box, Region
 from trail.runtime.window import WindowsWindowController
 
 
@@ -16,6 +16,8 @@ class WindowController(Protocol):
     def capture(self, *, from_x=None, from_y=None, to_x=None, to_y=None): ...
     def capture_to_workspace(self) -> Path: ...
     def prepare_input(self) -> None: ...
+    def client_region(self): ...
+    def to_screen_point(self, x: int | float, y: int | float) -> tuple[int, int]: ...
 
 
 class ImageMatcher(Protocol):
@@ -46,11 +48,14 @@ class RuntimeOperator:
         image = self.screenshot(**kwargs)
         box = self.matcher.locate(template, image)
         if box is not None:
-            return box
+            return self._offset_box(box, **kwargs)
 
         sleep(0.1)
         retry_image = self.screenshot(**kwargs)
-        return self.matcher.locate(template, retry_image)
+        retry_box = self.matcher.locate(template, retry_image)
+        if retry_box is None:
+            return None
+        return self._offset_box(retry_box, **kwargs)
 
     def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
         deadline = monotonic() + timeout
@@ -68,13 +73,56 @@ class RuntimeOperator:
     def _prepare_input_target(self) -> None:
         self.window.prepare_input()
 
+    def _to_screen_point(self, x: int | float, y: int | float) -> tuple[int | float, int | float]:
+        if hasattr(self.window, "to_screen_point"):
+            return self.window.to_screen_point(x, y)
+
+        if hasattr(self.window, "client_region"):
+            region = self.window.client_region()
+
+            def _convert(value: int | float, size: int, origin: int) -> int:
+                if isinstance(value, float) and 0.0 <= value <= 1.0:
+                    return origin + round(size * value)
+                return origin + round(value)
+
+            return _convert(x, region.width, region.left), _convert(y, region.height, region.top)
+
+        return x, y
+
+    def _offset_box(self, box: Box, **kwargs) -> Box:
+        from_x = kwargs.get("from_x")
+        from_y = kwargs.get("from_y")
+        if from_x is None or from_y is None:
+            return box
+
+        if not hasattr(self.window, "client_region"):
+            return box
+
+        region = self.window.client_region()
+
+        def _offset(value: int | float, size: int) -> int:
+            if isinstance(value, float) and 0.0 <= value <= 1.0:
+                return round(size * value)
+            return round(value)
+
+        return Box(
+            left=box.left + _offset(from_x, region.width),
+            top=box.top + _offset(from_y, region.height),
+            width=box.width,
+            height=box.height,
+            source=box.source,
+        )
+
     def click_point(self, x: float, y: float, **kwargs):
         self._prepare_input_target()
-        self.input.click(x, y, **kwargs)
+        screen_x, screen_y = self._to_screen_point(x, y)
+        self.input.click(screen_x, screen_y, **kwargs)
 
     def drag_to(self, from_x: float, from_y: float, to_x: float, to_y: float):
         self._prepare_input_target()
-        self.input.drag(from_x, from_y, to_x, to_y)
+        screen_from_x, screen_from_y = self._to_screen_point(from_x, from_y)
+        screen_to_x, screen_to_y = self._to_screen_point(to_x, to_y)
+        self.input.drag(screen_from_x, screen_from_y, screen_to_x, screen_to_y)
 
     def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
         self._prepare_input_target()

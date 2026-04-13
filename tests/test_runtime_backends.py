@@ -11,6 +11,25 @@ from trail.core.errors import TrailError
 from trail.runtime.model import Box, WindowBinding
 
 
+def test_enable_dpi_awareness_calls_win32_api(monkeypatch):
+    import trail.runtime.window as window_module
+
+    calls = []
+
+    class User32:
+        @staticmethod
+        def SetProcessDPIAware():
+            calls.append("SetProcessDPIAware")
+            return 1
+
+    monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(window_module.ctypes, "windll", SimpleNamespace(user32=User32()))
+
+    window_module._enable_dpi_awareness()
+
+    assert calls == ["SetProcessDPIAware"]
+
+
 def test_windows_window_controller_capture_uses_imagegrab(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
 
@@ -246,6 +265,146 @@ def test_runtime_operator_prepares_window_before_input_actions():
         ("prepare_input",),
         ("press", "shift"),
     ]
+
+
+def test_runtime_operator_click_and_drag_translate_window_relative_pixels():
+    import trail.runtime.operator as operator_module
+
+    calls: list[tuple] = []
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+        def prepare_input(self):
+            calls.append(("prepare_input",))
+
+        def client_region(self):
+            return operator_module.Region(left=100, top=200, width=1000, height=500)
+
+    input_driver = SimpleNamespace(
+        click=lambda x, y, **kwargs: calls.append(("click", x, y)),
+        drag=lambda from_x, from_y, to_x, to_y: calls.append(("drag", from_x, from_y, to_x, to_y)),
+        press=lambda key: calls.append(("press", key)),
+    )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=input_driver,
+    )
+
+    runtime.click_point(10, 20)
+    runtime.drag_to(1, 2, 30, 40)
+
+    assert calls == [
+        ("prepare_input",),
+        ("click", 110, 220),
+        ("prepare_input",),
+        ("drag", 101, 202, 130, 240),
+    ]
+
+
+def test_runtime_operator_keeps_ratio_support_for_scene_commands():
+    import trail.runtime.operator as operator_module
+
+    calls: list[tuple] = []
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+        def prepare_input(self):
+            calls.append(("prepare_input",))
+
+        def client_region(self):
+            return operator_module.Region(left=100, top=200, width=1000, height=500)
+
+    input_driver = SimpleNamespace(
+        click=lambda x, y, **kwargs: calls.append(("click", x, y)),
+        drag=lambda from_x, from_y, to_x, to_y: calls.append(("drag", from_x, from_y, to_x, to_y)),
+        press=lambda key: calls.append(("press", key)),
+    )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=input_driver,
+    )
+
+    runtime.click_point(0.5, 0.25)
+    runtime.drag_to(0.1, 0.2, 0.8, 0.6)
+
+    assert calls == [
+        ("prepare_input",),
+        ("click", 600, 325),
+        ("prepare_input",),
+        ("drag", 200, 300, 900, 500),
+    ]
+
+
+def test_runtime_operator_locate_offsets_box_to_window_relative_pixels():
+    import trail.runtime.operator as operator_module
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+        def prepare_input(self):
+            raise AssertionError("not used")
+
+        def client_region(self):
+            return operator_module.Region(left=100, top=200, width=1000, height=500)
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: operator_module.Box(left=5, top=6, width=7, height=8, source=template)),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(click=lambda *args, **kwargs: None, drag=lambda *args, **kwargs: None, press=lambda *args, **kwargs: None),
+    )
+
+    box = runtime.locate("demo.png", from_x=0.1, from_y=0.2, to_x=0.5, to_y=0.6)
+
+    assert box == operator_module.Box(left=105, top=106, width=7, height=8, source="demo.png")
+
+
+def test_runtime_operator_locate_offsets_box_when_crop_uses_pixel_region():
+    import trail.runtime.operator as operator_module
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+        def prepare_input(self):
+            raise AssertionError("not used")
+
+        def client_region(self):
+            return operator_module.Region(left=100, top=200, width=1000, height=500)
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: operator_module.Box(left=5, top=6, width=7, height=8, source=template)),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(click=lambda *args, **kwargs: None, drag=lambda *args, **kwargs: None, press=lambda *args, **kwargs: None),
+    )
+
+    box = runtime.locate("demo.png", from_x=364, from_y=280, to_x=1689, to_y=334)
+
+    assert box == operator_module.Box(left=369, top=286, width=7, height=8, source="demo.png")
 
 
 def test_windows_window_controller_prepare_input_restores_and_activates_window(monkeypatch, tmp_path):

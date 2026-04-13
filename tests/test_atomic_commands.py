@@ -93,11 +93,11 @@ def test_input_click_drag_and_key_return_envelopes(cli_runner, fake_runtime):
     assert click_result.exit_code == 0
     assert drag_result.exit_code == 0
     assert key_result.exit_code == 0
-    assert click_payload["data"] == {"clicked": [10.0, 20.0]}
-    assert drag_payload["data"] == {"dragged": [1.0, 2.0, 3.0, 4.0]}
+    assert click_payload["data"] == {"clicked": [10, 20]}
+    assert drag_payload["data"] == {"dragged": [1, 2, 3, 4]}
     assert key_payload["data"] == {"key": "space", "presses": 2}
-    assert fake_runtime.clicks == [(10.0, 20.0)]
-    assert fake_runtime.drags == [(1.0, 2.0, 3.0, 4.0)]
+    assert fake_runtime.clicks == [(10, 20)]
+    assert fake_runtime.drags == [(1, 2, 3, 4)]
     assert fake_runtime.keys == [("space", 2, 0.2)]
 
 

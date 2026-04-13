@@ -10,38 +10,45 @@ OptionChooser = Callable[[int], object]
 EventHandler = Callable[[], tuple[str, str]]
 SceneAction = Callable[[], object]
 
+CW_WIDTH = 1920
+CW_HEIGHT = 1080
+
+
+def _point(x_ratio: float, y_ratio: float) -> tuple[int, int]:
+    return int(CW_WIDTH * x_ratio), int(CW_HEIGHT * y_ratio)
+
 REPLENISH_OPTION_POINTS = {
-    1: (0.2, 0.52),
-    2: (0.53, 0.52),
-    3: (0.82, 0.52),
+    1: _point(0.2, 0.52),
+    2: _point(0.53, 0.52),
+    3: _point(0.82, 0.52),
 }
-REPLENISH_CONFIRM_POINT = (0.88, 0.91)
+REPLENISH_CONFIRM_POINT = _point(0.88, 0.91)
 
 INVEST_OPTION_POINTS = {
-    1: (0.2, 0.3),
-    2: (0.5, 0.3),
-    3: (0.8, 0.3),
+    1: _point(0.2, 0.3),
+    2: _point(0.5, 0.3),
+    3: _point(0.8, 0.3),
 }
-INVEST_CONFIRM_POINT = (0.77, 0.521)
+INVEST_CONFIRM_POINT = _point(0.77, 0.521)
 
 ENCOUNTER_OPTION_POINTS = {
-    1: (0.35, 0.5),
-    2: (0.65, 0.5),
+    1: _point(0.35, 0.5),
+    2: _point(0.65, 0.5),
 }
-ENCOUNTER_CONFIRM_POINT = (0.5, 0.84)
+ENCOUNTER_CONFIRM_POINT = _point(0.5, 0.84)
 
 FORTUNE_OPTION_POINTS = {
-    1: (0.2, 0.3),
-    2: (0.8, 0.3),
+    1: _point(0.2, 0.3),
+    2: _point(0.8, 0.3),
 }
-FORTUNE_CONFIRM_POINT = (0.77, 0.521)
+FORTUNE_CONFIRM_POINT = _point(0.77, 0.521)
 
-SPECIAL_EVENT_OPTION_POINT = (0.5, 0.25)
-SPECIAL_EVENT_CONFIRM_POINT = (0.77, 0.521)
-BOSS_PREVIEW_CONFIRM_POINT = (0.5, 0.7)
-SETTLE_NEXT_POINT = (0.5, 0.82)
-BATTLE_START_POINT = (0.5, 0.824)
-BATTLE_CONTINUE_POINT = (0.5, 0.824)
+SPECIAL_EVENT_OPTION_POINT = _point(0.5, 0.25)
+SPECIAL_EVENT_CONFIRM_POINT = _point(0.77, 0.521)
+BOSS_PREVIEW_CONFIRM_POINT = _point(0.5, 0.7)
+SETTLE_NEXT_POINT = _point(0.5, 0.82)
+BATTLE_START_POINT = _point(0.5, 0.824)
+BATTLE_CONTINUE_POINT = _point(0.5, 0.824)
 
 
 def _invalidate_cw_stage(session: SessionModel) -> None:
