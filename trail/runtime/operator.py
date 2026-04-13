@@ -87,7 +87,13 @@ class PyScreezeMatcher:
             raise TrailError("IMAGE_BACKEND_UNAVAILABLE", "pyscreeze backend unavailable") from exc
 
         screenshot = Image.open(BytesIO(image)) if isinstance(image, (bytes, bytearray)) else image
-        box = pyscreeze.locate(template, screenshot, confidence=0.9)
+        try:
+            box = pyscreeze.locate(template, screenshot, confidence=0.9)
+        except Exception as exc:
+            image_not_found = getattr(pyscreeze, "ImageNotFoundException", None)
+            if image_not_found is not None and isinstance(exc, image_not_found):
+                return None
+            raise
         if box is None:
             return None
         left, top, width, height = box

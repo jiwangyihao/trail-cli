@@ -1,12 +1,64 @@
 from __future__ import annotations
 
+import ctypes
+import sys
 from pathlib import Path
 from io import BytesIO
+from ctypes.wintypes import POINT, RECT
 
 from PIL import ImageGrab
 
 from trail.core.errors import TrailError
 from trail.runtime.model import Region, WindowBinding
+
+
+def _capture_win32_window(hwnd: int, region: Region):
+    import win32gui  # type: ignore
+    import win32ui  # type: ignore
+    from PIL import Image
+
+    if not hwnd or region.width <= 0 or region.height <= 0:
+        raise TrailError("SCREENSHOT_FAILED", "无法截取窗口内容")
+
+    hwnd_dc = None
+    mfc_dc = None
+    save_dc = None
+    save_bitmap = None
+
+    try:
+        hwnd_dc = win32gui.GetWindowDC(hwnd)
+        mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+        save_dc = mfc_dc.CreateCompatibleDC()
+        save_bitmap = win32ui.CreateBitmap()
+        save_bitmap.CreateCompatibleBitmap(mfc_dc, region.width, region.height)
+        save_dc.SelectObject(save_bitmap)
+
+        flags = 1 | 2
+        result = ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), flags)
+        if result == 0:
+            raise TrailError("SCREENSHOT_FAILED", "无法截取窗口内容")
+
+        bmp_info = save_bitmap.GetInfo()
+        bmp_data = save_bitmap.GetBitmapBits(True)
+        image = Image.frombuffer(
+            "RGB",
+            (bmp_info["bmWidth"], bmp_info["bmHeight"]),
+            bmp_data,
+            "raw",
+            "BGRX",
+            0,
+            1,
+        )
+        return image
+    finally:
+        if save_bitmap is not None:
+            win32gui.DeleteObject(save_bitmap.GetHandle())
+        if save_dc is not None:
+            save_dc.DeleteDC()
+        if mfc_dc is not None:
+            mfc_dc.DeleteDC()
+        if hwnd_dc is not None:
+            win32gui.ReleaseDC(hwnd, hwnd_dc)
 
 
 def attach_window(window_title: str) -> WindowBinding:
@@ -62,8 +114,22 @@ class WindowsWindowController:
 
         raise TrailError("WINDOW_NOT_FOUND", f"未找到窗口 {self.window_title}")
 
-    def _resolve_region(self) -> Region:
-        window = self._resolve_window()
+    def _get_client_region(self, hwnd: int) -> Region:
+        client_rect = RECT()
+        ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(client_rect))
+        left_top = POINT(client_rect.left, client_rect.top)
+        ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(left_top))
+        width = client_rect.right - client_rect.left
+        height = client_rect.bottom - client_rect.top
+        if width <= 0 or height <= 0:
+            raise TrailError("WINDOW_REGION_INVALID", f"无法获取窗口区域 {self.window_title}")
+        return Region(left=left_top.x, top=left_top.y, width=width, height=height)
+
+    def _resolve_region(self, window=None) -> Region:
+        window = self._resolve_window() if window is None else window
+        hwnd = getattr(window, "_hWnd", None)
+        if hwnd:
+            return self._get_client_region(int(hwnd))
         left = int(getattr(window, "left", 0))
         top = int(getattr(window, "top", 0))
         width = int(getattr(window, "width", 0))
@@ -73,18 +139,23 @@ class WindowsWindowController:
         return Region(left=left, top=top, width=width, height=height)
 
     def capture(self, *, from_x=None, from_y=None, to_x=None, to_y=None) -> bytes:
-        region = self._resolve_region()
+        window = self._resolve_window()
+        region = self._resolve_region(window)
         if all(value is not None for value in (from_x, from_y, to_x, to_y)):
             region = region.sub_region(from_x, from_y, to_x, to_y)
 
-        image = ImageGrab.grab(
-            bbox=(
-                region.left,
-                region.top,
-                region.left + region.width,
-                region.top + region.height,
+        hwnd = getattr(window, "_hWnd", None)
+        if sys.platform == "win32" and hwnd is not None:
+            image = _capture_win32_window(int(hwnd), region)
+        else:
+            image = ImageGrab.grab(
+                bbox=(
+                    region.left,
+                    region.top,
+                    region.left + region.width,
+                    region.top + region.height,
+                )
             )
-        )
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue()
