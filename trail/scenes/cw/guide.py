@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import html
 import json
 import re
 from pathlib import Path
 from time import monotonic, sleep
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from trail.artifacts.models import ArtifactMeta
@@ -18,15 +16,20 @@ from trail.scenes.cw.models import CwSceneState, ensure_cw_state
 from trail.session.models import SessionModel
 
 
-CW_GUIDE_DETAIL_API = "https://bbs-api.miyoushe.com/post/wapi/getPostFull"
-CW_GUIDE_GIDS = 6
+CW_GUIDE_DETAIL_API = "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/detail"
 CW_GUIDE_HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Referer": "https://www.miyoushe.com/",
+    "accept": "application/json, text/plain, */*",
+    "x-rpc-currencywar-tourn": "tourn",
+    "x-rpc-platform": "pc",
 }
-ARTICLE_ID_PATTERN = re.compile(r"(?:/article/|post_id=)(\d+)")
+LINEUP_ID_PATTERN = re.compile(r"#/lineup/([^/?]+)")
 SHARE_CODE_PATTERN = re.compile(r"##[^#\s]+##")
-HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+LINEUP_LEVEL_PATTERN = re.compile(r"(\d+)级搜牌")
+PURCHASE_COUNT_BY_STAR = {
+    1: 1,
+    2: 3,
+    3: 9,
+}
 
 CW_WIDTH = 1920
 CW_HEIGHT = 1080
@@ -132,8 +135,8 @@ def apply_cw_guide_via_ui(runtime, *, share_code: str) -> None:
     runtime.press_key("esc", presses=GUIDE_ESC_PRESSES, interval=GUIDE_ESC_INTERVAL)
 
 
-def _extract_article_id(url: str) -> str:
-    match = ARTICLE_ID_PATTERN.search(url)
+def _extract_lineup_id(url: str) -> str:
+    match = LINEUP_ID_PATTERN.search(url)
     if match is None:
         raise TrailError("GUIDE_URL_INVALID", f"unsupported cw guide url: {url}")
     return match.group(1)
@@ -152,80 +155,113 @@ def _read_json_response(request: Request, *, timeout: int) -> dict:
         raise TrailError("GUIDE_FETCH_FAILED", "guide fetch returned invalid json") from exc
 
 
-def _fetch_miyoushe_post(url: str, *, timeout: int = 10) -> dict:
-    article_id = _extract_article_id(url)
-    query = urlencode({"gids": CW_GUIDE_GIDS, "post_id": article_id, "read": 1})
-    request = Request(f"{CW_GUIDE_DETAIL_API}?{query}", headers=CW_GUIDE_HEADERS)
+def _fetch_lineup_detail(url: str, *, timeout: int = 10) -> tuple[str, dict]:
+    lineup_id = _extract_lineup_id(url)
+    request = Request(f"{CW_GUIDE_DETAIL_API}?id={lineup_id}&game=hkrpg", headers=CW_GUIDE_HEADERS)
     payload = _read_json_response(request, timeout=timeout)
-    if payload.get("retcode") != 0:
+    lineup = payload.get("data", {}).get("lineup")
+    if payload.get("retcode") != 0 or not isinstance(lineup, Mapping):
         raise TrailError("GUIDE_FETCH_FAILED", f"guide fetch failed: {payload.get('message', 'unknown error')}")
-
-    try:
-        return payload["data"]["post"]
-    except KeyError as exc:
-        raise TrailError("GUIDE_FETCH_FAILED", "guide fetch response missing post data") from exc
+    return lineup_id, dict(lineup)
 
 
-def _extract_post_text(post: dict) -> str:
-    post_data = post.get("post") or {}
-    structured_content = post_data.get("structured_content")
-
-    operations: list[object] = []
-    if isinstance(structured_content, str) and structured_content:
-        try:
-            structured_content = json.loads(structured_content)
-        except json.JSONDecodeError:
-            structured_content = None
-
-    if isinstance(structured_content, dict):
-        maybe_ops = structured_content.get("ops")
-        if isinstance(maybe_ops, list):
-            operations = maybe_ops
-    elif isinstance(structured_content, list):
-        operations = structured_content
-
-    if operations:
-        parts: list[str] = []
-        for operation in operations:
-            if not isinstance(operation, dict):
-                continue
-            insert = operation.get("insert")
-            if isinstance(insert, str):
-                parts.append(insert)
-        if parts:
-            return "".join(parts)
-
-    content = post_data.get("content", "")
-    stripped = HTML_TAG_PATTERN.sub("\n", content)
-    return html.unescape(stripped)
-
-
-def _extract_share_code(text: str, *, source_url: str) -> str:
-    match = SHARE_CODE_PATTERN.search(text)
-    if match is None:
+def _wrap_share_code(share_code: object, *, source_url: str) -> str:
+    if not isinstance(share_code, str) or not share_code:
         raise TrailError("GUIDE_SHARE_CODE_NOT_FOUND", f"guide share code not found: {source_url}")
-    return match.group(0)
+    if SHARE_CODE_PATTERN.fullmatch(share_code):
+        return share_code
+    return f"##{share_code}##"
+
+
+def _get_purchase_count(star: object) -> int:
+    if isinstance(star, bool):
+        return PURCHASE_COUNT_BY_STAR[1]
+    if isinstance(star, int):
+        return PURCHASE_COUNT_BY_STAR.get(star, PURCHASE_COUNT_BY_STAR[1])
+    return PURCHASE_COUNT_BY_STAR[1]
+
+
+def _append_roles(target: dict[str, int], roles: object, seen_names: set[str]) -> None:
+    if not isinstance(roles, list):
+        return
+    for role in roles:
+        if not isinstance(role, Mapping):
+            continue
+        name = role.get("name")
+        if not isinstance(name, str) or not name or name in seen_names:
+            continue
+        target[name] = _get_purchase_count(role.get("star"))
+        seen_names.add(name)
+
+
+def _get_lineup_level(lineup: Mapping) -> int:
+    tourn_detail = lineup.get("tourn_detail")
+    if not isinstance(tourn_detail, Mapping):
+        return 7
+    labels = tourn_detail.get("labels")
+    if not isinstance(labels, list):
+        return 7
+    for label in labels:
+        if not isinstance(label, Mapping):
+            continue
+        text = label.get("text")
+        if not isinstance(text, str):
+            continue
+        match = LINEUP_LEVEL_PATTERN.search(text)
+        if match is not None:
+            return int(match.group(1))
+    return 7
+
+
+def _get_mid_level(min_level: int) -> int:
+    return max(min_level, 9)
+
+
+def _build_roles_from_lineup(lineup: Mapping) -> tuple[dict[str, int], dict[str, int]]:
+    tourn_detail = lineup.get("tourn_detail")
+    if not isinstance(tourn_detail, Mapping):
+        raise TrailError("GUIDE_FETCH_FAILED", "guide fetch response missing lineup detail")
+    role_stages = tourn_detail.get("role_stages")
+    if not isinstance(role_stages, list) or not role_stages:
+        raise TrailError("GUIDE_FETCH_FAILED", "guide fetch response missing role stages")
+
+    final_stage = None
+    for stage in role_stages:
+        if isinstance(stage, Mapping) and stage.get("stage") == "Final":
+            final_stage = stage
+            break
+    if not isinstance(final_stage, Mapping):
+        final_stage = role_stages[-1]
+    if not isinstance(final_stage, Mapping):
+        raise TrailError("GUIDE_FETCH_FAILED", "guide fetch response missing final lineup stage")
+
+    on_field: dict[str, int] = {}
+    off_field: dict[str, int] = {}
+    seen_names: set[str] = set()
+    _append_roles(on_field, final_stage.get("front_roles"), seen_names)
+    _append_roles(off_field, final_stage.get("back_roles"), seen_names)
+    return on_field, off_field
 
 
 def fetch_cw_guide_payload(url: str) -> dict:
-    post = _fetch_miyoushe_post(url)
-    post_data = post.get("post") or {}
-    user_data = post.get("user") or {}
-    text = _extract_post_text(post)
+    lineup_id, lineup = _fetch_lineup_detail(url)
+    on_field, off_field = _build_roles_from_lineup(lineup)
+    min_level = _get_lineup_level(lineup)
+    tourn_detail = lineup.get("tourn_detail") if isinstance(lineup.get("tourn_detail"), Mapping) else {}
     payload = {
         "scene": "cw",
         "kind": "guide",
         "source_url": url,
-        "article_id": str(post_data.get("post_id", _extract_article_id(url))),
-        "title": str(post_data.get("subject") or "货币战争攻略码"),
-        "author": str(user_data.get("nickname") or ""),
-        "uploader": str(user_data.get("nickname") or ""),
-        "share_code": _extract_share_code(text, source_url=url),
+        "lineup_id": lineup_id,
+        "title": str(lineup.get("title") or "货币战争攻略码"),
+        "author": str(lineup.get("nickname") or ""),
+        "uploader": str(lineup.get("nickname") or ""),
+        "share_code": _wrap_share_code(tourn_detail.get("share_code"), source_url=url),
         "min_coins": 40,
-        "min_level": 7,
-        "mid_level": 7,
-        "on_field": {},
-        "off_field": {},
+        "min_level": min_level,
+        "mid_level": _get_mid_level(min_level),
+        "on_field": on_field,
+        "off_field": off_field,
     }
     return payload
 

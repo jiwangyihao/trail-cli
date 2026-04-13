@@ -21,6 +21,10 @@ def fake_fetcher(url: str):
     return {"share_code": "##demo##", "on_field": {"希儿": 9}, "off_field": {"佩拉": 3}}
 
 
+def fake_lineup_url(lineup_id: str = "70472857") -> str:
+    return f"https://act.miyoushe.com/sr/event/e20241220rpg-3Tii9M/index.html#/lineup/{lineup_id}"
+
+
 def fake_guide() -> dict:
     return {
         "artifact_id": "guide-demo",
@@ -49,21 +53,32 @@ class FakeHttpResponse:
         return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
 
 
-def fake_miyoushe_post_response(share_code: str = "##REAL-CODE##") -> dict:
+def fake_lineup_detail_response(share_code: str = "REAL-CODE", lineup_id: str = "70472857") -> dict:
     return {
         "retcode": 0,
         "message": "OK",
         "data": {
-            "post": {
-                "post": {
-                    "post_id": "70472857",
-                    "subject": "货币战争攻略码",
-                    "content": f"<p>【7群攻2银河学者】7级定战力</p><p>{share_code}</p>",
-                    "structured_content": json.dumps(
-                        [{"insert": f"【7群攻2银河学者】7级定战力\n{share_code}\n"}],
-                        ensure_ascii=False,
-                    ),
-                }
+            "lineup": {
+                "id": lineup_id,
+                "title": "7群攻2银河学者",
+                "description": "9级搜牌",
+                "nickname": "测试作者",
+                "tourn_detail": {
+                    "share_code": share_code,
+                    "labels": [{"text": "9级搜牌"}],
+                    "role_stages": [
+                        {
+                            "stage": "Opening",
+                            "front_roles": [{"name": "黑塔", "star": 1}],
+                            "back_roles": [{"name": "艾丝妲", "star": 1}],
+                        },
+                        {
+                            "stage": "Final",
+                            "front_roles": [{"name": "希儿", "star": 3}],
+                            "back_roles": [{"name": "佩拉", "star": 2}],
+                        },
+                    ],
+                },
             }
         },
     }
@@ -157,24 +172,97 @@ def test_guide_fetch_cw_cli_creates_artifact_from_remote_payload(cli_runner, fak
     import trail.scenes.cw.guide as guide_scene
 
     store = ArtifactStore(tmp_path / ".trail" / "artifacts")
+    captured_request: dict[str, object] = {}
+
+    def fake_urlopen(request, timeout=10):
+        captured_request["url"] = request.full_url
+        captured_request["timeout"] = timeout
+        captured_request["headers"] = {key.lower(): value for key, value in request.header_items()}
+        return FakeHttpResponse(fake_lineup_detail_response())
+
     monkeypatch.setattr(guide_cmd, "artifact_store_factory", lambda: store, raising=False)
     monkeypatch.setattr(
         guide_scene,
         "urlopen",
-        lambda request, timeout=10: FakeHttpResponse(fake_miyoushe_post_response()),
+        fake_urlopen,
         raising=False,
     )
 
-    result = cli_runner.invoke(app, ["guide", "fetch", "cw", "https://www.miyoushe.com/sr/article/70472857"])
+    result = cli_runner.invoke(app, ["guide", "fetch", "cw", fake_lineup_url()])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     artifact_path = Path(payload["data"]["path"])
     saved = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert captured_request == {
+        "url": "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/detail?id=70472857&game=hkrpg",
+        "timeout": 10,
+        "headers": {
+            "accept": "application/json, text/plain, */*",
+            "x-rpc-currencywar-tourn": "tourn",
+            "x-rpc-platform": "pc",
+        },
+    }
     assert saved["share_code"] == "##REAL-CODE##"
-    assert saved["source_url"] == "https://www.miyoushe.com/sr/article/70472857"
-    assert saved["title"] == "货币战争攻略码"
+    assert saved["source_url"] == fake_lineup_url()
+    assert saved["lineup_id"] == "70472857"
+    assert saved["title"] == "7群攻2银河学者"
+    assert saved["author"] == "测试作者"
+    assert saved["uploader"] == "测试作者"
+    assert saved["min_level"] == 9
+    assert saved["mid_level"] == 9
+    assert saved["on_field"] == {"希儿": 9}
+    assert saved["off_field"] == {"佩拉": 3}
+
+
+def test_fetch_cw_guide_payload_builds_payload_from_lineup_detail(monkeypatch):
+    guide_module = load_cw_guide_module()
+    fetch_cw_guide_payload = getattr(guide_module, "fetch_cw_guide_payload", None)
+    assert fetch_cw_guide_payload is not None
+
+    monkeypatch.setattr(
+        guide_module,
+        "urlopen",
+        lambda request, timeout=10: FakeHttpResponse(fake_lineup_detail_response(share_code="ABC-123", lineup_id="lineup-demo")),
+        raising=False,
+    )
+
+    payload = fetch_cw_guide_payload(fake_lineup_url("lineup-demo"))
+
+    assert payload == {
+        "scene": "cw",
+        "kind": "guide",
+        "source_url": fake_lineup_url("lineup-demo"),
+        "lineup_id": "lineup-demo",
+        "title": "7群攻2银河学者",
+        "author": "测试作者",
+        "uploader": "测试作者",
+        "share_code": "##ABC-123##",
+        "min_coins": 40,
+        "min_level": 9,
+        "mid_level": 9,
+        "on_field": {"希儿": 9},
+        "off_field": {"佩拉": 3},
+    }
+
+
+def test_fetch_cw_guide_payload_rejects_article_url(monkeypatch):
+    guide_module = load_cw_guide_module()
+    fetch_cw_guide_payload = getattr(guide_module, "fetch_cw_guide_payload", None)
+    assert fetch_cw_guide_payload is not None
+
+    monkeypatch.setattr(
+        guide_module,
+        "urlopen",
+        lambda request, timeout=10: pytest.fail("lineup parser should reject article url before requesting api"),
+        raising=False,
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        fetch_cw_guide_payload("https://www.miyoushe.com/sr/article/70472857")
+
+    assert exc_info.value.code == "GUIDE_URL_INVALID"
 
 
 def test_fetch_cw_guide_returns_artifact_meta(tmp_path):
@@ -419,28 +507,6 @@ def test_cw_guide_apply_cli_classifies_invalid_artifact(cli_runner, fake_runtime
     payload = json.loads(result.stdout)
     assert payload["ok"] is False
     assert payload["error"]["code"] == "GUIDE_ARTIFACT_INVALID"
-
-
-@pytest.mark.parametrize(
-    "structured_content",
-    [
-        json.dumps({"ops": [{"insert": {"image": "https://example.invalid/demo.png"}}]}, ensure_ascii=False),
-        json.dumps(["unexpected", {"insert": {"image": "https://example.invalid/demo.png"}}], ensure_ascii=False),
-    ],
-)
-def test_extract_post_text_falls_back_to_html_when_structured_content_shape_unexpected(structured_content):
-    guide_module = load_cw_guide_module()
-    extract_post_text = getattr(guide_module, "_extract_post_text", None)
-    assert extract_post_text is not None
-
-    post = {
-        "post": {
-            "content": "<p>【回退】</p><p>##HTML-FALLBACK##</p>",
-            "structured_content": structured_content,
-        }
-    }
-
-    assert "##HTML-FALLBACK##" in extract_post_text(post)
 
 
 @pytest.mark.parametrize("field", ["on_field", "off_field", "priority", "positioning"])
