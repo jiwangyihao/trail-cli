@@ -1,4 +1,10 @@
 CW_RESOURCE_ALIASES = {
+    "entry.start": "start_currency_wars.png",
+    "entry.new": "enter_game.png",
+    "entry.continue": "continue_progress.png",
+    "entry.start_game": "start_game.png",
+    "entry.difficulty.highest": "return_highest_rank.png",
+    "entry.difficulty.lowest": "down_arrow.png",
     "guide.strategy": "strategy.png",
     "guide.enter_code": "enter_strategy_code.png",
     "guide.confirm": "ensure2.png",

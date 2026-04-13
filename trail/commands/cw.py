@@ -186,16 +186,19 @@ def cw_enter(
     difficulty: EnterDifficulty = typer.Option(EnterDifficulty.CURRENT, "--difficulty"),
     battle_mode: BattleMode = typer.Option(BattleMode.STANDARD, "--battle-mode"),
 ) -> None:
+    runtime = _runtime_for_session(session)
+
     def action(loaded):
         refreshed = enter_cw(
             loaded,
             mode=mode.value,
             difficulty=difficulty.value,
             battle_mode=battle_mode.value,
+            runtime=runtime,
         )
         return refreshed.scene_state["cw"]["entry"]
 
-    _run(session, "cw.enter", action)
+    _run(session, "cw.enter", action, runtime=runtime)
 
 
 @cw_guide_app.command("apply")

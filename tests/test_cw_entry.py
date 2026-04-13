@@ -3,8 +3,36 @@ from __future__ import annotations
 import json
 
 from trail.cli import app
+from trail.runtime.model import Box
+from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.entry import enter_cw
 from trail.session.store import SessionStore
+
+
+def _asset(alias: str) -> str:
+    return str(resolve_scene_asset("cw", alias))
+
+
+def _box(alias: str, *, left: int, top: int, width: int = 40, height: int = 20) -> Box:
+    return Box(left=left, top=top, width=width, height=height, source=_asset(alias))
+
+
+def _install_template_runtime(runtime, *, locate_results: dict[str, object] | None = None, wait_results: dict[str, object] | None = None) -> None:
+    locate_results = locate_results or {}
+    wait_results = wait_results or {}
+
+    def locate(template: str, **kwargs):
+        del kwargs
+        runtime.locate_calls.append(template)
+        return locate_results.get(template)
+
+    def wait_img(template: str, timeout: int = 10, interval: float = 0.5):
+        del timeout, interval
+        runtime.wait_calls.append(template)
+        return wait_results.get(template)
+
+    runtime.locate = locate
+    runtime.wait_img = wait_img
 
 
 def test_enter_cw_records_entry_snapshot_and_invalidates_stage(tmp_path):
@@ -20,18 +48,98 @@ def test_enter_cw_records_entry_snapshot_and_invalidates_stage(tmp_path):
     assert refreshed.scene_state["cw"]["stage"] == {"stale": True}
 
 
+def test_enter_cw_runs_new_mode_ui_flow_from_start_related_pages(tmp_path):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.last_stage = {"scene": "cw", "value": "shop"}
+
+    start_box = _box("entry.start", left=10, top=20)
+    enter_box = _box("entry.new", left=80, top=90)
+    highest_box = _box("entry.difficulty.highest", left=140, top=160)
+    start_game_box = _box("entry.start_game", left=220, top=260)
+    next_step_box = _box("stage.settle", left=320, top=360)
+    invest_box = _box("stage.invest", left=420, top=460)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={
+            _asset("entry.start"): start_box,
+            _asset("stage.preparation"): None,
+            _asset("stage.settle"): next_step_box,
+            _asset("stage.invest"): invest_box,
+        },
+        wait_results={
+            _asset("entry.new"): enter_box,
+            _asset("entry.difficulty.highest"): highest_box,
+            _asset("entry.start_game"): start_game_box,
+            _asset("stage.settle"): next_step_box,
+            _asset("stage.invest"): invest_box,
+        },
+    )
+
+    refreshed = enter_cw(session, mode="new", difficulty="highest", battle_mode="overclock", runtime=runtime)
+
+    assert refreshed.scene_state["cw"]["entry"] == {
+        "mode": "new",
+        "difficulty": "highest",
+        "battle_mode": "overclock",
+    }
+    assert refreshed.scene_state["cw"]["stage"] == {"stale": True}
+    assert refreshed.last_stage is None
+    assert runtime.clicks == [
+        start_box.center,
+        (300, 450),
+        enter_box.center,
+        highest_box.center,
+        start_game_box.center,
+        next_step_box.center,
+        (960, 540),
+        (384, 324),
+        (1478, 562),
+    ]
+
+
 def test_cw_enter_cli_persists_entry_snapshot(cli_runner, fake_runtime, fake_session, tmp_path):
-    result = cli_runner.invoke(app, ["cw", "enter", "--session", fake_session, "--mode", "new"])
+    continue_box = _box("entry.continue", left=60, top=80)
+    blank_box = _box("stage.boss_preview", left=160, top=180)
+    _install_template_runtime(
+        fake_runtime,
+        locate_results={
+            _asset("stage.preparation"): None,
+            _asset("entry.continue"): continue_box,
+        },
+        wait_results={
+            _asset("entry.continue"): continue_box,
+            _asset("stage.boss_preview"): blank_box,
+        },
+    )
+
+    result = cli_runner.invoke(app, ["cw", "enter", "--session", fake_session, "--mode", "continue"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"] == {
-        "mode": "new",
+        "mode": "continue",
         "difficulty": "current",
         "battle_mode": "standard",
     }
     assert payload["screenshot"]
+    assert fake_runtime.clicks == [continue_box.center, blank_box.center]
 
     session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
     assert session.scene_state["cw"]["entry"] == payload["data"]
