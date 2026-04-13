@@ -103,7 +103,10 @@ def _select_difficulty(runtime, *, difficulty: str) -> None:
 
 def _handle_boss_info_flow(runtime) -> None:
     _click_box_center(runtime, _wait(runtime, "stage.settle"))
-    runtime.click_point(*BOSS_INFO_DISMISS_POINT)
+
+
+def _consume_click_blank_prompt(runtime) -> None:
+    _click_box_center(runtime, _wait(runtime, "stage.boss_preview"))
 
 
 def _handle_invest_environment_flow(runtime) -> None:
@@ -137,6 +140,7 @@ def _enter_new_game(runtime, *, difficulty: str) -> None:
     _select_difficulty(runtime, difficulty=difficulty)
     _click_box_center(runtime, _wait(runtime, "entry.start_game"))
     _handle_boss_info_flow(runtime)
+    _consume_click_blank_prompt(runtime)
     _handle_invest_environment_flow(runtime)
 
 

@@ -66,6 +66,7 @@ def test_enter_cw_runs_new_mode_ui_flow_from_start_related_pages(tmp_path):
     highest_box = _box("entry.difficulty.highest", left=140, top=160)
     start_game_box = _box("entry.start_game", left=220, top=260)
     next_step_box = _box("stage.settle", left=320, top=360)
+    blank_box = _box("stage.boss_preview", left=360, top=400)
     invest_box = _box("stage.invest", left=420, top=460)
 
     class Runtime:
@@ -96,6 +97,7 @@ def test_enter_cw_runs_new_mode_ui_flow_from_start_related_pages(tmp_path):
             _asset("entry.difficulty.highest"): highest_box,
             _asset("entry.start_game"): start_game_box,
             _asset("stage.settle"): next_step_box,
+            _asset("stage.boss_preview"): blank_box,
             _asset("stage.invest"): invest_box,
         },
     )
@@ -116,9 +118,17 @@ def test_enter_cw_runs_new_mode_ui_flow_from_start_related_pages(tmp_path):
         highest_box.center,
         start_game_box.center,
         next_step_box.center,
-        (960, 540),
+        blank_box.center,
         (384, 324),
         (1478, 562),
+    ]
+    assert runtime.wait_calls == [
+        _asset("entry.new"),
+        _asset("entry.difficulty.highest"),
+        _asset("entry.start_game"),
+        _asset("stage.settle"),
+        _asset("stage.boss_preview"),
+        _asset("stage.invest"),
     ]
 
 
