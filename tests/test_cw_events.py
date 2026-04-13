@@ -10,6 +10,10 @@ from trail.scenes.cw.models import ensure_cw_state
 from trail.session.store import SessionStore
 
 
+def result_text(result) -> str:
+    return result.stdout + getattr(result, "stderr", "")
+
+
 def load_cw_events_module():
     try:
         return importlib.import_module("trail.scenes.cw.events")
@@ -166,3 +170,40 @@ def test_cw_event_handle_cli_returns_type_and_action(cli_runner, fake_runtime, f
         "data": {"event_type": "special", "handled_action": "confirm"},
         "error": None,
     }
+
+
+@pytest.mark.parametrize(
+    ("argv"),
+    [
+        ["cw", "replenish", "read"],
+        ["cw", "invest", "read"],
+        ["cw", "encounter", "read"],
+        ["cw", "fortune", "read"],
+        ["cw", "event", "handle"],
+    ],
+)
+def test_cw_event_cli_requires_session_for_read_and_handle_commands(cli_runner, argv):
+    result = cli_runner.invoke(app, argv)
+    output = result_text(result)
+
+    assert result.exit_code != 0
+    assert "Missing option" in output
+    assert "--session" in output
+
+
+@pytest.mark.parametrize(
+    ("argv"),
+    [
+        ["cw", "replenish", "choose", "--option", "1"],
+        ["cw", "invest", "choose", "--option", "2"],
+        ["cw", "encounter", "choose", "--option", "1"],
+        ["cw", "fortune", "choose", "--option", "2"],
+    ],
+)
+def test_cw_event_choose_cli_requires_session_when_option_is_present(cli_runner, argv):
+    result = cli_runner.invoke(app, argv)
+    output = result_text(result)
+
+    assert result.exit_code != 0
+    assert "Missing option" in output
+    assert "--session" in output
