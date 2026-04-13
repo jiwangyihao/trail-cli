@@ -15,6 +15,11 @@ from trail.commands.helpers import (
 )
 from trail.scenes.cw.entry import enter_cw
 from trail.scenes.cw.events import (
+    build_cw_encounter_chooser,
+    build_cw_event_handler,
+    build_cw_fortune_chooser,
+    build_cw_invest_chooser,
+    build_cw_replenish_chooser,
     choose_cw_encounter,
     choose_cw_fortune,
     choose_cw_invest,
@@ -66,31 +71,11 @@ shop_scanner_factory = build_cw_shop_scanner
 shop_buyer_factory = build_cw_shop_buyer
 shop_refresher_factory = build_cw_shop_refresher
 shop_closer_factory = build_cw_shop_closer
-
-
-def _default_option_chooser(option: int) -> None:
-    del option
-
-
-def _default_option_chooser_factory(runtime):
-    del runtime
-    return _default_option_chooser
-
-
-def _default_event_handler() -> tuple[str, str]:
-    return "unknown", "noop"
-
-
-def _default_event_handler_factory(runtime):
-    del runtime
-    return _default_event_handler
-
-
-replenish_chooser_factory = _default_option_chooser_factory
-invest_chooser_factory = _default_option_chooser_factory
-encounter_chooser_factory = _default_option_chooser_factory
-fortune_chooser_factory = _default_option_chooser_factory
-event_handler_factory = _default_event_handler_factory
+replenish_chooser_factory = build_cw_replenish_chooser
+invest_chooser_factory = build_cw_invest_chooser
+encounter_chooser_factory = build_cw_encounter_chooser
+fortune_chooser_factory = build_cw_fortune_chooser
+event_handler_factory = build_cw_event_handler
 
 cw_app = typer.Typer(no_args_is_help=True)
 cw_guide_app = typer.Typer(no_args_is_help=True)

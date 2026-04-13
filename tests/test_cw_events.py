@@ -60,11 +60,13 @@ def test_event_chooses_call_chooser_and_invalidate_stage_snapshot(tmp_path, meth
 
     session = build_fake_cw_session(tmp_path)
     ensure_cw_state(session)["stage"] = {"value": "shop", "stale": False}
+    session.last_stage = {"scene": "cw", "value": "shop"}
     chosen: list[int] = []
 
     refreshed = method(session, option=option, chooser=lambda selected: chosen.append(selected))
 
     assert refreshed.scene_state["cw"]["stage"] == {"stale": True}
+    assert refreshed.last_stage is None
     assert chosen == [option]
 
 
@@ -76,9 +78,13 @@ def test_event_handle_returns_type_and_action(tmp_path):
     from tests.conftest import build_fake_cw_session, fake_event_handler
 
     session = build_fake_cw_session(tmp_path)
+    ensure_cw_state(session)["stage"] = {"value": "event", "stale": False}
+    session.last_stage = {"scene": "cw", "value": "event"}
     result = handle_cw_event(session, handler=fake_event_handler)
 
     assert result == {"event_type": "special", "handled_action": "confirm"}
+    assert session.scene_state["cw"]["stage"] == {"stale": True}
+    assert session.last_stage is None
 
 
 @pytest.mark.parametrize(
@@ -135,6 +141,7 @@ def test_cw_event_choose_cli_invalidates_stage_snapshot(
     store = SessionStore(tmp_path / ".trail" / "sessions")
     session = store.load(fake_session)
     ensure_cw_state(session)["stage"] = {"value": "shop", "stale": False}
+    session.last_stage = {"scene": "cw", "value": "shop"}
     store.save(session)
 
     result = cli_runner.invoke(app, [*argv, "--session", fake_session, "--option", str(option)])
@@ -148,6 +155,44 @@ def test_cw_event_choose_cli_invalidates_stage_snapshot(
 
     session = store.load(fake_session)
     assert session.scene_state["cw"]["stage"] == {"stale": True}
+    assert session.last_stage is None
+
+
+@pytest.mark.parametrize(
+    ("argv", "option", "expected_clicks"),
+    [
+        (["cw", "replenish", "choose"], 1, [(0.2, 0.52), (0.88, 0.91)]),
+        (["cw", "invest", "choose"], 2, [(0.5, 0.3), (0.77, 0.521)]),
+        (["cw", "encounter", "choose"], 1, [(0.35, 0.5), (0.5, 0.84)]),
+        (["cw", "fortune", "choose"], 2, [(0.8, 0.3), (0.77, 0.521)]),
+    ],
+)
+def test_cw_event_choose_cli_uses_default_runtime_actions_and_clears_last_stage(
+    cli_runner,
+    fake_runtime,
+    fake_session,
+    argv,
+    option,
+    expected_clicks,
+    tmp_path,
+):
+    store = SessionStore(tmp_path / ".trail" / "sessions")
+    session = store.load(fake_session)
+    ensure_cw_state(session)["stage"] = {"value": "shop", "stale": False}
+    session.last_stage = {"scene": "cw", "value": "shop"}
+    store.save(session)
+
+    result = cli_runner.invoke(app, [*argv, "--session", fake_session, "--option", str(option)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"] == {"stale": True}
+    assert fake_runtime.clicks == expected_clicks
+
+    session = store.load(fake_session)
+    assert session.scene_state["cw"]["stage"] == {"stale": True}
+    assert session.last_stage is None
 
 
 def test_cw_event_handle_cli_returns_type_and_action(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
@@ -170,6 +215,26 @@ def test_cw_event_handle_cli_returns_type_and_action(cli_runner, fake_runtime, f
         "data": {"event_type": "special", "handled_action": "confirm"},
         "error": None,
     }
+
+
+def test_cw_event_handle_cli_uses_default_handler_and_clears_last_stage(cli_runner, fake_runtime, fake_session, tmp_path):
+    store = SessionStore(tmp_path / ".trail" / "sessions")
+    session = store.load(fake_session)
+    ensure_cw_state(session)["stage"] = {"value": "event", "stale": False}
+    session.last_stage = {"scene": "cw", "value": "event"}
+    store.save(session)
+
+    result = cli_runner.invoke(app, ["cw", "event", "handle", "--session", fake_session])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"] == {"event_type": "special", "handled_action": "confirm"}
+    assert fake_runtime.clicks == [(0.5, 0.25), (0.77, 0.521)]
+
+    session = store.load(fake_session)
+    assert session.scene_state["cw"]["stage"] == {"stale": True}
+    assert session.last_stage is None
 
 
 @pytest.mark.parametrize(
