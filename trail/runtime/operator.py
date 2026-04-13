@@ -29,9 +29,11 @@ class OcrEngine(Protocol):
 
 
 class InputDriver(Protocol):
+    def ensure_available(self) -> None: ...
     def click(self, x: float, y: float, **kwargs) -> None: ...
     def drag(self, from_x: float, from_y: float, to_x: float, to_y: float) -> None: ...
     def press(self, key: str) -> None: ...
+    def hotkey(self, *keys: str) -> None: ...
 
 
 class RuntimeOperator:
@@ -71,6 +73,9 @@ class RuntimeOperator:
         return self.ocr_engine.run(image)
 
     def _prepare_input_target(self) -> None:
+        ensure_available = getattr(self.input, "ensure_available", None)
+        if callable(ensure_available):
+            ensure_available()
         self.window.prepare_input()
 
     def _to_screen_point(self, x: int | float, y: int | float) -> tuple[int | float, int | float]:
@@ -130,6 +135,10 @@ class RuntimeOperator:
             self.input.press(key)
             if index + 1 < presses:
                 sleep(interval)
+
+    def hotkey(self, *keys: str):
+        self._prepare_input_target()
+        self.input.hotkey(*keys)
 
     def capture_after_action(self, optional: bool = False):
         try:
@@ -192,6 +201,9 @@ class PyAutoGuiInputDriver:
         pyautogui = self._load_backend()
         pyautogui.click(x, y)
 
+    def ensure_available(self) -> None:
+        self._load_backend()
+
     def drag(self, from_x: float, from_y: float, to_x: float, to_y: float) -> None:
         pyautogui = self._load_backend()
         pyautogui.moveTo(from_x, from_y)
@@ -200,6 +212,10 @@ class PyAutoGuiInputDriver:
     def press(self, key: str) -> None:
         pyautogui = self._load_backend()
         pyautogui.press(key)
+
+    def hotkey(self, *keys: str) -> None:
+        pyautogui = self._load_backend()
+        pyautogui.hotkey(*keys)
 
 
 def build_window_controller(

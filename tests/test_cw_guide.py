@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import importlib
 import json
 from pathlib import Path
@@ -90,11 +91,45 @@ def test_apply_guide_populates_cw_scene_state(tmp_path):
     assert "slots" in cw_state
     assert cw_state["guide"]["artifact"] == "guide-demo"
     assert cw_state["guide"]["share_code"] == "##demo##"
+    assert cw_state["guide"]["on_field"] == {"希儿": 9}
+    assert cw_state["guide"]["off_field"] == {"佩拉": 3}
     assert cw_state["guide"]["remaining_purchases"] == {"希儿": 9, "佩拉": 3}
     assert cw_state["constraints"]["min_coins"] == 40
     assert cw_state["constraints"]["min_level"] == 7
     assert cw_state["constraints"]["mid_level"] == 9
     assert cw_state["slots"]["stale"] is True
+
+
+def test_apply_guide_preserves_source_metadata_for_later_scene_steps(tmp_path):
+    guide_module = load_cw_guide_module()
+    apply_cw_guide = getattr(guide_module, "apply_cw_guide", None)
+    assert apply_cw_guide is not None
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    refreshed = apply_cw_guide(
+        session,
+        guide_data={
+            **fake_guide(),
+            "source_url": "https://www.miyoushe.com/sr/article/70472857",
+            "article_id": "70472857",
+            "title": "货币战争攻略码",
+            "author": "测试作者",
+            "uploader": "测试作者",
+        },
+    )
+
+    assert refreshed.scene_state["cw"]["guide"] == {
+        "artifact": "guide-demo",
+        "share_code": "##demo##",
+        "source_url": "https://www.miyoushe.com/sr/article/70472857",
+        "article_id": "70472857",
+        "title": "货币战争攻略码",
+        "author": "测试作者",
+        "uploader": "测试作者",
+        "on_field": {"希儿": 9},
+        "off_field": {"佩拉": 3},
+        "remaining_purchases": {"希儿": 9, "佩拉": 3},
+    }
 
 
 def test_apply_guide_clears_existing_sell_plan(tmp_path):
@@ -221,10 +256,19 @@ def test_cw_guide_apply_cli_runs_runtime_action_chain_and_persists_scene_state(
     artifact_store = ArtifactStore(tmp_path / ".trail" / "artifacts")
     meta = artifact_store.create(scene="cw", kind="guide", payload=fake_guide())
     monkeypatch.setattr(cw_cmd, "artifact_store_factory", lambda: artifact_store, raising=False)
-    copied: list[str] = []
-    pasted: list[str] = []
-    monkeypatch.setattr(guide_scene, "_copy_text_to_clipboard", lambda text: copied.append(text), raising=False)
-    monkeypatch.setattr(guide_scene, "_paste_clipboard_text", lambda: pasted.append("paste"), raising=False)
+    clipboard_events: list[tuple[str, str | None]] = []
+
+    @contextmanager
+    def fake_temporary_clipboard_text(text: str):
+        clipboard_events.append(("set", text))
+        try:
+            yield
+        finally:
+            clipboard_events.append(("restore", None))
+
+    monkeypatch.setattr(guide_scene, "_temporary_clipboard_text", fake_temporary_clipboard_text, raising=False)
+    monkeypatch.setattr(guide_scene, "_copy_text_to_clipboard", lambda text: clipboard_events.append(("legacy-copy", text)), raising=False)
+    monkeypatch.setattr(guide_scene, "_paste_clipboard_text", lambda: clipboard_events.append(("legacy-paste", None)), raising=False)
     fake_runtime.wait_result = Box(left=10, top=20, width=40, height=20, source="guide.png")
 
     result = cli_runner.invoke(app, ["cw", "guide", "apply", "--session", fake_session, "--guide", meta.artifact_id])
@@ -248,11 +292,13 @@ def test_cw_guide_apply_cli_runs_runtime_action_chain_and_persists_scene_state(
         (30, 30),
     ]
     assert fake_runtime.keys == [("esc", 3, 1)]
-    assert copied == ["##demo##"]
-    assert pasted == ["paste"]
+    assert fake_runtime.hotkeys == [("ctrl", "v")]
+    assert clipboard_events == [("set", "##demo##"), ("restore", None)]
 
     session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
     assert session.scene_state["cw"]["guide"]["artifact"] == meta.artifact_id
+    assert session.scene_state["cw"]["guide"]["on_field"] == {"希儿": 9}
+    assert session.scene_state["cw"]["guide"]["off_field"] == {"佩拉": 3}
     assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"希儿": 9, "佩拉": 3}
     assert session.scene_state["cw"]["constraints"]["min_coins"] == 40
     assert session.scene_state["cw"]["constraints"]["min_level"] == 7
@@ -282,10 +328,116 @@ def test_cw_guide_apply_cli_rejects_invalid_artifact(cli_runner, fake_runtime, f
         "message": "guide artifact scene must be cw, got: ocr",
     }
     assert fake_runtime.wait_calls == []
+    assert fake_runtime.hotkeys == []
     assert fake_runtime.clicks == []
     assert fake_runtime.keys == []
-    assert copied == []
-    assert pasted == []
+
+
+def test_temporary_clipboard_text_restores_previous_text_after_success(monkeypatch):
+    guide_module = load_cw_guide_module()
+    temporary_clipboard_text = getattr(guide_module, "_temporary_clipboard_text", None)
+    assert temporary_clipboard_text is not None
+
+    clipboard = {"value": "user clipboard"}
+    writes: list[str | None] = []
+    monkeypatch.setattr(guide_module, "_read_clipboard_text", lambda: clipboard["value"])
+    monkeypatch.setattr(
+        guide_module,
+        "_write_clipboard_text",
+        lambda text: writes.append(text) or clipboard.update(value=text),
+    )
+    monkeypatch.setattr(
+        guide_module,
+        "_clear_clipboard",
+        lambda: writes.append(None) or clipboard.update(value=None),
+    )
+
+    with temporary_clipboard_text("##demo##"):
+        assert clipboard["value"] == "##demo##"
+
+    assert clipboard["value"] == "user clipboard"
+    assert writes == ["##demo##", "user clipboard"]
+
+
+def test_temporary_clipboard_text_restores_previous_text_after_failure(monkeypatch):
+    guide_module = load_cw_guide_module()
+    temporary_clipboard_text = getattr(guide_module, "_temporary_clipboard_text", None)
+    assert temporary_clipboard_text is not None
+
+    clipboard = {"value": "user clipboard"}
+    writes: list[str | None] = []
+    monkeypatch.setattr(guide_module, "_read_clipboard_text", lambda: clipboard["value"])
+    monkeypatch.setattr(
+        guide_module,
+        "_write_clipboard_text",
+        lambda text: writes.append(text) or clipboard.update(value=text),
+    )
+    monkeypatch.setattr(
+        guide_module,
+        "_clear_clipboard",
+        lambda: writes.append(None) or clipboard.update(value=None),
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with temporary_clipboard_text("##demo##"):
+            raise RuntimeError("boom")
+
+    assert clipboard["value"] == "user clipboard"
+    assert writes == ["##demo##", "user clipboard"]
+
+
+def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit(monkeypatch):
+    guide_module = load_cw_guide_module()
+    apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
+    assert apply_cw_guide_via_ui is not None
+
+    apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
+    confirm_template = str((CW_ASSET_ROOT / "ensure2.png").resolve())
+    wait_calls: list[str] = []
+    locate_calls: list[str] = []
+    hotkeys: list[tuple[str, ...]] = []
+    keys: list[tuple[str, int, float]] = []
+
+    class RuntimeStub:
+        def __init__(self):
+            self._locate_results = [Box(left=10, top=20, width=40, height=20, source=apply_template), None]
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            wait_calls.append(template)
+            return Box(left=10, top=20, width=40, height=20, source=template)
+
+        def click_point(self, x: float, y: float, **kwargs):
+            return None
+
+        def hotkey(self, *combo: str):
+            hotkeys.append(tuple(combo))
+
+        def locate(self, template: str, **kwargs):
+            locate_calls.append(template)
+            if template != apply_template:
+                return None
+            if self._locate_results:
+                return self._locate_results.pop(0)
+            return None
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            keys.append((key, presses, interval))
+
+    @contextmanager
+    def fake_temporary_clipboard_text(text: str):
+        assert text == "##demo##"
+        yield
+
+    monkeypatch.setattr(guide_module, "_temporary_clipboard_text", fake_temporary_clipboard_text, raising=False)
+    monkeypatch.setattr(guide_module, "_copy_text_to_clipboard", lambda text: None, raising=False)
+    monkeypatch.setattr(guide_module, "_paste_clipboard_text", lambda: None, raising=False)
+
+    apply_cw_guide_via_ui(RuntimeStub(), share_code="##demo##")
+
+    assert confirm_template in wait_calls
+    assert hotkeys == [("ctrl", "v")]
+    assert locate_calls == [apply_template, apply_template]
+    assert keys == [("esc", 3, 1)]
 
 
 @pytest.mark.parametrize(

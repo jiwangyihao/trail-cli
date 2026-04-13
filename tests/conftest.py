@@ -23,12 +23,14 @@ class FakeRuntime:
     def __init__(self, screenshot_path: Path | None = None):
         self._shot = screenshot_path or Path("shot.png")
         self.locate_result = None
+        self.locate_calls: list[str] = []
         self.wait_result = None
         self.wait_calls: list[str] = []
         self.ocr_result = []
         self.clicks: list[tuple[float, float]] = []
         self.drags: list[tuple[float, float, float, float]] = []
         self.keys: list[tuple[str, int, float]] = []
+        self.hotkeys: list[tuple[str, ...]] = []
 
     def capture_after_action(self, optional: bool = False):
         return self._shot
@@ -37,6 +39,7 @@ class FakeRuntime:
         return self.ocr_result
 
     def locate(self, template: str, **kwargs):
+        self.locate_calls.append(template)
         return self.locate_result
 
     def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
@@ -51,6 +54,9 @@ class FakeRuntime:
 
     def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
         self.keys.append((key, presses, interval))
+
+    def hotkey(self, *keys: str):
+        self.hotkeys.append(tuple(keys))
 
 
 @pytest.fixture
