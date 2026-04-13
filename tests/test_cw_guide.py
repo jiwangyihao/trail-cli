@@ -63,19 +63,37 @@ def fake_lineup_detail_response(share_code: str = "REAL-CODE", lineup_id: str = 
                 "title": "7群攻2银河学者",
                 "description": "9级搜牌",
                 "nickname": "测试作者",
+                "has_change_equip": True,
+                "has_expert": True,
+                "certification": 3,
+                "weight": 999,
+                "mongo_json": {"debug": True},
+                "forbid_edit": False,
+                "draft_info": {"state": "hidden"},
+                "uid": "123456",
+                "account_uid": "654321",
                 "tourn_detail": {
                     "share_code": share_code,
-                    "labels": [{"text": "9级搜牌"}],
+                    "labels": [{"text": "9级搜牌"}, {"text": "银河学者"}],
+                    "support_hard": True,
+                    "rpg_game_big_version": "3.1",
+                    "first_fight_augments": [{"name": "银河大乐透"}, {"name": "超距遥感"}],
+                    "second_fight_augments": [{"name": "折射棱镜"}],
+                    "portals": [{"name": "购物区"}, {"name": "事件区"}],
+                    "order_basic": [{"name": "抢前排输出"}, {"name": "补减防"}],
+                    "order_compose": [{"name": "推进器"}],
                     "role_stages": [
                         {
                             "stage": "Opening",
-                            "front_roles": [{"name": "黑塔", "star": 1}],
-                            "back_roles": [{"name": "艾丝妲", "star": 1}],
+                            "front_roles": [{"name": "黑塔", "star": 1, "rarity": 1, "is_carry": False}],
+                            "back_roles": [{"name": "艾丝妲", "star": 1, "rarity": 1, "is_carry": False}],
+                            "traits": [{"name": "智识"}],
                         },
                         {
                             "stage": "Final",
-                            "front_roles": [{"name": "希儿", "star": 3}],
-                            "back_roles": [{"name": "佩拉", "star": 2}],
+                            "front_roles": [{"name": "希儿", "star": 3, "rarity": 3, "is_carry": True}],
+                            "back_roles": [{"name": "佩拉", "star": 2, "rarity": 2, "is_carry": False}],
+                            "traits": [{"name": "巡猎"}, {"name": "量子"}],
                         },
                     ],
                 },
@@ -324,10 +342,41 @@ def test_guide_fetch_cw_cli_creates_artifact_from_remote_payload(cli_runner, fak
     assert saved["title"] == "7群攻2银河学者"
     assert saved["author"] == "测试作者"
     assert saved["uploader"] == "测试作者"
+    assert saved["labels"] == ["9级搜牌", "银河学者"]
+    assert saved["support_hard"] is True
+    assert saved["has_change_equip"] is True
+    assert saved["has_expert"] is True
+    assert saved["version"] == "3.1"
     assert saved["min_level"] == 9
     assert saved["mid_level"] == 9
     assert saved["on_field"] == {"希儿": 9}
     assert saved["off_field"] == {"佩拉": 3}
+    assert saved["role_stages"] == [
+        {
+            "stage": "Opening",
+            "front_roles": [{"name": "黑塔", "star": 1, "rarity": 1, "is_carry": False}],
+            "back_roles": [{"name": "艾丝妲", "star": 1, "rarity": 1, "is_carry": False}],
+            "traits": ["智识"],
+        },
+        {
+            "stage": "Final",
+            "front_roles": [{"name": "希儿", "star": 3, "rarity": 3, "is_carry": True}],
+            "back_roles": [{"name": "佩拉", "star": 2, "rarity": 2, "is_carry": False}],
+            "traits": ["巡猎", "量子"],
+        },
+    ]
+    assert saved["first_fight_augments"] == ["银河大乐透", "超距遥感"]
+    assert saved["second_fight_augments"] == ["折射棱镜"]
+    assert saved["portals"] == ["购物区", "事件区"]
+    assert saved["order_basic"] == ["抢前排输出", "补减防"]
+    assert saved["order_compose"] == ["推进器"]
+    assert "certification" not in saved
+    assert "weight" not in saved
+    assert "mongo_json" not in saved
+    assert "forbid_edit" not in saved
+    assert "draft_info" not in saved
+    assert "uid" not in saved
+    assert "account_uid" not in saved
 
 
 def test_fetch_cw_guide_payload_builds_payload_from_lineup_detail(monkeypatch):
@@ -353,11 +402,35 @@ def test_fetch_cw_guide_payload_builds_payload_from_lineup_detail(monkeypatch):
         "author": "测试作者",
         "uploader": "测试作者",
         "share_code": "##ABC-123##",
+        "labels": ["9级搜牌", "银河学者"],
+        "support_hard": True,
+        "has_change_equip": True,
+        "has_expert": True,
+        "version": "3.1",
         "min_coins": 40,
         "min_level": 9,
         "mid_level": 9,
         "on_field": {"希儿": 9},
         "off_field": {"佩拉": 3},
+        "role_stages": [
+            {
+                "stage": "Opening",
+                "front_roles": [{"name": "黑塔", "star": 1, "rarity": 1, "is_carry": False}],
+                "back_roles": [{"name": "艾丝妲", "star": 1, "rarity": 1, "is_carry": False}],
+                "traits": ["智识"],
+            },
+            {
+                "stage": "Final",
+                "front_roles": [{"name": "希儿", "star": 3, "rarity": 3, "is_carry": True}],
+                "back_roles": [{"name": "佩拉", "star": 2, "rarity": 2, "is_carry": False}],
+                "traits": ["巡猎", "量子"],
+            },
+        ],
+        "first_fight_augments": ["银河大乐透", "超距遥感"],
+        "second_fight_augments": ["折射棱镜"],
+        "portals": ["购物区", "事件区"],
+        "order_basic": ["抢前排输出", "补减防"],
+        "order_compose": ["推进器"],
     }
 
 

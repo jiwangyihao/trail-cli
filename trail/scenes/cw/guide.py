@@ -445,6 +445,30 @@ def _append_role_cards(target: list[dict[str, object]], values: object) -> None:
         )
 
 
+def _normalize_role_stage_list(role_stages: object) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    if not isinstance(role_stages, list):
+        return result
+    for stage in role_stages:
+        if not isinstance(stage, Mapping):
+            continue
+        front_roles: list[dict[str, object]] = []
+        back_roles: list[dict[str, object]] = []
+        traits: list[str] = []
+        _append_role_cards(front_roles, stage.get("front_roles"))
+        _append_role_cards(back_roles, stage.get("back_roles"))
+        _append_unique_names(traits, stage.get("traits"))
+        result.append(
+            {
+                "stage": str(stage.get("stage") or ""),
+                "front_roles": front_roles,
+                "back_roles": back_roles,
+                "traits": traits,
+            }
+        )
+    return result
+
+
 def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
     if not isinstance(lineup, Mapping):
         return {
@@ -633,11 +657,22 @@ def fetch_cw_guide_payload(url: str) -> dict:
         "author": str(lineup.get("nickname") or ""),
         "uploader": str(lineup.get("nickname") or ""),
         "share_code": _wrap_share_code(tourn_detail.get("share_code"), source_url=url),
+        "labels": _normalize_lineup_labels(tourn_detail.get("labels")),
+        "support_hard": bool(tourn_detail.get("support_hard")),
+        "has_change_equip": bool(lineup.get("has_change_equip")),
+        "has_expert": bool(lineup.get("has_expert")),
+        "version": str(tourn_detail.get("rpg_game_big_version") or ""),
         "min_coins": 40,
         "min_level": min_level,
         "mid_level": _get_mid_level(min_level),
         "on_field": on_field,
         "off_field": off_field,
+        "role_stages": _normalize_role_stage_list(tourn_detail.get("role_stages")),
+        "first_fight_augments": _normalize_named_list(tourn_detail.get("first_fight_augments")),
+        "second_fight_augments": _normalize_named_list(tourn_detail.get("second_fight_augments")),
+        "portals": _normalize_named_list(tourn_detail.get("portals")),
+        "order_basic": _normalize_named_list(tourn_detail.get("order_basic")),
+        "order_compose": _normalize_named_list(tourn_detail.get("order_compose")),
     }
     return payload
 
