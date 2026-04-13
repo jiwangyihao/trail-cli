@@ -204,3 +204,70 @@ def test_runtime_operator_locate_retries_once_after_initial_miss():
 
     assert matcher.calls == 2
     assert box == Box(left=1, top=2, width=3, height=4, source="demo.png")
+
+
+def test_runtime_operator_prepares_window_before_input_actions():
+    import trail.runtime.operator as operator_module
+
+    calls: list[tuple] = []
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+        def prepare_input(self):
+            calls.append(("prepare_input",))
+
+    input_driver = SimpleNamespace(
+        click=lambda x, y, **kwargs: calls.append(("click", x, y)),
+        drag=lambda from_x, from_y, to_x, to_y: calls.append(("drag", from_x, from_y, to_x, to_y)),
+        press=lambda key: calls.append(("press", key)),
+    )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=input_driver,
+    )
+
+    runtime.click_point(10, 20)
+    runtime.drag_to(1, 2, 3, 4)
+    runtime.press_key("shift")
+
+    assert calls == [
+        ("prepare_input",),
+        ("click", 10, 20),
+        ("prepare_input",),
+        ("drag", 1, 2, 3, 4),
+        ("prepare_input",),
+        ("press", "shift"),
+    ]
+
+
+def test_windows_window_controller_prepare_input_restores_and_activates_window(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    actions: list[str] = []
+
+    fake_window = SimpleNamespace(
+        title="Demo",
+        _hWnd=321,
+        isMinimized=True,
+        isActive=False,
+        restore=lambda: actions.append("restore"),
+        activate=lambda: actions.append("activate"),
+    )
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+    monkeypatch.setattr(controller, "_resolve_window", lambda: fake_window)
+
+    controller.prepare_input()
+
+    assert actions == ["restore", "activate"]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from time import sleep
 from pathlib import Path
 from io import BytesIO
 from ctypes.wintypes import POINT, RECT
@@ -137,6 +138,15 @@ class WindowsWindowController:
         if width <= 0 or height <= 0:
             raise TrailError("WINDOW_REGION_INVALID", f"无法获取窗口区域 {self.window_title}")
         return Region(left=left, top=top, width=width, height=height)
+
+    def prepare_input(self) -> None:
+        window = self._resolve_window()
+        if getattr(window, "isMinimized", False):
+            window.restore()
+            sleep(0.1)
+        if not getattr(window, "isActive", False):
+            window.activate()
+            sleep(0.1)
 
     def capture(self, *, from_x=None, from_y=None, to_x=None, to_y=None) -> bytes:
         window = self._resolve_window()

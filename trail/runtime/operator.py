@@ -15,6 +15,7 @@ from trail.runtime.window import WindowsWindowController
 class WindowController(Protocol):
     def capture(self, *, from_x=None, from_y=None, to_x=None, to_y=None): ...
     def capture_to_workspace(self) -> Path: ...
+    def prepare_input(self) -> None: ...
 
 
 class ImageMatcher(Protocol):
@@ -64,13 +65,19 @@ class RuntimeOperator:
         image = self.screenshot(**kwargs)
         return self.ocr_engine.run(image)
 
+    def _prepare_input_target(self) -> None:
+        self.window.prepare_input()
+
     def click_point(self, x: float, y: float, **kwargs):
+        self._prepare_input_target()
         self.input.click(x, y, **kwargs)
 
     def drag_to(self, from_x: float, from_y: float, to_x: float, to_y: float):
+        self._prepare_input_target()
         self.input.drag(from_x, from_y, to_x, to_y)
 
     def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+        self._prepare_input_target()
         for index in range(presses):
             self.input.press(key)
             if index + 1 < presses:
