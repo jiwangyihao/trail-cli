@@ -13,13 +13,14 @@ from trail.commands.screen import screen_app
 from trail.commands.session import session_app
 from trail.commands.state import state_app
 from trail.commands.window import window_app
+from trail.output.capture import set_capture_options
 
 app = typer.Typer(no_args_is_help=True)
 
 
 @app.callback()
-def main() -> None:
-    pass
+def main(verbose: bool = typer.Option(False, "--verbose", help="输出复杂操作的中间流程，便于开发期调试")) -> None:
+    set_capture_options(verbose=verbose)
 
 
 @app.command()

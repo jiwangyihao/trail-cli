@@ -22,6 +22,64 @@ def test_window_attach_returns_envelope_and_binding(cli_runner, fake_runtime):
     assert payload["screenshot"]
 
 
+def test_window_launch_returns_structured_payload(cli_runner, fake_runtime, tmp_path, monkeypatch):
+    import trail.commands.window as window_cmd
+
+    executable = tmp_path / "StarRail.exe"
+    captured: dict[str, object] = {}
+
+    def fake_launch_game(*, game_path, channel, launch_args, use_cmd):
+        captured.update(
+            {
+                "game_path": game_path,
+                "channel": channel,
+                "launch_args": launch_args,
+                "use_cmd": use_cmd,
+            }
+        )
+        return {
+            "started": True,
+            "already_running": False,
+            "path": str(game_path),
+            "channel": channel,
+            "args": list(launch_args),
+        }
+
+    monkeypatch.setattr(window_cmd, "launch_game", fake_launch_game, raising=False)
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "window",
+            "launch",
+            "--game-path",
+            str(executable),
+            "--channel",
+            "bilibili",
+            "--arg",
+            "-popupwindow",
+            "--use-cmd",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"] == {
+        "started": True,
+        "already_running": False,
+        "path": str(executable),
+        "channel": "bilibili",
+        "args": ["-popupwindow"],
+    }
+    assert captured == {
+        "game_path": executable,
+        "channel": "bilibili",
+        "launch_args": ["-popupwindow"],
+        "use_cmd": True,
+    }
+
+
 def test_screen_shot_returns_envelope_and_screenshot(cli_runner, fake_runtime):
     result = cli_runner.invoke(app, ["screen", "shot"])
 
@@ -99,6 +157,39 @@ def test_input_click_drag_and_key_return_envelopes(cli_runner, fake_runtime):
     assert fake_runtime.clicks == [(10, 20)]
     assert fake_runtime.drags == [(1, 2, 3, 4)]
     assert fake_runtime.keys == [("space", 2, 0.2)]
+
+
+def test_input_click_returns_runtime_warnings_and_reference_matches(cli_runner, fake_runtime):
+    fake_runtime.warnings = [
+        {
+            "code": "WINDOW_NOT_FOREGROUND",
+            "message": "输入命令执行后窗口不在前台，本次操作可能失败",
+        }
+    ]
+    fake_runtime.references = [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.88}]
+
+    result = cli_runner.invoke(app, ["input", "click", "10", "20"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["warnings"] == [
+        {
+            "code": "WINDOW_NOT_FOREGROUND",
+            "message": "输入命令执行后窗口不在前台，本次操作可能失败",
+        }
+    ]
+    assert payload["references"] == [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.88}]
+    assert payload["debug"] is None
+
+
+def test_top_level_verbose_emits_runtime_debug_trace(cli_runner, fake_runtime):
+    fake_runtime.trace = [{"step": "click", "point": [10, 20]}]
+
+    result = cli_runner.invoke(app, ["--verbose", "input", "click", "10", "20"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["debug"] == {"trace": [{"step": "click", "point": [10, 20]}]}
 
 
 def test_state_dump_returns_session_snapshot(cli_runner, fake_runtime, fake_session):
@@ -215,6 +306,7 @@ def test_cli_help_exposes_top_level_command_groups(cli_runner):
     assert "input" in result.stdout
     assert "state" in result.stdout
     assert "cw" in result.stdout
+    assert "--verbose" in result.stdout
 
 
 def test_cw_help_exposes_scene_command_groups(cli_runner):
@@ -248,3 +340,11 @@ def test_cw_enter_help_exposes_enum_contract(cli_runner):
     assert "[lowest|current|highest]" in result.stdout
     assert "--battle-mode" in result.stdout
     assert "[standard|overclock]" in result.stdout
+
+
+def test_window_help_exposes_launch_command(cli_runner):
+    result = cli_runner.invoke(app, ["window", "--help"])
+
+    assert result.exit_code == 0
+    assert "attach" in result.stdout
+    assert "launch" in result.stdout

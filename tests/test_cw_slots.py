@@ -140,6 +140,69 @@ def test_build_cw_slots_reader_reads_runtime_slot_snapshots_and_closes_overlay()
     assert len(runtime.ocr_calls) == 19
 
 
+def test_build_cw_slots_reader_reads_only_requested_slots():
+    slots_module = load_cw_slots_module()
+    build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
+    assert build_cw_slots_reader is not None
+
+    class RuntimeSpy:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.locate_calls = 0
+            self.ocr_calls: list[dict] = []
+            self._ocr_results = iter(
+                [
+                    [([0, 0], "希儿", 0.99)],
+                    [([0, 0], "阮·梅", 0.99)],
+                ]
+            )
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            self.locate_calls += 1
+            if self.locate_calls == 1:
+                return Box(left=10, top=20, width=30, height=40)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            return next(self._ocr_results)
+
+    runtime = RuntimeSpy()
+
+    front, back, hand = build_cw_slots_reader(runtime, targets=["front:0", "hand:2"])()
+
+    assert front == ["希儿", None, None, None]
+    assert back == [None, None, None, None, None, None]
+    assert hand == [None, None, "阮·梅", None, None, None, None, None, None]
+    assert len(runtime.ocr_calls) == 2
+
+
+def test_slots_read_partial_refresh_preserves_existing_unknown_positions(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: ([None, "布洛妮娅", None, None], [None] * 6, [None] * 9),
+        targets=["front:1"],
+    )
+
+    assert refreshed.scene_state["cw"]["slots"] == {
+        "front": ["希儿", "布洛妮娅", None, None],
+        "back": ["佩拉", None, None, None, None, None],
+        "hand": ["银狼", None, "阮·梅", None, None, None, None, None, None],
+        "stale": False,
+    }
+
+
 def test_collapse_expanded_hand_card_rejects_stuck_open_overlay():
     slots_module = load_cw_slots_module()
     collapse = getattr(slots_module, "_collapse_expanded_hand_card", None)
@@ -387,6 +450,43 @@ def test_cw_slots_read_cli_refreshes_snapshot(cli_runner, fake_runtime, fake_ses
 
     session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
     assert session.scene_state["cw"]["slots"] == payload["data"]
+
+
+def test_cw_slots_read_cli_accepts_targeted_slots_and_preserves_existing_snapshot(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
+    store = SessionStore(tmp_path / ".trail" / "sessions")
+    session = store.load(fake_session)
+    ensure_cw_state(session)["slots"] = {
+        "front": ["希儿", None, None, None],
+        "back": ["佩拉", None, None, None, None, None],
+        "hand": ["银狼", None, None, None, None, None, None, None, None],
+        "stale": False,
+    }
+    store.save(session)
+
+    locate_results = iter([Box(left=10, top=20, width=30, height=40), None])
+    ocr_results = iter(
+        [
+            [([0, 0], "布洛妮娅", 0.99)],
+            [([0, 0], "阮·梅", 0.99)],
+        ]
+    )
+
+    monkeypatch.setattr(fake_runtime, "locate", lambda template, **kwargs: next(locate_results), raising=False)
+    monkeypatch.setattr(fake_runtime, "ocr", lambda **kwargs: next(ocr_results), raising=False)
+
+    result = cli_runner.invoke(
+        app,
+        ["cw", "slots", "read", "--session", fake_session, "--slot", "front:1", "--slot", "hand:2"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["data"] == {
+        "front": ["希儿", "布洛妮娅", None, None],
+        "back": ["佩拉", None, None, None, None, None],
+        "hand": ["银狼", None, "阮·梅", None, None, None, None, None, None],
+        "stale": False,
+    }
 
 
 def test_cw_slots_read_cli_rejects_empty_snapshot_without_polluting_session(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):

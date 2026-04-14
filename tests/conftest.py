@@ -32,6 +32,9 @@ class FakeRuntime:
         self.keys: list[tuple[str, int, float]] = []
         self.hotkeys: list[tuple[str, ...]] = []
         self.texts: list[str] = []
+        self.warnings: list[dict] = []
+        self.references: list[dict] = []
+        self.trace: list[dict] = []
 
     def capture_after_action(self, optional: bool = False):
         return self._shot
@@ -61,6 +64,20 @@ class FakeRuntime:
 
     def type_text(self, text: str):
         self.texts.append(text)
+
+    def collect_warnings(self):
+        warnings = list(self.warnings)
+        self.warnings.clear()
+        return warnings
+
+    def match_references(self, screenshot_path, limit: int = 3):
+        del screenshot_path, limit
+        return list(self.references)
+
+    def consume_debug_trace(self):
+        trace = list(self.trace)
+        self.trace.clear()
+        return trace
 
 
 @pytest.fixture

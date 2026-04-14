@@ -34,10 +34,27 @@ class FakeRuntime:
     def __init__(self, screenshot_path: Path):
         self._shot = screenshot_path
         self.calls: list[bool] = []
+        self.warnings: list[dict] = []
+        self.references: list[dict] = []
+        self.trace: list[dict] = []
 
     def capture_after_action(self, optional: bool = False):
         self.calls.append(optional)
         return self._shot
+
+    def collect_warnings(self):
+        warnings = list(self.warnings)
+        self.warnings.clear()
+        return warnings
+
+    def match_references(self, screenshot_path, limit: int = 3):
+        del screenshot_path, limit
+        return list(self.references)
+
+    def consume_debug_trace(self):
+        trace = list(self.trace)
+        self.trace.clear()
+        return trace
 
 
 class OptionalCaptureFailsRuntime(FakeRuntime):
@@ -56,6 +73,19 @@ class RequiredCaptureFailsRuntime(FakeRuntime):
         return self._shot
 
 
+class MetadataRuntime(FakeRuntime):
+    def __init__(self, screenshot_path: Path):
+        super().__init__(screenshot_path)
+        self.warnings = [
+            {
+                "code": "WINDOW_NOT_FOREGROUND",
+                "message": "输入命令执行后窗口不在前台，本次操作可能失败",
+            }
+        ]
+        self.references = [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.97}]
+        self.trace = [{"step": "click", "point": [10, 20]}]
+
+
 def test_with_auto_capture_wraps_trail_error_as_failure(tmp_path):
     runtime = FakeRuntime(tmp_path / "failed.png")
 
@@ -71,6 +101,37 @@ def test_with_auto_capture_wraps_trail_error_as_failure(tmp_path):
     }
     assert result["screenshot"].endswith("failed.png")
     assert runtime.calls == [True]
+
+
+def test_with_auto_capture_collects_runtime_metadata_and_debug(tmp_path):
+    runtime = MetadataRuntime(tmp_path / "ok.png")
+
+    result = with_auto_capture(runtime, lambda: {"done": True}, verbose=True)
+
+    assert result["ok"] is True
+    assert result["warnings"] == [
+        {
+            "code": "WINDOW_NOT_FOREGROUND",
+            "message": "输入命令执行后窗口不在前台，本次操作可能失败",
+        }
+    ]
+    assert result["references"] == [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.97}]
+    assert result["debug"] == {"trace": [{"step": "click", "point": [10, 20]}]}
+
+
+def test_with_auto_capture_omits_debug_without_verbose(tmp_path):
+    runtime = MetadataRuntime(tmp_path / "ok.png")
+
+    result = with_auto_capture(runtime, lambda: {"done": True})
+
+    assert result["warnings"] == [
+        {
+            "code": "WINDOW_NOT_FOREGROUND",
+            "message": "输入命令执行后窗口不在前台，本次操作可能失败",
+        }
+    ]
+    assert result["references"] == [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.97}]
+    assert result["debug"] is None
 
 
 def test_run_session_command_persists_last_result_and_last_screenshot(tmp_path):

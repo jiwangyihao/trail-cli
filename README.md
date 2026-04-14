@@ -11,6 +11,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 
 手工 CLI 冒烟顺序：
 
+- 如果游戏还没开：`trail window launch --game-path <StarRail.exe>`
 - `trail session create`
 - `trail guide fetch cw <lineup_url|lineup_id>`
 - `trail cw enter --session <id> --mode new`
@@ -22,6 +23,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `session`：创建并持久化 session
 - `guide`：拉取攻略内容、返回筛选枚举与攻略列表
 - `window`：做窗口绑定检查
+- `window launch`：按显式路径启动《崩坏：星穹铁道》客户端，支持渠道切换
 - `screen`：截图
 - `ocr`：OCR 读取
 - `image`：模板识别与等待
@@ -32,9 +34,10 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 ## 输出约定
 
 - 所有命令默认返回结构化 envelope
-- 关键字段固定为 `ok`、`data`、`screenshot`、`timing`、`error`
+- 关键字段固定为 `ok`、`data`、`screenshot`、`timing`、`warnings`、`references`、`debug`、`error`
 - skill 应优先消费当前命令返回的 `screenshot` 与 `data`，不要沿用旧推断
 - 对多模态 agent 来说，`screenshot` 是第一手事实来源；CLI 自带的 `detect/read/status` 更适合作为辅助输入，而不是唯一真相
+- 对开发期调试，可加顶层 `--verbose` 查看复杂操作的中间 trace
 
 ## Guide 字段语义
 

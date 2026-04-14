@@ -282,11 +282,15 @@ def cw_stage_wait(
 
 
 @slots_app.command("read")
-def cw_slots_read(session: str = typer.Option(..., "--session")) -> None:
+def cw_slots_read(
+    session: str = typer.Option(..., "--session"),
+    slot: list[str] | None = typer.Option(None, "--slot"),
+) -> None:
     runtime = _runtime_for_session(session)
+    targets = list(slot or []) or None
 
     def action(loaded):
-        refreshed = read_cw_slots(loaded, reader=slots_reader_factory(runtime))
+        refreshed = read_cw_slots(loaded, reader=slots_reader_factory(runtime, targets=targets), targets=targets)
         return refreshed.scene_state["cw"]["slots"]
 
     _run(session, "cw.slots.read", action, runtime=runtime)

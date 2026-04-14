@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 import sys
 from types import SimpleNamespace
 
@@ -58,6 +59,45 @@ def test_windows_window_controller_capture_uses_imagegrab(monkeypatch, tmp_path)
 
     image_bytes = controller.capture(from_x=0.1, from_y=0.2, to_x=0.5, to_y=0.8)
 
+    assert FakeImageGrab.called_with == (20, 32, 60, 68)
+    assert image_bytes.startswith(b"\x89PNG")
+
+
+def test_windows_window_controller_capture_falls_back_to_imagegrab_when_printwindow_fails(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    class FakeImageGrab:
+        called_with = None
+
+        @staticmethod
+        def grab(*, bbox):
+            FakeImageGrab.called_with = bbox
+            return Image.new("RGB", (10, 6), color="white")
+
+    monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        window_module,
+        "_capture_win32_window",
+        lambda hwnd, region: (_ for _ in ()).throw(TrailError("SCREENSHOT_FAILED", "无法截取窗口内容")),
+    )
+    monkeypatch.setattr(window_module, "ImageGrab", FakeImageGrab)
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=1),
+    )
+    prepare_calls: list[str] = []
+    monkeypatch.setattr(controller, "_resolve_window", lambda: SimpleNamespace(_hWnd=1))
+    monkeypatch.setattr(controller, "prepare_input", lambda: prepare_calls.append("prepare"))
+    monkeypatch.setattr(
+        controller,
+        "_resolve_region",
+        lambda window=None: window_module.Region(left=10, top=20, width=100, height=60),
+    )
+
+    image_bytes = controller.capture(from_x=0.1, from_y=0.2, to_x=0.5, to_y=0.8)
+
+    assert prepare_calls == ["prepare"]
     assert FakeImageGrab.called_with == (20, 32, 60, 68)
     assert image_bytes.startswith(b"\x89PNG")
 
@@ -507,3 +547,189 @@ def test_windows_window_controller_prepare_input_restores_and_activates_window(m
     controller.prepare_input()
 
     assert actions == ["restore", "activate"]
+
+
+def test_change_game_config_updates_channel_values(tmp_path):
+    import trail.runtime.window as window_module
+
+    executable = tmp_path / "StarRail.exe"
+    executable.write_text("demo", encoding="utf-8")
+    config = tmp_path / "config.ini"
+    config.write_text("channel=0\nsub_channel=0\n", encoding="utf-8")
+
+    window_module.change_game_config(executable, channel=14, sub_channel=0)
+
+    assert config.read_text(encoding="utf-8") == "channel=14\nsub_channel=0\n"
+
+
+def test_launch_game_skips_when_process_already_running(tmp_path, monkeypatch):
+    import trail.runtime.window as window_module
+
+    executable = tmp_path / "StarRail.exe"
+    executable.write_text("demo", encoding="utf-8")
+
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: process_name == "StarRail.exe")
+
+    result = window_module.launch_game(game_path=executable, channel="official")
+
+    assert result == {
+        "started": False,
+        "already_running": True,
+        "path": str(executable),
+        "channel": "official",
+        "args": [],
+    }
+
+
+def test_launch_game_uses_popen_with_bilibili_channel(tmp_path, monkeypatch):
+    import trail.runtime.window as window_module
+
+    executable = tmp_path / "StarRail.exe"
+    executable.write_text("demo", encoding="utf-8")
+    config = tmp_path / "config.ini"
+    config.write_text("channel=0\nsub_channel=0\n", encoding="utf-8")
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: False)
+    monkeypatch.setattr(
+        window_module.subprocess,
+        "Popen",
+        lambda args, **kwargs: calls.update({"args": args, "kwargs": kwargs}) or SimpleNamespace(),
+    )
+
+    result = window_module.launch_game(
+        game_path=executable,
+        channel="bilibili",
+        launch_args=["-popupwindow"],
+        use_cmd=False,
+    )
+
+    assert result == {
+        "started": True,
+        "already_running": False,
+        "path": str(executable),
+        "channel": "bilibili",
+        "args": ["-popupwindow"],
+    }
+    assert config.read_text(encoding="utf-8") == "channel=14\nsub_channel=0\n"
+    assert calls == {
+        "args": [str(executable), "-popupwindow"],
+        "kwargs": {"cwd": str(tmp_path)},
+    }
+
+
+def test_launch_game_uses_cmd_start_when_requested(tmp_path, monkeypatch):
+    import trail.runtime.window as window_module
+
+    executable = tmp_path / "StarRail.exe"
+    executable.write_text("demo", encoding="utf-8")
+    config = tmp_path / "config.ini"
+    config.write_text("channel=0\nsub_channel=0\n", encoding="utf-8")
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: False)
+    monkeypatch.setattr(
+        window_module.subprocess,
+        "Popen",
+        lambda args, **kwargs: calls.update({"args": args, "kwargs": kwargs}) or SimpleNamespace(),
+    )
+
+    result = window_module.launch_game(
+        game_path=executable,
+        channel="official",
+        launch_args=["-popupwindow"],
+        use_cmd=True,
+    )
+
+    assert result == {
+        "started": True,
+        "already_running": False,
+        "path": str(executable),
+        "channel": "official",
+        "args": ["-popupwindow"],
+    }
+    assert calls == {
+        "args": ["cmd", "/c", "start", "", str(executable), "-popupwindow"],
+        "kwargs": {"cwd": str(tmp_path)},
+    }
+
+
+def test_runtime_operator_warns_when_window_not_foreground_after_input():
+    import trail.runtime.operator as operator_module
+
+    class WindowStub:
+        def __init__(self):
+            self.prepare_calls = 0
+
+        def capture(self, **kwargs):
+            del kwargs
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+        def prepare_input(self):
+            self.prepare_calls += 1
+
+        def is_foreground(self):
+            return False
+
+        def to_screen_point(self, x, y):
+            return x, y
+
+    clicks: list[tuple[int, int]] = []
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda x, y, **kwargs: clicks.append((x, y)),
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    runtime.click_point(10, 20)
+
+    assert clicks == [(10, 20)]
+    assert runtime.collect_warnings() == [
+        {
+            "code": "WINDOW_NOT_FOREGROUND",
+            "message": "输入命令执行后窗口不在前台，本次操作可能失败；可能是窗口未在前台，或拉回前台失败",
+        }
+    ]
+
+
+def test_runtime_operator_matches_reference_images_from_project_tree(tmp_path, monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    monkeypatch.chdir(tmp_path)
+    reference_dir = tmp_path / "trail" / "scenes" / "cw" / "references"
+    reference_dir.mkdir(parents=True)
+
+    shot_path = tmp_path / "shot.png"
+    Image.new("RGB", (32, 32), color="red").save(shot_path)
+    Image.new("RGB", (32, 32), color="red").save(reference_dir / "1.png")
+    Image.new("RGB", (32, 32), color="blue").save(reference_dir / "2.png")
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: None, capture_to_workspace=lambda: shot_path, prepare_input=lambda: None),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    matches = runtime.match_references(shot_path)
+
+    assert [Path(match["path"]).name for match in matches] == ["1.png", "2.png"]
+    assert matches[0]["similarity"] > matches[1]["similarity"]

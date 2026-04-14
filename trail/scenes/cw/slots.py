@@ -150,6 +150,36 @@ def _slot_points(area: str) -> list[tuple[int, int]]:
     return points
 
 
+def _empty_slots_snapshot() -> tuple[list[Any], list[Any], list[Any]]:
+    return [None] * len(FRONT_SLOT_POINTS), [None] * len(BACK_SLOT_POINTS), [None] * len(HAND_SLOT_POINTS)
+
+
+def _parse_slot_targets(targets: list[str] | None = None) -> dict[str, set[int]] | None:
+    if not targets:
+        return None
+
+    parsed = {"front": set(), "back": set(), "hand": set()}
+    for target in targets:
+        area, index = _parse_slot_reference(target, allowed_areas={"front", "back", "hand"})
+        parsed[area].add(index)
+    return parsed
+
+
+def _merge_area_snapshot(previous: Any, current: list[Any], *, size: int, targets: set[int] | None) -> list[Any]:
+    if targets is None:
+        return list(current)
+
+    merged = list(previous) if isinstance(previous, list) else [None] * size
+    if len(merged) < size:
+        merged.extend([None] * (size - len(merged)))
+    else:
+        merged = merged[:size]
+
+    for index in targets:
+        merged[index] = current[index]
+    return merged
+
+
 def _parse_slot_reference(value: str, *, allowed_areas: set[str] | None = None) -> tuple[str, int]:
     area, separator, raw_index = value.partition(":")
     if separator != ":" or not raw_index.isdecimal():
@@ -172,12 +202,24 @@ def _ensure_fieldable_target(runtime, *, target: str) -> None:
     raise TrailError("SLOTS_CANNOT_BE_FIELDED", f"target slot cannot field character: {target}")
 
 
-def build_cw_slots_reader(runtime) -> SlotsSnapshotReader:
+def build_cw_slots_reader(runtime, targets: list[str] | None = None) -> SlotsSnapshotReader:
+    parsed_targets = _parse_slot_targets(targets)
+
     def reader() -> tuple[list[str | None], list[str | None], list[str | None]]:
         _collapse_expanded_hand_card(runtime)
-        front = [_read_slot_name(runtime, point=point) for point in FRONT_SLOT_POINTS]
-        back = [_read_slot_name(runtime, point=point) for point in BACK_SLOT_POINTS]
-        hand = [_read_slot_name(runtime, point=point) for point in HAND_SLOT_POINTS]
+        front, back, hand = _empty_slots_snapshot()
+        targets_by_area = parsed_targets or {
+            "front": set(range(len(FRONT_SLOT_POINTS))),
+            "back": set(range(len(BACK_SLOT_POINTS))),
+            "hand": set(range(len(HAND_SLOT_POINTS))),
+        }
+
+        for index in sorted(targets_by_area["front"]):
+            front[index] = _read_slot_name(runtime, point=FRONT_SLOT_POINTS[index])
+        for index in sorted(targets_by_area["back"]):
+            back[index] = _read_slot_name(runtime, point=BACK_SLOT_POINTS[index])
+        for index in sorted(targets_by_area["hand"]):
+            hand[index] = _read_slot_name(runtime, point=HAND_SLOT_POINTS[index])
         return front, back, hand
 
     return reader
@@ -211,15 +253,20 @@ def build_cw_crystal_collector(runtime) -> CrystalCollector:
     return collector
 
 
-def read_cw_slots(session: SessionModel, *, reader: SlotsSnapshotReader) -> SessionModel:
+def read_cw_slots(session: SessionModel, *, reader: SlotsSnapshotReader, targets: list[str] | None = None) -> SessionModel:
     front, back, hand = reader()
-    if not _snapshot_has_any_name(front, back, hand):
-        raise TrailError("SLOTS_READ_EMPTY", "未读取到任何货币战争槽位角色，请确认当前在编队界面")
     cw_state = ensure_cw_state(session)
+    previous = cw_state.get("slots", {})
+    parsed_targets = _parse_slot_targets(targets)
+    merged_front = _merge_area_snapshot(previous.get("front"), front, size=len(FRONT_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["front"])
+    merged_back = _merge_area_snapshot(previous.get("back"), back, size=len(BACK_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["back"])
+    merged_hand = _merge_area_snapshot(previous.get("hand"), hand, size=len(HAND_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["hand"])
+    if not _snapshot_has_any_name(merged_front, merged_back, merged_hand):
+        raise TrailError("SLOTS_READ_EMPTY", "未读取到任何货币战争槽位角色，请确认当前在编队界面")
     cw_state["slots"] = {
-        "front": deepcopy(front),
-        "back": deepcopy(back),
-        "hand": deepcopy(hand),
+        "front": deepcopy(merged_front),
+        "back": deepcopy(merged_back),
+        "hand": deepcopy(merged_hand),
         "stale": False,
     }
     _clear_sell_plan(cw_state)

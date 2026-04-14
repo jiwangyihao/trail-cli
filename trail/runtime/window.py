@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import subprocess
 import sys
 from time import sleep
 from pathlib import Path
@@ -23,6 +24,12 @@ def _enable_dpi_awareness() -> None:
 
 
 _enable_dpi_awareness()
+
+GAME_CHANNEL_CONFIG = {
+    "official": (1, 1),
+    "bilibili": (14, 0),
+    "global": None,
+}
 
 
 def _capture_win32_window(hwnd: int, region: Region):
@@ -103,6 +110,87 @@ def normalize_window_binding(window_binding: WindowBinding | dict | None = None,
     return WindowBinding(title=window_title or "崩坏：星穹铁道")
 
 
+def is_process_running(process_name: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {process_name}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return False
+    return process_name.lower() in (result.stdout or "").lower()
+
+
+def change_game_config(game_path: Path, *, channel: int, sub_channel: int) -> None:
+    config_file = Path(game_path).parent / "config.ini"
+    try:
+        lines = config_file.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError as exc:
+        raise TrailError("GAME_CONFIG_NOT_FOUND", f"未找到配置文件 {config_file}") from exc
+
+    updated: list[str] = []
+    channel_seen = False
+    sub_channel_seen = False
+    for line in lines:
+        if line.startswith("channel="):
+            updated.append(f"channel={channel}")
+            channel_seen = True
+        elif line.startswith("sub_channel="):
+            updated.append(f"sub_channel={sub_channel}")
+            sub_channel_seen = True
+        else:
+            updated.append(line)
+
+    if not channel_seen:
+        updated.append(f"channel={channel}")
+    if not sub_channel_seen:
+        updated.append(f"sub_channel={sub_channel}")
+    config_file.write_text("\n".join(updated) + "\n", encoding="utf-8")
+
+
+def launch_game(
+    *,
+    game_path: Path,
+    channel: str = "official",
+    launch_args: list[str] | None = None,
+    use_cmd: bool = False,
+) -> dict:
+    path = Path(game_path)
+    if not path.exists():
+        raise TrailError("GAME_PATH_NOT_FOUND", f"未找到游戏启动路径 {path}")
+
+    args = list(launch_args or [])
+    if is_process_running("StarRail.exe"):
+        return {
+            "started": False,
+            "already_running": True,
+            "path": str(path),
+            "channel": channel,
+            "args": args,
+        }
+
+    channel_config = GAME_CHANNEL_CONFIG.get(channel)
+    if channel_config is None and channel != "global":
+        raise TrailError("GAME_CHANNEL_INVALID", f"未知游戏渠道 {channel}")
+    if channel_config is not None:
+        change_game_config(path, channel=channel_config[0], sub_channel=channel_config[1])
+
+    cwd = str(path.parent)
+    if use_cmd:
+        subprocess.Popen(["cmd", "/c", "start", "", str(path), *args], cwd=cwd)
+    else:
+        subprocess.Popen([str(path)] + args, cwd=cwd)
+    return {
+        "started": True,
+        "already_running": False,
+        "path": str(path),
+        "channel": channel,
+        "args": args,
+    }
+
+
 class WindowsWindowController:
     def __init__(self, *, workspace: Path, window_binding: WindowBinding | dict | None = None, window_title: str | None = None):
         self.window_binding = normalize_window_binding(window_binding, window_title=window_title)
@@ -173,6 +261,10 @@ class WindowsWindowController:
             window.activate()
             sleep(0.1)
 
+    def is_foreground(self) -> bool:
+        window = self._resolve_window()
+        return bool(getattr(window, "isActive", False))
+
     def capture(self, *, from_x=None, from_y=None, to_x=None, to_y=None) -> bytes:
         window = self._resolve_window()
         region = self._resolve_region(window)
@@ -181,7 +273,20 @@ class WindowsWindowController:
 
         hwnd = getattr(window, "_hWnd", None)
         if sys.platform == "win32" and hwnd is not None:
-            image = _capture_win32_window(int(hwnd), region)
+            try:
+                image = _capture_win32_window(int(hwnd), region)
+            except TrailError as exc:
+                if exc.code != "SCREENSHOT_FAILED":
+                    raise
+                self.prepare_input()
+                image = ImageGrab.grab(
+                    bbox=(
+                        region.left,
+                        region.top,
+                        region.left + region.width,
+                        region.top + region.height,
+                    )
+                )
         else:
             image = ImageGrab.grab(
                 bbox=(

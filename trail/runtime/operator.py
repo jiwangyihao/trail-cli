@@ -5,7 +5,7 @@ from pathlib import Path
 from time import monotonic, sleep
 from typing import Any, Protocol
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageOps, ImageStat
 
 from trail.core.errors import TrailError
 from trail.runtime.model import Box, Region
@@ -16,6 +16,7 @@ class WindowController(Protocol):
     def capture(self, *, from_x=None, from_y=None, to_x=None, to_y=None): ...
     def capture_to_workspace(self) -> Path: ...
     def prepare_input(self) -> None: ...
+    def is_foreground(self) -> bool: ...
     def client_region(self): ...
     def to_screen_point(self, x: int | float, y: int | float) -> tuple[int, int]: ...
 
@@ -43,6 +44,54 @@ class RuntimeOperator:
         self.matcher = matcher
         self.ocr_engine = ocr_engine
         self.input = input_driver
+        self._warnings: list[dict[str, Any]] = []
+        self._trace: list[dict[str, Any]] = []
+
+    def _record_trace(self, step: str, **payload: Any) -> None:
+        self._trace.append({"step": step, **payload})
+
+    @staticmethod
+    def _serialize_box(box: Box | None) -> dict[str, Any] | None:
+        if box is None:
+            return None
+        return {
+            "left": box.left,
+            "top": box.top,
+            "width": box.width,
+            "height": box.height,
+            "source": box.source,
+        }
+
+    def _check_foreground_after_input(self) -> None:
+        is_foreground = getattr(self.window, "is_foreground", None)
+        if not callable(is_foreground):
+            return
+        try:
+            foreground = bool(is_foreground())
+        except Exception:
+            return
+        self._record_trace("foreground_check", foreground=foreground)
+        if foreground:
+            return
+        self._warnings.append(
+            {
+                "code": "WINDOW_NOT_FOREGROUND",
+                "message": "输入命令执行后窗口不在前台，本次操作可能失败；可能是窗口未在前台，或拉回前台失败",
+            }
+        )
+
+    def collect_warnings(self) -> list[dict[str, Any]]:
+        warnings = list(self._warnings)
+        self._warnings.clear()
+        return warnings
+
+    def consume_debug_trace(self) -> list[dict[str, Any]]:
+        trace = list(self._trace)
+        self._trace.clear()
+        return trace
+
+    def match_references(self, screenshot_path: Path | str, limit: int = 3) -> list[dict[str, Any]]:
+        return _match_reference_images(Path(screenshot_path), limit=limit)
 
     def screenshot(self, *, from_x=None, from_y=None, to_x=None, to_y=None):
         return self.window.capture(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y)
@@ -51,33 +100,43 @@ class RuntimeOperator:
         image = self.screenshot(**kwargs)
         box = self.matcher.locate(template, image)
         if box is not None:
-            return self._offset_box(box, **kwargs)
+            resolved = self._offset_box(box, **kwargs)
+            self._record_trace("locate", template=template, kwargs=dict(kwargs), box=self._serialize_box(resolved), retried=False)
+            return resolved
 
         sleep(0.1)
         retry_image = self.screenshot(**kwargs)
         retry_box = self.matcher.locate(template, retry_image)
         if retry_box is None:
+            self._record_trace("locate", template=template, kwargs=dict(kwargs), box=None, retried=True)
             return None
-        return self._offset_box(retry_box, **kwargs)
+        resolved = self._offset_box(retry_box, **kwargs)
+        self._record_trace("locate", template=template, kwargs=dict(kwargs), box=self._serialize_box(resolved), retried=True)
+        return resolved
 
     def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
         deadline = monotonic() + timeout
         while monotonic() < deadline:
             box = self.locate(template)
             if box is not None:
+                self._record_trace("wait_img", template=template, timeout=timeout, interval=interval, found=True)
                 return box
             sleep(interval)
+        self._record_trace("wait_img", template=template, timeout=timeout, interval=interval, found=False)
         return None
 
     def ocr(self, **kwargs):
         image = self.screenshot(**kwargs)
-        return self.ocr_engine.run(image)
+        result = self.ocr_engine.run(image)
+        self._record_trace("ocr", kwargs=dict(kwargs), pieces=len(result or []))
+        return result
 
     def _prepare_input_target(self) -> None:
         ensure_available = getattr(self.input, "ensure_available", None)
         if callable(ensure_available):
             ensure_available()
         self.window.prepare_input()
+        self._record_trace("prepare_input")
 
     def _to_screen_point(self, x: int | float, y: int | float) -> tuple[int | float, int | float]:
         if hasattr(self.window, "to_screen_point"):
@@ -123,12 +182,22 @@ class RuntimeOperator:
         self._prepare_input_target()
         screen_x, screen_y = self._to_screen_point(x, y)
         self.input.click(screen_x, screen_y, **kwargs)
+        self._record_trace("click_point", point=[x, y], screen_point=[screen_x, screen_y])
+        self._check_foreground_after_input()
 
     def drag_to(self, from_x: float, from_y: float, to_x: float, to_y: float):
         self._prepare_input_target()
         screen_from_x, screen_from_y = self._to_screen_point(from_x, from_y)
         screen_to_x, screen_to_y = self._to_screen_point(to_x, to_y)
         self.input.drag(screen_from_x, screen_from_y, screen_to_x, screen_to_y)
+        self._record_trace(
+            "drag_to",
+            from_point=[from_x, from_y],
+            to_point=[to_x, to_y],
+            screen_from=[screen_from_x, screen_from_y],
+            screen_to=[screen_to_x, screen_to_y],
+        )
+        self._check_foreground_after_input()
 
     def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
         self._prepare_input_target()
@@ -136,22 +205,76 @@ class RuntimeOperator:
             self.input.press(key)
             if index + 1 < presses:
                 sleep(interval)
+        self._record_trace("press_key", key=key, presses=presses, interval=interval)
+        self._check_foreground_after_input()
 
     def hotkey(self, *keys: str):
         self._prepare_input_target()
         self.input.hotkey(*keys)
+        self._record_trace("hotkey", keys=list(keys))
+        self._check_foreground_after_input()
 
     def type_text(self, text: str):
         self._prepare_input_target()
         self.input.type_text(text)
+        self._record_trace("type_text", text=text)
+        self._check_foreground_after_input()
 
     def capture_after_action(self, optional: bool = False):
         try:
-            return self.window.capture_to_workspace()
+            path = self.window.capture_to_workspace()
+            self._record_trace("capture_after_action", optional=optional, screenshot=str(path))
+            return path
         except Exception:
             if optional:
+                self._record_trace("capture_after_action", optional=optional, screenshot=None)
                 return None
             raise
+
+
+REFERENCE_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+REFERENCE_IMAGE_SIZE = (64, 64)
+
+
+def _iter_reference_images(base_dir: Path) -> list[Path]:
+    trail_root = base_dir / "trail"
+    if not trail_root.exists():
+        return []
+    return sorted(
+        path
+        for path in trail_root.rglob("*")
+        if path.is_file() and path.suffix.lower() in REFERENCE_IMAGE_EXTENSIONS and "references" in path.parts
+    )
+
+
+def _load_normalized_image(path: Path):
+    with Image.open(path) as image:
+        return ImageOps.grayscale(image).resize(REFERENCE_IMAGE_SIZE)
+
+
+def _compute_similarity(left: Path, right: Path) -> float:
+    diff = ImageChops.difference(_load_normalized_image(left), _load_normalized_image(right))
+    mean = ImageStat.Stat(diff).mean[0] / 255.0
+    return round(max(0.0, 1.0 - mean), 4)
+
+
+def _match_reference_images(screenshot_path: Path, *, limit: int = 3) -> list[dict[str, Any]]:
+    if not screenshot_path.exists():
+        return []
+
+    matches: list[dict[str, Any]] = []
+    for reference_path in _iter_reference_images(Path.cwd()):
+        try:
+            similarity = _compute_similarity(screenshot_path, reference_path)
+        except Exception:
+            continue
+        try:
+            display_path = reference_path.relative_to(Path.cwd()).as_posix()
+        except ValueError:
+            display_path = str(reference_path)
+        matches.append({"path": display_path, "similarity": similarity})
+
+    return sorted(matches, key=lambda item: (-item["similarity"], item["path"]))[:limit]
 
 
 class PyScreezeMatcher:
