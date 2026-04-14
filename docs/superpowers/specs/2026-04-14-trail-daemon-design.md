@@ -2,48 +2,116 @@
 
 ## 背景
 
-`trail-cli` 当前以短命 CLI 进程为主，每执行一条命令都会重新初始化运行时。这已经暴露出三类问题：
+`trail-cli` 当前是短命 CLI 架构：每条命令都会重新启动进程、初始化 runtime、重新加载 OCR 与图像匹配资源，并在命令结束后退出。真实实机验证已经暴露出四类问题：
 
-1. 性能问题：OCR、图像匹配、窗口绑定、场景资源会被重复加载，`ocr read` 一类命令开销偏大。
-2. 权限问题：游戏窗口以更高权限运行时，普通权限的 CLI 对输入链路不再可靠，导致点击、拖拽、按键不能稳定生效。
-3. 状态问题：跨命令的窗口句柄、场景上下文、模型缓存与诊断信息无法自然复用，排障和实机 smoke 成本高。
+1. 性能问题：`ocr read`、`image locate`、`cw` 阶段识别等命令每次都要重新加载模型或重建运行时，延迟偏高。
+2. 权限问题：当《崩坏：星穹铁道》窗口以更高权限运行时，普通权限 CLI 无法可靠执行输入动作。
+3. 状态问题：窗口句柄、DPI、截图策略、参考图索引、场景热状态无法跨命令复用，跨命令诊断链被切断。
+4. 平台问题：扩展屏、混合 DPI、后台窗口、窗口级截图和屏幕级回退逻辑需要统一管理，分散在短命进程里很难稳定。
 
-本设计将 `trail-cli` 重构为“非管理员薄 CLI + 单管理员全量 daemon”的两层架构，在保持现有命令面的同时，把运行时代码、模型、场景执行和窗口交互集中到常驻进程中。
+用户已经明确选择如下方向：
+
+- 不是只做输入桥，而是做**单管理员全量 daemon**；
+- CLI 保持普通权限，尽量保留现有命令面；
+- daemon 自动连接、可自动启动，同时也提供显式生命周期管理；
+- 目标不仅是解决输入权限，还要顺带解决 OCR/找图/窗口绑定/场景执行的重复加载和状态复用问题。
 
 ## 目标
 
-1. 保持 `trail ...` 现有命令面基本不变，Agent 与 skill 不需要整套重写。
-2. 把窗口、截图、OCR、找图、输入、`cw` 场景执行全部放进常驻 daemon，避免每条命令重复初始化。
-3. 只有 daemon 运行在管理员权限；CLI 和 Agent 继续保持普通权限。
-4. 支持“自动拉起 + 显式管理”：普通命令在 daemon 不存在时自动启动，同时提供 `trail daemon start|stop|status|logs`。
-5. 保持结构化 envelope 输出契约：`ok`、`data`、`screenshot`、`timing`、`warnings`、`references`、`debug`、`error`。
-6. 在扩展屏、混合 DPI、后台截图、已提权游戏窗口输入等现实条件下保持稳定行为。
+1. 将窗口、截图、OCR、找图、输入、`cw` 场景执行、session 热状态全部收敛到常驻 daemon 中。
+2. 保持 `trail ...` 现有命令面基本不变，使 skill 与 Agent 不需要整套重写。
+3. 只有 daemon 运行在管理员权限；CLI 与 Agent 继续保持普通权限。
+4. 支持“自动连接 + 自动启动 + 显式管理”：
+   - 普通命令优先连接现有 daemon；
+   - daemon 不存在时，按定义好的 bootstrap 机制启动；
+   - 同时提供 `trail daemon install|start|stop|status|logs`。
+5. 保持结构化 envelope 契约，包括 transport/bootstrap 失败路径。
+6. 在扩展屏、混合 DPI、后台截图、已提权窗口输入等现实条件下保持稳定行为。
 
 ## 非目标
 
-1. 第一版不做远程访问，不支持跨机器控制。
-2. 第一版不拆成普通 daemon + 管理员 helper 双进程。
-3. 第一版不改变现有 `guide` 数据模型与 `cw` 业务语义，只改变执行宿主与调用方式。
-4. 第一版不追求零迁移成本之外的全新命令体系；优先兼容现有 CLI。
+1. 第一版不支持远程调用，不暴露跨机器控制能力。
+2. 第一版不拆分为“普通 daemon + 管理员输入 helper”双进程模型。
+3. 第一版不改变 `guide` 的业务语义与 `cw` 的场景语义，只改变执行宿主与通信方式。
+4. 第一版不追求全新命令体系，优先保证兼容现有 CLI 心智模型。
 
 ## 总体架构
 
 ### 进程模型
 
-- `traild`
-  - 单管理员常驻进程。
-  - 持有窗口控制器、输入驱动、OCR 引擎、图像匹配器、参考图索引、场景执行器、会话内存态。
-  - 对外暴露本机限定的 RPC 服务。
 - `trail`
   - 非管理员薄 CLI。
-  - 负责参数解析、自动连接/自动拉起 daemon、构造 RPC 请求、打印响应 envelope。
-  - 只保留帮助文案、轻量参数校验和 daemon 生命周期管理入口。
+  - 负责参数解析、workspace 解析、daemon 发现、请求构造、响应渲染。
+- `traild`
+  - 单管理员常驻 daemon。
+  - 持有窗口控制器、截图器、OCR 引擎、图像匹配器、参考图索引、输入执行器、`cw` 场景执行器、session 热状态。
 
 ### 权限边界
 
 - 只有 `traild` 是管理员进程。
-- `trail` 绝不自提权，也不要求 Agent 整体提权。
-- 所有真正触碰已提权游戏窗口的能力都经由 daemon 完成，包括：输入、窗口附着、截图、场景执行。
+- `trail` 本体不常驻管理员权限，也不要求 Agent 整体提权。
+- 唯一允许显式触发提权的 CLI 管理动作是 `trail daemon install`：它负责一次性安装 daemon bootstrap 能力。日常普通命令和 `trail daemon start` 不再自行弹 UAC。
+
+## Bootstrap 模型
+
+这是本设计的关键约束，必须在 spec 中固定，而不能留给 implementation plan 自由发挥。
+
+### 一次性安装
+
+第一版采用**显式安装 + 后续自动启动**模型：
+
+1. 用户首次执行 `trail daemon install`。
+2. 该命令显式请求管理员授权。
+3. 安装动作完成后，在 Windows 上注册一个**每用户私有、以最高权限运行**的 daemon 启动器。第一版推荐实现为计划任务；只要后续实现仍满足相同外部契约，也允许用等价的本机 bootstrap 设施替代。
+4. 安装完成后写入 daemon manifest，记录：
+   - bootstrap 标识（例如任务名）
+   - daemon 可执行入口
+   - 协议版本
+   - manifest 版本
+   - token 文件位置
+   - 日志目录
+
+### 日常自动启动
+
+普通命令的启动链固定如下：
+
+1. CLI 先读取本机 manifest。
+2. 若 manifest 不存在，返回结构化错误 `DAEMON_BOOTSTRAP_REQUIRED`，明确提示先运行 `trail daemon install`。
+3. 若 manifest 存在，CLI 先尝试连接现有 daemon。
+4. 若连接失败，CLI 调用 bootstrap 启动器拉起 `traild`。
+5. CLI 轮询 daemon manifest runtime 段，直到看到：
+   - daemon 已注册 endpoint
+   - token 已生成
+   - 状态为 `ready` 或 `degraded`
+6. 然后 CLI 再发业务请求。
+
+### 为什么这样定义
+
+这样做的目的，是避免“普通 CLI 静默自提权”这个不可控路径，同时又满足用户要求的“自动+显式”：
+
+- 显式：`trail daemon install|start|stop|status|logs`
+- 自动：任何普通命令在 daemon 缺失时都能自动尝试启动**已安装好的** bootstrap 目标
+
+## Workspace 与路径归属
+
+daemon 化后，`cwd` 不能再作为隐式真相源。第一版必须显式协议化 workspace。
+
+### Workspace 规则
+
+1. CLI 每次请求必须传 `workspace_root` 绝对路径。
+2. daemon 内所有 `.trail` 路径都基于该 `workspace_root` 解析。
+3. 不允许 daemon 用自身 `cwd` 推断 workspace。
+4. daemon 内的 session、截图、artifact、引用图索引都按 `workspace_root` 隔离。
+
+### 路径返回规则
+
+为了兼容现有 skill 和命令输出：
+
+1. daemon 内部可以使用绝对路径。
+2. CLI 对外打印 envelope 时：
+   - `screenshot` 返回相对 `workspace_root` 的相对路径，例如 `.trail/shots/last-action.png`
+   - `references[].path` 同样返回相对 `workspace_root` 的相对路径
+3. 如果路径不属于当前 workspace，CLI 必须回退为绝对路径，而不能静默输出错误相对路径。
 
 ## 组件划分
 
@@ -51,190 +119,320 @@
 
 职责：
 
-- 保持现有命令入口：`window`、`screen`、`ocr`、`image`、`input`、`state`、`cw`、`guide`。
-- 将命令统一映射为 RPC 请求，例如：
-  - `input.click`
-  - `ocr.read`
-  - `cw.stage.detect`
-  - `cw.slots.read`
-- 自动探测 daemon 是否可用；不可用时按策略自动拉起。
-- 把 daemon 响应原样渲染为现有 envelope 格式。
+- 保持现有命令入口和大体参数形态；
+- 将命令映射为 RPC 请求；
+- 处理 daemon 发现、自动启动、版本检查、认证；
+- 对 transport/bootstrap 失败合成结构化 envelope。
 
-不负责：
+CLI 不负责：
 
-- 直接初始化 OCR、图像匹配、窗口运行时。
-- 直接执行窗口输入或场景动作。
+- 直接初始化 OCR、找图、窗口 runtime；
+- 直接执行任何窗口输入；
+- 直接维护 session 热状态。
 
 ### 2. Daemon RPC 层
 
 职责：
 
-- 监听本机 IPC/回环地址。
-- 维护请求认证、版本协商、错误映射。
-- 将 RPC 路由到具体服务：window、screen、ocr、image、input、session、cw。
+- 监听本机专用 IPC；
+- 校验认证令牌；
+- 暴露稳定方法集；
+- 将请求路由到内部服务层；
+- 返回统一响应对象。
 
-设计要求：
+协议要求：
 
-- 本地专用，不暴露远程访问。
-- 启动时生成一次性认证令牌。
-- CLI 每次连接必须带令牌；令牌失效时提示重连或重启 daemon。
+- 仅允许本机访问；
+- 请求必须包含：
+  - `request_id`
+  - `protocol_version`
+  - `workspace_root`
+  - `session_id`（如适用）
+  - `verbose`（如适用）
+  - `method`
+  - `payload`
+- 响应必须包含：
+  - `request_id`
+  - `ok`
+  - `data`
+  - `screenshot`
+  - `timing`
+  - `warnings`
+  - `references`
+  - `debug`
+  - `error`
 
 ### 3. Runtime 服务层
 
-daemon 内部常驻的服务对象：
-
 - `WindowService`
-  - 管理窗口附着、句柄缓存、DPI 信息、截图策略、窗口启动。
-- `InputService`
-  - 负责 click/drag/key 等输入执行与审计记录。
+  - 窗口附着、句柄缓存、DPI 读取、窗口启动、窗口级截图策略。
 - `CaptureService`
-  - 统一窗口截图，优先窗口级抓图；失败时按策略回退。
+  - 截图主逻辑，负责窗口级抓图、`PrintWindow` 回退、bbox 回退。
 - `OcrService`
-  - 常驻 OCR 模型实例。
+  - OCR 模型常驻与复用。
 - `ImageService`
-  - 常驻图像匹配资源与参考图索引。
+  - 图像匹配器与参考图索引常驻。
+- `InputService`
+  - click/drag/key 等输入动作；只允许暴露受控动作，不暴露任意脚本执行。
 - `SceneService`
-  - 持有 `cw` 场景执行器、阶段识别器、槽位读取器、商店与事件逻辑。
+  - `cw` 阶段识别、槽位读取、商店、补给、事件、攻略应用等场景能力。
 - `SessionService`
-  - 维护 session 内存态并同步落盘。
+  - session 热状态管理、磁盘落盘、恢复、并发隔离。
 
-### 4. 存储层
+## 命令兼容边界
 
-- 继续使用现有 `.trail/sessions`、`.trail/shots`、`.trail/artifacts`。
-- daemon 内存中维护热状态，磁盘作为恢复与审计基础。
-- daemon 重启后可从磁盘恢复必要 session 元数据；模型与运行时资源则重新加载。
+### 原则
 
-## 命令与数据流
+CLI 命令面是“尽量兼容”，但不能只写成口号。第一版按以下表冻结：
 
-### 普通命令执行
+#### 继续由 CLI 本地处理
 
-1. 用户执行 `trail <command>`。
-2. CLI 解析参数并生成 RPC 请求。
-3. 若 daemon 不存在：
-   - 尝试自动拉起 `traild`。
-   - 获取认证令牌并建立连接。
-4. daemon 执行对应服务。
-5. daemon 返回统一 envelope。
-6. CLI 将 envelope 直接打印给用户/Agent。
+- `--help`
+- 纯文案输出
+- 纯参数校验
+- `trail daemon install|start|stop|status|logs` 的本地调度部分
 
-### `--verbose` 语义
+#### 通过 RPC 调 daemon 执行
 
-- `--verbose` 改为 RPC 级调试标记。
-- CLI 只转发该标记。
-- daemon 决定是否返回 `debug.trace`、模型热身信息、场景中间步骤、窗口/输入诊断信息。
+- `window attach|launch`
+- `screen shot`
+- `ocr read`
+- `image locate|wait`
+- `input click|drag|key`
+- `state dump`
+- `session create`
+- 所有 `cw ...`
 
-### `session` 语义
+#### 保持的 envelope 契约
 
-- `session_id` 继续作为显式上下文锚点。
-- CLI 不持有运行态，只传 `session_id + payload`。
-- daemon 负责在内存中维护 session 热状态，并在命令结束后同步落盘。
+无论是业务失败，还是 transport/bootstrap 失败，CLI 对外都必须打印 JSON envelope。也就是说：
+
+- daemon 执行成功/失败：daemon 返回 envelope，CLI 只做路径归一化。
+- daemon 未安装、拉起失败、认证失败、版本不匹配、连接超时：CLI 本地生成 envelope。
+
+新增稳定错误码：
+
+- `DAEMON_BOOTSTRAP_REQUIRED`
+- `DAEMON_START_FAILED`
+- `DAEMON_UNAVAILABLE`
+- `DAEMON_AUTH_FAILED`
+- `DAEMON_VERSION_MISMATCH`
+
+这些错误也必须落在同样的 envelope 结构中。
+
+## `--verbose` 与调试语义
+
+- `--verbose` 变为 RPC 级调试开关。
+- daemon 在 `verbose=true` 时可返回：
+  - transport 诊断
+  - 请求路由
+  - 模型命中/初始化信息
+  - 窗口与输入 trace
+  - 场景中间步骤
+- transport/bootstrap 层的 debug 也必须进入同一个 `debug` 字段，而不是单独打印到 stderr。
+
+## Session、一致性与幂等性
+
+这是第一版必须写清楚的核心语义。
+
+### 真相源
+
+- 运行中的单一真相源：daemon 内存中的 session 热状态。
+- 可恢复副本：磁盘上的 `.trail/sessions/*.json`。
+
+### 并发模型
+
+1. 同一 `session_id` 的 mutating 请求必须串行执行。
+2. 只读请求可以按策略并行，但不得穿透到会改变同一 session 真相源的执行路径。
+3. `cw` 相关请求按 `session_id` 串行，不允许两个 CLI 同时推进同一局。
+
+### 请求状态机
+
+所有 mutating RPC 都必须有 `request_id`，并记录到执行日志，状态至少包括：
+
+- `accepted`
+- `executing`
+- `side_effect_applied`
+- `state_persisted`
+- `responded`
+
+### 自动重试规则
+
+- 只读 RPC 在 transport 失败时可以有限重试。
+- mutating RPC 默认**不自动重试**。
+- 如果 CLI 在 mutating RPC 上超时或断连，只能提示“执行结果未知”，并依赖 `request_id` 与审计日志/状态查询来判定，而不能盲目重放。
+
+### 落盘顺序
+
+mutating RPC 的提交顺序固定为：
+
+1. 写执行日志 `accepted/executing`
+2. 执行业务副作用
+3. 更新内存 session 真相源
+4. 持久化 session 磁盘副本
+5. 记录 `state_persisted`
+6. 生成响应 envelope
+
+若在 2-5 任一步骤中断，daemon 必须在日志中留下 `request_id` 与最后可见阶段，供后续排障和人工判断是否已执行。
 
 ## 截图与输入策略
 
 ### 截图
 
-- Windows 下优先使用窗口级抓图接口，目标是直接得到游戏窗口内容，且分辨率稳定为 `1920x1080`。
-- 当窗口级抓图不可用时，再考虑 `PrintWindow` 或 bbox 回退策略。
-- 对扩展屏、混合 DPI、后台窗口，daemon 统一封装兼容逻辑，CLI 不再关心具体平台差异。
+- Windows 下优先使用窗口级抓图，以确保游戏窗口内容与分辨率稳定；
+- 目标输出分辨率固定为游戏窗口内部的 `1920x1080`；
+- 当窗口级抓图失败时，再按策略回退到 `PrintWindow`，最后才考虑 bbox 回退；
+- 扩展屏、混合 DPI、后台窗口都由 daemon 内部兼容。
 
 ### 输入
 
-- 所有输入操作都通过管理员 daemon 执行。
-- 输入前由 daemon 统一完成窗口准备、焦点确认和必要的错误诊断。
-- 输入请求必须记录审计日志：时间、session、窗口、动作类型、坐标/按键。
+- 所有输入都在管理员 daemon 内执行；
+- 输入前由 daemon 统一完成窗口准备、句柄校验和诊断；
+- 所有输入请求都必须写审计日志：时间、workspace、session、窗口、动作、坐标/按键、`request_id`。
 
-## 安全与运维
+## 状态与运维
 
-### 安全约束
+### daemon runtime 状态
 
-1. daemon 仅允许本机访问。
-2. daemon 启动时生成一次性认证令牌。
-3. CLI 必须带令牌才能访问 daemon。
-4. daemon 不执行任意代码，不暴露通用 shell 能力，只暴露受控 RPC 方法。
-5. 输入类 RPC 全部写入审计日志。
+`trail daemon status` 不能只返回静态字段，必须返回明确的 daemon 状态机：
+
+- `starting`
+- `ready`
+- `degraded`
+- `stopping`
+- `crashed`
+
+并至少展示：
+
+- 是否管理员
+- bootstrap 类型与标识
+- 监听 endpoint
+- daemon PID
+- 启动时间
+- 协议版本
+- token 文件状态
+- 当前 workspace 数
+- 当前 session 数
+- 每个 session 当前绑定窗口摘要
+- 已加载模型/索引摘要
+- 最后一次启动错误（如果存在）
 
 ### 生命周期命令
 
-新增：
-
+- `trail daemon install`
+  - 一次性安装 bootstrap。
 - `trail daemon start`
+  - 触发已安装 daemon 启动；若未安装则返回 `DAEMON_BOOTSTRAP_REQUIRED`。
 - `trail daemon stop`
-- `trail daemon status`
+  - 请求 daemon drain in-flight 请求后退出；不删除 session 文件。
 - `trail daemon logs`
-
-其中：
-
-- `start` 支持显式预热 OCR/图像模型。
-- `stop` 只停止 daemon，不删除 session 文件。
-- `status` 至少展示：
-  - 是否管理员
-  - 监听地址/IPC 标识
-  - 启动时间
-  - 已加载模型
-  - 当前绑定窗口
-  - 当前 session 数
-- `logs` 只展示 daemon 自身日志，不混入截图产物。
+  - 只看 daemon 自身日志，不混入业务截图产物。
 
 ## 错误处理
 
-- daemon 未启动：CLI 自动拉起；失败则返回明确错误。
-- daemon 版本不匹配或协议不兼容：返回稳定错误码并提示重启。
-- 令牌失效：返回认证错误，CLI 提示重新连接或重启 daemon。
-- 窗口句柄失效：返回 `WINDOW_NOT_FOUND`。
-- 输入能力不可用：返回 `INPUT_BACKEND_UNAVAILABLE`。
-- OCR/图像模型加载失败：返回结构化错误，不让 CLI 伪装成功。
+- 未安装 bootstrap：`DAEMON_BOOTSTRAP_REQUIRED`
+- bootstrap 启动失败：`DAEMON_START_FAILED`
+- daemon 连接失败：`DAEMON_UNAVAILABLE`
+- token 无效：`DAEMON_AUTH_FAILED`
+- 协议不兼容：`DAEMON_VERSION_MISMATCH`
+- 窗口句柄失效：`WINDOW_NOT_FOUND`
+- 输入后端不可用：`INPUT_BACKEND_UNAVAILABLE`
+- 模型加载失败：保持已有业务错误码风格，返回结构化错误
 
-## 验证标准
+所有这些错误都必须进入统一 envelope，而不是退化为纯 stderr 文本。
 
-### 功能
+## 测试分层
 
-1. 现有 CLI 命令面基本保持不变。
-2. `trail input click` 在已提权游戏窗口下真实生效。
-3. `trail screen shot` 在扩展屏 + 混合 DPI 下稳定得到 `1920x1080` 游戏窗口图像。
-4. `trail ocr read`、`trail image locate`、`trail cw ...` 能通过 daemon 正常执行。
+daemon 化后，测试策略必须同步升级，不能继续只依赖“进程内 fake runtime”。第一版测试分为五层：
 
-### 性能
+### 1. 纯领域单元测试
 
-1. 同一 daemon 生命周期内，第二次 `ocr read` 显著快于第一次。
-2. 图像匹配与场景命令不再每次重复初始化重资源。
+继续保留现有场景与领域逻辑的单元测试，例如：
 
-### 安全
+- `cw` 阶段识别
+- 槽位读取与合并逻辑
+- guide 业务解析
 
-1. CLI 保持非管理员权限。
-2. 未携带认证令牌的本机请求不能调用 daemon。
-3. 输入动作存在可审计日志。
+这些测试不依赖 RPC。
+
+### 2. daemon 服务层测试
+
+新增：
+
+- `WindowService` / `CaptureService` / `OcrService` / `ImageService` / `InputService` / `SessionService` 的进程内测试
+- 用 fake backend 验证缓存复用、workspace 解析、session 串行化、日志顺序
+
+### 3. CLI-RPC 契约测试
+
+新增：
+
+- fake daemon + 真 CLI 的契约测试
+- 验证普通命令经由 RPC 后仍输出兼容 envelope
+- 验证 transport/bootstrap/auth/version 失败时，CLI 本地 envelope 也稳定
+
+### 4. Bootstrap 与存储一致性测试
+
+新增：
+
+- manifest 发现
+- token 轮换
+- workspace 隔离
+- session 落盘与恢复
+- mutating RPC 的 request log 状态机
+
+### 5. 实机 smoke
+
+必须保留，且作为第一版验收的一部分：
+
+- 已提权游戏窗口输入真实生效
+- 扩展屏 + 混合 DPI 下截图稳定为 `1920x1080`
+- 后台截图可用
+- 同一 daemon 生命周期内第二次 OCR 调用明显快于第一次
 
 ## 迁移策略
 
-### 第一阶段
+### 第一阶段：daemon 骨架与 runtime RPC 化
 
-- 建立 daemon 骨架、RPC 协议和生命周期命令。
-- 先迁移 `window`、`screen`、`ocr`、`image`、`input`。
+- 建立 manifest、bootstrap、RPC 层、token 认证、daemon lifecycle 命令
+- 迁移 `window`、`screen`、`ocr`、`image`、`input`
+- 建立 CLI 对 transport/bootstrap 失败的 envelope 封装
 
-### 第二阶段
+### 第二阶段：session 热状态与一致性
 
-- 迁移 `session/state` 的热状态维护。
-- 将 `cw` 场景逻辑迁入 daemon。
+- 引入 `SessionService`
+- 定义 request log 状态机
+- 完成 workspace 隔离与落盘恢复
+- 将 `session create`、`state dump` 迁入 daemon
 
-### 第三阶段
+### 第三阶段：`cw` 场景迁移
 
-- 调整 skill/README，明确 `trail` 已成为 RPC 薄壳。
-- 增加性能与实机回归验证。
+- 将 `cw` 场景执行器迁入 daemon
+- 保持现有命令面与 skill 基本兼容
+- 增加场景 trace 与诊断输出
+
+### 第四阶段：文档与实机验收
+
+- 更新 README 与 skill
+- 执行性能 smoke、权限 smoke、多显示器/DPI smoke
 
 ## 风险与缓解
 
 1. 单管理员全量 daemon 权限面偏大。
-   - 缓解：严格限制 RPC 方法、启用令牌认证、保留审计日志。
-2. 迁移范围较大，容易一次性改动过多。
-   - 缓解：按阶段迁移，优先 runtime，再迁移场景。
-3. daemon 崩溃会影响全部命令。
-   - 缓解：加入健康检查、自动重连与显式 `status/logs`。
+   - 缓解：本机 IPC、一次性 token、固定 RPC 方法集、审计日志。
+2. bootstrap 安装与自动启动路径在 Windows 上天然复杂。
+   - 缓解：把 `install` 作为显式前置步骤写入正式契约，避免模糊的“普通 CLI 静默提权”。
+3. mutating RPC 不能安全自动重试。
+   - 缓解：引入 `request_id` 与执行日志状态机，禁止盲重试。
+4. daemon 崩溃会影响全部命令。
+   - 缓解：`status/logs`、健康状态机、重连策略、磁盘恢复。
 
 ## 成功判定
 
 当以下条件同时满足，即认为本设计完成：
 
-1. 非管理员 CLI 能稳定驱动管理员 daemon 完成截图、OCR、找图、输入和 `cw` 场景命令。
-2. 同一 daemon 生命周期内，重资源只加载一次并被跨命令复用。
-3. 实机环境下，已提权游戏窗口输入恢复稳定，扩展屏混合 DPI 截图稳定输出 `1920x1080`。
-4. 现有 skill/Agent 基本无需改写命令面，仅需继续消费同样的 envelope。
+1. `trail` 保持普通权限，`traild` 为唯一管理员进程。
+2. 普通命令在 daemon 不存在时，能通过已安装 bootstrap 自动启动；未安装时，返回稳定的 `DAEMON_BOOTSTRAP_REQUIRED` envelope。
+3. 同一 daemon 生命周期内，OCR/图像匹配/窗口绑定等重资源只初始化一次并被跨命令复用。
+4. 已提权游戏窗口输入真实恢复稳定。
+5. 扩展屏 + 混合 DPI + 后台窗口场景下，截图稳定输出 `1920x1080` 游戏窗口内容。
+6. 现有 skill/Agent 不需要重写命令面，只需继续消费兼容 envelope。
