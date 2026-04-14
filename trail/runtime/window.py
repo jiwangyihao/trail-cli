@@ -191,6 +191,24 @@ def launch_game(
     }
 
 
+def _grab_region_with_imagegrab(region: Region):
+    kwargs = {
+        "bbox": (
+            region.left,
+            region.top,
+            region.left + region.width,
+            region.top + region.height,
+        )
+    }
+    if sys.platform == "win32":
+        kwargs["all_screens"] = True
+    return ImageGrab.grab(**kwargs)
+
+
+def _grab_window_with_imagegrab(hwnd: int):
+    return ImageGrab.grab(window=hwnd)
+
+
 class WindowsWindowController:
     def __init__(self, *, workspace: Path, window_binding: WindowBinding | dict | None = None, window_title: str | None = None):
         self.window_binding = normalize_window_binding(window_binding, window_title=window_title)
@@ -274,28 +292,17 @@ class WindowsWindowController:
         hwnd = getattr(window, "_hWnd", None)
         if sys.platform == "win32" and hwnd is not None:
             try:
-                image = _capture_win32_window(int(hwnd), region)
-            except TrailError as exc:
-                if exc.code != "SCREENSHOT_FAILED":
-                    raise
-                self.prepare_input()
-                image = ImageGrab.grab(
-                    bbox=(
-                        region.left,
-                        region.top,
-                        region.left + region.width,
-                        region.top + region.height,
-                    )
-                )
+                image = _grab_window_with_imagegrab(int(hwnd))
+            except Exception:
+                try:
+                    image = _capture_win32_window(int(hwnd), region)
+                except TrailError as exc:
+                    if exc.code != "SCREENSHOT_FAILED":
+                        raise
+                    self.prepare_input()
+                    image = _grab_region_with_imagegrab(region)
         else:
-            image = ImageGrab.grab(
-                bbox=(
-                    region.left,
-                    region.top,
-                    region.left + region.width,
-                    region.top + region.height,
-                )
-            )
+            image = _grab_region_with_imagegrab(region)
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue()

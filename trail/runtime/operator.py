@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ctypes
 from io import BytesIO
 from pathlib import Path
+import sys
 from time import monotonic, sleep
 from typing import Any, Protocol
 
@@ -317,6 +319,9 @@ class RapidOcrAdapter:
 
 
 class PyAutoGuiInputDriver:
+    MOUSEEVENTF_LEFTDOWN = 0x0002
+    MOUSEEVENTF_LEFTUP = 0x0004
+
     @staticmethod
     def _load_backend():
         try:
@@ -325,7 +330,31 @@ class PyAutoGuiInputDriver:
             raise TrailError("INPUT_BACKEND_UNAVAILABLE", "pyautogui backend unavailable") from exc
         return pyautogui
 
+    @staticmethod
+    def _should_use_virtual_screen_path(*coords: float) -> bool:
+        return sys.platform == "win32" and any(round(value) < 0 for value in coords)
+
+    @staticmethod
+    def _virtual_click(x: float, y: float) -> None:
+        user32 = ctypes.windll.user32
+        user32.SetCursorPos(round(x), round(y))
+        user32.mouse_event(PyAutoGuiInputDriver.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+        user32.mouse_event(PyAutoGuiInputDriver.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+    @staticmethod
+    def _virtual_drag(from_x: float, from_y: float, to_x: float, to_y: float) -> None:
+        user32 = ctypes.windll.user32
+        user32.SetCursorPos(round(from_x), round(from_y))
+        user32.mouse_event(PyAutoGuiInputDriver.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+        sleep(0.1)
+        user32.SetCursorPos(round(to_x), round(to_y))
+        sleep(0.1)
+        user32.mouse_event(PyAutoGuiInputDriver.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
     def click(self, x: float, y: float, **kwargs) -> None:
+        if self._should_use_virtual_screen_path(x, y):
+            self._virtual_click(x, y)
+            return
         pyautogui = self._load_backend()
         pyautogui.click(x, y)
 
@@ -333,6 +362,9 @@ class PyAutoGuiInputDriver:
         self._load_backend()
 
     def drag(self, from_x: float, from_y: float, to_x: float, to_y: float) -> None:
+        if self._should_use_virtual_screen_path(from_x, from_y, to_x, to_y):
+            self._virtual_drag(from_x, from_y, to_x, to_y)
+            return
         pyautogui = self._load_backend()
         pyautogui.moveTo(from_x, from_y)
         pyautogui.dragTo(to_x, to_y, duration=0.5)

@@ -40,8 +40,8 @@ def test_windows_window_controller_capture_uses_imagegrab(monkeypatch, tmp_path)
         called_with = None
 
         @staticmethod
-        def grab(*, bbox):
-            FakeImageGrab.called_with = bbox
+        def grab(*, bbox, all_screens=False):
+            FakeImageGrab.called_with = (bbox, all_screens)
             return Image.new("RGB", (10, 6), color="white")
 
     monkeypatch.setattr(window_module, "ImageGrab", FakeImageGrab)
@@ -59,19 +59,66 @@ def test_windows_window_controller_capture_uses_imagegrab(monkeypatch, tmp_path)
 
     image_bytes = controller.capture(from_x=0.1, from_y=0.2, to_x=0.5, to_y=0.8)
 
-    assert FakeImageGrab.called_with == (20, 32, 60, 68)
+    assert FakeImageGrab.called_with == ((20, 32, 60, 68), False)
     assert image_bytes.startswith(b"\x89PNG")
 
 
-def test_windows_window_controller_capture_falls_back_to_imagegrab_when_printwindow_fails(monkeypatch, tmp_path):
+def test_windows_window_controller_capture_falls_back_to_printwindow_when_window_grab_fails(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
 
     class FakeImageGrab:
         called_with = None
 
         @staticmethod
-        def grab(*, bbox):
-            FakeImageGrab.called_with = bbox
+        def grab(*, bbox=None, all_screens=False, window=None):
+            FakeImageGrab.called_with = {"bbox": bbox, "all_screens": all_screens, "window": window}
+            raise OSError("window grab unavailable")
+
+    monkeypatch.setattr(window_module.sys, "platform", "win32")
+    called = {}
+    monkeypatch.setattr(
+        window_module,
+        "_capture_win32_window",
+        lambda hwnd, region: called.update({"hwnd": hwnd, "region": region}) or Image.new("RGB", (10, 6), color="white"),
+    )
+    monkeypatch.setattr(window_module, "ImageGrab", FakeImageGrab)
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=1),
+    )
+    prepare_calls: list[str] = []
+    monkeypatch.setattr(controller, "_resolve_window", lambda: SimpleNamespace(_hWnd=1))
+    monkeypatch.setattr(controller, "prepare_input", lambda: prepare_calls.append("prepare"))
+    monkeypatch.setattr(
+        controller,
+        "_resolve_region",
+        lambda window=None: window_module.Region(left=10, top=20, width=100, height=60),
+    )
+
+    image_bytes = controller.capture(from_x=0.1, from_y=0.2, to_x=0.5, to_y=0.8)
+
+    assert prepare_calls == []
+    assert FakeImageGrab.called_with == {"bbox": None, "all_screens": False, "window": 1}
+    assert called == {
+        "hwnd": 1,
+        "region": window_module.Region(left=20, top=32, width=40, height=36),
+    }
+    assert image_bytes.startswith(b"\x89PNG")
+
+
+def test_windows_window_controller_capture_falls_back_to_bbox_grab_when_window_grab_and_printwindow_fail(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    class FakeImageGrab:
+        calls: list[dict] = []
+
+        @staticmethod
+        def grab(*, bbox=None, all_screens=False, window=None):
+            call = {"bbox": bbox, "all_screens": all_screens, "window": window}
+            FakeImageGrab.calls.append(call)
+            if window is not None:
+                raise OSError("window grab unavailable")
             return Image.new("RGB", (10, 6), color="white")
 
     monkeypatch.setattr(window_module.sys, "platform", "win32")
@@ -98,21 +145,26 @@ def test_windows_window_controller_capture_falls_back_to_imagegrab_when_printwin
     image_bytes = controller.capture(from_x=0.1, from_y=0.2, to_x=0.5, to_y=0.8)
 
     assert prepare_calls == ["prepare"]
-    assert FakeImageGrab.called_with == (20, 32, 60, 68)
+    assert FakeImageGrab.calls == [
+        {"bbox": None, "all_screens": False, "window": 1},
+        {"bbox": (20, 32, 60, 68), "all_screens": True, "window": None},
+    ]
     assert image_bytes.startswith(b"\x89PNG")
 
 
-def test_windows_window_controller_prefers_win32_capture_when_hwnd_present(monkeypatch, tmp_path):
+def test_windows_window_controller_prefers_window_grab_when_hwnd_present(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
 
-    called = {}
+    class FakeImageGrab:
+        called_with = None
+
+        @staticmethod
+        def grab(*, bbox=None, all_screens=False, window=None):
+            FakeImageGrab.called_with = {"bbox": bbox, "all_screens": all_screens, "window": window}
+            return Image.new("RGB", (4, 4), color="white")
 
     monkeypatch.setattr(window_module.sys, "platform", "win32")
-    monkeypatch.setattr(
-        window_module,
-        "_capture_win32_window",
-        lambda hwnd, region: called.update({"hwnd": hwnd, "region": region}) or Image.new("RGB", (4, 4), color="white"),
-    )
+    monkeypatch.setattr(window_module, "ImageGrab", FakeImageGrab)
 
     controller = window_module.WindowsWindowController(
         workspace=tmp_path,
@@ -127,22 +179,23 @@ def test_windows_window_controller_prefers_win32_capture_when_hwnd_present(monke
 
     image_bytes = controller.capture()
 
-    assert called["hwnd"] == 321
-    assert called["region"] == window_module.Region(left=10, top=20, width=100, height=60)
+    assert FakeImageGrab.called_with == {"bbox": None, "all_screens": False, "window": 321}
     assert image_bytes.startswith(b"\x89PNG")
 
 
 def test_windows_window_controller_uses_resolved_hwnd_when_binding_missing(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
 
-    called = {}
+    class FakeImageGrab:
+        called_with = None
+
+        @staticmethod
+        def grab(*, bbox=None, all_screens=False, window=None):
+            FakeImageGrab.called_with = {"bbox": bbox, "all_screens": all_screens, "window": window}
+            return Image.new("RGB", (4, 4), color="white")
 
     monkeypatch.setattr(window_module.sys, "platform", "win32")
-    monkeypatch.setattr(
-        window_module,
-        "_capture_win32_window",
-        lambda hwnd, region: called.update({"hwnd": hwnd, "region": region}) or Image.new("RGB", (4, 4), color="white"),
-    )
+    monkeypatch.setattr(window_module, "ImageGrab", FakeImageGrab)
 
     fake_window = SimpleNamespace(title="Demo", _hWnd=654)
     controller = window_module.WindowsWindowController(
@@ -158,8 +211,7 @@ def test_windows_window_controller_uses_resolved_hwnd_when_binding_missing(monke
 
     image_bytes = controller.capture()
 
-    assert called["hwnd"] == 654
-    assert called["region"] == window_module.Region(left=10, top=20, width=100, height=60)
+    assert FakeImageGrab.called_with == {"bbox": None, "all_screens": False, "window": 654}
     assert image_bytes.startswith(b"\x89PNG")
 
 
@@ -733,3 +785,62 @@ def test_runtime_operator_matches_reference_images_from_project_tree(tmp_path, m
 
     assert [Path(match["path"]).name for match in matches] == ["1.png", "2.png"]
     assert matches[0]["similarity"] > matches[1]["similarity"]
+
+
+def test_pyautogui_input_driver_click_uses_win32_cursor_for_virtual_screen_coords(monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    class User32:
+        def __init__(self):
+            self.calls: list[tuple[str, tuple[int, ...]]] = []
+
+        def SetCursorPos(self, x: int, y: int):
+            self.calls.append(("SetCursorPos", (x, y)))
+            return 1
+
+        def mouse_event(self, flags: int, dx: int, dy: int, data: int, extra: int):
+            self.calls.append(("mouse_event", (flags, dx, dy, data, extra)))
+            return 1
+
+    user32 = User32()
+    monkeypatch.setattr(operator_module.sys, "platform", "win32")
+    monkeypatch.setattr(operator_module.ctypes, "windll", SimpleNamespace(user32=user32))
+
+    driver = operator_module.PyAutoGuiInputDriver()
+    driver.click(1408, -1196)
+
+    assert user32.calls == [
+        ("SetCursorPos", (1408, -1196)),
+        ("mouse_event", (0x0002, 0, 0, 0, 0)),
+        ("mouse_event", (0x0004, 0, 0, 0, 0)),
+    ]
+
+
+def test_pyautogui_input_driver_drag_uses_win32_cursor_for_virtual_screen_coords(monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    class User32:
+        def __init__(self):
+            self.calls: list[tuple[str, tuple[int, ...]]] = []
+
+        def SetCursorPos(self, x: int, y: int):
+            self.calls.append(("SetCursorPos", (x, y)))
+            return 1
+
+        def mouse_event(self, flags: int, dx: int, dy: int, data: int, extra: int):
+            self.calls.append(("mouse_event", (flags, dx, dy, data, extra)))
+            return 1
+
+    user32 = User32()
+    monkeypatch.setattr(operator_module.sys, "platform", "win32")
+    monkeypatch.setattr(operator_module.ctypes, "windll", SimpleNamespace(user32=user32))
+
+    driver = operator_module.PyAutoGuiInputDriver()
+    driver.drag(1408, -1196, 1410, -1190)
+
+    assert user32.calls == [
+        ("SetCursorPos", (1408, -1196)),
+        ("mouse_event", (0x0002, 0, 0, 0, 0)),
+        ("SetCursorPos", (1410, -1190)),
+        ("mouse_event", (0x0004, 0, 0, 0, 0)),
+    ]
