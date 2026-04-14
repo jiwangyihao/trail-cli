@@ -70,6 +70,56 @@
    - manifest 版本
    - token 文件位置
    - 日志目录
+   - workspace 注册根目录策略
+
+### manifest 契约
+
+manifest 分为两段，且字段语义必须固定：
+
+- `install`
+  - bootstrap 类型
+  - bootstrap 标识
+  - daemon 可执行入口
+  - manifest 版本
+  - 协议版本
+  - token 文件位置
+  - 日志目录
+- `runtime`
+  - `instance_id`
+  - `pid`
+  - `state`
+  - `endpoint`
+  - `token_generation`
+  - `updated_at`
+  - `last_transition_at`
+  - `last_start_error`
+
+`runtime.state` 的稳定状态集合固定为：
+
+- `installed`
+- `starting`
+- `ready`
+- `degraded`
+- `stopping`
+- `stopped`
+- `crashed`
+
+`instance_id` 与 `token_generation` 的生命周期固定为：
+
+1. 每次 daemon 成功启动都生成新的 `instance_id`。
+2. 每次生成新 token 都必须递增 `token_generation`。
+3. 第一版要求“一次启动实例只对应一代 token”；也就是说，正常实现中 `instance_id` 与 `token_generation` 是一一对应的。
+4. 当 daemon 进入 `stopped` 或 `crashed`，旧 token 必须立即失效；下一实例必须生成新的 `instance_id + token_generation` 组合。
+5. CLI 在自动重连时，只要发现任一字段漂移，都必须视为新实例重连，而不是复用旧连接上下文。
+
+### 访问控制要求
+
+bootstrap、manifest、token 与 IPC endpoint 都必须限定为“安装用户本人”可访问：
+
+1. manifest 文件必须设置为当前安装用户可读写，其他普通用户默认不可写。
+2. token 文件必须设置更严格的 ACL，至少不允许同机其他普通用户读取。
+3. IPC endpoint 必须绑定到安装用户上下文，不允许只靠“本机 + token”放宽到任意本机用户。
+4. `trail daemon install` 必须负责写入这些 ACL，而不是留给后续实现自由选择。
 
 ### 日常自动启动
 
@@ -84,6 +134,13 @@
    - token 已生成
    - 状态为 `ready` 或 `degraded`
 6. 然后 CLI 再发业务请求。
+
+CLI 必须同时校验：
+
+- `runtime.instance_id` 是否与当前连接对象一致；
+- `runtime.updated_at` 是否新于启动前快照；
+- `protocol_version` 是否兼容；
+- token 文件是否存在且 `token_generation` 未漂移。
 
 ### 为什么这样定义
 
@@ -102,6 +159,7 @@ daemon 化后，`cwd` 不能再作为隐式真相源。第一版必须显式协�
 2. daemon 内所有 `.trail` 路径都基于该 `workspace_root` 解析。
 3. 不允许 daemon 用自身 `cwd` 推断 workspace。
 4. daemon 内的 session、截图、artifact、引用图索引都按 `workspace_root` 隔离。
+5. session、artifact、state 内所有持久化路径字段默认都存相对 `workspace_root` 的相对路径；只有超出 workspace 的路径才允许保留绝对路径。
 
 ### 路径返回规则
 
@@ -112,6 +170,14 @@ daemon 化后，`cwd` 不能再作为隐式真相源。第一版必须显式协�
    - `screenshot` 返回相对 `workspace_root` 的相对路径，例如 `.trail/shots/last-action.png`
    - `references[].path` 同样返回相对 `workspace_root` 的相对路径
 3. 如果路径不属于当前 workspace，CLI 必须回退为绝对路径，而不能静默输出错误相对路径。
+
+### 产物命名规则
+
+为了避免并行请求覆盖同一张截图：
+
+1. daemon 生成的截图、调试产物必须按 `request_id` 或等价唯一键命名，不允许把单个可覆写文件作为唯一真相源。
+2. `references` 必须绑定到与当前 envelope 同一份 `screenshot`。
+3. `last-action.png` 最多只能作为便捷别名，不能作为并发协议的唯一截图路径。
 
 ## 组件划分
 
@@ -199,6 +265,7 @@ CLI 命令面是“尽量兼容”，但不能只写成口号。第一版按以�
 - `ocr read`
 - `image locate|wait`
 - `input click|drag|key`
+- `guide fetch|config|list`
 - `state dump`
 - `session create`
 - 所有 `cw ...`
@@ -219,6 +286,15 @@ CLI 命令面是“尽量兼容”，但不能只写成口号。第一版按以�
 - `DAEMON_VERSION_MISMATCH`
 
 这些错误也必须落在同样的 envelope 结构中。
+
+#### `request_id` 对外契约
+
+`request_id` 属于 transport/审计元数据，不作为现有顶层 envelope 的新公开字段直接暴露。第一版规则固定为：
+
+1. daemon 内部与 CLI transport 层必须始终持有 `request_id`。
+2. 当命令正常成功或普通业务失败时，CLI 对外仍保持现有 envelope 顶层字段集合不变。
+3. 当 transport/bootstrap 失败且结果需要后续排障时，CLI 必须把 `request_id` 放进 `debug` 或明确的管理查询面，而不是破坏现有顶层 JSON schema。
+4. CLI 本地生成的 transport/bootstrap 失败 envelope 也必须生成 `request_id`，以便后续日志与状态查询关联。
 
 ## `--verbose` 与调试语义
 
@@ -245,6 +321,8 @@ CLI 命令面是“尽量兼容”，但不能只写成口号。第一版按以�
 1. 同一 `session_id` 的 mutating 请求必须串行执行。
 2. 只读请求可以按策略并行，但不得穿透到会改变同一 session 真相源的执行路径。
 3. `cw` 相关请求按 `session_id` 串行，不允许两个 CLI 同时推进同一局。
+4. 所有会触碰真实窗口输入或窗口启动的 mutating 请求，还必须参与更高一级的 `window/input` 互斥，不得仅靠 `session_id` 串行。
+5. 无 `session_id` 的 mutating 请求（例如纯输入命令）也必须进入同一套 `window/input` 锁模型。
 
 ### 请求状态机
 
@@ -256,11 +334,41 @@ CLI 命令面是“尽量兼容”，但不能只写成口号。第一版按以�
 - `state_persisted`
 - `responded`
 
+并定义以下机器可判定终态：
+
+- `failed_before_side_effect`
+- `applied_but_not_persisted`
+- `persisted_but_response_unknown`
+- `completed`
+
+同一 `request_id` 在同一 `workspace_root + session_id + method` 范围内必须唯一。若 daemon 收到重复 `request_id`：
+
+- 若原请求已进入终态，则直接返回该请求的最终记录，不得重复执行业务副作用；
+- 若原请求仍在执行，则返回“请求进行中”状态，而不是启动第二次执行。
+
 ### 自动重试规则
 
 - 只读 RPC 在 transport 失败时可以有限重试。
 - mutating RPC 默认**不自动重试**。
 - 如果 CLI 在 mutating RPC 上超时或断连，只能提示“执行结果未知”，并依赖 `request_id` 与审计日志/状态查询来判定，而不能盲目重放。
+
+为此第一版需要显式提供 `request_id` 查询面，至少支持 daemon 内部和 CLI 管理命令查询某个请求的最终状态。
+
+第一版将这一查询面固定为：
+
+- `trail daemon request-status --request-id <id>`
+
+其最小返回字段固定为：
+
+- `request_id`
+- `method`
+- `workspace_root`
+- `session_id`（如适用）
+- `final_state`
+- `last_visible_stage`
+- `tainted`
+- `started_at`
+- `updated_at`
 
 ### 落盘顺序
 
@@ -274,6 +382,50 @@ mutating RPC 的提交顺序固定为：
 6. 生成响应 envelope
 
 若在 2-5 任一步骤中断，daemon 必须在日志中留下 `request_id` 与最后可见阶段，供后续排障和人工判断是否已执行。
+
+### 失败持久化矩阵
+
+1. 默认失败不提交业务 session 状态变更。
+2. 允许显式定义“安全失败可持久化”类别，例如某些仅更新 `stale/error` 标记的场景命令；这一类必须在后续 plan 中逐条列出。
+3. `last_result`、`last_screenshot`、request journal 必须在所有失败路径都有明确更新策略，不能留给实现自由发挥。
+4. daemon 重启后，如果某个 session 存在 `applied_but_not_persisted` 或 `persisted_but_response_unknown` 请求，必须把该 session 标为 `tainted`，在 reconcile 前拒绝继续执行 mutating 场景命令。
+
+第一版在 spec 里先冻结默认失败持久化矩阵：
+
+- `failed_before_side_effect`
+  - 业务 session 状态：不更新
+  - `last_result`：更新为失败 envelope
+  - `last_screenshot`：若已有截图则更新，否则保持原值
+  - request journal：终态记录
+- `applied_but_not_persisted`
+  - 业务 session 状态：不更新磁盘副本
+  - `last_result`：更新为“结果未知”失败 envelope
+  - `last_screenshot`：更新为当前请求截图（若有）
+  - request journal：终态记录，并把 session 标为 `tainted`
+- `persisted_but_response_unknown`
+  - 业务 session 状态：以已持久化副本为准
+  - `last_result`：更新为“结果未知”失败 envelope
+  - `last_screenshot`：更新为当前请求截图（若有）
+  - request journal：终态记录，并把 session 标为 `tainted`
+- `completed`
+  - 业务 session 状态：正常提交
+  - `last_result`：更新为成功/业务失败 envelope
+  - `last_screenshot`：按当前请求更新
+  - request journal：终态记录
+
+`tainted` 语义在第一版必须固定如下：
+
+1. `tainted` 持久化在 session 磁盘副本与内存真相源中，不能只存在于日志里。
+2. `state dump` 与 daemon 管理查询都必须能直接返回 `tainted` 状态。
+3. 只有显式 reconcile 或管理清除动作才能解除 `tainted`，普通命令不得隐式清除。
+4. 第一版固定两个外部入口：
+   - `trail daemon request-status --request-id <id>` 用于按请求排障；
+   - `trail daemon reconcile-session --session <id>` 用于显式 reconcile/清除 `tainted`。
+5. `failed_before_side_effect` / `applied_but_not_persisted` / `persisted_but_response_unknown` / `completed` 四类终态下，必须分别定义：
+   - 是否更新业务 session 状态
+   - 是否更新 `last_result`
+   - 是否更新 `last_screenshot`
+   - request journal 的最终记录内容
 
 ## 截图与输入策略
 
@@ -290,16 +442,23 @@ mutating RPC 的提交顺序固定为：
 - 输入前由 daemon 统一完成窗口准备、句柄校验和诊断；
 - 所有输入请求都必须写审计日志：时间、workspace、session、窗口、动作、坐标/按键、`request_id`。
 
+### `window launch` 语义
+
+- 第一版接受 `window launch` 经由管理员 daemon 拉起游戏，因此其结果进程可以是管理员权限；这被视为 daemon 化后的正式语义，而不是与旧 CLI 本地启动语义严格等价。
+- 如果未来要保留“以普通用户令牌启动游戏”的能力，需要作为后续单独功能显式设计，而不是在第一版实现里隐式追加。 
+
 ## 状态与运维
 
 ### daemon runtime 状态
 
 `trail daemon status` 不能只返回静态字段，必须返回明确的 daemon 状态机：
 
+- `installed`
 - `starting`
 - `ready`
 - `degraded`
 - `stopping`
+- `stopped`
 - `crashed`
 
 并至少展示：
@@ -317,6 +476,13 @@ mutating RPC 的提交顺序固定为：
 - 已加载模型/索引摘要
 - 最后一次启动错误（如果存在）
 
+`status` 还必须能区分：
+
+- daemon 尚未启动但 bootstrap 已安装；
+- daemon 正在启动但尚未 ready；
+- daemon 已停止且可再次启动；
+- daemon 崩溃且 manifest 仍残留旧 runtime 记录。
+
 ### 生命周期命令
 
 - `trail daemon install`
@@ -327,6 +493,8 @@ mutating RPC 的提交顺序固定为：
   - 请求 daemon drain in-flight 请求后退出；不删除 session 文件。
 - `trail daemon logs`
   - 只看 daemon 自身日志，不混入业务截图产物。
+
+另需补一个面向实现与排障的请求查询入口，例如 `trail daemon request-status --request-id <id>`，用于返回 request journal 的机器可消费状态。
 
 ## 错误处理
 
@@ -369,6 +537,7 @@ daemon 化后，测试策略必须同步升级，不能继续只依赖“进程�
 - fake daemon + 真 CLI 的契约测试
 - 验证普通命令经由 RPC 后仍输出兼容 envelope
 - 验证 transport/bootstrap/auth/version 失败时，CLI 本地 envelope 也稳定
+- 验证 `guide` 命令 daemon 化后仍保持当前命令面与输出契约
 
 ### 4. Bootstrap 与存储一致性测试
 
@@ -379,6 +548,7 @@ daemon 化后，测试策略必须同步升级，不能继续只依赖“进程�
 - workspace 隔离
 - session 落盘与恢复
 - mutating RPC 的 request log 状态机
+- 路径字段相对化与 `last_result/last_screenshot` 失败持久化矩阵
 
 ### 5. 实机 smoke
 
@@ -387,7 +557,7 @@ daemon 化后，测试策略必须同步升级，不能继续只依赖“进程�
 - 已提权游戏窗口输入真实生效
 - 扩展屏 + 混合 DPI 下截图稳定为 `1920x1080`
 - 后台截图可用
-- 同一 daemon 生命周期内第二次 OCR 调用明显快于第一次
+- 采用显式预热；预热完成后连续执行至少 3 次 `ocr read`，以后 2 次的中位耗时低于第一次 warm 请求
 
 ## 迁移策略
 
@@ -403,6 +573,12 @@ daemon 化后，测试策略必须同步升级，不能继续只依赖“进程�
 - 定义 request log 状态机
 - 完成 workspace 隔离与落盘恢复
 - 将 `session create`、`state dump` 迁入 daemon
+- 从这一阶段开始，所有 session 读写都必须经 daemon；不允许保留本地 CLI 对 `.trail/sessions` 的双写路径
+
+这一阶段与第三阶段的 cutover 规则固定为：
+
+- `cw` 不允许在“本地直写 session”与“daemon 管理 session”之间 mixed-mode 共存。
+- 因此 phase 2 完成后，`cw` 要么已经通过 daemon 包装执行现有逻辑，要么 phase 2/3 必须合并为单次 cutover；implementation plan 不得再自由选择双真相源过渡。
 
 ### 第三阶段：`cw` 场景迁移
 
