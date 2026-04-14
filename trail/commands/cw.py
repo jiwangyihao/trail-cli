@@ -92,6 +92,7 @@ boss_preview_confirmer_factory = build_cw_boss_preview_confirmer
 battle_starter_factory = build_cw_battle_starter
 battle_continuer_factory = build_cw_battle_continuer
 settle_continuer_factory = build_cw_settle_continuer
+DEFAULT_CW_STAGE_WAIT_TIMEOUT = 120
 
 cw_app = typer.Typer(no_args_is_help=True)
 cw_guide_app = typer.Typer(no_args_is_help=True)
@@ -206,7 +207,12 @@ def cw_enter(
 
 
 @cw_guide_app.command("apply")
-def cw_guide_apply(session: str = typer.Option(..., "--session"), guide: str = typer.Option(..., "--guide")) -> None:
+def cw_guide_apply(
+    session: str = typer.Option(..., "--session"),
+    guide: str = typer.Option(..., "--lineup-id", "--guide"),
+) -> None:
+    """在游戏内应用指定攻略。优先使用 lineup_id 作为统一输入心智模型。"""
+
     runtime = _runtime_for_session(session)
 
     def action(loaded):
@@ -221,6 +227,8 @@ def cw_guide_apply(session: str = typer.Option(..., "--session"), guide: str = t
 
 @cw_guide_app.command("current")
 def cw_guide_current(session: str = typer.Option(..., "--session")) -> None:
+    """回顾当前 session 里已应用的攻略细节，不触发网络请求。"""
+
     store = session_store_factory()
 
     def action() -> dict | None:
@@ -254,7 +262,10 @@ def cw_stage_detect(session: str = typer.Option(..., "--session")) -> None:
 
 
 @stage_app.command("wait")
-def cw_stage_wait(session: str = typer.Option(..., "--session"), timeout: int = typer.Option(30, "--timeout")) -> None:
+def cw_stage_wait(
+    session: str = typer.Option(..., "--session"),
+    timeout: int = typer.Option(DEFAULT_CW_STAGE_WAIT_TIMEOUT, "--timeout"),
+) -> None:
     runtime = _runtime_for_session(session)
 
     def action(loaded):

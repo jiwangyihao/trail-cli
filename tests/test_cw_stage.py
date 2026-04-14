@@ -66,6 +66,48 @@ def test_build_cw_stage_detector_maps_replenish_template_to_replenish():
     assert detector() == "replenish"
 
 
+def test_build_cw_stage_detector_falls_back_to_settle_keywords_from_ocr():
+    class RuntimeSpy:
+        def __init__(self):
+            self.templates: list[str] = []
+            self.ocr_calls = 0
+
+        def locate(self, template: str, **kwargs):
+            self.templates.append(template)
+            return None
+
+        def ocr(self, **kwargs):
+            self.ocr_calls += 1
+            return [
+                {"text": "挑战成功"},
+                {"text": "1-1奖励"},
+                {"text": "继续挑战"},
+            ]
+
+    runtime = RuntimeSpy()
+
+    detector = stage_scene.build_cw_stage_detector(runtime)
+
+    assert detector() == "settle"
+    assert runtime.ocr_calls == 1
+
+
+def test_build_cw_stage_detector_reads_tuple_ocr_results_for_settle_keywords():
+    class RuntimeSpy:
+        def locate(self, template: str, **kwargs):
+            return None
+
+        def ocr(self, **kwargs):
+            return [
+                ([[837.0, 199.0], [1081.0, 199.0]], "挑战成功", 0.98),
+                ([[911.0, 880.0], [1011.0, 880.0]], "继续挑战", 0.99),
+            ]
+
+    detector = stage_scene.build_cw_stage_detector(RuntimeSpy())
+
+    assert detector() == "settle"
+
+
 def test_detect_cw_stage_refreshes_stage_snapshot(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
 
@@ -83,6 +125,19 @@ def test_wait_cw_stage_retries_until_stage_is_detected(tmp_path):
 
     assert refreshed.scene_state["cw"]["stage"] == {"value": "settle", "stale": False}
     assert refreshed.last_stage == {"scene": "cw", "value": "settle"}
+
+
+def test_wait_cw_stage_sleeps_between_detection_attempts(tmp_path, monkeypatch):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    stages = iter([None, "settle"])
+    sleeps: list[float] = []
+
+    monkeypatch.setattr(stage_scene, "sleep", lambda seconds: sleeps.append(seconds))
+
+    refreshed = stage_scene.wait_cw_stage(session, detector=lambda: next(stages), timeout=1)
+
+    assert refreshed.scene_state["cw"]["stage"] == {"value": "settle", "stale": False}
+    assert sleeps == [0.5]
 
 
 def test_wait_cw_stage_raises_timeout_when_stage_missing(tmp_path, monkeypatch):
@@ -170,6 +225,27 @@ def test_cw_stage_wait_cli_returns_timeout_error(cli_runner, fake_runtime, fake_
         "message": "等待货币战争阶段超时",
     }
     assert payload["screenshot"]
+
+
+def test_cw_stage_wait_cli_uses_longer_default_timeout(cli_runner, fake_runtime, fake_session, monkeypatch):
+    import trail.commands.cw as cw_cmd
+
+    captured: dict[str, int] = {}
+
+    def fake_wait_cw_stage(session, *, detector, timeout):
+        captured["timeout"] = timeout
+        return stage_scene.detect_cw_stage(session, detector=lambda: "settle")
+
+    monkeypatch.setattr(cw_cmd, "wait_cw_stage", fake_wait_cw_stage, raising=False)
+    monkeypatch.setattr(cw_cmd, "stage_detector_factory", lambda runtime: (lambda: "settle"), raising=False)
+
+    result = cli_runner.invoke(app, ["cw", "stage", "wait", "--session", fake_session])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"] == {"value": "settle", "stale": False}
+    assert captured["timeout"] == 120
 
 
 @pytest.mark.parametrize(
