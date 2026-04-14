@@ -110,6 +110,10 @@ def _click_required_template(runtime, *, alias: str) -> None:
     runtime.click_point(*_box_center(box))
 
 
+def _is_template_visible(runtime, *, alias: str):
+    return runtime.locate(str(resolve_scene_asset("cw", alias))) is not None
+
+
 def _wait_for_template_to_clear(runtime, *, alias: str, timeout: float, interval: float) -> None:
     template = str(resolve_scene_asset("cw", alias))
     deadline = monotonic() + timeout
@@ -121,7 +125,8 @@ def _wait_for_template_to_clear(runtime, *, alias: str, timeout: float, interval
 
 
 def apply_cw_guide_via_ui(runtime, *, share_code: str) -> None:
-    _click_required_template(runtime, alias="guide.strategy")
+    if not _is_template_visible(runtime, alias="guide.enter_code"):
+        _click_required_template(runtime, alias="guide.strategy")
     _click_required_template(runtime, alias="guide.enter_code")
     runtime.click_point(*GUIDE_INPUT_POINT)
     sleep(GUIDE_INPUT_FOCUS_DELAY)

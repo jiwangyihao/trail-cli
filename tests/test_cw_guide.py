@@ -779,7 +779,10 @@ def test_cw_guide_apply_cli_fetches_lineup_applies_ui_and_persists_artifact(
     assert fake_runtime.keys == [("esc", 3, 1)]
     assert fake_runtime.hotkeys == []
     assert fake_runtime.texts == ["##REAL-CODE##"]
-    assert fake_runtime.locate_calls == [str((CW_ASSET_ROOT / "apply_strategy.png").resolve())]
+    assert fake_runtime.locate_calls == [
+        str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve()),
+        str((CW_ASSET_ROOT / "apply_strategy.png").resolve()),
+    ]
 
     session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
     assert session.scene_state["cw"]["guide"]["artifact"] == artifact_id
@@ -1087,7 +1090,11 @@ def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit():
 
     assert confirm_template in wait_calls
     assert texts == ["##demo##"]
-    assert locate_calls == [apply_template, apply_template]
+    assert locate_calls == [
+        str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve()),
+        apply_template,
+        apply_template,
+    ]
     assert keys == [("esc", 3, 1)]
 
 
@@ -1124,6 +1131,56 @@ def test_apply_cw_guide_via_ui_fails_when_apply_button_does_not_clear():
     assert exc_info.value.code == "GUIDE_APPLY_NOT_CONFIRMED"
     assert texts == ["##demo##"]
     assert keys == []
+
+
+def test_apply_cw_guide_via_ui_skips_strategy_click_when_guide_page_already_open():
+    guide_module = load_cw_guide_module()
+    apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
+    assert apply_cw_guide_via_ui is not None
+
+    strategy_template = str((CW_ASSET_ROOT / "strategy.png").resolve())
+    enter_code_template = str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve())
+    apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
+    wait_calls: list[str] = []
+    locate_calls: list[str] = []
+    clicks: list[tuple[float, float]] = []
+
+    class RuntimeStub:
+        def __init__(self):
+            self._apply_locate_results = [Box(left=10, top=20, width=40, height=20, source=apply_template), None]
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            wait_calls.append(template)
+            return Box(left=10, top=20, width=40, height=20, source=template)
+
+        def click_point(self, x: float, y: float, **kwargs):
+            clicks.append((x, y))
+
+        def type_text(self, text: str):
+            return None
+
+        def locate(self, template: str, **kwargs):
+            locate_calls.append(template)
+            if template == enter_code_template:
+                return Box(left=10, top=20, width=40, height=20, source=template)
+            if template == apply_template:
+                if self._apply_locate_results:
+                    return self._apply_locate_results.pop(0)
+                return None
+            if template == strategy_template:
+                return None
+            return None
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            return None
+
+    apply_cw_guide_via_ui(RuntimeStub(), share_code="##demo##")
+
+    assert strategy_template not in locate_calls
+    assert enter_code_template in locate_calls
+    assert strategy_template not in wait_calls
+    assert enter_code_template in wait_calls
+    assert clicks[0] == (30, 30)
 
 
 @pytest.mark.parametrize("field", ["on_field", "off_field", "priority", "positioning"])

@@ -13,6 +13,7 @@ description: Use when an agent needs to handle boss preview, special events, bat
 
 - 处理 Boss 预览、特殊事件、结算翻页与战斗继续
 - 不负责商店、补给和整局循环
+- 依赖主 skill 结合截图判断当前是不是该调用这里的命令，不假设 CLI 已内建穷尽识别
 
 ## 标准流程
 
@@ -28,3 +29,5 @@ description: Use when an agent needs to handle boss preview, special events, bat
 - 每次事件命令后都把 `stage` 视为失效，交回主 skill 重新识别
 - `trail cw event handle` 的返回至少要看 `event_type` 和 `handled_action`
 - 这个 skill 负责固定事件处理，不负责决定何时购物、何时补给、何时换阵容，也不负责决定何时退出整局
+- 如果事件截图和 `event_type` / `handled_action` 不一致，以截图为准，并由主 skill 决定下一步是否重试或改走别的命令
+- 即使 CLI 提供了 `event_type`，也不要假设它已经穷尽所有事件分支；必要时直接根据截图做多模态判断

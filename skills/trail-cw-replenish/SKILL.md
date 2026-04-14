@@ -14,10 +14,11 @@ description: Use when an agent needs to read or choose replenish, invest, encoun
 - 读取并选择补给、投资、遭遇、命运卜者选项
 - 一次只处理当前阶段
 - 不负责阶段切换和整局循环
+- `read` 命令返回的是辅助信息，不应替代 agent 对截图本身的判断
 
 ## 标准流程
 
-1. 根据当前阶段选择读取命令：
+1. 优先查看上一条命令返回的 `screenshot`，必要时再调用读取命令补充辅助信息：
    - 补给：`trail cw replenish read --session <id>`
    - 投资：`trail cw invest read --session <id>`
    - 遭遇：`trail cw encounter read --session <id>`
@@ -31,7 +32,8 @@ description: Use when an agent needs to read or choose replenish, invest, encoun
 
 ## 执行规则
 
-- 先 `read`，再 `choose`，不要直接盲点
+- 优先看截图，再决定是否调用 `read`；不要把 `read` 的返回当成唯一事实来源
+- `read` 返回的编号只是辅助输入，真正该选哪个仍应结合截图、攻略细节和当前局内目标判断
 - `--option` 必须显式给出
 - `choose` 之后把 `stage` 视为失效，回到 `trail-cw` 重新 `stage detect`
 - 这个 skill 不处理商店、编队和战斗逻辑

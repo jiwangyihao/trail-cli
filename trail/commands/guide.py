@@ -17,6 +17,8 @@ guide_app = typer.Typer(no_args_is_help=True)
 
 @guide_app.command("fetch")
 def guide_fetch(scene: str, url: str) -> None:
+    """拉取攻略内容并直接返回给 Agent；货币战争支持 lineup_url 或 lineup_id。"""
+
     def action() -> dict:
         if scene != "cw":
             raise TrailError("SCENE_NOT_SUPPORTED", f"暂不支持场景 {scene}")
@@ -27,6 +29,8 @@ def guide_fetch(scene: str, url: str) -> None:
 
 @guide_app.command("config")
 def guide_config(scene: str) -> None:
+    """返回货币战争攻略筛选会用到的动态枚举字典。"""
+
     def action() -> dict:
         if scene != "cw":
             raise TrailError("SCENE_NOT_SUPPORTED", f"暂不支持场景 {scene}")
@@ -57,6 +61,8 @@ def guide_list(
     match_change_job: str | None = typer.Option(None, "--match-change-job"),
     match_hard: str | None = typer.Option(None, "--match-hard"),
 ) -> None:
+    """列出可选攻略。默认字段面向“选攻略”，会保留 has_change_equip / has_expert / support_hard / final_role_cards 等高价值信息。"""
+
     def action() -> dict:
         if scene != "cw":
             raise TrailError("SCENE_NOT_SUPPORTED", f"暂不支持场景 {scene}")
