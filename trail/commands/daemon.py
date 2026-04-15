@@ -55,9 +55,14 @@ def daemon_install() -> None:
 @daemon_app.command("start")
 def daemon_start() -> None:
     daemon_home = resolve_daemon_home()
-    _manifest, failure = _load_manifest_for_command(daemon_home=daemon_home, request_id="local-start")
+    manifest, failure = _load_manifest_for_command(daemon_home=daemon_home, request_id="local-start")
     if failure is not None:
         print_json(failure)
+        return
+
+    runtime = manifest.runtime
+    if runtime.state in {"ready", "degraded"} and runtime.endpoint and runtime.pid:
+        print_json(command_success(data={"started": False, "already_running": True}, screenshot=None))
         return
 
     if not start_bootstrap(daemon_home):
