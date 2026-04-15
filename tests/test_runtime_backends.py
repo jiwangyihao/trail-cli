@@ -10,6 +10,7 @@ from PIL import Image
 
 from trail.core.errors import TrailError
 from trail.runtime.model import Box, WindowBinding
+from tests.support.fake_daemon import FakeDaemonClient, build_success_response
 
 
 class _CommandRuntimeStub:
@@ -1144,6 +1145,83 @@ def test_runtime_service_builds_runtime_with_workspace_reference_root(tmp_path, 
             "reference_root": workspace_root,
         }
     ]
+
+
+def test_fake_daemon_client_moves_request_id_into_debug_when_verbose():
+    client = FakeDaemonClient(
+        responses={
+            "input.click": build_success_response(
+                request_id="req-fake-verbose",
+                data={"clicked": [10, 20]},
+                screenshot=".trail/shots/req-fake-verbose.png",
+            )
+        }
+    )
+
+    payload = client.call(
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        workspace_root="C:/repo",
+        session_id=None,
+        verbose=True,
+    )
+
+    assert payload == {
+        "ok": True,
+        "data": {"clicked": [10, 20]},
+        "screenshot": ".trail/shots/req-fake-verbose.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"request_id": "req-fake-verbose"},
+        "error": None,
+    }
+
+
+def test_fake_daemon_client_preserves_request_id_in_debug_for_daemon_errors():
+    client = FakeDaemonClient(
+        responses={
+            "screen.shot": {
+                "request_id": "req-fake-daemon-error",
+                "ok": False,
+                "data": {},
+                "screenshot": None,
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": {"detail": "bootstrap missing"},
+                "error": {
+                    "code": "DAEMON_BOOTSTRAP_REQUIRED",
+                    "message": "daemon bootstrap not installed",
+                },
+            }
+        }
+    )
+
+    payload = client.call(
+        method="screen.shot",
+        payload={},
+        workspace_root="C:/repo",
+        session_id=None,
+        verbose=False,
+    )
+
+    assert payload == {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "detail": "bootstrap missing",
+            "request_id": "req-fake-daemon-error",
+        },
+        "error": {
+            "code": "DAEMON_BOOTSTRAP_REQUIRED",
+            "message": "daemon bootstrap not installed",
+        },
+    }
 
 
 def test_pyautogui_input_driver_click_uses_win32_cursor_for_virtual_screen_coords(monkeypatch):
