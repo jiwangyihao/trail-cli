@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from trail.artifacts.store import ArtifactStore
 from trail.session.store import SessionStore
+from tests.support.fake_daemon import FakeDaemonClient
 
 
 @pytest.fixture
