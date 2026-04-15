@@ -135,7 +135,7 @@ def test_daemon_start_is_idempotent_when_runtime_ready(cli_runner, monkeypatch, 
     token_before = Path(before.install.token_file).read_text(encoding="utf-8")
     started: list[Path] = []
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
-    monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_reachable", lambda endpoint: True, raising=False)
+    monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_traild", lambda **kwargs: True)
     monkeypatch.setattr("trail.commands.daemon.start_bootstrap", lambda home: started.append(home) or True)
 
     result = cli_runner.invoke(app, ["daemon", "start"])
@@ -157,20 +157,21 @@ def test_daemon_start_restarts_stale_ready_runtime(cli_runner, monkeypatch, tmp_
     daemon_home = tmp_path / "daemon-home"
     listener = socket.create_server(("127.0.0.1", 0))
     endpoint = f"127.0.0.1:{listener.getsockname()[1]}"
-    listener.close()
-    write_ready_manifest(daemon_home, endpoint=endpoint, token_value="token-live")
-    started: list[Path] = []
-    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
-    monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_reachable", lambda current: False, raising=False)
-    monkeypatch.setattr("trail.commands.daemon.start_bootstrap", lambda home: started.append(home) or True)
+    try:
+        write_ready_manifest(daemon_home, endpoint=endpoint, token_value="token-live")
+        started: list[Path] = []
+        monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+        monkeypatch.setattr("trail.commands.daemon.start_bootstrap", lambda home: started.append(home) or True)
 
-    result = cli_runner.invoke(app, ["daemon", "start"])
+        result = cli_runner.invoke(app, ["daemon", "start"])
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"started": True}
-    assert started == [daemon_home]
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["ok"] is True
+        assert payload["data"] == {"started": True}
+        assert started == [daemon_home]
+    finally:
+        listener.close()
 
 
 def test_daemon_logs_returns_log_dir(cli_runner, monkeypatch, tmp_path: Path):
@@ -190,6 +191,7 @@ def test_daemon_stop_returns_stopped_and_clears_runtime(cli_runner, monkeypatch,
     write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
     terminated: list[int] = []
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_traild", lambda **kwargs: True)
     monkeypatch.setattr("trail.commands.daemon.terminate_daemon_process", lambda pid: terminated.append(pid))
 
     result = cli_runner.invoke(app, ["daemon", "stop"])
@@ -209,6 +211,7 @@ def test_daemon_stop_returns_failure_when_process_termination_fails(cli_runner, 
     write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
     token_path = daemon_home / "daemon-token.txt"
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_traild", lambda **kwargs: True)
 
     def fail_terminate(pid: int) -> None:
         raise PermissionError(f"denied: {pid}")
@@ -230,6 +233,33 @@ def test_daemon_stop_returns_failure_when_process_termination_fails(cli_runner, 
     assert manifest.runtime.endpoint == "127.0.0.1:8765"
     assert manifest.runtime.pid == 1234
     assert token_path.read_text(encoding="utf-8") == "token-1"
+
+
+def test_daemon_stop_clears_stale_runtime_without_killing_unverified_pid(cli_runner, monkeypatch, tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    listener = socket.create_server(("127.0.0.1", 0))
+    endpoint = f"127.0.0.1:{listener.getsockname()[1]}"
+    try:
+        write_ready_manifest(daemon_home, endpoint=endpoint, token_value="token-stale")
+        terminated: list[int] = []
+        token_path = daemon_home / "daemon-token.txt"
+        monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+        monkeypatch.setattr("trail.commands.daemon.terminate_daemon_process", lambda pid: terminated.append(pid))
+
+        result = cli_runner.invoke(app, ["daemon", "stop"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        manifest = load_manifest(manifest_path_for_user(daemon_home))
+        assert payload["ok"] is True
+        assert payload["data"] == {"stopped": True}
+        assert terminated == []
+        assert manifest.runtime.state == "stopped"
+        assert manifest.runtime.endpoint is None
+        assert manifest.runtime.pid is None
+        assert token_path.read_text(encoding="utf-8") == ""
+    finally:
+        listener.close()
 
 
 def test_start_bootstrap_marks_runtime_starting_and_invokes_traild(monkeypatch, tmp_path: Path):
@@ -390,6 +420,34 @@ def test_traild_server_accepts_socket_requests(tmp_path: Path, monkeypatch):
     assert manifest.runtime.state == "ready"
     assert manifest.runtime.endpoint == endpoint
     assert manifest.runtime.pid
+
+
+def test_traild_server_responds_to_ping(tmp_path: Path, monkeypatch):
+    server, thread, _runtime_service, endpoint, token = _start_server_in_thread(
+        daemon_home=tmp_path / "daemon-home",
+        monkeypatch=monkeypatch,
+    )
+
+    try:
+        payload = send_daemon_request(
+            DaemonRequest(
+                request_id="req-ping-1",
+                protocol_version=PROTOCOL_VERSION,
+                workspace_root=str(tmp_path),
+                session_id=None,
+                verbose=False,
+                method="daemon.ping",
+                payload={},
+            ),
+            token=token,
+            endpoint=endpoint,
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    assert payload["ok"] is True
+    assert payload["data"] == {"alive": True}
 
 
 def test_traild_server_rejects_token_mismatch(tmp_path: Path, monkeypatch):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import os
 import signal
@@ -24,13 +25,66 @@ def terminate_daemon_process(pid: int) -> None:
     os.kill(pid, signal.SIGTERM)
 
 
-def runtime_endpoint_is_reachable(endpoint: str, *, timeout_seconds: float = 0.2) -> bool:
+def runtime_endpoint_is_traild(
+    *,
+    endpoint: str,
+    token: str,
+    protocol_version: int,
+    timeout_seconds: float = 0.2,
+) -> bool:
     try:
         host, port_text = endpoint.split(":", 1)
-        with socket.create_connection((host, int(port_text)), timeout=timeout_seconds):
-            return True
+        with socket.create_connection((host, int(port_text)), timeout=timeout_seconds) as sock:
+            sock.settimeout(timeout_seconds)
+            body = {
+                "request_id": "daemon-control-ping",
+                "protocol_version": protocol_version,
+                "workspace_root": str(Path.cwd()),
+                "session_id": None,
+                "verbose": False,
+                "method": "daemon.ping",
+                "payload": {},
+                "token": token,
+            }
+            sock.sendall(json.dumps(body, ensure_ascii=False).encode("utf-8") + b"\n")
+            with sock.makefile("r", encoding="utf-8") as reader:
+                response = json.loads(reader.readline())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+
+    return response.get("ok") is True and response.get("data") == {"alive": True}
+
+
+def runtime_manifest_is_live(manifest) -> bool:
+    runtime = manifest.runtime
+    if runtime.state not in {"ready", "degraded"} or not runtime.endpoint or not runtime.pid:
+        return False
+
+    try:
+        token = Path(manifest.install.token_file).read_text(encoding="utf-8").strip()
     except OSError:
         return False
+    if not token:
+        return False
+
+    return runtime_endpoint_is_traild(
+        endpoint=runtime.endpoint,
+        token=token,
+        protocol_version=manifest.install.protocol_version,
+    )
+
+
+def clear_runtime_manifest_state(*, manifest_path: Path, manifest) -> None:
+    manifest.runtime.state = "stopped"
+    manifest.runtime.endpoint = None
+    manifest.runtime.pid = None
+    manifest.runtime.updated_at = _utc_now()
+    manifest.runtime.last_transition_at = manifest.runtime.updated_at
+    manifest.runtime.last_start_error = None
+    token_path = Path(manifest.install.token_file)
+    if token_path.exists():
+        token_path.write_text("", encoding="utf-8")
+    save_manifest(manifest_path, manifest)
 
 
 def _load_manifest_for_command(*, daemon_home: Path, request_id: str):
@@ -70,13 +124,7 @@ def daemon_start() -> None:
         print_json(failure)
         return
 
-    runtime = manifest.runtime
-    if (
-        runtime.state in {"ready", "degraded"}
-        and runtime.endpoint
-        and runtime.pid
-        and runtime_endpoint_is_reachable(runtime.endpoint)
-    ):
+    if runtime_manifest_is_live(manifest):
         print_json(command_success(data={"started": False, "already_running": True}, screenshot=None))
         return
 
@@ -121,6 +169,12 @@ def daemon_stop() -> None:
         print_json(failure)
         return
 
+    runtime_is_live = runtime_manifest_is_live(manifest)
+    if not runtime_is_live and (manifest.runtime.endpoint or manifest.runtime.pid):
+        clear_runtime_manifest_state(manifest_path=manifest_path, manifest=manifest)
+        print_json(command_success(data={"stopped": True}, screenshot=None))
+        return
+
     if manifest.runtime.pid is not None:
         try:
             terminate_daemon_process(manifest.runtime.pid)
@@ -138,16 +192,7 @@ def daemon_stop() -> None:
             )
             return
 
-    manifest.runtime.state = "stopped"
-    manifest.runtime.endpoint = None
-    manifest.runtime.pid = None
-    manifest.runtime.updated_at = _utc_now()
-    manifest.runtime.last_transition_at = manifest.runtime.updated_at
-    manifest.runtime.last_start_error = None
-    token_path = Path(manifest.install.token_file)
-    if token_path.exists():
-        token_path.write_text("", encoding="utf-8")
-    save_manifest(manifest_path, manifest)
+    clear_runtime_manifest_state(manifest_path=manifest_path, manifest=manifest)
     print_json(command_success(data={"stopped": True}, screenshot=None))
 
 

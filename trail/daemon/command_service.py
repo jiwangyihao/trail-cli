@@ -40,6 +40,12 @@ class CommandService:
         )
 
     def handle(self, request):
+        if request.method == "daemon.ping":
+            return success(
+                {"alive": True},
+                request_id=request.request_id,
+            )
+
         if request.method == "ocr.read":
             runtime = self._runtime(request)
             return success(
