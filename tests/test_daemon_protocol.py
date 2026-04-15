@@ -1,3 +1,6 @@
+from pathlib import Path
+
+from trail.daemon.client import TrailDaemonClient, send_daemon_request
 from trail.daemon.models import DaemonRequest
 from trail.daemon.protocol import PROTOCOL_VERSION
 from tests.support.fake_daemon import (
@@ -5,11 +8,100 @@ from tests.support.fake_daemon import (
     build_success_response,
     fake_round_trip_transport,
     start_fake_daemon_server,
+    write_ready_manifest,
 )
 
 
 def test_protocol_version_is_fixed():
     assert PROTOCOL_VERSION == 1
+
+
+def test_client_returns_bootstrap_required_envelope_when_manifest_missing(tmp_path: Path):
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=tmp_path / "daemon-home",
+        transport=lambda request, token, *, endpoint: None,
+    )
+
+    payload = client.call("ocr.read", {})
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_BOOTSTRAP_REQUIRED",
+        "message": "daemon bootstrap not installed",
+    }
+    assert payload["debug"]["request_id"]
+
+
+def test_client_call_builds_protocol_request(tmp_path: Path):
+    requests: list[DaemonRequest] = []
+    tokens: list[str] = []
+    endpoints: list[str] = []
+
+    def fake_transport(request: DaemonRequest, token: str, *, endpoint: str):
+        requests.append(request)
+        tokens.append(token)
+        endpoints.append(endpoint)
+        return build_success_response(
+            request_id=request.request_id,
+            data={"captured": True},
+            screenshot=".trail/shots/req-1.png",
+        )
+
+    write_ready_manifest(
+        tmp_path / "daemon-home",
+        endpoint="127.0.0.1:8765",
+        token_value="token-1",
+    )
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=tmp_path / "daemon-home",
+        transport=fake_transport,
+    )
+
+    payload = client.call("screen.shot", {"region": "main"}, session_id="session-1")
+
+    assert payload["ok"] is True
+    assert len(requests) == 1
+    assert requests[0].workspace_root == str(tmp_path)
+    assert requests[0].method == "screen.shot"
+    assert requests[0].protocol_version == PROTOCOL_VERSION
+    assert requests[0].session_id == "session-1"
+    assert requests[0].payload == {"region": "main"}
+    assert requests[0].request_id
+    assert tokens == ["token-1"]
+    assert endpoints == ["127.0.0.1:8765"]
+
+
+def test_client_moves_transport_request_id_into_debug_when_verbose(tmp_path: Path):
+    write_ready_manifest(
+        tmp_path / "daemon-home",
+        endpoint="127.0.0.1:8765",
+        token_value="token-1",
+    )
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=tmp_path / "daemon-home",
+        transport=lambda request, token, *, endpoint: {
+            "request_id": request.request_id,
+            "ok": True,
+            "data": {"clicked": [10, 20]},
+            "screenshot": ".trail/shots/req-1.png",
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": {"transport": "fake"},
+            "error": None,
+        },
+    )
+
+    payload = client.call("input.click", {"x": 10, "y": 20}, verbose=True)
+
+    assert payload["debug"] == {
+        "transport": "fake",
+        "request_id": payload["debug"]["request_id"],
+    }
+    assert "request_id" not in payload
 
 
 def test_fake_daemon_client_records_request_metadata():
@@ -134,3 +226,42 @@ def test_fake_round_trip_transport_forwards_request_metadata_and_auth():
         "debug": None,
         "error": None,
     }
+
+
+def test_send_daemon_request_round_trips_with_fake_server(tmp_path: Path):
+    response = build_success_response(
+        request_id="req-1",
+        data={"captured": True},
+        screenshot=".trail/shots/req-1.png",
+    )
+    fake_server = start_fake_daemon_server({"screen.shot": response})
+
+    payload = send_daemon_request(
+        DaemonRequest(
+            request_id="req-1",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="screen.shot",
+            payload={},
+        ),
+        "token-1",
+        endpoint="127.0.0.1:8765",
+        server=fake_server,
+    )
+
+    assert payload["ok"] is True
+    assert fake_server.requests == [
+        {
+            "request_id": "req-1",
+            "protocol_version": PROTOCOL_VERSION,
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+            "method": "screen.shot",
+            "payload": {},
+            "token": "token-1",
+            "endpoint": "127.0.0.1:8765",
+        }
+    ]
