@@ -52,6 +52,9 @@ def runtime_endpoint_is_traild(
     except (OSError, ValueError, json.JSONDecodeError):
         return False
 
+    if not isinstance(response, dict):
+        return False
+
     return response.get("ok") is True and response.get("data") == {"alive": True}
 
 

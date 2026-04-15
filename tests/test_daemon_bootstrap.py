@@ -450,6 +450,38 @@ def test_traild_server_responds_to_ping(tmp_path: Path, monkeypatch):
     assert payload["data"] == {"alive": True}
 
 
+def test_runtime_endpoint_is_traild_returns_false_for_non_object_json():
+    from trail.commands.daemon import runtime_endpoint_is_traild
+
+    listener = socket.create_server(("127.0.0.1", 0))
+    listener.settimeout(5)
+
+    def handle_once() -> None:
+        with listener:
+            connection, _ = listener.accept()
+            with connection:
+                chunks = b""
+                while not chunks.endswith(b"\n"):
+                    chunk = connection.recv(4096)
+                    if not chunk:
+                        break
+                    chunks += chunk
+                connection.sendall(b"[]\n")
+
+    thread = threading.Thread(target=handle_once)
+    thread.start()
+    endpoint = f"127.0.0.1:{listener.getsockname()[1]}"
+
+    try:
+        assert runtime_endpoint_is_traild(
+            endpoint=endpoint,
+            token="token-1",
+            protocol_version=PROTOCOL_VERSION,
+        ) is False
+    finally:
+        thread.join(timeout=5)
+
+
 def test_traild_server_rejects_token_mismatch(tmp_path: Path, monkeypatch):
     server, thread, _runtime_service, endpoint, _token = _start_server_in_thread(
         daemon_home=tmp_path / "daemon-home",
