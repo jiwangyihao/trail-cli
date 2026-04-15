@@ -13,6 +13,9 @@ from trail.daemon.models import DaemonRequest
 from trail.daemon.protocol import PROTOCOL_VERSION
 from trail.output.envelope import command_failure
 
+READY_RUNTIME_STATES = {"ready", "degraded"}
+RETRIABLE_TRANSPORT_ERRORS = (ConnectionRefusedError, TimeoutError, socket.timeout)
+
 
 class DaemonTransport(Protocol):
     def __call__(self, request: DaemonRequest, token: str, *, endpoint: str) -> dict[str, Any]: ...
@@ -101,6 +104,34 @@ class TrailDaemonClient:
         self.transport = transport
         self.starter = starter
 
+    def _start_runtime(self, *, manifest_path: Path, request_id: str) -> tuple[dict[str, Any] | None, Any]:
+        try:
+            started = self.starter(self.daemon_home)
+        except Exception as error:
+            return daemon_transport_failure(
+                request_id=request_id,
+                code="DAEMON_START_FAILED",
+                message="daemon start failed",
+                debug={"detail": format_exception_detail(error)},
+            ), None
+        if not started:
+            return daemon_transport_failure(
+                request_id=request_id,
+                code="DAEMON_START_FAILED",
+                message="daemon start failed",
+            ), None
+
+        try:
+            wait_until_runtime_ready(self.daemon_home)
+            return None, load_manifest(manifest_path)
+        except Exception as error:
+            return daemon_transport_failure(
+                request_id=request_id,
+                code="DAEMON_START_FAILED",
+                message="daemon start failed",
+                debug={"detail": format_exception_detail(error)},
+            ), None
+
     def call(
         self,
         method: str,
@@ -126,32 +157,12 @@ class TrailDaemonClient:
                 detail=format_exception_detail(error),
             )
 
-        if manifest.runtime.state not in {"ready", "degraded"}:
-            try:
-                started = self.starter(self.daemon_home)
-            except Exception as error:
-                return daemon_transport_failure(
-                    request_id=request_id,
-                    code="DAEMON_START_FAILED",
-                    message="daemon start failed",
-                    debug={"detail": format_exception_detail(error)},
-                )
-            if not started:
-                return daemon_transport_failure(
-                    request_id=request_id,
-                    code="DAEMON_START_FAILED",
-                    message="daemon start failed",
-                )
-            try:
-                wait_until_runtime_ready(self.daemon_home)
-                manifest = load_manifest(manifest_path)
-            except Exception as error:
-                return daemon_transport_failure(
-                    request_id=request_id,
-                    code="DAEMON_START_FAILED",
-                    message="daemon start failed",
-                    debug={"detail": format_exception_detail(error)},
-                )
+        bootstrap_attempted = False
+        if manifest.runtime.state not in READY_RUNTIME_STATES:
+            failure, manifest = self._start_runtime(manifest_path=manifest_path, request_id=request_id)
+            if failure is not None:
+                return failure
+            bootstrap_attempted = True
 
         try:
             token = Path(manifest.install.token_file).read_text(encoding="utf-8").strip()
@@ -159,13 +170,6 @@ class TrailDaemonClient:
             return daemon_unavailable_failure(
                 request_id=request_id,
                 detail=format_exception_detail(error),
-            )
-
-        endpoint = manifest.runtime.endpoint
-        if not endpoint:
-            return daemon_unavailable_failure(
-                request_id=request_id,
-                detail="runtime endpoint missing",
             )
 
         request = DaemonRequest(
@@ -177,13 +181,50 @@ class TrailDaemonClient:
             method=method,
             payload=payload,
         )
-        try:
-            response = deepcopy(self.transport(request, token, endpoint=endpoint))
-        except Exception as error:
-            return daemon_unavailable_failure(
-                request_id=request_id,
-                detail=format_exception_detail(error),
-            )
+
+        while True:
+            endpoint = manifest.runtime.endpoint
+            if not endpoint:
+                if bootstrap_attempted:
+                    return daemon_unavailable_failure(
+                        request_id=request_id,
+                        detail="runtime endpoint missing",
+                    )
+                failure, manifest = self._start_runtime(manifest_path=manifest_path, request_id=request_id)
+                if failure is not None:
+                    return failure
+                bootstrap_attempted = True
+                try:
+                    token = Path(manifest.install.token_file).read_text(encoding="utf-8").strip()
+                except Exception as error:
+                    return daemon_unavailable_failure(
+                        request_id=request_id,
+                        detail=format_exception_detail(error),
+                    )
+                continue
+
+            try:
+                response = deepcopy(self.transport(request, token, endpoint=endpoint))
+            except Exception as error:
+                if not bootstrap_attempted and isinstance(error, RETRIABLE_TRANSPORT_ERRORS):
+                    failure, manifest = self._start_runtime(manifest_path=manifest_path, request_id=request_id)
+                    if failure is not None:
+                        return failure
+                    bootstrap_attempted = True
+                    try:
+                        token = Path(manifest.install.token_file).read_text(encoding="utf-8").strip()
+                    except Exception as nested_error:
+                        return daemon_unavailable_failure(
+                            request_id=request_id,
+                            detail=format_exception_detail(nested_error),
+                        )
+                    continue
+
+                return daemon_unavailable_failure(
+                    request_id=request_id,
+                    detail=format_exception_detail(error),
+                )
+            break
 
         if not isinstance(response, dict):
             return daemon_unavailable_failure(

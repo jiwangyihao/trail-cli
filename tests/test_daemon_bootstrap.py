@@ -25,6 +25,21 @@ def test_daemon_status_reports_installed_runtime_state(cli_runner, monkeypatch, 
     assert payload["data"]["runtime"]["state"] == "installed"
 
 
+def test_daemon_status_returns_structured_failure_when_manifest_invalid(cli_runner, monkeypatch, tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    manifest_path = write_installed_manifest(daemon_home, runtime_state="installed")
+    manifest_path.write_text("{invalid-json", encoding="utf-8")
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+
+    result = cli_runner.invoke(app, ["daemon", "status"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "DAEMON_MANIFEST_INVALID"
+    assert "JSONDecodeError" in payload["debug"]["detail"]
+
+
 def test_daemon_install_writes_manifest(cli_runner, monkeypatch, tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
@@ -77,6 +92,34 @@ def test_daemon_stop_returns_stopped_and_clears_runtime(cli_runner, monkeypatch,
     assert manifest.runtime.state == "stopped"
     assert manifest.runtime.endpoint is None
     assert manifest.runtime.pid is None
+
+
+def test_daemon_stop_returns_failure_when_process_termination_fails(cli_runner, monkeypatch, tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    token_path = daemon_home / "daemon-token.txt"
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+
+    def fail_terminate(pid: int) -> None:
+        raise PermissionError(f"denied: {pid}")
+
+    monkeypatch.setattr("trail.commands.daemon.terminate_daemon_process", fail_terminate)
+
+    result = cli_runner.invoke(app, ["daemon", "stop"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    manifest = load_manifest(manifest_path_for_user(daemon_home))
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_STOP_FAILED",
+        "message": "daemon stop failed",
+    }
+    assert "PermissionError" in payload["debug"]["detail"]
+    assert manifest.runtime.state == "ready"
+    assert manifest.runtime.endpoint == "127.0.0.1:8765"
+    assert manifest.runtime.pid == 1234
+    assert token_path.read_text(encoding="utf-8") == "token-1"
 
 
 def test_start_bootstrap_marks_runtime_starting_and_invokes_traild(monkeypatch, tmp_path: Path):

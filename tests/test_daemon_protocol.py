@@ -3,6 +3,8 @@ import socket
 import threading
 from pathlib import Path
 
+import pytest
+
 from trail.daemon.client import TrailDaemonClient, send_daemon_request
 from trail.daemon.models import DaemonRequest
 from trail.daemon.protocol import PROTOCOL_VERSION
@@ -108,20 +110,35 @@ def test_client_moves_transport_request_id_into_debug_when_verbose(tmp_path: Pat
     assert "request_id" not in payload
 
 
-def test_client_returns_daemon_unavailable_when_runtime_endpoint_missing(tmp_path: Path):
+def test_client_attempts_bootstrap_when_ready_runtime_is_missing_endpoint(tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
     write_installed_manifest(daemon_home, runtime_state="ready")
+    started: list[Path] = []
+
+    def fake_start(home: Path) -> bool:
+        started.append(home)
+        write_ready_manifest(home, endpoint="127.0.0.1:9001", token_value="token-2")
+        return True
+
     client = TrailDaemonClient(
         workspace_root=tmp_path,
         daemon_home=daemon_home,
-        transport=send_daemon_request,
+        transport=lambda request, token, *, endpoint: build_success_response(
+            request_id=request.request_id,
+            data={"captured": True, "token": token, "endpoint": endpoint},
+        ),
+        starter=fake_start,
     )
 
     payload = client.call("screen.shot", {})
 
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "DAEMON_UNAVAILABLE"
-    assert payload["debug"]["request_id"]
+    assert payload["ok"] is True
+    assert payload["data"] == {
+        "captured": True,
+        "token": "token-2",
+        "endpoint": "127.0.0.1:9001",
+    }
+    assert started == [daemon_home]
 
 
 def test_client_attempts_bootstrap_when_runtime_not_ready(tmp_path: Path):
@@ -178,27 +195,56 @@ def test_client_returns_daemon_start_failed_when_bootstrap_cannot_start(tmp_path
     assert payload["debug"]["request_id"]
 
 
-def test_client_returns_daemon_unavailable_when_socket_transport_raises(tmp_path: Path):
-    listener = socket.create_server(("127.0.0.1", 0))
-    endpoint = f"127.0.0.1:{listener.getsockname()[1]}"
-    listener.close()
-
+@pytest.mark.parametrize(
+    ("transport_error",),
+    [
+        (ConnectionRefusedError("connection refused"),),
+        (socket.timeout("timed out"),),
+    ],
+)
+def test_client_retries_connection_failures_by_bootstrapping(tmp_path: Path, transport_error: Exception):
     write_ready_manifest(
         tmp_path / "daemon-home",
-        endpoint=endpoint,
+        endpoint="127.0.0.1:8765",
         token_value="token-1",
     )
+    calls: list[tuple[str, str]] = []
+    started: list[Path] = []
+
+    def fake_start(home: Path) -> bool:
+        started.append(home)
+        write_ready_manifest(home, endpoint="127.0.0.1:9002", token_value="token-2")
+        return True
+
+    def fake_transport(request: DaemonRequest, token: str, *, endpoint: str):
+        calls.append((token, endpoint))
+        if len(calls) == 1:
+            raise transport_error
+        return build_success_response(
+            request_id=request.request_id,
+            data={"captured": True, "token": token, "endpoint": endpoint},
+        )
+
     client = TrailDaemonClient(
         workspace_root=tmp_path,
         daemon_home=tmp_path / "daemon-home",
-        transport=send_daemon_request,
+        transport=fake_transport,
+        starter=fake_start,
     )
 
     payload = client.call("screen.shot", {})
 
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "DAEMON_UNAVAILABLE"
-    assert payload["debug"]["request_id"]
+    assert payload["ok"] is True
+    assert payload["data"] == {
+        "captured": True,
+        "token": "token-2",
+        "endpoint": "127.0.0.1:9002",
+    }
+    assert calls == [
+        ("token-1", "127.0.0.1:8765"),
+        ("token-2", "127.0.0.1:9002"),
+    ]
+    assert started == [tmp_path / "daemon-home"]
 
 
 def test_client_returns_daemon_unavailable_when_transport_returns_non_object_json(tmp_path: Path):
