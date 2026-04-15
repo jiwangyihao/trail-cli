@@ -1,3 +1,4 @@
 .trail/
 uv.lock
 **/__pycache__/
+.worktrees/
