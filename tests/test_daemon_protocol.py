@@ -147,6 +147,45 @@ def test_client_returns_daemon_unavailable_when_socket_transport_raises(tmp_path
     assert payload["debug"]["request_id"]
 
 
+def test_client_returns_daemon_unavailable_when_transport_returns_non_object_json(tmp_path: Path):
+    server = socket.create_server(("127.0.0.1", 0))
+    server.settimeout(5)
+
+    def handle_once() -> None:
+        with server:
+            connection, _ = server.accept()
+            with connection:
+                chunks = b""
+                while not chunks.endswith(b"\n"):
+                    chunk = connection.recv(4096)
+                    if not chunk:
+                        break
+                    chunks += chunk
+                connection.sendall(b"[]\n")
+
+    thread = threading.Thread(target=handle_once)
+    thread.start()
+    endpoint = f"127.0.0.1:{server.getsockname()[1]}"
+    write_ready_manifest(
+        tmp_path / "daemon-home",
+        endpoint=endpoint,
+        token_value="token-1",
+    )
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=tmp_path / "daemon-home",
+        transport=send_daemon_request,
+    )
+
+    payload = client.call("screen.shot", {})
+    thread.join(timeout=5)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "DAEMON_UNAVAILABLE"
+    assert payload["debug"]["request_id"]
+    assert "list" in payload["debug"]["detail"]
+
+
 def test_fake_daemon_client_records_request_metadata():
     responses = {
         "ocr.read": {

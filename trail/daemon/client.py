@@ -54,6 +54,10 @@ def format_exception_detail(error: Exception) -> str:
     return f"{type(error).__name__}: {message}"
 
 
+def format_invalid_response_detail(response: Any) -> str:
+    return f"invalid daemon response type: expected object, got {type(response).__name__}"
+
+
 def send_daemon_request(
     request: DaemonRequest,
     token: str,
@@ -142,6 +146,12 @@ class TrailDaemonClient:
             return daemon_unavailable_failure(
                 request_id=request_id,
                 detail=format_exception_detail(error),
+            )
+
+        if not isinstance(response, dict):
+            return daemon_unavailable_failure(
+                request_id=request_id,
+                detail=format_invalid_response_detail(response),
             )
 
         returned_request_id = response.pop("request_id", request_id)
