@@ -110,7 +110,7 @@ def test_client_moves_transport_request_id_into_debug_when_verbose(tmp_path: Pat
 
 def test_client_returns_daemon_unavailable_when_runtime_endpoint_missing(tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
-    write_installed_manifest(daemon_home, runtime_state="installed")
+    write_installed_manifest(daemon_home, runtime_state="ready")
     client = TrailDaemonClient(
         workspace_root=tmp_path,
         daemon_home=daemon_home,
@@ -121,6 +121,60 @@ def test_client_returns_daemon_unavailable_when_runtime_endpoint_missing(tmp_pat
 
     assert payload["ok"] is False
     assert payload["error"]["code"] == "DAEMON_UNAVAILABLE"
+    assert payload["debug"]["request_id"]
+
+
+def test_client_attempts_bootstrap_when_runtime_not_ready(tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    write_installed_manifest(daemon_home, runtime_state="installed")
+
+    started: list[Path] = []
+
+    def fake_start(home: Path) -> bool:
+        started.append(home)
+        write_ready_manifest(home, endpoint="127.0.0.1:8765", token_value="token-1")
+        return True
+
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=daemon_home,
+        transport=lambda request, token, *, endpoint: {
+            "request_id": request.request_id,
+            "ok": True,
+            "data": {},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": None,
+            "error": None,
+        },
+        starter=fake_start,
+    )
+
+    payload = client.call("screen.shot", {})
+
+    assert payload["ok"] is True
+    assert started == [daemon_home]
+
+
+def test_client_returns_daemon_start_failed_when_bootstrap_cannot_start(tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    write_installed_manifest(daemon_home, runtime_state="starting")
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=daemon_home,
+        transport=lambda request, token, *, endpoint: None,
+        starter=lambda home: False,
+    )
+
+    payload = client.call("screen.shot", {})
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_START_FAILED",
+        "message": "daemon start failed",
+    }
     assert payload["debug"]["request_id"]
 
 

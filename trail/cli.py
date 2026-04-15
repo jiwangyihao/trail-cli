@@ -5,6 +5,7 @@ import tomllib
 import typer
 
 from trail.commands.cw import cw_app
+from trail.commands.daemon import daemon_app
 from trail.commands.guide import guide_app
 from trail.commands.image import image_app
 from trail.commands.input import input_app
@@ -34,6 +35,7 @@ def version() -> None:
 
 
 app.add_typer(session_app, name="session")
+app.add_typer(daemon_app, name="daemon")
 app.add_typer(guide_app, name="guide")
 app.add_typer(window_app, name="window")
 app.add_typer(screen_app, name="screen")

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from trail.daemon.bootstrap import start_bootstrap, wait_until_runtime_ready
 from trail.daemon.manifest import load_manifest, manifest_path_for_user
 from trail.daemon.models import DaemonRequest
 from trail.daemon.protocol import PROTOCOL_VERSION
@@ -93,10 +94,12 @@ class TrailDaemonClient:
         workspace_root: Path,
         daemon_home: Path,
         transport: DaemonTransport,
+        starter=start_bootstrap,
     ):
         self.workspace_root = Path(workspace_root)
         self.daemon_home = Path(daemon_home)
         self.transport = transport
+        self.starter = starter
 
     def call(
         self,
@@ -117,6 +120,40 @@ class TrailDaemonClient:
 
         try:
             manifest = load_manifest(manifest_path)
+        except Exception as error:
+            return daemon_unavailable_failure(
+                request_id=request_id,
+                detail=format_exception_detail(error),
+            )
+
+        if manifest.runtime.state not in {"ready", "degraded"}:
+            try:
+                started = self.starter(self.daemon_home)
+            except Exception as error:
+                return daemon_transport_failure(
+                    request_id=request_id,
+                    code="DAEMON_START_FAILED",
+                    message="daemon start failed",
+                    debug={"detail": format_exception_detail(error)},
+                )
+            if not started:
+                return daemon_transport_failure(
+                    request_id=request_id,
+                    code="DAEMON_START_FAILED",
+                    message="daemon start failed",
+                )
+            try:
+                wait_until_runtime_ready(self.daemon_home)
+                manifest = load_manifest(manifest_path)
+            except Exception as error:
+                return daemon_transport_failure(
+                    request_id=request_id,
+                    code="DAEMON_START_FAILED",
+                    message="daemon start failed",
+                    debug={"detail": format_exception_detail(error)},
+                )
+
+        try:
             token = Path(manifest.install.token_file).read_text(encoding="utf-8").strip()
         except Exception as error:
             return daemon_unavailable_failure(

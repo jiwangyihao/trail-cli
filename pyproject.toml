@@ -19,6 +19,7 @@ dev = ["pytest>=8.0"]
 
 [project.scripts]
 trail = "trail.cli:app"
+traild = "trail.daemon.server:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]
