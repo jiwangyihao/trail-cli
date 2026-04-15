@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 
@@ -19,11 +20,18 @@ class RuntimeService:
                 maybe_title = window_binding.get("title")
                 if isinstance(maybe_title, str) and maybe_title:
                     window_title = maybe_title
-            self._runtimes[cache_key] = build_runtime(
-                workspace=workspace,
-                window_title=window_title,
-                window_binding=window_binding,
-            )
+            build_kwargs = {
+                "workspace": workspace,
+                "window_title": window_title,
+                "window_binding": window_binding,
+            }
+            parameters = inspect.signature(build_runtime).parameters.values()
+            if any(
+                parameter.name == "reference_root" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            ):
+                build_kwargs["reference_root"] = Path(workspace_root)
+            self._runtimes[cache_key] = build_runtime(**build_kwargs)
         return self._runtimes[cache_key]
 
     def attach_window(self, *, window_title: str):

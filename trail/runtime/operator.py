@@ -41,11 +41,20 @@ class InputDriver(Protocol):
 
 
 class RuntimeOperator:
-    def __init__(self, window: WindowController, matcher: ImageMatcher, ocr_engine: OcrEngine, input_driver: InputDriver):
+    def __init__(
+        self,
+        window: WindowController,
+        matcher: ImageMatcher,
+        ocr_engine: OcrEngine,
+        input_driver: InputDriver,
+        *,
+        reference_root: Path | None = None,
+    ):
         self.window = window
         self.matcher = matcher
         self.ocr_engine = ocr_engine
         self.input = input_driver
+        self.reference_root = Path.cwd() if reference_root is None else Path(reference_root)
         self._warnings: list[dict[str, Any]] = []
         self._trace: list[dict[str, Any]] = []
 
@@ -93,7 +102,7 @@ class RuntimeOperator:
         return trace
 
     def match_references(self, screenshot_path: Path | str, limit: int = 3) -> list[dict[str, Any]]:
-        return _match_reference_images(Path(screenshot_path), limit=limit)
+        return _match_reference_images(Path(screenshot_path), limit=limit, reference_root=self.reference_root)
 
     def screenshot(self, *, from_x=None, from_y=None, to_x=None, to_y=None):
         return self.window.capture(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y)
@@ -260,18 +269,19 @@ def _compute_similarity(left: Path, right: Path) -> float:
     return round(max(0.0, 1.0 - mean), 4)
 
 
-def _match_reference_images(screenshot_path: Path, *, limit: int = 3) -> list[dict[str, Any]]:
+def _match_reference_images(screenshot_path: Path, *, limit: int = 3, reference_root: Path | None = None) -> list[dict[str, Any]]:
     if not screenshot_path.exists():
         return []
 
+    base_dir = Path.cwd() if reference_root is None else Path(reference_root)
     matches: list[dict[str, Any]] = []
-    for reference_path in _iter_reference_images(Path.cwd()):
+    for reference_path in _iter_reference_images(base_dir):
         try:
             similarity = _compute_similarity(screenshot_path, reference_path)
         except Exception:
             continue
         try:
-            display_path = reference_path.relative_to(Path.cwd()).as_posix()
+            display_path = reference_path.relative_to(base_dir).as_posix()
         except ValueError:
             display_path = str(reference_path)
         matches.append({"path": display_path, "similarity": similarity})
@@ -409,10 +419,12 @@ def build_runtime(
     window_title: str = "崩坏：星穹铁道",
     window_binding: dict | None = None,
     workspace: Path | None = None,
+    reference_root: Path | None = None,
 ) -> RuntimeOperator:
     return RuntimeOperator(
         build_window_controller(window_title=window_title, window_binding=window_binding, workspace=workspace),
         build_image_matcher(),
         build_ocr_engine(),
         build_input_driver(),
+        reference_root=reference_root,
     )

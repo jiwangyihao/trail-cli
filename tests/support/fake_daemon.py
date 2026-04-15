@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from trail.daemon.client import is_daemon_control_plane_error
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
 from trail.daemon.models import DaemonRequest, InstallRecord, RuntimeRecord, TrailDaemonManifest
 from trail.daemon.protocol import PROTOCOL_VERSION
@@ -36,7 +37,17 @@ class FakeDaemonClient:
                 }
             )
         )
-        return deepcopy(self._responses[method])
+        response = deepcopy(self._responses[method])
+        if not isinstance(response, dict):
+            return response
+
+        returned_request_id = response.pop("request_id", f"fake-request-{len(self.calls)}")
+        if verbose or is_daemon_control_plane_error(response):
+            response["debug"] = {
+                **(response.get("debug") or {}),
+                "request_id": returned_request_id,
+            }
+        return response
 
 
 class FakeDaemonServer:

@@ -398,6 +398,83 @@ def test_fake_daemon_client_records_request_metadata():
     assert fresh_payload["data"]["result"][0]["text"] == "点击进入"
 
 
+def test_fake_daemon_client_moves_request_id_into_debug_when_verbose():
+    client = FakeDaemonClient(
+        responses={
+            "input.click": build_success_response(
+                request_id="req-fake-verbose",
+                data={"clicked": [10, 20]},
+                screenshot=".trail/shots/req-fake-verbose.png",
+            )
+        }
+    )
+
+    payload = client.call(
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        workspace_root="C:/repo",
+        session_id=None,
+        verbose=True,
+    )
+
+    assert payload == {
+        "ok": True,
+        "data": {"clicked": [10, 20]},
+        "screenshot": ".trail/shots/req-fake-verbose.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"request_id": "req-fake-verbose"},
+        "error": None,
+    }
+
+
+def test_fake_daemon_client_preserves_request_id_in_debug_for_daemon_errors():
+    client = FakeDaemonClient(
+        responses={
+            "screen.shot": {
+                "request_id": "req-fake-daemon-error",
+                "ok": False,
+                "data": {},
+                "screenshot": None,
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": {"detail": "bootstrap missing"},
+                "error": {
+                    "code": "DAEMON_BOOTSTRAP_REQUIRED",
+                    "message": "daemon bootstrap not installed",
+                },
+            }
+        }
+    )
+
+    payload = client.call(
+        method="screen.shot",
+        payload={},
+        workspace_root="C:/repo",
+        session_id=None,
+        verbose=False,
+    )
+
+    assert payload == {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "detail": "bootstrap missing",
+            "request_id": "req-fake-daemon-error",
+        },
+        "error": {
+            "code": "DAEMON_BOOTSTRAP_REQUIRED",
+            "message": "daemon bootstrap not installed",
+        },
+    }
+
+
 def test_build_success_response_snapshots_nested_data():
     data = {"result": [{"text": "点击进入"}]}
 

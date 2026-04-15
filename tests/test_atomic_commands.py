@@ -343,6 +343,7 @@ def test_top_level_verbose_emits_runtime_debug_trace(cli_runner, fake_daemon_cli
     client = fake_daemon_client(
         {
             "input.click": {
+                "request_id": "req-input-click-verbose",
                 "ok": True,
                 "data": {"clicked": [10, 20]},
                 "screenshot": ".trail/shots/req-input-click-verbose.png",
@@ -359,7 +360,10 @@ def test_top_level_verbose_emits_runtime_debug_trace(cli_runner, fake_daemon_cli
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["debug"] == {"trace": [{"step": "click", "point": [10, 20]}]}
+    assert payload["debug"] == {
+        "trace": [{"step": "click", "point": [10, 20]}],
+        "request_id": "req-input-click-verbose",
+    }
     assert client.calls == [
         {
             "method": "input.click",
@@ -369,6 +373,41 @@ def test_top_level_verbose_emits_runtime_debug_trace(cli_runner, fake_daemon_cli
             "verbose": True,
         }
     ]
+
+
+def test_daemon_control_plane_errors_keep_request_id_in_debug(cli_runner, fake_daemon_client):
+    fake_daemon_client(
+        {
+            "screen.shot": {
+                "request_id": "req-screen-shot-daemon-error",
+                "ok": False,
+                "data": {},
+                "screenshot": None,
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": {"detail": "bootstrap missing"},
+                "error": {
+                    "code": "DAEMON_BOOTSTRAP_REQUIRED",
+                    "message": "daemon bootstrap not installed",
+                },
+            }
+        }
+    )
+
+    result = cli_runner.invoke(app, ["screen", "shot"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_BOOTSTRAP_REQUIRED",
+        "message": "daemon bootstrap not installed",
+    }
+    assert payload["debug"] == {
+        "detail": "bootstrap missing",
+        "request_id": "req-screen-shot-daemon-error",
+    }
 
 
 def test_state_dump_returns_session_snapshot(cli_runner, fake_runtime, fake_session):

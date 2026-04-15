@@ -1081,6 +1081,71 @@ def test_runtime_operator_matches_reference_images_from_project_tree(tmp_path, m
     assert matches[0]["similarity"] > matches[1]["similarity"]
 
 
+def test_runtime_operator_matches_reference_images_from_workspace_root_when_cwd_differs(tmp_path, monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    workspace_root = tmp_path / "workspace"
+    other_cwd = tmp_path / "daemon-home"
+    reference_dir = workspace_root / "trail" / "scenes" / "cw" / "references"
+    reference_dir.mkdir(parents=True)
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+
+    shot_path = workspace_root / ".trail" / "shots" / "shot.png"
+    shot_path.parent.mkdir(parents=True)
+    Image.new("RGB", (32, 32), color="red").save(shot_path)
+    Image.new("RGB", (32, 32), color="red").save(reference_dir / "1.png")
+    Image.new("RGB", (32, 32), color="blue").save(reference_dir / "2.png")
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: None, capture_to_workspace=lambda: shot_path, prepare_input=lambda: None),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+        reference_root=workspace_root,
+    )
+
+    matches = runtime.match_references(shot_path)
+
+    assert [match["path"] for match in matches] == [
+        "trail/scenes/cw/references/1.png",
+        "trail/scenes/cw/references/2.png",
+    ]
+    assert matches[0]["similarity"] > matches[1]["similarity"]
+
+
+def test_runtime_service_builds_runtime_with_workspace_reference_root(tmp_path, monkeypatch):
+    from trail.daemon.runtime_service import RuntimeService
+
+    workspace_root = tmp_path / "workspace"
+    captured: list[dict[str, object]] = []
+    built_runtime = object()
+
+    monkeypatch.setattr(
+        "trail.runtime.operator.build_runtime",
+        lambda **kwargs: captured.append(kwargs) or built_runtime,
+    )
+
+    runtime = RuntimeService().get_runtime(workspace_root=str(workspace_root), window_binding=None)
+
+    assert runtime is built_runtime
+    assert captured == [
+        {
+            "workspace": workspace_root / ".trail" / "shots",
+            "window_title": "崩坏：星穹铁道",
+            "window_binding": None,
+            "reference_root": workspace_root,
+        }
+    ]
+
+
 def test_pyautogui_input_driver_click_uses_win32_cursor_for_virtual_screen_coords(monkeypatch):
     import trail.runtime.operator as operator_module
 
