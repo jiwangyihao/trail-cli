@@ -14,7 +14,12 @@ from trail.daemon.protocol import PROTOCOL_VERSION
 from trail.output.envelope import command_failure
 
 READY_RUNTIME_STATES = {"ready", "degraded"}
-RETRIABLE_TRANSPORT_ERRORS = (ConnectionRefusedError, TimeoutError, socket.timeout)
+RETRIABLE_TRANSPORT_ERRORS = (
+    ConnectionRefusedError,
+    ConnectionResetError,
+    ConnectionAbortedError,
+    BrokenPipeError,
+)
 
 
 class DaemonTransport(Protocol):

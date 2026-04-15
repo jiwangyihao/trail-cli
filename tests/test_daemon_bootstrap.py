@@ -5,6 +5,8 @@ import threading
 import tomllib
 from pathlib import Path
 
+import pytest
+
 from trail.cli import app
 from trail.daemon.client import send_daemon_request
 from trail.daemon.manifest import load_manifest, manifest_path_for_user
@@ -40,6 +42,25 @@ def test_daemon_status_returns_structured_failure_when_manifest_invalid(cli_runn
     assert "JSONDecodeError" in payload["debug"]["detail"]
 
 
+@pytest.mark.parametrize("command", ["start", "stop", "logs"])
+def test_daemon_control_commands_return_structured_failure_when_manifest_invalid(cli_runner, monkeypatch, tmp_path: Path, command: str):
+    daemon_home = tmp_path / "daemon-home"
+    manifest_path = write_installed_manifest(daemon_home, runtime_state="installed")
+    manifest_path.write_text("{invalid-json", encoding="utf-8")
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+
+    result = cli_runner.invoke(app, ["daemon", command])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_MANIFEST_INVALID",
+        "message": "daemon manifest invalid",
+    }
+    assert "JSONDecodeError" in payload["debug"]["detail"]
+
+
 def test_daemon_install_writes_manifest(cli_runner, monkeypatch, tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
@@ -51,6 +72,28 @@ def test_daemon_install_writes_manifest(cli_runner, monkeypatch, tmp_path: Path)
     assert payload["ok"] is True
     assert payload["data"]["manifest_path"].endswith("manifest.json")
     assert manifest.runtime.state == "installed"
+
+
+def test_daemon_install_is_idempotent_for_existing_ready_runtime(cli_runner, monkeypatch, tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-live")
+    manifest_path = manifest_path_for_user(daemon_home)
+    before = load_manifest(manifest_path)
+    token_before = Path(before.install.token_file).read_text(encoding="utf-8")
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+
+    result = cli_runner.invoke(app, ["daemon", "install"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    after = load_manifest(manifest_path)
+    token_after = Path(after.install.token_file).read_text(encoding="utf-8")
+    assert payload["ok"] is True
+    assert after.runtime.state == before.runtime.state
+    assert after.runtime.endpoint == before.runtime.endpoint
+    assert after.runtime.pid == before.runtime.pid
+    assert after.runtime.token_generation == before.runtime.token_generation
+    assert token_after == token_before
 
 
 def test_daemon_start_returns_bootstrap_required_when_not_installed(cli_runner, monkeypatch, tmp_path: Path):

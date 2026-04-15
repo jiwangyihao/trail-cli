@@ -199,7 +199,6 @@ def test_client_returns_daemon_start_failed_when_bootstrap_cannot_start(tmp_path
     ("transport_error",),
     [
         (ConnectionRefusedError("connection refused"),),
-        (socket.timeout("timed out"),),
     ],
 )
 def test_client_retries_connection_failures_by_bootstrapping(tmp_path: Path, transport_error: Exception):
@@ -245,6 +244,32 @@ def test_client_retries_connection_failures_by_bootstrapping(tmp_path: Path, tra
         ("token-2", "127.0.0.1:9002"),
     ]
     assert started == [tmp_path / "daemon-home"]
+
+
+def test_client_does_not_bootstrap_on_socket_timeout(tmp_path: Path):
+    write_ready_manifest(
+        tmp_path / "daemon-home",
+        endpoint="127.0.0.1:8765",
+        token_value="token-1",
+    )
+    started: list[Path] = []
+
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=tmp_path / "daemon-home",
+        transport=lambda request, token, *, endpoint: (_ for _ in ()).throw(socket.timeout("timed out")),
+        starter=lambda home: started.append(home) or True,
+    )
+
+    payload = client.call("screen.shot", {})
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "daemon unavailable",
+    }
+    assert "TimeoutError" in payload["debug"]["detail"]
+    assert started == []
 
 
 def test_client_returns_daemon_unavailable_when_transport_returns_non_object_json(tmp_path: Path):

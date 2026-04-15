@@ -23,6 +23,17 @@ def resolve_daemon_home() -> Path:
 def install_bootstrap(daemon_home: Path) -> Path:
     daemon_home = Path(daemon_home)
     daemon_home.mkdir(parents=True, exist_ok=True)
+    path = manifest_path_for_user(daemon_home)
+
+    if path.exists():
+        manifest = load_manifest(path)
+        Path(manifest.install.log_dir).mkdir(parents=True, exist_ok=True)
+        token_file = Path(manifest.install.token_file)
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        if not token_file.exists():
+            token_file.write_text(uuid4().hex, encoding="utf-8")
+        return path
+
     log_dir = daemon_home / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     token_file = daemon_home / "daemon-token.txt"
@@ -50,7 +61,6 @@ def install_bootstrap(daemon_home: Path) -> Path:
             last_start_error=None,
         ),
     )
-    path = manifest_path_for_user(daemon_home)
     save_manifest(path, manifest)
     return path
 
