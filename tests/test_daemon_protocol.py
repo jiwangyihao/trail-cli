@@ -1,3 +1,6 @@
+import json
+import socket
+import threading
 from pathlib import Path
 
 from trail.daemon.client import TrailDaemonClient, send_daemon_request
@@ -8,6 +11,7 @@ from tests.support.fake_daemon import (
     build_success_response,
     fake_round_trip_transport,
     start_fake_daemon_server,
+    write_installed_manifest,
     write_ready_manifest,
 )
 
@@ -102,6 +106,45 @@ def test_client_moves_transport_request_id_into_debug_when_verbose(tmp_path: Pat
         "request_id": payload["debug"]["request_id"],
     }
     assert "request_id" not in payload
+
+
+def test_client_returns_daemon_unavailable_when_runtime_endpoint_missing(tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    write_installed_manifest(daemon_home, runtime_state="installed")
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=daemon_home,
+        transport=send_daemon_request,
+    )
+
+    payload = client.call("screen.shot", {})
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "DAEMON_UNAVAILABLE"
+    assert payload["debug"]["request_id"]
+
+
+def test_client_returns_daemon_unavailable_when_socket_transport_raises(tmp_path: Path):
+    listener = socket.create_server(("127.0.0.1", 0))
+    endpoint = f"127.0.0.1:{listener.getsockname()[1]}"
+    listener.close()
+
+    write_ready_manifest(
+        tmp_path / "daemon-home",
+        endpoint=endpoint,
+        token_value="token-1",
+    )
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=tmp_path / "daemon-home",
+        transport=send_daemon_request,
+    )
+
+    payload = client.call("screen.shot", {})
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "DAEMON_UNAVAILABLE"
+    assert payload["debug"]["request_id"]
 
 
 def test_fake_daemon_client_records_request_metadata():
@@ -263,5 +306,67 @@ def test_send_daemon_request_round_trips_with_fake_server(tmp_path: Path):
             "payload": {},
             "token": "token-1",
             "endpoint": "127.0.0.1:8765",
+        }
+    ]
+
+
+def test_send_daemon_request_round_trips_over_real_socket(tmp_path: Path):
+    server = socket.create_server(("127.0.0.1", 0))
+    server.settimeout(5)
+    received: list[dict[str, object]] = []
+
+    def handle_once() -> None:
+        with server:
+            connection, _ = server.accept()
+            with connection:
+                chunks = b""
+                while not chunks.endswith(b"\n"):
+                    chunk = connection.recv(4096)
+                    if not chunk:
+                        break
+                    chunks += chunk
+                received.append(json.loads(chunks.decode("utf-8")))
+                connection.sendall(
+                    json.dumps(
+                        build_success_response(
+                            request_id="req-socket-1",
+                            data={"captured": True},
+                            screenshot=".trail/shots/req-socket-1.png",
+                        ),
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    + b"\n"
+                )
+
+    thread = threading.Thread(target=handle_once)
+    thread.start()
+    endpoint = f"127.0.0.1:{server.getsockname()[1]}"
+
+    payload = send_daemon_request(
+        DaemonRequest(
+            request_id="req-socket-1",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id="session-1",
+            verbose=True,
+            method="screen.shot",
+            payload={"region": "main"},
+        ),
+        "token-1",
+        endpoint=endpoint,
+    )
+    thread.join(timeout=5)
+
+    assert payload["ok"] is True
+    assert received == [
+        {
+            "request_id": "req-socket-1",
+            "protocol_version": PROTOCOL_VERSION,
+            "workspace_root": str(tmp_path),
+            "session_id": "session-1",
+            "verbose": True,
+            "method": "screen.shot",
+            "payload": {"region": "main"},
+            "token": "token-1",
         }
     ]

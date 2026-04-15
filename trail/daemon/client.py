@@ -38,6 +38,22 @@ def daemon_transport_failure(
     )
 
 
+def daemon_unavailable_failure(*, request_id: str, detail: str) -> dict[str, Any]:
+    return daemon_transport_failure(
+        request_id=request_id,
+        code="DAEMON_UNAVAILABLE",
+        message="daemon unavailable",
+        debug={"detail": detail},
+    )
+
+
+def format_exception_detail(error: Exception) -> str:
+    message = str(error)
+    if not message:
+        return type(error).__name__
+    return f"{type(error).__name__}: {message}"
+
+
 def send_daemon_request(
     request: DaemonRequest,
     token: str,
@@ -95,8 +111,22 @@ class TrailDaemonClient:
                 message="daemon bootstrap not installed",
             )
 
-        manifest = load_manifest(manifest_path)
-        token = Path(manifest.install.token_file).read_text(encoding="utf-8").strip()
+        try:
+            manifest = load_manifest(manifest_path)
+            token = Path(manifest.install.token_file).read_text(encoding="utf-8").strip()
+        except Exception as error:
+            return daemon_unavailable_failure(
+                request_id=request_id,
+                detail=format_exception_detail(error),
+            )
+
+        endpoint = manifest.runtime.endpoint
+        if not endpoint:
+            return daemon_unavailable_failure(
+                request_id=request_id,
+                detail="runtime endpoint missing",
+            )
+
         request = DaemonRequest(
             request_id=request_id,
             protocol_version=PROTOCOL_VERSION,
@@ -106,9 +136,14 @@ class TrailDaemonClient:
             method=method,
             payload=payload,
         )
-        response = deepcopy(
-            self.transport(request, token, endpoint=str(manifest.runtime.endpoint))
-        )
+        try:
+            response = deepcopy(self.transport(request, token, endpoint=endpoint))
+        except Exception as error:
+            return daemon_unavailable_failure(
+                request_id=request_id,
+                detail=format_exception_detail(error),
+            )
+
         returned_request_id = response.pop("request_id", request_id)
         if verbose:
             response["debug"] = {
