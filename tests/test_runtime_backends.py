@@ -12,6 +12,300 @@ from trail.core.errors import TrailError
 from trail.runtime.model import Box, WindowBinding
 
 
+class _CommandRuntimeStub:
+    def __init__(self):
+        self._shot = Path(".trail/shots/daemon-command.png")
+        self.ocr_result = [{"text": "银狼"}]
+        self.locate_result = {"left": 1, "top": 2, "width": 3, "height": 4}
+        self.wait_result = {"left": 5, "top": 6, "width": 7, "height": 8}
+        self.warnings: list[dict] = []
+        self.references: list[dict] = []
+        self.trace: list[dict] = []
+        self.clicks: list[tuple[int, int]] = []
+        self.drags: list[tuple[int, int, int, int]] = []
+        self.keys: list[tuple[str, int]] = []
+
+    def capture_after_action(self, optional: bool = False):
+        return self._shot
+
+    def collect_warnings(self):
+        warnings = list(self.warnings)
+        self.warnings.clear()
+        return warnings
+
+    def match_references(self, screenshot_path, limit: int = 3):
+        del screenshot_path, limit
+        return list(self.references)
+
+    def consume_debug_trace(self):
+        trace = list(self.trace)
+        self.trace.clear()
+        return trace
+
+    def ocr(self, **kwargs):
+        del kwargs
+        return self.ocr_result
+
+    def locate(self, template: str, **kwargs):
+        del template, kwargs
+        return self.locate_result
+
+    def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+        del template, timeout, interval
+        return self.wait_result
+
+    def click_point(self, x: int, y: int, **kwargs):
+        del kwargs
+        self.clicks.append((x, y))
+
+    def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int):
+        self.drags.append((from_x, from_y, to_x, to_y))
+
+    def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+        del interval
+        self.keys.append((key, presses))
+
+
+class _CommandRuntimeServiceStub:
+    def __init__(self, runtime: _CommandRuntimeStub):
+        self.runtime = runtime
+        self.runtime_calls: list[dict[str, object]] = []
+        self.attach_calls: list[str] = []
+        self.launch_calls: list[dict[str, object]] = []
+
+    def get_runtime(self, *, workspace_root: str, window_binding: dict | None):
+        self.runtime_calls.append({"workspace_root": workspace_root, "window_binding": window_binding})
+        return self.runtime
+
+    def attach_window(self, *, window_title: str):
+        self.attach_calls.append(window_title)
+        return {"title": window_title, "hwnd": 321}
+
+    def launch_game(self, **payload):
+        self.launch_calls.append(dict(payload))
+        return {
+            "started": True,
+            "already_running": False,
+            "path": payload["game_path"],
+            "channel": payload["channel"],
+            "args": list(payload.get("launch_args", [])),
+        }
+
+
+def _command_request(*, workspace_root: Path, method: str, payload: dict | None = None, verbose: bool = False):
+    from trail.daemon.models import DaemonRequest
+    from trail.daemon.protocol import PROTOCOL_VERSION
+
+    return DaemonRequest(
+        request_id=f"req-{method}",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(workspace_root),
+        session_id=None,
+        verbose=verbose,
+        method=method,
+        payload=payload or {},
+    )
+
+
+def test_command_service_handles_window_methods(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+
+    runtime = _CommandRuntimeStub()
+    runtime_service = _CommandRuntimeServiceStub(runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    attach_payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="window.attach",
+            payload={"window_title": "Demo Window"},
+        )
+    )
+    launch_payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="window.launch",
+            payload={
+                "game_path": str(tmp_path / "StarRail.exe"),
+                "channel": "bilibili",
+                "launch_args": ["-popupwindow"],
+                "use_cmd": True,
+            },
+        )
+    )
+
+    assert attach_payload["ok"] is True
+    assert attach_payload["data"] == {"title": "Demo Window", "hwnd": 321}
+    assert attach_payload["request_id"] == "req-window.attach"
+    assert attach_payload["screenshot"] == str(Path(".trail/shots/daemon-command.png"))
+    assert launch_payload["ok"] is True
+    assert launch_payload["data"] == {
+        "started": True,
+        "already_running": False,
+        "path": str(tmp_path / "StarRail.exe"),
+        "channel": "bilibili",
+        "args": ["-popupwindow"],
+    }
+    assert launch_payload["request_id"] == "req-window.launch"
+    assert launch_payload["screenshot"] is None
+    assert runtime_service.attach_calls == ["Demo Window"]
+    assert runtime_service.launch_calls == [
+        {
+            "game_path": str(tmp_path / "StarRail.exe"),
+            "channel": "bilibili",
+            "launch_args": ["-popupwindow"],
+            "use_cmd": True,
+        }
+    ]
+    assert runtime_service.runtime_calls == [
+        {
+            "workspace_root": str(tmp_path),
+            "window_binding": {"title": "Demo Window", "hwnd": 321},
+        }
+    ]
+
+
+def test_command_service_handles_screen_ocr_and_image_methods(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+
+    runtime = _CommandRuntimeStub()
+    runtime_service = _CommandRuntimeServiceStub(runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    screen_payload = service.handle(_command_request(workspace_root=tmp_path, method="screen.shot"))
+    ocr_payload = service.handle(_command_request(workspace_root=tmp_path, method="ocr.read"))
+    locate_payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="image.locate",
+            payload={"template": "demo.png"},
+        )
+    )
+    wait_payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="image.wait",
+            payload={"template": "demo.png", "timeout": 12},
+        )
+    )
+
+    assert screen_payload["ok"] is True
+    assert screen_payload["data"] == {"captured": True}
+    assert screen_payload["request_id"] == "req-screen.shot"
+    assert ocr_payload["ok"] is True
+    assert ocr_payload["data"] == {"result": [{"text": "银狼"}]}
+    assert ocr_payload["request_id"] == "req-ocr.read"
+    assert locate_payload["ok"] is True
+    assert locate_payload["data"] == {"box": {"left": 1, "top": 2, "width": 3, "height": 4}}
+    assert locate_payload["request_id"] == "req-image.locate"
+    assert wait_payload["ok"] is True
+    assert wait_payload["data"] == {"box": {"left": 5, "top": 6, "width": 7, "height": 8}}
+    assert wait_payload["request_id"] == "req-image.wait"
+    assert runtime_service.runtime_calls == [
+        {"workspace_root": str(tmp_path), "window_binding": None},
+        {"workspace_root": str(tmp_path), "window_binding": None},
+        {"workspace_root": str(tmp_path), "window_binding": None},
+        {"workspace_root": str(tmp_path), "window_binding": None},
+    ]
+
+
+def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+
+    runtime = _CommandRuntimeStub()
+    runtime.warnings = [
+        {
+            "code": "WINDOW_NOT_FOREGROUND",
+            "message": "输入命令执行后窗口不在前台，本次操作可能失败",
+        }
+    ]
+    runtime.references = [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.88}]
+    runtime.trace = [{"step": "click", "point": [10, 20]}]
+    runtime_service = _CommandRuntimeServiceStub(runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    click_payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="input.click",
+            payload={"x": 10, "y": 20},
+            verbose=True,
+        )
+    )
+    drag_payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="input.drag",
+            payload={"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4},
+        )
+    )
+    key_payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="input.key",
+            payload={"key": "space", "presses": 2},
+        )
+    )
+
+    assert click_payload["ok"] is True
+    assert click_payload["data"] == {"clicked": [10, 20]}
+    assert click_payload["warnings"] == [
+        {
+            "code": "WINDOW_NOT_FOREGROUND",
+            "message": "输入命令执行后窗口不在前台，本次操作可能失败",
+        }
+    ]
+    assert click_payload["references"] == [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.88}]
+    assert click_payload["debug"] == {"trace": [{"step": "click", "point": [10, 20]}]}
+    assert click_payload["request_id"] == "req-input.click"
+    assert drag_payload["ok"] is True
+    assert drag_payload["data"] == {"dragged": [1, 2, 3, 4]}
+    assert drag_payload["request_id"] == "req-input.drag"
+    assert key_payload["ok"] is True
+    assert key_payload["data"] == {"key": "space", "presses": 2}
+    assert key_payload["request_id"] == "req-input.key"
+    assert runtime.clicks == [(10, 20)]
+    assert runtime.drags == [(1, 2, 3, 4)]
+    assert runtime.keys == [("space", 2)]
+
+
+def test_command_service_returns_structured_errors_for_missing_ocr_and_images(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+
+    runtime = _CommandRuntimeStub()
+    runtime.ocr_result = []
+    runtime.locate_result = None
+    runtime.wait_result = None
+    runtime_service = _CommandRuntimeServiceStub(runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    ocr_payload = service.handle(_command_request(workspace_root=tmp_path, method="ocr.read"))
+    locate_payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="image.locate",
+            payload={"template": "missing.png"},
+        )
+    )
+    wait_payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="image.wait",
+            payload={"template": "missing.png", "timeout": 5},
+        )
+    )
+
+    assert ocr_payload["ok"] is False
+    assert ocr_payload["error"] == {"code": "OCR_NO_RESULT", "message": "OCR 无结果"}
+    assert ocr_payload["request_id"] == "req-ocr.read"
+    assert locate_payload["ok"] is False
+    assert locate_payload["error"] == {"code": "IMAGE_NOT_FOUND", "message": "未找到 missing.png"}
+    assert locate_payload["request_id"] == "req-image.locate"
+    assert wait_payload["ok"] is False
+    assert wait_payload["error"] == {"code": "IMAGE_NOT_FOUND", "message": "未找到 missing.png"}
+    assert wait_payload["request_id"] == "req-image.wait"
+
+
 def test_enable_dpi_awareness_calls_win32_api(monkeypatch):
     import trail.runtime.window as window_module
 

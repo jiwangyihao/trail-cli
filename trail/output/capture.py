@@ -9,7 +9,16 @@ from trail.output.envelope import command_failure, command_success
 _CAPTURE_OPTIONS = {"verbose": False}
 
 
+def _resolve_runtime(runtime):
+    if callable(runtime) and not hasattr(runtime, "capture_after_action"):
+        return runtime()
+    return runtime
+
+
 def _capture_screenshot(runtime, *, optional: bool):
+    runtime = _resolve_runtime(runtime)
+    if runtime is None:
+        return None
     try:
         return runtime.capture_after_action(optional=optional)
     except Exception:
@@ -37,7 +46,12 @@ def _resolve_verbose(verbose: bool | None) -> bool:
     return bool(verbose)
 
 
+def resolve_capture_verbose(verbose: bool | None = None) -> bool:
+    return _resolve_verbose(verbose)
+
+
 def _collect_capture_metadata(runtime, *, screenshot, verbose: bool) -> dict:
+    runtime = _resolve_runtime(runtime)
     warnings: list[dict] = []
     references: list[dict] = []
     debug = None

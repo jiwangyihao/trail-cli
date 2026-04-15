@@ -102,7 +102,7 @@ def fake_runtime(tmp_path, monkeypatch) -> FakeRuntime:
 
     monkeypatch.setattr(guide_cmd, "artifact_store_factory", lambda: ArtifactStore(tmp_path / ".trail" / "artifacts"), raising=False)
 
-    monkeypatch.setattr(window_cmd, "attach_window", lambda window_title: {"title": window_title, "hwnd": 123})
+    monkeypatch.setattr(window_cmd, "attach_window", lambda window_title: {"title": window_title, "hwnd": 123}, raising=False)
     return runtime
 
 
@@ -121,6 +121,19 @@ def fake_session(tmp_path, monkeypatch):
 
     session = store.create(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
     return session.session_id
+
+
+@pytest.fixture
+def fake_daemon_client(tmp_path, monkeypatch):
+    def install(responses: dict[str, dict]):
+        client = FakeDaemonClient(responses, workspace_root=str(tmp_path))
+
+        import trail.commands.helpers as helpers
+
+        monkeypatch.setattr(helpers, "build_default_daemon_client", lambda: client)
+        return client
+
+    return install
 
 
 def build_fake_cw_session(tmp_path, purchases: dict | None = None):

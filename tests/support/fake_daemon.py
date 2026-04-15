@@ -10,8 +10,9 @@ from trail.daemon.protocol import PROTOCOL_VERSION
 
 
 class FakeDaemonClient:
-    def __init__(self, responses: dict[str, dict[str, Any]]):
+    def __init__(self, responses: dict[str, dict[str, Any]], *, workspace_root: str | None = None):
         self._responses = deepcopy(responses)
+        self.workspace_root = workspace_root
         self.calls: list[dict[str, Any]] = []
 
     def call(
@@ -23,12 +24,13 @@ class FakeDaemonClient:
         session_id: str | None = None,
         verbose: bool = False,
     ) -> dict[str, Any]:
+        resolved_workspace_root = self.workspace_root if workspace_root is None else workspace_root
         self.calls.append(
             deepcopy(
                 {
                 "method": method,
                 "payload": payload,
-                "workspace_root": workspace_root,
+                "workspace_root": resolved_workspace_root,
                 "session_id": session_id,
                 "verbose": verbose,
                 }

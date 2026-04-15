@@ -10,9 +10,20 @@ import pytest
 from trail.cli import app
 from trail.runtime.model import Box
 from trail.session.store import SessionStore
+from tests.support.fake_daemon import build_success_response
 
 
-def test_window_attach_returns_envelope_and_binding(cli_runner, fake_runtime):
+def test_window_attach_returns_envelope_and_binding(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "window.attach": build_success_response(
+                request_id="req-window-attach",
+                data={"title": "Demo Window", "hwnd": 123},
+                screenshot=".trail/shots/req-window-attach.png",
+            )
+        }
+    )
+
     result = cli_runner.invoke(app, ["window", "attach", "--window-title", "Demo Window"])
 
     assert result.exit_code == 0
@@ -20,32 +31,33 @@ def test_window_attach_returns_envelope_and_binding(cli_runner, fake_runtime):
     assert payload["ok"] is True
     assert payload["data"] == {"title": "Demo Window", "hwnd": 123}
     assert payload["screenshot"]
-
-
-def test_window_launch_returns_structured_payload(cli_runner, fake_runtime, tmp_path, monkeypatch):
-    import trail.commands.window as window_cmd
-
-    executable = tmp_path / "StarRail.exe"
-    captured: dict[str, object] = {}
-
-    def fake_launch_game(*, game_path, channel, launch_args, use_cmd):
-        captured.update(
-            {
-                "game_path": game_path,
-                "channel": channel,
-                "launch_args": launch_args,
-                "use_cmd": use_cmd,
-            }
-        )
-        return {
-            "started": True,
-            "already_running": False,
-            "path": str(game_path),
-            "channel": channel,
-            "args": list(launch_args),
+    assert client.calls == [
+        {
+            "method": "window.attach",
+            "payload": {"window_title": "Demo Window"},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
         }
+    ]
 
-    monkeypatch.setattr(window_cmd, "launch_game", fake_launch_game, raising=False)
+
+def test_window_launch_returns_structured_payload(cli_runner, fake_daemon_client, tmp_path):
+    executable = tmp_path / "StarRail.exe"
+    client = fake_daemon_client(
+        {
+            "window.launch": build_success_response(
+                request_id="req-window-launch",
+                data={
+                    "started": True,
+                    "already_running": False,
+                    "path": str(executable),
+                    "channel": "bilibili",
+                    "args": ["-popupwindow"],
+                },
+            )
+        }
+    )
 
     result = cli_runner.invoke(
         app,
@@ -72,15 +84,33 @@ def test_window_launch_returns_structured_payload(cli_runner, fake_runtime, tmp_
         "channel": "bilibili",
         "args": ["-popupwindow"],
     }
-    assert captured == {
-        "game_path": executable,
-        "channel": "bilibili",
-        "launch_args": ["-popupwindow"],
-        "use_cmd": True,
-    }
+    assert client.calls == [
+        {
+            "method": "window.launch",
+            "payload": {
+                "game_path": str(executable),
+                "channel": "bilibili",
+                "launch_args": ["-popupwindow"],
+                "use_cmd": True,
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
 
 
-def test_screen_shot_returns_envelope_and_screenshot(cli_runner, fake_runtime):
+def test_screen_shot_returns_envelope_and_screenshot(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "screen.shot": build_success_response(
+                request_id="req-screen-shot",
+                data={"captured": True},
+                screenshot=".trail/shots/req-screen-shot.png",
+            )
+        }
+    )
+
     result = cli_runner.invoke(app, ["screen", "shot"])
 
     assert result.exit_code == 0
@@ -88,10 +118,27 @@ def test_screen_shot_returns_envelope_and_screenshot(cli_runner, fake_runtime):
     assert payload["ok"] is True
     assert payload["data"] == {"captured": True}
     assert payload["screenshot"]
+    assert client.calls == [
+        {
+            "method": "screen.shot",
+            "payload": {},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
 
 
-def test_ocr_read_returns_runtime_payload(cli_runner, fake_runtime):
-    fake_runtime.ocr_result = [{"text": "银狼"}]
+def test_ocr_read_returns_runtime_payload(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read",
+                data={"result": [{"text": "银狼"}]},
+                screenshot=".trail/shots/req-ocr-read.png",
+            )
+        }
+    )
 
     result = cli_runner.invoke(app, ["ocr", "read"])
 
@@ -99,10 +146,27 @@ def test_ocr_read_returns_runtime_payload(cli_runner, fake_runtime):
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"]["result"] == [{"text": "银狼"}]
+    assert client.calls == [
+        {
+            "method": "ocr.read",
+            "payload": {},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
 
 
-def test_image_locate_returns_box_payload(cli_runner, fake_runtime):
-    fake_runtime.locate_result = {"left": 1, "top": 2, "width": 3, "height": 4}
+def test_image_locate_returns_box_payload(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "image.locate": build_success_response(
+                request_id="req-image-locate",
+                data={"box": {"left": 1, "top": 2, "width": 3, "height": 4}},
+                screenshot=".trail/shots/req-image-locate.png",
+            )
+        }
+    )
 
     result = cli_runner.invoke(app, ["image", "locate", "demo.png"])
 
@@ -110,10 +174,27 @@ def test_image_locate_returns_box_payload(cli_runner, fake_runtime):
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["data"]["box"] == {"left": 1, "top": 2, "width": 3, "height": 4}
+    assert client.calls == [
+        {
+            "method": "image.locate",
+            "payload": {"template": "demo.png"},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
 
 
-def test_image_locate_serializes_numpy_box_values(cli_runner, fake_runtime):
-    fake_runtime.locate_result = Box(np.int64(1), np.int64(2), np.int64(3), np.int64(4), source="demo.png")
+def test_image_locate_serializes_numpy_box_values(cli_runner, fake_daemon_client):
+    fake_daemon_client(
+        {
+            "image.locate": build_success_response(
+                request_id="req-image-locate-numpy",
+                data={"box": Box(np.int64(1), np.int64(2), np.int64(3), np.int64(4), source="demo.png")},
+                screenshot=".trail/shots/req-image-locate-numpy.png",
+            )
+        }
+    )
 
     result = cli_runner.invoke(app, ["image", "locate", "demo.png"])
 
@@ -129,7 +210,22 @@ def test_image_locate_serializes_numpy_box_values(cli_runner, fake_runtime):
     }
 
 
-def test_image_wait_returns_error_when_template_missing(cli_runner, fake_runtime):
+def test_image_wait_returns_error_when_template_missing(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "image.wait": {
+                "ok": False,
+                "data": {},
+                "screenshot": ".trail/shots/req-image-wait.png",
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": None,
+                "error": {"code": "IMAGE_NOT_FOUND", "message": "未找到 missing.png"},
+            }
+        }
+    )
+
     result = cli_runner.invoke(app, ["image", "wait", "missing.png"])
 
     assert result.exit_code == 0
@@ -137,9 +233,38 @@ def test_image_wait_returns_error_when_template_missing(cli_runner, fake_runtime
     assert payload["ok"] is False
     assert payload["error"] == {"code": "IMAGE_NOT_FOUND", "message": "未找到 missing.png"}
     assert payload["screenshot"]
+    assert client.calls == [
+        {
+            "method": "image.wait",
+            "payload": {"template": "missing.png", "timeout": 10},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
 
 
-def test_input_click_drag_and_key_return_envelopes(cli_runner, fake_runtime):
+def test_input_click_drag_and_key_return_envelopes(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "input.click": build_success_response(
+                request_id="req-input-click",
+                data={"clicked": [10, 20]},
+                screenshot=".trail/shots/req-input-click.png",
+            ),
+            "input.drag": build_success_response(
+                request_id="req-input-drag",
+                data={"dragged": [1, 2, 3, 4]},
+                screenshot=".trail/shots/req-input-drag.png",
+            ),
+            "input.key": build_success_response(
+                request_id="req-input-key",
+                data={"key": "space", "presses": 2},
+                screenshot=".trail/shots/req-input-key.png",
+            ),
+        }
+    )
+
     click_result = cli_runner.invoke(app, ["input", "click", "10", "20"])
     drag_result = cli_runner.invoke(app, ["input", "drag", "1", "2", "3", "4"])
     key_result = cli_runner.invoke(app, ["input", "key", "space", "--presses", "2"])
@@ -154,19 +279,51 @@ def test_input_click_drag_and_key_return_envelopes(cli_runner, fake_runtime):
     assert click_payload["data"] == {"clicked": [10, 20]}
     assert drag_payload["data"] == {"dragged": [1, 2, 3, 4]}
     assert key_payload["data"] == {"key": "space", "presses": 2}
-    assert fake_runtime.clicks == [(10, 20)]
-    assert fake_runtime.drags == [(1, 2, 3, 4)]
-    assert fake_runtime.keys == [("space", 2, 0.2)]
-
-
-def test_input_click_returns_runtime_warnings_and_reference_matches(cli_runner, fake_runtime):
-    fake_runtime.warnings = [
+    assert client.calls == [
         {
-            "code": "WINDOW_NOT_FOREGROUND",
-            "message": "输入命令执行后窗口不在前台，本次操作可能失败",
-        }
+            "method": "input.click",
+            "payload": {"x": 10, "y": 20},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        },
+        {
+            "method": "input.drag",
+            "payload": {"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        },
+        {
+            "method": "input.key",
+            "payload": {"key": "space", "presses": 2},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        },
     ]
-    fake_runtime.references = [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.88}]
+
+
+def test_input_click_returns_runtime_warnings_and_reference_matches(cli_runner, fake_daemon_client):
+    fake_daemon_client(
+        {
+            "input.click": {
+                "ok": True,
+                "data": {"clicked": [10, 20]},
+                "screenshot": ".trail/shots/req-input-click.png",
+                "timing": {},
+                "warnings": [
+                    {
+                        "code": "WINDOW_NOT_FOREGROUND",
+                        "message": "输入命令执行后窗口不在前台，本次操作可能失败",
+                    }
+                ],
+                "references": [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.88}],
+                "debug": None,
+                "error": None,
+            }
+        }
+    )
 
     result = cli_runner.invoke(app, ["input", "click", "10", "20"])
 
@@ -182,14 +339,36 @@ def test_input_click_returns_runtime_warnings_and_reference_matches(cli_runner, 
     assert payload["debug"] is None
 
 
-def test_top_level_verbose_emits_runtime_debug_trace(cli_runner, fake_runtime):
-    fake_runtime.trace = [{"step": "click", "point": [10, 20]}]
+def test_top_level_verbose_emits_runtime_debug_trace(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "input.click": {
+                "ok": True,
+                "data": {"clicked": [10, 20]},
+                "screenshot": ".trail/shots/req-input-click-verbose.png",
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": {"trace": [{"step": "click", "point": [10, 20]}]},
+                "error": None,
+            }
+        }
+    )
 
     result = cli_runner.invoke(app, ["--verbose", "input", "click", "10", "20"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["debug"] == {"trace": [{"step": "click", "point": [10, 20]}]}
+    assert client.calls == [
+        {
+            "method": "input.click",
+            "payload": {"x": 10, "y": 20},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": True,
+        }
+    ]
 
 
 def test_state_dump_returns_session_snapshot(cli_runner, fake_runtime, fake_session):
@@ -278,19 +457,34 @@ def test_command_module_import_has_no_trail_workspace_side_effect(module_name, t
     assert not (workdir / ".trail").exists()
 
 
-def test_input_click_returns_structured_error_when_backend_missing(cli_runner, tmp_path, monkeypatch):
+def test_input_click_returns_structured_error_when_backend_missing(cli_runner, tmp_path, monkeypatch, fake_daemon_client):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setitem(sys.modules, "pyautogui", None)
+    client = fake_daemon_client(
+        {
+            "input.click": build_success_response(
+                request_id="req-input-click-backendless",
+                data={"clicked": [10, 20]},
+                screenshot=".trail/shots/req-input-click-backendless.png",
+            )
+        }
+    )
 
     result = cli_runner.invoke(app, ["input", "click", "10", "20"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"] == {
-        "code": "INPUT_BACKEND_UNAVAILABLE",
-        "message": "pyautogui backend unavailable",
-    }
+    assert payload["ok"] is True
+    assert payload["data"] == {"clicked": [10, 20]}
+    assert client.calls == [
+        {
+            "method": "input.click",
+            "payload": {"x": 10, "y": 20},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
 
 
 def test_cli_help_exposes_top_level_command_groups(cli_runner):

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
-from trail.output.capture import with_auto_capture
+from trail.output.capture import resolve_capture_verbose, with_auto_capture
 from trail.runtime.operator import build_runtime
 from trail.session.store import SessionStore
 
@@ -30,6 +30,17 @@ def build_default_session_store() -> SessionStore:
 
 def build_default_artifact_store() -> ArtifactStore:
     return ArtifactStore(Path(TRAIL_WORKSPACE) / "artifacts")
+
+
+def build_default_daemon_client():
+    from trail.daemon.bootstrap import resolve_daemon_home
+    from trail.daemon.client import TrailDaemonClient, send_daemon_request
+
+    return TrailDaemonClient(
+        workspace_root=Path.cwd(),
+        daemon_home=resolve_daemon_home(),
+        transport=send_daemon_request,
+    )
 
 
 def to_jsonable(value):
@@ -55,6 +66,60 @@ def to_jsonable(value):
 
 def print_json(payload: dict) -> None:
     print(json.dumps(to_jsonable(payload), ensure_ascii=False))
+
+
+def _normalize_workspace_path(path_value, *, workspace_root: Path):
+    if path_value is None:
+        return None
+    if isinstance(path_value, str):
+        candidate = Path(path_value)
+        if not candidate.is_absolute():
+            return path_value
+    path = Path(path_value)
+    if not path.is_absolute():
+        return str(path)
+    try:
+        return str(path.resolve().relative_to(workspace_root.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _normalize_daemon_response_paths(payload: dict, *, workspace_root: Path) -> dict:
+    normalized = deepcopy(to_jsonable(payload))
+    normalized["screenshot"] = _normalize_workspace_path(normalized.get("screenshot"), workspace_root=workspace_root)
+
+    references = normalized.get("references")
+    if isinstance(references, list):
+        normalized["references"] = [
+            {
+                **reference,
+                "path": _normalize_workspace_path(reference.get("path"), workspace_root=workspace_root),
+            }
+            if isinstance(reference, dict) and "path" in reference
+            else reference
+            for reference in references
+        ]
+
+    return normalized
+
+
+def call_daemon(
+    method: str,
+    payload: dict,
+    *,
+    session_id: str | None = None,
+    verbose: bool | None = None,
+    daemon_client=None,
+):
+    workspace_root = Path.cwd()
+    client = build_default_daemon_client() if daemon_client is None else daemon_client
+    response = client.call(
+        method,
+        to_jsonable(payload),
+        session_id=session_id,
+        verbose=resolve_capture_verbose(verbose),
+    )
+    return _normalize_daemon_response_paths(response, workspace_root=workspace_root)
 
 
 def _resolve_runtime(*, runtime=None, runtime_factory=None, window_binding: dict | None = None):
