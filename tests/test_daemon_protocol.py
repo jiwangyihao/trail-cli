@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from trail.cli import app
 from trail.daemon.client import TrailDaemonClient, send_daemon_request
 from trail.daemon.models import DaemonRequest
 from trail.daemon.protocol import PROTOCOL_VERSION
@@ -147,6 +148,70 @@ def test_client_preserves_request_id_in_debug_for_daemon_transport_errors(tmp_pa
         "request_id": payload["debug"]["request_id"],
     }
     assert "request_id" not in payload
+
+
+def test_daemon_request_status_command_calls_daemon_method(cli_runner, fake_daemon_client, tmp_path: Path):
+    client = fake_daemon_client(
+        {
+            "daemon.request_status": build_success_response(
+                request_id="req-daemon-request-status",
+                data={
+                    "request_id": "req-42",
+                    "method": "input.click",
+                    "workspace_root": str(tmp_path),
+                    "session_id": None,
+                    "final_state": "completed",
+                    "last_visible_stage": "responded",
+                    "tainted": False,
+                    "started_at": "2026-04-16T00:00:00+00:00",
+                    "updated_at": "2026-04-16T00:00:01+00:00",
+                },
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["daemon", "request-status", "--request-id", "req-42"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"]["request_id"] == "req-42"
+    assert client.calls == [
+        {
+            "method": "daemon.request_status",
+            "payload": {"request_id": "req-42"},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_daemon_reconcile_session_command_calls_daemon_method(cli_runner, fake_daemon_client, tmp_path: Path):
+    client = fake_daemon_client(
+        {
+            "daemon.reconcile_session": build_success_response(
+                request_id="req-daemon-reconcile-session",
+                data={"session_id": "session-1", "tainted": False},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["daemon", "reconcile-session", "--session", "session-1"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"] == {"session_id": "session-1", "tainted": False}
+    assert client.calls == [
+        {
+            "method": "daemon.reconcile_session",
+            "payload": {"session_id": "session-1"},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
 
 
 def test_client_attempts_bootstrap_when_ready_runtime_is_missing_endpoint(tmp_path: Path):

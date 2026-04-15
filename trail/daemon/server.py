@@ -15,6 +15,7 @@ from trail.daemon.command_service import CommandService
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
 from trail.daemon.models import DaemonRequest
 from trail.daemon.runtime_service import RuntimeService
+from trail.daemon.session_service import SessionServiceRegistry
 from trail.output.envelope import command_failure
 
 
@@ -166,5 +167,6 @@ class TrailDaemonServer:
 
 def main() -> None:
     runtime_service = RuntimeService()
-    command_service = CommandService(runtime_service=runtime_service)
+    session_service = SessionServiceRegistry()
+    command_service = CommandService(runtime_service=runtime_service, session_service=session_service)
     TrailDaemonServer(command_service=command_service).serve_forever()

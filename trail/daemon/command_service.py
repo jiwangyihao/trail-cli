@@ -5,6 +5,7 @@ from typing import Any
 
 from trail.commands.helpers import to_jsonable
 from trail.core.errors import TrailError
+from trail.daemon.client import daemon_transport_failure
 from trail.output.capture import with_auto_capture
 
 
@@ -35,6 +36,11 @@ class CommandService:
         self.session_service = session_service
         self.cw_service = cw_service
 
+    def _session_service(self, request):
+        if self.session_service is None:
+            raise TrailError("DAEMON_UNAVAILABLE", "session service not configured")
+        return self.session_service.for_workspace(request.workspace_root)
+
     def _runtime(self, request):
         return self.runtime_service.get_runtime(
             workspace_root=request.workspace_root,
@@ -45,6 +51,20 @@ class CommandService:
         if request.method == "daemon.ping":
             return success(
                 {"alive": True},
+                request_id=request.request_id,
+            )
+
+        if request.method == "daemon.request_status":
+            service = self._session_service(request)
+            return success(
+                service.request_status(request.payload["request_id"]),
+                request_id=request.request_id,
+            )
+
+        if request.method == "daemon.reconcile_session":
+            service = self._session_service(request)
+            return success(
+                service.reconcile_session(request.payload["session_id"]),
                 request_id=request.request_id,
             )
 
@@ -102,35 +122,47 @@ class CommandService:
 
         if request.method == "input.click":
             runtime = self._runtime(request)
-            return self._capture_response(
+            return self._run_mutation(
                 request,
-                runtime,
-                lambda: self._click(runtime, x=request.payload["x"], y=request.payload["y"]),
+                "input.click",
+                lambda service: self._mutating_capture(
+                    request,
+                    runtime,
+                    lambda: self._click(runtime, x=request.payload["x"], y=request.payload["y"]),
+                ),
             )
 
         if request.method == "input.drag":
             runtime = self._runtime(request)
-            return self._capture_response(
+            return self._run_mutation(
                 request,
-                runtime,
-                lambda: self._drag(
+                "input.drag",
+                lambda service: self._mutating_capture(
+                    request,
                     runtime,
-                    from_x=request.payload["from_x"],
-                    from_y=request.payload["from_y"],
-                    to_x=request.payload["to_x"],
-                    to_y=request.payload["to_y"],
+                    lambda: self._drag(
+                        runtime,
+                        from_x=request.payload["from_x"],
+                        from_y=request.payload["from_y"],
+                        to_x=request.payload["to_x"],
+                        to_y=request.payload["to_y"],
+                    ),
                 ),
             )
 
         if request.method == "input.key":
             runtime = self._runtime(request)
-            return self._capture_response(
+            return self._run_mutation(
                 request,
-                runtime,
-                lambda: self._press_key(
+                "input.key",
+                lambda service: self._mutating_capture(
+                    request,
                     runtime,
-                    key=request.payload["key"],
-                    presses=request.payload.get("presses", 1),
+                    lambda: self._press_key(
+                        runtime,
+                        key=request.payload["key"],
+                        presses=request.payload.get("presses", 1),
+                    ),
                 ),
             )
 
@@ -140,6 +172,115 @@ class CommandService:
         response = with_auto_capture(runtime, action, verbose=request.verbose)
         response["request_id"] = request.request_id
         return response
+
+    def _mutating_capture(self, request, runtime, action):
+        data = action()
+        return self._capture_response(request, runtime, lambda: data)
+
+    def _failure_envelope(self, *, error: Exception) -> dict[str, Any]:
+        if isinstance(error, TrailError):
+            code = error.code
+            message = str(error)
+        else:
+            code = type(error).__name__
+            message = str(error) or type(error).__name__
+        return {
+            "ok": False,
+            "data": {},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": None,
+            "error": {"code": code, "message": message},
+        }
+
+    def _run_mutation(self, request, command_name: str, handler):
+        service = self._session_service(request)
+        accepted = service.begin_mutation(
+            session_id=request.session_id,
+            request_id=request.request_id,
+            command_name=command_name,
+        )
+        if accepted["status"] == "duplicate_terminal":
+            return success(accepted["record"], request_id=request.request_id)
+        if accepted["status"] == "duplicate_in_progress":
+            return daemon_transport_failure(
+                request_id=request.request_id,
+                code="REQUEST_IN_PROGRESS",
+                message="matching request is still executing",
+                debug={"record": accepted["record"]},
+            )
+        if accepted["status"] == "request_id_conflict":
+            raise TrailError("REQUEST_ID_CONFLICT", "request_id reused across a different session or command")
+
+        service.mark_executing(
+            request_id=request.request_id,
+            session_id=request.session_id,
+            command_name=command_name,
+        )
+        try:
+            result = handler(service)
+            service.mark_side_effect_applied(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                command_name=command_name,
+            )
+            service.mark_state_persisted(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                command_name=command_name,
+            )
+            service.finish_mutation(
+                session_id=request.session_id,
+                request_id=request.request_id,
+                command_name=command_name,
+                final_state="completed",
+                envelope=result,
+            )
+            return result
+        except SideEffectAppliedButStateNotPersisted as error:
+            service.mark_side_effect_applied(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                command_name=command_name,
+            )
+            service.finish_mutation(
+                session_id=request.session_id,
+                request_id=request.request_id,
+                command_name=command_name,
+                final_state="applied_but_not_persisted",
+                envelope=error.envelope,
+            )
+            raise
+        except PersistedButResponseUnknown as error:
+            service.mark_side_effect_applied(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                command_name=command_name,
+            )
+            service.mark_state_persisted(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                command_name=command_name,
+            )
+            service.finish_mutation(
+                session_id=request.session_id,
+                request_id=request.request_id,
+                command_name=command_name,
+                final_state="persisted_but_response_unknown",
+                envelope=error.envelope,
+            )
+            raise
+        except Exception as error:
+            service.finish_mutation(
+                session_id=request.session_id,
+                request_id=request.request_id,
+                command_name=command_name,
+                final_state="failed_before_side_effect",
+                envelope=self._failure_envelope(error=error),
+            )
+            raise
 
     def _read_ocr(self, runtime, payload: dict[str, Any]) -> dict[str, Any]:
         result = runtime.ocr(**payload)
@@ -170,3 +311,15 @@ class CommandService:
     def _press_key(self, runtime, *, key: str, presses: int) -> dict[str, Any]:
         runtime.press_key(key, presses=presses)
         return {"key": key, "presses": presses}
+
+
+class SideEffectAppliedButStateNotPersisted(Exception):
+    def __init__(self, envelope: dict[str, Any]):
+        super().__init__("side effect applied but state not persisted")
+        self.envelope = deepcopy(envelope)
+
+
+class PersistedButResponseUnknown(Exception):
+    def __init__(self, envelope: dict[str, Any]):
+        super().__init__("persisted but response unknown")
+        self.envelope = deepcopy(envelope)

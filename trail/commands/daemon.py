@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timezone
 import json
+from typing import Annotated
 from pathlib import Path
 import os
 import signal
@@ -10,7 +11,7 @@ import socket
 
 import typer
 
-from trail.commands.helpers import print_json
+from trail.commands.helpers import call_daemon, print_json
 from trail.daemon.bootstrap import install_bootstrap, resolve_daemon_home, start_bootstrap
 from trail.daemon.client import daemon_transport_failure, format_exception_detail
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
@@ -208,3 +209,13 @@ def daemon_logs() -> None:
         return
 
     print_json(command_success(data={"log_dir": manifest.install.log_dir}, screenshot=None))
+
+
+@daemon_app.command("request-status")
+def daemon_request_status(request_id: Annotated[str, typer.Option("--request-id")]) -> None:
+    print_json(call_daemon("daemon.request_status", {"request_id": request_id}))
+
+
+@daemon_app.command("reconcile-session")
+def daemon_reconcile_session(session: Annotated[str, typer.Option("--session")]) -> None:
+    print_json(call_daemon("daemon.reconcile_session", {"session_id": session}))
