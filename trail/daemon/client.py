@@ -67,6 +67,16 @@ def format_invalid_response_detail(response: Any) -> str:
     return f"invalid daemon response type: expected object, got {type(response).__name__}"
 
 
+def is_daemon_control_plane_error(response: dict[str, Any]) -> bool:
+    if response.get("ok") is not False:
+        return False
+    error = response.get("error")
+    if not isinstance(error, dict):
+        return False
+    code = error.get("code")
+    return isinstance(code, str) and code.startswith("DAEMON_")
+
+
 def send_daemon_request(
     request: DaemonRequest,
     token: str,
@@ -238,7 +248,7 @@ class TrailDaemonClient:
             )
 
         returned_request_id = response.pop("request_id", request_id)
-        if verbose:
+        if verbose or is_daemon_control_plane_error(response):
             response["debug"] = {
                 **(response.get("debug") or {}),
                 "request_id": returned_request_id,

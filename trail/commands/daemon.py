@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import os
 import signal
+import socket
 
 import typer
 
@@ -21,6 +22,15 @@ def _utc_now() -> str:
 
 def terminate_daemon_process(pid: int) -> None:
     os.kill(pid, signal.SIGTERM)
+
+
+def runtime_endpoint_is_reachable(endpoint: str, *, timeout_seconds: float = 0.2) -> bool:
+    try:
+        host, port_text = endpoint.split(":", 1)
+        with socket.create_connection((host, int(port_text)), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False
 
 
 def _load_manifest_for_command(*, daemon_home: Path, request_id: str):
@@ -61,7 +71,12 @@ def daemon_start() -> None:
         return
 
     runtime = manifest.runtime
-    if runtime.state in {"ready", "degraded"} and runtime.endpoint and runtime.pid:
+    if (
+        runtime.state in {"ready", "degraded"}
+        and runtime.endpoint
+        and runtime.pid
+        and runtime_endpoint_is_reachable(runtime.endpoint)
+    ):
         print_json(command_success(data={"started": False, "already_running": True}, screenshot=None))
         return
 

@@ -110,6 +110,45 @@ def test_client_moves_transport_request_id_into_debug_when_verbose(tmp_path: Pat
     assert "request_id" not in payload
 
 
+def test_client_preserves_request_id_in_debug_for_daemon_transport_errors(tmp_path: Path):
+    write_ready_manifest(
+        tmp_path / "daemon-home",
+        endpoint="127.0.0.1:8765",
+        token_value="token-1",
+    )
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=tmp_path / "daemon-home",
+        transport=lambda request, token, *, endpoint: {
+            "request_id": request.request_id,
+            "ok": False,
+            "data": None,
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": {"source": "daemon"},
+            "error": {
+                "code": "DAEMON_AUTH_FAILED",
+                "message": "daemon token mismatch",
+            },
+        },
+    )
+
+    payload = client.call("screen.shot", {})
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_AUTH_FAILED",
+        "message": "daemon token mismatch",
+    }
+    assert payload["debug"] == {
+        "source": "daemon",
+        "request_id": payload["debug"]["request_id"],
+    }
+    assert "request_id" not in payload
+
+
 def test_client_attempts_bootstrap_when_ready_runtime_is_missing_endpoint(tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
     write_installed_manifest(daemon_home, runtime_state="ready")

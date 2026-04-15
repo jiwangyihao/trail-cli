@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
 import tomllib
 from pathlib import Path
@@ -134,6 +135,7 @@ def test_daemon_start_is_idempotent_when_runtime_ready(cli_runner, monkeypatch, 
     token_before = Path(before.install.token_file).read_text(encoding="utf-8")
     started: list[Path] = []
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_reachable", lambda endpoint: True, raising=False)
     monkeypatch.setattr("trail.commands.daemon.start_bootstrap", lambda home: started.append(home) or True)
 
     result = cli_runner.invoke(app, ["daemon", "start"])
@@ -149,6 +151,26 @@ def test_daemon_start_is_idempotent_when_runtime_ready(cli_runner, monkeypatch, 
     assert after.runtime.endpoint == before.runtime.endpoint
     assert after.runtime.pid == before.runtime.pid
     assert token_after == token_before
+
+
+def test_daemon_start_restarts_stale_ready_runtime(cli_runner, monkeypatch, tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    listener = socket.create_server(("127.0.0.1", 0))
+    endpoint = f"127.0.0.1:{listener.getsockname()[1]}"
+    listener.close()
+    write_ready_manifest(daemon_home, endpoint=endpoint, token_value="token-live")
+    started: list[Path] = []
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_reachable", lambda current: False, raising=False)
+    monkeypatch.setattr("trail.commands.daemon.start_bootstrap", lambda home: started.append(home) or True)
+
+    result = cli_runner.invoke(app, ["daemon", "start"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"] == {"started": True}
+    assert started == [daemon_home]
 
 
 def test_daemon_logs_returns_log_dir(cli_runner, monkeypatch, tmp_path: Path):
