@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
@@ -22,7 +23,22 @@ def load_manifest(path: Path) -> TrailDaemonManifest:
 def save_manifest(path: Path, manifest: TrailDaemonManifest) -> None:
     manifest_path = Path(path)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(
-        json.dumps(asdict(manifest), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    payload = json.dumps(asdict(manifest), ensure_ascii=False, indent=2)
+    temp_path: Path | None = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=manifest_path.parent,
+            delete=False,
+            suffix=".tmp",
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(payload)
+
+        temp_path.replace(manifest_path)
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise

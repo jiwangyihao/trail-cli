@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,7 @@ from trail.daemon.protocol import PROTOCOL_VERSION
 
 class FakeDaemonClient:
     def __init__(self, responses: dict[str, dict[str, Any]]):
-        self._responses = responses
+        self._responses = deepcopy(responses)
         self.calls: list[dict[str, Any]] = []
 
     def call(
@@ -23,32 +24,34 @@ class FakeDaemonClient:
         verbose: bool = False,
     ) -> dict[str, Any]:
         self.calls.append(
-            {
+            deepcopy(
+                {
                 "method": method,
                 "payload": payload,
                 "workspace_root": workspace_root,
                 "session_id": session_id,
                 "verbose": verbose,
-            }
+                }
+            )
         )
-        return self._responses[method]
+        return deepcopy(self._responses[method])
 
 
 class FakeDaemonServer:
     def __init__(self, responses: dict[str, dict[str, Any]]):
-        self._responses = responses
+        self._responses = deepcopy(responses)
         self.requests: list[dict[str, Any]] = []
 
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self.requests.append(payload)
-        return self._responses[payload["method"]]
+        self.requests.append(deepcopy(payload))
+        return deepcopy(self._responses[payload["method"]])
 
 
 def build_success_response(*, request_id: str, data: dict[str, Any], screenshot: str | None = None) -> dict[str, Any]:
     return {
         "request_id": request_id,
         "ok": True,
-        "data": data,
+        "data": deepcopy(data),
         "screenshot": screenshot,
         "timing": {},
         "warnings": [],
