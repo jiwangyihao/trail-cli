@@ -518,6 +518,38 @@ def test_run_mutation_marks_failed_before_side_effect(tmp_path: Path):
     assert loaded.last_screenshot is None
 
 
+def test_handle_marks_terminal_failure_when_mark_executing_fails(tmp_path: Path, monkeypatch):
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    command_service = CommandService(
+        runtime_service=StubRuntimeService(StubRuntime(tmp_path / "mark-executing-fail.png")),
+        session_service=registry,
+    )
+    request = _request(
+        tmp_path,
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        request_id="req-mark-executing-fail",
+        session_id=None,
+    )
+
+    def fail_mark_executing(**kwargs):
+        raise OSError("executing marker failed")
+
+    monkeypatch.setattr(service, "mark_executing", fail_mark_executing)
+
+    response = command_service.handle(request)
+
+    status = registry.for_workspace(str(tmp_path)).request_status("req-mark-executing-fail")
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "OSError",
+        "message": "executing marker failed",
+    }
+    assert status["final_state"] == "failed_before_side_effect"
+    assert status["last_visible_stage"] == "responded"
+
+
 def test_run_mutation_marks_post_handler_stage_failure_as_applied_but_not_persisted(tmp_path: Path, monkeypatch):
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))

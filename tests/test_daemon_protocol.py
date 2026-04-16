@@ -392,6 +392,43 @@ def test_server_handle_payload_records_runtime_prefight_failure_in_journal(tmp_p
     assert status["final_state"] == "failed_before_side_effect"
 
 
+def test_server_handle_payload_marks_terminal_failure_when_mark_executing_fails(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    command_service = CommandService(
+        runtime_service=ProtocolRuntimeService(ProtocolRuntime(tmp_path / "mark-executing-fail.png")),
+        session_service=registry,
+    )
+    service = registry.for_workspace(str(tmp_path))
+
+    def fail_mark_executing(**kwargs):
+        raise OSError("executing marker failed")
+
+    monkeypatch.setattr(service, "mark_executing", fail_mark_executing)
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-server-mark-executing-fail",
+            method="input.click",
+            payload={"x": 10, "y": 20},
+        )
+    )
+
+    status = registry.for_workspace(str(tmp_path)).request_status("req-server-mark-executing-fail")
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "OSError",
+        "message": "executing marker failed",
+    }
+    assert status["final_state"] == "failed_before_side_effect"
+    assert status["last_visible_stage"] == "responded"
+
+
 @pytest.mark.parametrize(
     ("error_type", "final_state"),
     [

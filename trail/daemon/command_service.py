@@ -221,6 +221,37 @@ class CommandService:
         payload["debug"] = debug
         return payload
 
+    def _persist_terminal_envelope(
+        self,
+        *,
+        service,
+        request,
+        command_name: str,
+        final_state: str,
+        envelope: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            service.finish_mutation(
+                session_id=request.session_id,
+                request_id=request.request_id,
+                command_name=command_name,
+                final_state=final_state,
+                envelope=envelope,
+            )
+        except Exception as recovery_error:
+            try:
+                service.finalize_journal_record(
+                    request_id=request.request_id,
+                    command_name=command_name,
+                    final_state=final_state,
+                    envelope=envelope,
+                )
+            except Exception as finalize_error:
+                payload = self._attach_recovery_detail(envelope, recovery_error)
+                return self._attach_recovery_detail(payload, finalize_error)
+            return self._attach_recovery_detail(envelope, recovery_error)
+        return envelope
+
     def _failure_envelope(self, *, error: Exception) -> dict[str, Any]:
         if isinstance(error, TrailError):
             code = error.code
@@ -266,22 +297,21 @@ class CommandService:
         if accepted["status"] == "request_id_conflict":
             raise TrailError("REQUEST_ID_CONFLICT", "request_id reused across a different session or command")
 
-        service.mark_executing(
-            request_id=request.request_id,
-            session_id=request.session_id,
-            command_name=command_name,
-        )
         try:
+            service.mark_executing(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                command_name=command_name,
+            )
             result = self._response_with_request_id(request.request_id, handler(service))
         except FailedBeforeSideEffect as error:
-            service.finish_mutation(
-                session_id=request.session_id,
-                request_id=request.request_id,
+            return self._persist_terminal_envelope(
+                service=service,
+                request=request,
                 command_name=command_name,
                 final_state="failed_before_side_effect",
                 envelope=error.envelope,
             )
-            return error.envelope
         except SideEffectAppliedButStateNotPersisted as error:
             envelope = self._response_with_request_id(request.request_id, error.envelope)
             service.mark_side_effect_applied(
@@ -289,14 +319,13 @@ class CommandService:
                 session_id=request.session_id,
                 command_name=command_name,
             )
-            service.finish_mutation(
-                session_id=request.session_id,
-                request_id=request.request_id,
+            return self._persist_terminal_envelope(
+                service=service,
+                request=request,
                 command_name=command_name,
                 final_state="applied_but_not_persisted",
                 envelope=envelope,
             )
-            return envelope
         except PersistedButResponseUnknown as error:
             envelope = self._response_with_request_id(request.request_id, error.envelope)
             service.mark_side_effect_applied(
@@ -309,24 +338,22 @@ class CommandService:
                 session_id=request.session_id,
                 command_name=command_name,
             )
-            service.finish_mutation(
-                session_id=request.session_id,
-                request_id=request.request_id,
+            return self._persist_terminal_envelope(
+                service=service,
+                request=request,
                 command_name=command_name,
                 final_state="persisted_but_response_unknown",
                 envelope=envelope,
             )
-            return envelope
         except Exception as error:
             envelope = self._response_with_request_id(request.request_id, self._failure_envelope(error=error))
-            service.finish_mutation(
-                session_id=request.session_id,
-                request_id=request.request_id,
+            return self._persist_terminal_envelope(
+                service=service,
+                request=request,
                 command_name=command_name,
                 final_state="failed_before_side_effect",
                 envelope=envelope,
             )
-            return envelope
 
         last_known_stage = "handler_completed"
         try:
@@ -358,27 +385,13 @@ class CommandService:
                 error=error,
                 last_known_stage=last_known_stage,
             )
-            try:
-                service.finish_mutation(
-                    session_id=request.session_id,
-                    request_id=request.request_id,
-                    command_name=command_name,
-                    final_state=final_state,
-                    envelope=envelope,
-                )
-            except Exception as recovery_error:
-                try:
-                    service.finalize_journal_record(
-                        request_id=request.request_id,
-                        command_name=command_name,
-                        final_state=final_state,
-                        envelope=envelope,
-                    )
-                except Exception as finalize_error:
-                    payload = self._attach_recovery_detail(envelope, recovery_error)
-                    return self._attach_recovery_detail(payload, finalize_error)
-                return self._attach_recovery_detail(envelope, recovery_error)
-            return envelope
+            return self._persist_terminal_envelope(
+                service=service,
+                request=request,
+                command_name=command_name,
+                final_state=final_state,
+                envelope=envelope,
+            )
 
     def _read_ocr(self, runtime, payload: dict[str, Any]) -> dict[str, Any]:
         result = runtime.ocr(**payload)
