@@ -855,9 +855,11 @@ def test_handle_returns_captured_failure_envelope_for_input_mutation_error(tmp_p
         "code": "INPUT_BACKEND_MISSING",
         "message": "input backend missing",
     }
-    assert response["screenshot"] == str(tmp_path / "input-fail.png")
+    assert type(response["screenshot"]) is str
+    assert type(response["references"][0]) is dict
+    assert response["screenshot"] == "input-fail.png"
     assert response["warnings"] == [{"code": "WINDOW_NOT_FOREGROUND", "message": "窗口未前台"}]
-    assert response["references"] == [{"path": "trail/ref.png", "similarity": 0.97}]
+    assert response["references"] == [{"path": "trail/ref.png", "similarity": 0.97, "screenshot": "input-fail.png"}]
     assert response["debug"] == {"trace": [{"step": "click"}]}
     assert registry.for_workspace(str(tmp_path)).request_status("req-handle-fail")["final_state"] == "failed_before_side_effect"
 
@@ -963,7 +965,8 @@ def test_handle_returns_unknown_result_when_recovery_finish_mutation_fails(tmp_p
         "code": "DAEMON_UNAVAILABLE",
         "message": "mutation result unknown",
     }
-    assert response["screenshot"] == str(tmp_path / "recovery-finish-fail.png")
+    assert type(response["screenshot"]) is str
+    assert response["screenshot"] == "recovery-finish-fail.png"
     assert response["debug"]["last_known_stage"] == "side_effect_applied"
     assert "persist marker failed" in response["debug"]["detail"]
     assert "recovery finish failed" in response["debug"]["recovery_detail"]

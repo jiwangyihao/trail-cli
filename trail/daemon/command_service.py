@@ -11,28 +11,6 @@ from trail.daemon.client import daemon_transport_failure
 from trail.output.capture import with_auto_capture
 
 
-class _NormalizedScreenshotPath(str):
-    def __new__(cls, value: str, *aliases: str):
-        path = super().__new__(cls, value)
-        path._aliases = tuple(alias for alias in aliases if alias and alias != value)
-        return path
-
-    def __eq__(self, other):
-        return super().__eq__(other) or (isinstance(other, str) and other in self._aliases)
-
-
-class _BoundScreenshotReference(dict):
-    def __eq__(self, other):
-        if super().__eq__(other):
-            return True
-        if not isinstance(other, dict):
-            return False
-        normalized = dict(self)
-        if "screenshot" in normalized and "screenshot" not in other:
-            normalized.pop("screenshot")
-        return normalized == dict(other)
-
-
 def success(
     data: dict[str, Any],
     *,
@@ -69,13 +47,7 @@ def _normalize_workspace_path(path_value, *, workspace_root: Path) -> str | None
 
 
 def _normalize_daemon_screenshot_path(path_value, *, workspace_root: Path) -> str | None:
-    normalized = _normalize_workspace_path(path_value, workspace_root=workspace_root)
-    if normalized is None:
-        return None
-    path = Path(path_value)
-    if not path.is_absolute() or normalized == str(path):
-        return normalized
-    return _NormalizedScreenshotPath(normalized, str(path))
+    return _normalize_workspace_path(path_value, workspace_root=workspace_root)
 
 
 def _bind_references_to_screenshot(payload: dict[str, Any]) -> dict[str, Any]:
@@ -87,7 +59,7 @@ def _bind_references_to_screenshot(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(references, list):
         return normalized
     normalized["references"] = [
-        _BoundScreenshotReference({**reference, "screenshot": screenshot}) if isinstance(reference, dict) else reference
+        {**reference, "screenshot": screenshot} if isinstance(reference, dict) else reference
         for reference in references
     ]
     return normalized

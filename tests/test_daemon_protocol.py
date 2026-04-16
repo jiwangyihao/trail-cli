@@ -355,9 +355,11 @@ def test_server_handle_payload_preserves_captured_mutation_failure_envelope(tmp_
         "code": "INPUT_BACKEND_MISSING",
         "message": "input backend missing",
     }
-    assert response["screenshot"] == str(tmp_path / "input-fail.png")
+    assert type(response["screenshot"]) is str
+    assert type(response["references"][0]) is dict
+    assert response["screenshot"] == "input-fail.png"
     assert response["warnings"] == [{"code": "WINDOW_NOT_FOREGROUND", "message": "窗口未前台"}]
-    assert response["references"] == [{"path": "trail/ref.png", "similarity": 0.97}]
+    assert response["references"] == [{"path": "trail/ref.png", "similarity": 0.97, "screenshot": "input-fail.png"}]
     assert response["debug"] == {"trace": [{"step": "click"}]}
     assert registry.for_workspace(str(tmp_path)).request_status("req-server-fail")["final_state"] == "failed_before_side_effect"
 
@@ -527,7 +529,8 @@ def test_server_handle_payload_keeps_unknown_result_envelope_for_post_handler_fa
         "code": "DAEMON_UNAVAILABLE",
         "message": "mutation result unknown",
     }
-    assert response["screenshot"] == str(tmp_path / "post-handler-fail.png")
+    assert type(response["screenshot"]) is str
+    assert response["screenshot"] == "post-handler-fail.png"
     assert response["debug"]["last_known_stage"] == "state_persisted"
     assert "OSError" in response["debug"]["detail"]
     assert status["final_state"] == "persisted_but_response_unknown"

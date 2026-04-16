@@ -551,11 +551,13 @@ def test_capture_to_workspace_uses_request_id_filename(monkeypatch, tmp_path):
 
     path = controller.capture_to_workspace(request_id="req-123")
 
-    assert path == tmp_path / "req-123.png"
+    assert path.parent == tmp_path
+    assert path.name.startswith("req-123-")
+    assert path.suffix == ".png"
     assert path.read_bytes() == b"demo-bytes"
 
 
-def test_capture_to_workspace_sanitizes_dangerous_request_id(monkeypatch, tmp_path):
+def test_capture_to_workspace_distinguishes_colliding_request_ids_and_avoids_reserved_names(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
 
     controller = window_module.WindowsWindowController(
@@ -564,12 +566,18 @@ def test_capture_to_workspace_sanitizes_dangerous_request_id(monkeypatch, tmp_pa
     )
     monkeypatch.setattr(controller, "capture", lambda **kwargs: b"demo-bytes")
 
-    path = controller.capture_to_workspace(request_id="../escape")
+    plain = controller.capture_to_workspace(request_id="escape")
+    parent = controller.capture_to_workspace(request_id="../escape")
+    backslash = controller.capture_to_workspace(request_id=r"..\escape")
+    device = controller.capture_to_workspace(request_id="CON")
 
-    assert path.resolve().parent == tmp_path.resolve()
-    assert path.suffix == ".png"
-    assert "escape" in path.stem
-    assert path.read_bytes() == b"demo-bytes"
+    assert plain.resolve().parent == tmp_path.resolve()
+    assert parent.resolve().parent == tmp_path.resolve()
+    assert backslash.resolve().parent == tmp_path.resolve()
+    assert len({plain.name, parent.name, backslash.name}) == 3
+    assert device.resolve().parent == tmp_path.resolve()
+    assert device.stem.upper() != "CON"
+    assert device.read_bytes() == b"demo-bytes"
 
 
 def test_pyscreeze_matcher_returns_box(monkeypatch):
@@ -1258,6 +1266,8 @@ def test_command_service_binds_references_to_current_screenshot(tmp_path: Path):
 
     payload = service.handle(_command_request(workspace_root=tmp_path, method="ocr.read"))
 
+    assert type(payload["screenshot"]) is str
+    assert type(payload["references"][0]) is dict
     assert payload["screenshot"] == ".trail/shots/req-ocr-read.png"
     assert payload["references"] == [
         {
@@ -1285,6 +1295,8 @@ def test_command_service_normalizes_workspace_absolute_screenshot_and_rebinds_re
 
     payload = service.handle(_command_request(workspace_root=tmp_path, method="ocr.read"))
 
+    assert type(payload["screenshot"]) is str
+    assert type(payload["references"][0]) is dict
     assert payload["screenshot"] == "input-fail.png"
     assert payload["references"] == [
         {
@@ -1326,14 +1338,18 @@ def test_command_service_capture_chain_keeps_request_scoped_screenshot_inside_wo
         _command_request(
             workspace_root=tmp_path,
             method="screen.shot",
-            request_id="../escape",
+            request_id=r"..\CON",
         )
     )
+
+    assert payload["screenshot"] is not None
+    assert type(payload["screenshot"]) is str
     screenshot = Path(payload["screenshot"])
     screenshot_path = tmp_path / screenshot
 
     assert payload["screenshot"].startswith(".trail/shots/")
     assert ".." not in screenshot.parts
+    assert screenshot_path.stem.upper() != "CON"
     assert screenshot_path.exists()
     assert screenshot_path.resolve().parent == (tmp_path / ".trail" / "shots").resolve()
     assert screenshot_path.read_bytes() == b"demo-bytes"

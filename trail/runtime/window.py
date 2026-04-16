@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import subprocess
 import sys
 from time import sleep
@@ -31,12 +32,30 @@ GAME_CHANNEL_CONFIG = {
     "global": None,
 }
 
+WINDOWS_RESERVED_CAPTURE_STEMS = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+
 
 def _safe_capture_request_id(request_id: str | None) -> str:
-    candidate = Path(request_id or "last-action").name
-    sanitized = "".join(char if char.isascii() and (char.isalnum() or char in {"-", "_", "."}) else "_" for char in candidate)
-    sanitized = sanitized.strip("._")
-    return sanitized or "last-action"
+    if request_id is None:
+        return "last-action"
+
+    raw = str(request_id)
+    sanitized = "".join(char if char.isascii() and (char.isalnum() or char in {"-", "_", "."}) else "-" for char in raw)
+    sanitized = sanitized.strip(". -_")
+    if not sanitized:
+        sanitized = "request"
+    if sanitized.split(".", 1)[0].upper() in WINDOWS_RESERVED_CAPTURE_STEMS:
+        sanitized = f"request-{sanitized}"
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:10]
+    prefix = sanitized[:80].rstrip(". -_") or "request"
+    return f"{prefix}-{digest}"
 
 
 def _capture_win32_window(hwnd: int, region: Region):
