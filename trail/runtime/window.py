@@ -32,6 +32,13 @@ GAME_CHANNEL_CONFIG = {
 }
 
 
+def _safe_capture_request_id(request_id: str | None) -> str:
+    candidate = Path(request_id or "last-action").name
+    sanitized = "".join(char if char.isascii() and (char.isalnum() or char in {"-", "_", "."}) else "_" for char in candidate)
+    sanitized = sanitized.strip("._")
+    return sanitized or "last-action"
+
+
 def _capture_win32_window(hwnd: int, region: Region):
     import win32gui  # type: ignore
     import win32ui  # type: ignore
@@ -308,6 +315,6 @@ class WindowsWindowController:
         return buffer.getvalue()
 
     def capture_to_workspace(self, request_id: str | None = None) -> Path:
-        path = self.workspace / f"{request_id or 'last-action'}.png"
+        path = self.workspace / f"{_safe_capture_request_id(request_id)}.png"
         path.write_bytes(self.capture())
         return path

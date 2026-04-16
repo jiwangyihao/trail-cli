@@ -152,6 +152,21 @@ def test_session_store_persists_relative_last_screenshot(tmp_path):
     assert loaded.last_screenshot == ".trail/shots/req-123.png"
 
 
+def test_session_store_load_rebinds_legacy_absolute_workspace_to_current_store(tmp_path):
+    store = SessionStore(tmp_path / ".trail" / "sessions")
+    session = store.create(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    path = tmp_path / ".trail" / "sessions" / f"{session.session_id}.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["workspace"] = str(tmp_path / "legacy-workspace" / ".trail" / "sessions")
+    payload["last_screenshot"] = ".trail/shots/legacy.png"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    loaded = store.load(session.session_id)
+
+    assert loaded.workspace == store.workspace
+    assert loaded.last_screenshot == ".trail/shots/legacy.png"
+
+
 def test_artifact_store_persists_relative_path_fields(tmp_path):
     store = ArtifactStore(tmp_path / ".trail" / "artifacts")
 

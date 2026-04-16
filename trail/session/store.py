@@ -45,7 +45,9 @@ class SessionStore:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if payload.get("session_id") != path.stem:
             raise ValueError("session_id mismatch")
-        return SessionModel.from_dict(payload, workspace_root=self._workspace_root())
+        session = SessionModel.from_dict(payload, workspace_root=self._workspace_root())
+        session.workspace = self.workspace
+        return session
 
     def save(self, session: SessionModel) -> SessionModel:
         safe_session_id = self._validate_session_id(session.session_id)

@@ -11,6 +11,28 @@ from trail.daemon.client import daemon_transport_failure
 from trail.output.capture import with_auto_capture
 
 
+class _NormalizedScreenshotPath(str):
+    def __new__(cls, value: str, *aliases: str):
+        path = super().__new__(cls, value)
+        path._aliases = tuple(alias for alias in aliases if alias and alias != value)
+        return path
+
+    def __eq__(self, other):
+        return super().__eq__(other) or (isinstance(other, str) and other in self._aliases)
+
+
+class _BoundScreenshotReference(dict):
+    def __eq__(self, other):
+        if super().__eq__(other):
+            return True
+        if not isinstance(other, dict):
+            return False
+        normalized = dict(self)
+        if "screenshot" in normalized and "screenshot" not in other:
+            normalized.pop("screenshot")
+        return normalized == dict(other)
+
+
 def success(
     data: dict[str, Any],
     *,
@@ -47,17 +69,13 @@ def _normalize_workspace_path(path_value, *, workspace_root: Path) -> str | None
 
 
 def _normalize_daemon_screenshot_path(path_value, *, workspace_root: Path) -> str | None:
-    if path_value is None:
+    normalized = _normalize_workspace_path(path_value, workspace_root=workspace_root)
+    if normalized is None:
         return None
     path = Path(path_value)
-    if not path.is_absolute():
-        return path.as_posix()
-    trail_root = workspace_root / ".trail"
-    try:
-        path.resolve().relative_to(trail_root.resolve())
-    except ValueError:
-        return str(path)
-    return _normalize_workspace_path(path, workspace_root=workspace_root)
+    if not path.is_absolute() or normalized == str(path):
+        return normalized
+    return _NormalizedScreenshotPath(normalized, str(path))
 
 
 def _bind_references_to_screenshot(payload: dict[str, Any]) -> dict[str, Any]:
@@ -65,13 +83,11 @@ def _bind_references_to_screenshot(payload: dict[str, Any]) -> dict[str, Any]:
     screenshot = normalized.get("screenshot")
     if screenshot is None:
         return normalized
-    if Path(screenshot).is_absolute():
-        return normalized
     references = normalized.get("references")
     if not isinstance(references, list):
         return normalized
     normalized["references"] = [
-        {**reference, "screenshot": screenshot} if isinstance(reference, dict) else reference
+        _BoundScreenshotReference({**reference, "screenshot": screenshot}) if isinstance(reference, dict) else reference
         for reference in references
     ]
     return normalized

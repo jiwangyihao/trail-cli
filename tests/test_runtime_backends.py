@@ -100,12 +100,13 @@ def _command_request(
     payload: dict | None = None,
     session_id: str | None = None,
     verbose: bool = False,
+    request_id: str | None = None,
 ):
     from trail.daemon.models import DaemonRequest
     from trail.daemon.protocol import PROTOCOL_VERSION
 
     return DaemonRequest(
-        request_id=f"req-{method}",
+        request_id=request_id or f"req-{method}",
         protocol_version=PROTOCOL_VERSION,
         workspace_root=str(workspace_root),
         session_id=session_id,
@@ -551,6 +552,23 @@ def test_capture_to_workspace_uses_request_id_filename(monkeypatch, tmp_path):
     path = controller.capture_to_workspace(request_id="req-123")
 
     assert path == tmp_path / "req-123.png"
+    assert path.read_bytes() == b"demo-bytes"
+
+
+def test_capture_to_workspace_sanitizes_dangerous_request_id(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+    monkeypatch.setattr(controller, "capture", lambda **kwargs: b"demo-bytes")
+
+    path = controller.capture_to_workspace(request_id="../escape")
+
+    assert path.resolve().parent == tmp_path.resolve()
+    assert path.suffix == ".png"
+    assert "escape" in path.stem
     assert path.read_bytes() == b"demo-bytes"
 
 
@@ -1248,6 +1266,77 @@ def test_command_service_binds_references_to_current_screenshot(tmp_path: Path):
             "screenshot": ".trail/shots/req-ocr-read.png",
         }
     ]
+
+
+def test_command_service_normalizes_workspace_absolute_screenshot_and_rebinds_references(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+
+    runtime = _CommandRuntimeStub()
+    runtime._shot = tmp_path / "input-fail.png"
+    runtime.references = [
+        {
+            "path": str(tmp_path / "trail" / "scenes" / "cw" / "references" / "1-1.png"),
+            "similarity": 0.88,
+            "screenshot": "stale.png",
+        }
+    ]
+    runtime_service = _CommandRuntimeServiceStub(runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    payload = service.handle(_command_request(workspace_root=tmp_path, method="ocr.read"))
+
+    assert payload["screenshot"] == "input-fail.png"
+    assert payload["references"] == [
+        {
+            "path": "trail/scenes/cw/references/1-1.png",
+            "similarity": 0.88,
+            "screenshot": "input-fail.png",
+        }
+    ]
+
+
+def test_command_service_capture_chain_keeps_request_scoped_screenshot_inside_workspace(monkeypatch, tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+    from trail.runtime.operator import RuntimeOperator
+    import trail.runtime.window as window_module
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path / ".trail" / "shots",
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+    monkeypatch.setattr(controller, "capture", lambda **kwargs: b"demo-bytes")
+    runtime = RuntimeOperator(
+        window=controller,
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+        reference_root=tmp_path,
+    )
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="screen.shot",
+            request_id="../escape",
+        )
+    )
+    screenshot = Path(payload["screenshot"])
+    screenshot_path = tmp_path / screenshot
+
+    assert payload["screenshot"].startswith(".trail/shots/")
+    assert ".." not in screenshot.parts
+    assert screenshot_path.exists()
+    assert screenshot_path.resolve().parent == (tmp_path / ".trail" / "shots").resolve()
+    assert screenshot_path.read_bytes() == b"demo-bytes"
 
 
 def test_fake_daemon_client_moves_request_id_into_debug_when_verbose():
