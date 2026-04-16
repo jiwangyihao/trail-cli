@@ -93,7 +93,14 @@ class _CommandRuntimeServiceStub:
         }
 
 
-def _command_request(*, workspace_root: Path, method: str, payload: dict | None = None, verbose: bool = False):
+def _command_request(
+    *,
+    workspace_root: Path,
+    method: str,
+    payload: dict | None = None,
+    session_id: str | None = None,
+    verbose: bool = False,
+):
     from trail.daemon.models import DaemonRequest
     from trail.daemon.protocol import PROTOCOL_VERSION
 
@@ -101,7 +108,7 @@ def _command_request(*, workspace_root: Path, method: str, payload: dict | None 
         request_id=f"req-{method}",
         protocol_version=PROTOCOL_VERSION,
         workspace_root=str(workspace_root),
-        session_id=None,
+        session_id=session_id,
         verbose=verbose,
         method=method,
         payload=payload or {},
@@ -212,6 +219,7 @@ def test_command_service_handles_screen_ocr_and_image_methods(tmp_path: Path):
 
 def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Path):
     from trail.daemon.command_service import CommandService
+    from trail.daemon.session_service import SessionServiceRegistry
 
     runtime = _CommandRuntimeStub()
     runtime.warnings = [
@@ -223,13 +231,17 @@ def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Pa
     runtime.references = [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.88}]
     runtime.trace = [{"step": "click", "point": [10, 20]}]
     runtime_service = _CommandRuntimeServiceStub(runtime)
-    service = CommandService(runtime_service=runtime_service)
+    session_registry = SessionServiceRegistry()
+    session_service = session_registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "Demo Window", "hwnd": 321})
+    service = CommandService(runtime_service=runtime_service, session_service=session_registry)
 
     click_payload = service.handle(
         _command_request(
             workspace_root=tmp_path,
             method="input.click",
             payload={"x": 10, "y": 20},
+            session_id=session.session_id,
             verbose=True,
         )
     )
@@ -238,6 +250,7 @@ def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Pa
             workspace_root=tmp_path,
             method="input.drag",
             payload={"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4},
+            session_id=session.session_id,
         )
     )
     key_payload = service.handle(
@@ -245,8 +258,10 @@ def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Pa
             workspace_root=tmp_path,
             method="input.key",
             payload={"key": "space", "presses": 2},
+            session_id=session.session_id,
         )
     )
+    click_status = session_service.request_status("req-input.click")
 
     assert click_payload["ok"] is True
     assert click_payload["data"] == {"clicked": [10, 20]}
@@ -265,9 +280,17 @@ def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Pa
     assert key_payload["ok"] is True
     assert key_payload["data"] == {"key": "space", "presses": 2}
     assert key_payload["request_id"] == "req-input.key"
+    assert click_status["session_id"] == session.session_id
+    assert click_status["final_state"] == "completed"
+    assert click_status["last_visible_stage"] == "responded"
     assert runtime.clicks == [(10, 20)]
     assert runtime.drags == [(1, 2, 3, 4)]
     assert runtime.keys == [("space", 2)]
+    assert runtime_service.runtime_calls == [
+        {"workspace_root": str(tmp_path), "window_binding": None},
+        {"workspace_root": str(tmp_path), "window_binding": None},
+        {"workspace_root": str(tmp_path), "window_binding": None},
+    ]
 
 
 def test_command_service_returns_structured_errors_for_missing_ocr_and_images(tmp_path: Path):
