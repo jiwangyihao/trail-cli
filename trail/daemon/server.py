@@ -11,7 +11,11 @@ from uuid import uuid4
 
 from trail.core.errors import TrailError
 from trail.daemon.bootstrap import resolve_daemon_home
-from trail.daemon.command_service import CommandService
+from trail.daemon.command_service import (
+    CommandService,
+    PersistedButResponseUnknown,
+    SideEffectAppliedButStateNotPersisted,
+)
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
 from trail.daemon.models import DaemonRequest
 from trail.daemon.runtime_service import RuntimeService
@@ -132,6 +136,10 @@ class TrailDaemonServer:
                 code=error.code,
                 message=str(error),
             )
+        except (SideEffectAppliedButStateNotPersisted, PersistedButResponseUnknown) as error:
+            envelope = deepcopy(error.envelope)
+            envelope.setdefault("request_id", request_id)
+            return envelope
         except Exception as error:
             return _error_response(
                 request_id=request_id,

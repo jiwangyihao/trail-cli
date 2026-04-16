@@ -170,12 +170,18 @@ class CommandService:
 
     def _capture_response(self, request, runtime, action):
         response = with_auto_capture(runtime, action, verbose=request.verbose)
-        response["request_id"] = request.request_id
-        return response
+        return self._response_with_request_id(request.request_id, response)
 
     def _mutating_capture(self, request, runtime, action):
-        data = action()
-        return self._capture_response(request, runtime, lambda: data)
+        response = self._capture_response(request, runtime, action)
+        if response["ok"]:
+            return response
+        raise FailedBeforeSideEffect(response)
+
+    def _response_with_request_id(self, request_id: str, response: dict[str, Any]) -> dict[str, Any]:
+        payload = deepcopy(response)
+        payload["request_id"] = request_id
+        return payload
 
     def _failure_envelope(self, *, error: Exception) -> dict[str, Any]:
         if isinstance(error, TrailError):
@@ -220,7 +226,7 @@ class CommandService:
             command_name=command_name,
         )
         try:
-            result = handler(service)
+            result = self._response_with_request_id(request.request_id, handler(service))
             service.mark_side_effect_applied(
                 request_id=request.request_id,
                 session_id=request.session_id,
@@ -239,7 +245,17 @@ class CommandService:
                 envelope=result,
             )
             return result
+        except FailedBeforeSideEffect as error:
+            service.finish_mutation(
+                session_id=request.session_id,
+                request_id=request.request_id,
+                command_name=command_name,
+                final_state="failed_before_side_effect",
+                envelope=error.envelope,
+            )
+            return error.envelope
         except SideEffectAppliedButStateNotPersisted as error:
+            envelope = self._response_with_request_id(request.request_id, error.envelope)
             service.mark_side_effect_applied(
                 request_id=request.request_id,
                 session_id=request.session_id,
@@ -250,10 +266,11 @@ class CommandService:
                 request_id=request.request_id,
                 command_name=command_name,
                 final_state="applied_but_not_persisted",
-                envelope=error.envelope,
+                envelope=envelope,
             )
-            raise
+            return envelope
         except PersistedButResponseUnknown as error:
+            envelope = self._response_with_request_id(request.request_id, error.envelope)
             service.mark_side_effect_applied(
                 request_id=request.request_id,
                 session_id=request.session_id,
@@ -269,18 +286,19 @@ class CommandService:
                 request_id=request.request_id,
                 command_name=command_name,
                 final_state="persisted_but_response_unknown",
-                envelope=error.envelope,
+                envelope=envelope,
             )
-            raise
+            return envelope
         except Exception as error:
+            envelope = self._response_with_request_id(request.request_id, self._failure_envelope(error=error))
             service.finish_mutation(
                 session_id=request.session_id,
                 request_id=request.request_id,
                 command_name=command_name,
                 final_state="failed_before_side_effect",
-                envelope=self._failure_envelope(error=error),
+                envelope=envelope,
             )
-            raise
+            return envelope
 
     def _read_ocr(self, runtime, payload: dict[str, Any]) -> dict[str, Any]:
         result = runtime.ocr(**payload)
@@ -322,4 +340,10 @@ class SideEffectAppliedButStateNotPersisted(Exception):
 class PersistedButResponseUnknown(Exception):
     def __init__(self, envelope: dict[str, Any]):
         super().__init__("persisted but response unknown")
+        self.envelope = deepcopy(envelope)
+
+
+class FailedBeforeSideEffect(Exception):
+    def __init__(self, envelope: dict[str, Any]):
+        super().__init__("failed before side effect")
         self.envelope = deepcopy(envelope)

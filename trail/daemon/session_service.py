@@ -67,11 +67,11 @@ class SessionService:
     def begin_mutation(self, *, session_id: str | None, request_id: str, command_name: str) -> dict:
         with self._mutex:
             record = self._load_record(request_id)
-            if record is not None and record.get("final_state"):
-                return {"status": "duplicate_terminal", "record": deepcopy(record)}
             if record is not None:
                 if record.get("session_id") != session_id or record.get("method") != command_name:
                     return {"status": "request_id_conflict", "record": deepcopy(record)}
+                if record.get("final_state"):
+                    return {"status": "duplicate_terminal", "record": deepcopy(record)}
                 return {"status": "duplicate_in_progress", "record": deepcopy(record)}
 
             now = _utc_now()
@@ -167,9 +167,11 @@ class SessionService:
 class SessionServiceRegistry:
     def __init__(self):
         self._services: dict[str, SessionService] = {}
+        self._mutex = Lock()
 
     def for_workspace(self, workspace_root: str) -> SessionService:
         key = str(Path(workspace_root))
-        if key not in self._services:
-            self._services[key] = SessionService(workspace_root=Path(workspace_root))
-        return self._services[key]
+        with self._mutex:
+            if key not in self._services:
+                self._services[key] = SessionService(workspace_root=Path(workspace_root))
+            return self._services[key]

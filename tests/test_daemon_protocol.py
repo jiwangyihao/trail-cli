@@ -2,13 +2,19 @@ import json
 import socket
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from trail.cli import app
+from trail.core.errors import TrailError
+import trail.daemon.server as daemon_server_module
+from trail.daemon.command_service import CommandService, PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
 from trail.daemon.client import TrailDaemonClient, send_daemon_request
 from trail.daemon.models import DaemonRequest
 from trail.daemon.protocol import PROTOCOL_VERSION
+from trail.daemon.server import TrailDaemonServer
+from trail.daemon.session_service import SessionServiceRegistry
 from tests.support.fake_daemon import (
     FakeDaemonClient,
     build_success_response,
@@ -17,6 +23,69 @@ from tests.support.fake_daemon import (
     write_installed_manifest,
     write_ready_manifest,
 )
+
+
+class ProtocolRuntime:
+    def __init__(self, screenshot_path: Path, *, click_error: Exception | None = None):
+        self._screenshot_path = screenshot_path
+        self.click_error = click_error
+        self.warnings: list[dict] = []
+        self.references: list[dict] = []
+        self.trace: list[dict] = []
+
+    def capture_after_action(self, optional: bool = False):
+        del optional
+        return str(self._screenshot_path)
+
+    def collect_warnings(self):
+        warnings = list(self.warnings)
+        self.warnings.clear()
+        return warnings
+
+    def match_references(self, screenshot_path, limit: int = 3):
+        del screenshot_path, limit
+        return list(self.references)
+
+    def consume_debug_trace(self):
+        trace = list(self.trace)
+        self.trace.clear()
+        return trace
+
+    def click_point(self, x: int, y: int):
+        del x, y
+        if self.click_error is not None:
+            raise self.click_error
+
+
+class ProtocolRuntimeService:
+    def __init__(self, runtime):
+        self._runtime = runtime
+
+    def get_runtime(self, *, workspace_root: str, window_binding):
+        del workspace_root, window_binding
+        return self._runtime
+
+
+def _server_payload(
+    tmp_path: Path,
+    *,
+    token: str,
+    request_id: str,
+    method: str,
+    payload: dict,
+    session_id: str | None = None,
+    verbose: bool = False,
+):
+    return {
+        "request_id": request_id,
+        "protocol_version": PROTOCOL_VERSION,
+        "workspace_root": str(tmp_path),
+        "session_id": session_id,
+        "verbose": verbose,
+        "method": method,
+        "payload": payload,
+        "token": token,
+    }
 
 
 def test_protocol_version_is_fixed():
@@ -212,6 +281,135 @@ def test_daemon_reconcile_session_command_calls_daemon_method(cli_runner, fake_d
             "verbose": False,
         }
     ]
+
+
+def test_server_main_injects_session_service_registry(monkeypatch):
+    captured: dict[str, object] = {}
+    runtime_service = object()
+
+    monkeypatch.setattr(daemon_server_module, "RuntimeService", lambda: runtime_service)
+
+    def fake_command_service(*, runtime_service, session_service=None, cw_service=None):
+        captured["runtime_service"] = runtime_service
+        captured["session_service"] = session_service
+        captured["cw_service"] = cw_service
+        return SimpleNamespace(session_service=session_service)
+
+    class FakeTrailDaemonServer:
+        def __init__(self, *, command_service):
+            captured["command_service"] = command_service
+
+        def serve_forever(self):
+            captured["served"] = True
+
+    monkeypatch.setattr(daemon_server_module, "CommandService", fake_command_service)
+    monkeypatch.setattr(daemon_server_module, "TrailDaemonServer", FakeTrailDaemonServer)
+
+    daemon_server_module.main()
+
+    assert captured["runtime_service"] is runtime_service
+    assert isinstance(captured["session_service"], SessionServiceRegistry)
+    assert captured["served"] is True
+
+
+def test_server_handle_payload_preserves_captured_mutation_failure_envelope(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    runtime = ProtocolRuntime(
+        tmp_path / "input-fail.png",
+        click_error=TrailError("INPUT_BACKEND_MISSING", "input backend missing"),
+    )
+    runtime.warnings = [{"code": "WINDOW_NOT_FOREGROUND", "message": "窗口未前台"}]
+    runtime.references = [{"path": "trail/ref.png", "similarity": 0.97}]
+    runtime.trace = [{"step": "click"}]
+    registry = SessionServiceRegistry()
+    command_service = CommandService(
+        runtime_service=ProtocolRuntimeService(runtime),
+        session_service=registry,
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-server-fail",
+            method="input.click",
+            payload={"x": 10, "y": 20},
+            verbose=True,
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "INPUT_BACKEND_MISSING",
+        "message": "input backend missing",
+    }
+    assert response["screenshot"] == str(tmp_path / "input-fail.png")
+    assert response["warnings"] == [{"code": "WINDOW_NOT_FOREGROUND", "message": "窗口未前台"}]
+    assert response["references"] == [{"path": "trail/ref.png", "similarity": 0.97}]
+    assert response["debug"] == {"trace": [{"step": "click"}]}
+    assert registry.for_workspace(str(tmp_path)).request_status("req-server-fail")["final_state"] == "failed_before_side_effect"
+
+
+@pytest.mark.parametrize(
+    ("error_type", "final_state"),
+    [
+        (SideEffectAppliedButStateNotPersisted, "applied_but_not_persisted"),
+        (PersistedButResponseUnknown, "persisted_but_response_unknown"),
+    ],
+)
+def test_server_handle_payload_preserves_unknown_result_envelope(
+    tmp_path: Path,
+    monkeypatch,
+    error_type,
+    final_state: str,
+):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    command_service = CommandService(
+        runtime_service=ProtocolRuntimeService(ProtocolRuntime(tmp_path / "ok.png")),
+        session_service=registry,
+    )
+    envelope = {
+        "ok": False,
+        "data": {},
+        "screenshot": f".trail/shots/{final_state}.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"detail": final_state},
+        "error": {"code": "DAEMON_UNAVAILABLE", "message": final_state},
+    }
+    monkeypatch.setattr(
+        command_service,
+        "_mutating_capture",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error_type(envelope=envelope)),
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id=f"req-{final_state}",
+            method="input.click",
+            payload={"x": 10, "y": 20},
+            session_id=session.session_id,
+        )
+    )
+
+    status = registry.for_workspace(str(tmp_path)).request_status(f"req-{final_state}")
+    loaded = registry.for_workspace(str(tmp_path)).load_session(session.session_id)
+    assert response["error"] == envelope["error"]
+    assert response["screenshot"] == envelope["screenshot"]
+    assert response["debug"] == envelope["debug"]
+    assert status["final_state"] == final_state
+    assert loaded.scene_state["daemon"]["tainted"] is True
 
 
 def test_client_attempts_bootstrap_when_ready_runtime_is_missing_endpoint(tmp_path: Path):

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from trail.core.errors import TrailError
 from trail.daemon.command_service import (
     CommandService,
     PersistedButResponseUnknown,
@@ -52,33 +55,56 @@ def _envelope(
 
 
 class StubRuntime:
-    def __init__(self, screenshot_path: Path):
+    def __init__(
+        self,
+        screenshot_path: Path,
+        *,
+        click_error: Exception | None = None,
+        drag_error: Exception | None = None,
+        key_error: Exception | None = None,
+    ):
         self._screenshot_path = screenshot_path
         self.clicks: list[tuple[int, int]] = []
         self.drags: list[tuple[int, int, int, int]] = []
         self.keys: list[tuple[str, int]] = []
+        self.warnings: list[dict] = []
+        self.references: list[dict] = []
+        self.trace: list[dict] = []
+        self.click_error = click_error
+        self.drag_error = drag_error
+        self.key_error = key_error
 
     def capture_after_action(self, optional: bool = False):
         del optional
         return str(self._screenshot_path)
 
     def collect_warnings(self):
-        return []
+        warnings = list(self.warnings)
+        self.warnings.clear()
+        return warnings
 
     def match_references(self, screenshot_path, limit: int = 3):
         del screenshot_path, limit
-        return []
+        return list(self.references)
 
     def consume_debug_trace(self):
-        return []
+        trace = list(self.trace)
+        self.trace.clear()
+        return trace
 
     def click_point(self, x: int, y: int):
+        if self.click_error is not None:
+            raise self.click_error
         self.clicks.append((x, y))
 
     def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int):
+        if self.drag_error is not None:
+            raise self.drag_error
         self.drags.append((from_x, from_y, to_x, to_y))
 
     def press_key(self, key: str, presses: int = 1):
+        if self.key_error is not None:
+            raise self.key_error
         self.keys.append((key, presses))
 
 
@@ -157,6 +183,24 @@ def test_duplicate_request_id_is_workspace_global(tmp_path: Path):
     service.begin_mutation(session_id=first.session_id, request_id="req-3c", command_name="cw.enter")
 
     result = service.begin_mutation(session_id=second.session_id, request_id="req-3c", command_name="cw.shop.buy-slot")
+
+    assert result["status"] == "request_id_conflict"
+
+
+def test_completed_request_id_reuse_across_scope_conflicts(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    first = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    second = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 2})
+    service.begin_mutation(session_id=first.session_id, request_id="req-3d", command_name="input.click")
+    service.finish_mutation(
+        session_id=first.session_id,
+        request_id="req-3d",
+        command_name="input.click",
+        final_state="completed",
+        envelope=_envelope(data={"clicked": [10, 20]}, screenshot=".trail/shots/req-3d.png"),
+    )
+
+    result = service.begin_mutation(session_id=second.session_id, request_id="req-3d", command_name="input.drag")
 
     assert result["status"] == "request_id_conflict"
 
@@ -262,15 +306,16 @@ def test_run_mutation_marks_unknown_result_terminal_states(tmp_path: Path, error
         error={"code": "DAEMON_UNAVAILABLE", "message": final_state},
     )
 
-    with pytest.raises(error_type):
-        command_service._run_mutation(
-            request,
-            "input.click",
-            lambda svc: (_ for _ in ()).throw(error_type(envelope=envelope)),
-        )
+    result = command_service._run_mutation(
+        request,
+        "input.click",
+        lambda svc: (_ for _ in ()).throw(error_type(envelope=envelope)),
+    )
 
     status = service.request_status(request.request_id)
     loaded = service.load_session(session.session_id)
+    assert result["error"] == envelope["error"]
+    assert result["screenshot"] == envelope["screenshot"]
     assert status["final_state"] == final_state
     assert loaded.scene_state["daemon"]["tainted"] is True
     assert loaded.last_screenshot == envelope["screenshot"]
@@ -289,14 +334,14 @@ def test_run_mutation_marks_failed_before_side_effect(tmp_path: Path):
         session_id=session.session_id,
     )
 
-    with pytest.raises(RuntimeError):
-        command_service._run_mutation(
-            request,
-            "input.click",
-            lambda svc: (_ for _ in ()).throw(RuntimeError("boom")),
-        )
+    result = command_service._run_mutation(
+        request,
+        "input.click",
+        lambda svc: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
 
     loaded = service.load_session(session.session_id)
+    assert result["error"] == {"code": "RuntimeError", "message": "boom"}
     assert service.request_status("req-6b")["final_state"] == "failed_before_side_effect"
     assert loaded.last_result == {
         "command": "input.click",
@@ -363,3 +408,61 @@ def test_handle_routes_input_mutations_through_journal_without_session(
     assert response["data"] == expected
     assert status["final_state"] == "completed"
     assert status["session_id"] is None
+
+
+def test_handle_returns_captured_failure_envelope_for_input_mutation_error(tmp_path: Path):
+    runtime = StubRuntime(
+        tmp_path / "input-fail.png",
+        click_error=TrailError("INPUT_BACKEND_MISSING", "input backend missing"),
+    )
+    runtime.warnings = [{"code": "WINDOW_NOT_FOREGROUND", "message": "窗口未前台"}]
+    runtime.references = [{"path": "trail/ref.png", "similarity": 0.97}]
+    runtime.trace = [{"step": "click"}]
+    registry = SessionServiceRegistry()
+    command_service = CommandService(
+        runtime_service=StubRuntimeService(runtime),
+        session_service=registry,
+    )
+    request = _request(
+        tmp_path,
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        request_id="req-handle-fail",
+        session_id=None,
+        verbose=True,
+    )
+
+    response = command_service.handle(request)
+
+    assert response["request_id"] == "req-handle-fail"
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "INPUT_BACKEND_MISSING",
+        "message": "input backend missing",
+    }
+    assert response["screenshot"] == str(tmp_path / "input-fail.png")
+    assert response["warnings"] == [{"code": "WINDOW_NOT_FOREGROUND", "message": "窗口未前台"}]
+    assert response["references"] == [{"path": "trail/ref.png", "similarity": 0.97}]
+    assert response["debug"] == {"trace": [{"step": "click"}]}
+    assert registry.for_workspace(str(tmp_path)).request_status("req-handle-fail")["final_state"] == "failed_before_side_effect"
+
+
+def test_session_service_registry_is_thread_safe(tmp_path: Path, monkeypatch):
+    created: list[object] = []
+
+    class SlowSessionService:
+        def __init__(self, *, workspace_root: Path):
+            self.workspace_root = Path(workspace_root)
+            created.append(self)
+            time.sleep(0.05)
+
+    monkeypatch.setattr("trail.daemon.session_service.SessionService", SlowSessionService)
+    registry = SessionServiceRegistry()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(registry.for_workspace, str(tmp_path)) for _ in range(8)]
+
+    services = [future.result() for future in futures]
+
+    assert len(created) == 1
+    assert len({id(service) for service in services}) == 1
