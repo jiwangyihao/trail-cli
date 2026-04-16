@@ -487,6 +487,82 @@ def test_run_mutation_marks_unknown_result_terminal_states(tmp_path: Path, error
     assert loaded.last_screenshot == envelope["screenshot"]
 
 
+def test_run_mutation_keeps_terminal_state_when_side_effect_unknown_marker_fails(tmp_path: Path, monkeypatch):
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
+    request = _request(
+        tmp_path,
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        request_id="req-side-effect-marker-fail",
+        session_id=session.session_id,
+    )
+    envelope = _envelope(
+        ok=False,
+        screenshot=".trail/shots/req-side-effect-marker-fail.png",
+        error={"code": "DAEMON_UNAVAILABLE", "message": "applied_but_not_persisted"},
+    )
+
+    def fail_mark_side_effect_applied(**kwargs):
+        raise OSError("side effect stage marker failed")
+
+    monkeypatch.setattr(service, "mark_side_effect_applied", fail_mark_side_effect_applied)
+
+    result = command_service._run_mutation(
+        request,
+        "input.click",
+        lambda svc: (_ for _ in ()).throw(SideEffectAppliedButStateNotPersisted(envelope=envelope)),
+    )
+
+    status = service.request_status(request.request_id)
+    assert result["error"] == envelope["error"]
+    assert result["screenshot"] == envelope["screenshot"]
+    assert "side effect stage marker failed" in result["debug"]["stage_detail"]
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["last_visible_stage"] == "responded"
+    assert status["tainted"] is True
+
+
+def test_run_mutation_keeps_terminal_state_when_persisted_unknown_marker_fails(tmp_path: Path, monkeypatch):
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
+    request = _request(
+        tmp_path,
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        request_id="req-persisted-unknown-marker-fail",
+        session_id=session.session_id,
+    )
+    envelope = _envelope(
+        ok=False,
+        screenshot=".trail/shots/req-persisted-unknown-marker-fail.png",
+        error={"code": "DAEMON_UNAVAILABLE", "message": "persisted_but_response_unknown"},
+    )
+
+    def fail_mark_state_persisted(**kwargs):
+        raise OSError("state persisted marker failed")
+
+    monkeypatch.setattr(service, "mark_state_persisted", fail_mark_state_persisted)
+
+    result = command_service._run_mutation(
+        request,
+        "input.click",
+        lambda svc: (_ for _ in ()).throw(PersistedButResponseUnknown(envelope=envelope)),
+    )
+
+    status = service.request_status(request.request_id)
+    assert result["error"] == envelope["error"]
+    assert result["screenshot"] == envelope["screenshot"]
+    assert "state persisted marker failed" in result["debug"]["stage_detail"]
+    assert status["final_state"] == "persisted_but_response_unknown"
+    assert status["last_visible_stage"] == "responded"
+    assert status["tainted"] is True
+
+
 def test_run_mutation_marks_failed_before_side_effect(tmp_path: Path):
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))

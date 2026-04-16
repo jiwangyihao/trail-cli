@@ -221,6 +221,13 @@ class CommandService:
         payload["debug"] = debug
         return payload
 
+    def _attach_stage_detail(self, envelope: dict[str, Any], stage_error: Exception) -> dict[str, Any]:
+        payload = deepcopy(envelope)
+        debug = deepcopy(payload.get("debug") or {})
+        debug["stage_detail"] = self._format_exception_detail(stage_error)
+        payload["debug"] = debug
+        return payload
+
     def _persist_terminal_envelope(
         self,
         *,
@@ -314,11 +321,14 @@ class CommandService:
             )
         except SideEffectAppliedButStateNotPersisted as error:
             envelope = self._response_with_request_id(request.request_id, error.envelope)
-            service.mark_side_effect_applied(
-                request_id=request.request_id,
-                session_id=request.session_id,
-                command_name=command_name,
-            )
+            try:
+                service.mark_side_effect_applied(
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    command_name=command_name,
+                )
+            except Exception as stage_error:
+                envelope = self._attach_stage_detail(envelope, stage_error)
             return self._persist_terminal_envelope(
                 service=service,
                 request=request,
@@ -328,16 +338,19 @@ class CommandService:
             )
         except PersistedButResponseUnknown as error:
             envelope = self._response_with_request_id(request.request_id, error.envelope)
-            service.mark_side_effect_applied(
-                request_id=request.request_id,
-                session_id=request.session_id,
-                command_name=command_name,
-            )
-            service.mark_state_persisted(
-                request_id=request.request_id,
-                session_id=request.session_id,
-                command_name=command_name,
-            )
+            try:
+                service.mark_side_effect_applied(
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    command_name=command_name,
+                )
+                service.mark_state_persisted(
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    command_name=command_name,
+                )
+            except Exception as stage_error:
+                envelope = self._attach_stage_detail(envelope, stage_error)
             return self._persist_terminal_envelope(
                 service=service,
                 request=request,

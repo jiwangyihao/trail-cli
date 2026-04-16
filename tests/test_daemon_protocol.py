@@ -534,6 +534,59 @@ def test_server_handle_payload_keeps_unknown_result_envelope_for_post_handler_fa
     assert loaded.scene_state["daemon"]["tainted"] is True
 
 
+def test_server_handle_payload_keeps_unknown_result_envelope_when_unknown_marker_fails(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    command_service = CommandService(
+        runtime_service=ProtocolRuntimeService(ProtocolRuntime(tmp_path / "unknown-marker-fail.png")),
+        session_service=registry,
+    )
+    service = registry.for_workspace(str(tmp_path))
+    envelope = {
+        "ok": False,
+        "data": {},
+        "screenshot": ".trail/shots/unknown-marker-fail.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"detail": "persisted_but_response_unknown"},
+        "error": {"code": "DAEMON_UNAVAILABLE", "message": "persisted_but_response_unknown"},
+    }
+
+    def fail_mark_state_persisted(**kwargs):
+        raise OSError("state persisted marker failed")
+
+    monkeypatch.setattr(service, "mark_state_persisted", fail_mark_state_persisted)
+    monkeypatch.setattr(
+        command_service,
+        "_mutating_capture",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PersistedButResponseUnknown(envelope=envelope)),
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-server-unknown-marker-fail",
+            method="input.click",
+            payload={"x": 10, "y": 20},
+            session_id=session.session_id,
+        )
+    )
+
+    status = registry.for_workspace(str(tmp_path)).request_status("req-server-unknown-marker-fail")
+    assert response["ok"] is False
+    assert response["error"] == envelope["error"]
+    assert response["screenshot"] == envelope["screenshot"]
+    assert "state persisted marker failed" in response["debug"]["stage_detail"]
+    assert status["final_state"] == "persisted_but_response_unknown"
+    assert status["last_visible_stage"] == "responded"
+
+
 def test_server_handle_payload_keeps_risky_terminal_state_when_recovery_finish_fails(tmp_path: Path, monkeypatch):
     daemon_home = tmp_path / "daemon-home"
     write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
