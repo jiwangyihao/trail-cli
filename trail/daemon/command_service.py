@@ -340,22 +340,14 @@ class CommandService:
             service = self._session_service(request)
             if request.method in CW_MUTATING_METHODS:
                 session_id = request.session_id or request.payload.get("session_id")
-                if isinstance(session_id, str) and session_id:
-                    try:
-                        service.ensure_cw_mutation_allowed(session_id)
-                    except TrailError as error:
-                        return daemon_transport_failure(
-                            request_id=request.request_id,
-                            code=error.code,
-                            message=str(error),
-                            debug={"session_id": session_id},
-                        )
                 return self._run_mutation(
                     request,
                     request.method,
                     lambda session_service: self._run_cw_mutation(request, service=session_service),
                     handler_persisted_state=True,
                     response_builder=success,
+                    enforce_cw_tainted=bool(isinstance(session_id, str) and session_id),
+                    tainted_session_id=session_id if isinstance(session_id, str) and session_id else None,
                 )
             return success(self._run_cw(request, service=service), request_id=request.request_id)
 
@@ -527,7 +519,17 @@ class CommandService:
             "error": {"code": code, "message": message},
         }
 
-    def _run_mutation(self, request, command_name: str, handler, *, handler_persisted_state: bool = False, response_builder=None):
+    def _run_mutation(
+        self,
+        request,
+        command_name: str,
+        handler,
+        *,
+        handler_persisted_state: bool = False,
+        response_builder=None,
+        enforce_cw_tainted: bool = False,
+        tainted_session_id: str | None = None,
+    ):
         if response_builder is None:
             response_builder = lambda payload: payload
         service = self._session_service(request)
@@ -535,6 +537,7 @@ class CommandService:
             session_id=request.session_id,
             request_id=request.request_id,
             command_name=command_name,
+            enforce_cw_tainted=enforce_cw_tainted,
         )
         if accepted["status"] == "duplicate_terminal":
             terminal_envelope = accepted["record"].get("last_envelope")
@@ -556,6 +559,13 @@ class CommandService:
             )
         if accepted["status"] == "request_id_conflict":
             raise TrailError("REQUEST_ID_CONFLICT", "request_id reused across a different session or command")
+        if accepted["status"] == "session_tainted":
+            return daemon_transport_failure(
+                request_id=request.request_id,
+                code="SESSION_RECONCILE_REQUIRED",
+                message="session is tainted; reconcile before mutating cw commands",
+                debug={"session_id": tainted_session_id},
+            )
 
         last_known_stage = "accepted"
         handler_result = None

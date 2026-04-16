@@ -310,7 +310,7 @@ def test_shop_close_marks_shop_closed_and_stale(tmp_path):
     assert closed == ["close"]
 
 
-def _build_cw_harness(tmp_path: Path):
+def _build_cw_harness(tmp_path: Path, *, runtime=None):
     from trail.daemon.command_service import CommandService
     from trail.daemon.cw_service import CwService
     from trail.daemon.session_service import SessionServiceRegistry
@@ -318,7 +318,8 @@ def _build_cw_harness(tmp_path: Path):
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
-    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    runtime = SimpleNamespace() if runtime is None else runtime
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
     cw_service = CwService(runtime_service=runtime_service)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     return registry, service, session, cw_service, command_service
@@ -452,3 +453,64 @@ def test_cw_shop_read_commands_persist_shop_snapshot(tmp_path: Path, monkeypatch
     assert scanned["items"] == [{"name": "银狼", "price": 20}]
     assert status["items"] == [{"name": "银狼", "price": 20}]
     assert service.load_session(session.session_id).scene_state["cw"]["shop"]["coins"] == 40
+
+
+def test_cw_shop_buy_slot_marks_applied_but_not_persisted_when_confirmation_fails_after_purchase(
+    tmp_path: Path,
+    monkeypatch,
+):
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    runtime = Runtime()
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    loaded = service.load_session(session.session_id)
+    loaded.scene_state.setdefault("cw", {})["guide"] = {"remaining_purchases": {"银狼": 1}}
+    loaded.scene_state["cw"]["constraints"] = {"min_coins": 40, "min_level": 7, "mid_level": 7}
+    loaded.scene_state["cw"]["shop"] = {
+        "items": [{"name": "银狼", "price": 20}],
+        "coins": 40,
+        "level": 7,
+        "reserve_full": False,
+        "max_team_size": 8,
+        "opened": True,
+        "guide_summary": {
+            "remaining_purchases": {"银狼": 1},
+            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
+        },
+        "stale": False,
+    }
+    service.save_session(loaded)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.shop_buyer_factory",
+        lambda runtime: lambda slot, expect: runtime.click_point(111, 222),
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.shop_scanner_factory", lambda runtime: fake_shop_snapshot)
+
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-shop-buy-late-fail",
+        method="cw.shop.buy_slot",
+        payload={"slot": 1, "expect": "银狼"},
+    )
+    status = service.request_status("req-cw-shop-buy-late-fail")
+    persisted = service.load_session(session.session_id)
+
+    assert runtime.clicks == [(111, 222)]
+    assert envelope["ok"] is False
+    assert envelope["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert "shop purchase not confirmed for slot 1: 银狼" in envelope["debug"]["detail"]
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True
+    assert persisted.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
+    assert persisted.scene_state["cw"]["shop"]["items"] == [{"name": "银狼", "price": 20}]

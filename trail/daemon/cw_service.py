@@ -80,6 +80,33 @@ battle_starter_factory = build_cw_battle_starter
 battle_continuer_factory = build_cw_battle_continuer
 settle_continuer_factory = build_cw_settle_continuer
 DEFAULT_CW_STAGE_WAIT_TIMEOUT = 120
+SIDE_EFFECT_RUNTIME_METHODS = {"click_point", "drag_to", "press_key", "type_text"}
+
+
+class _RuntimeSideEffectTracker:
+    def __init__(self):
+        self.side_effect_applied = False
+
+    def mark_applied(self) -> None:
+        self.side_effect_applied = True
+
+
+class _SideEffectTrackingRuntime:
+    def __init__(self, runtime, tracker: _RuntimeSideEffectTracker):
+        self._runtime = runtime
+        self._tracker = tracker
+
+    def __getattr__(self, name: str):
+        attribute = getattr(self._runtime, name)
+        if not callable(attribute) or name not in SIDE_EFFECT_RUNTIME_METHODS:
+            return attribute
+
+        def wrapped(*args, **kwargs):
+            result = attribute(*args, **kwargs)
+            self._tracker.mark_applied()
+            return result
+
+        return wrapped
 
 
 class CwService:
@@ -87,7 +114,7 @@ class CwService:
         self.runtime_service = runtime_service
 
     def handle(self, *, method: str, payload: dict, workspace_root: str, session_service) -> dict | None:
-        session, _, _, handlers = self._context(
+        session, _, _, handlers, _ = self._context(
             method=method,
             payload=payload,
             workspace_root=workspace_root,
@@ -99,17 +126,22 @@ class CwService:
         return result
 
     def handle_mutation(self, *, method: str, payload: dict, workspace_root: str, session_service) -> dict | None:
-        session, _, _, handlers = self._context(
+        session, _, _, handlers, tracker = self._context(
             method=method,
             payload=payload,
             workspace_root=workspace_root,
             session_service=session_service,
+            track_side_effects=True,
         )
 
         try:
             result = handlers[method]()
         except CwSideEffectAppliedError as error:
             raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
+        except Exception as error:
+            if tracker.side_effect_applied:
+                raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
+            raise
 
         try:
             session_service.save_session(session)
@@ -118,7 +150,7 @@ class CwService:
 
         return result
 
-    def _context(self, *, method: str, payload: dict, workspace_root: str, session_service):
+    def _context(self, *, method: str, payload: dict, workspace_root: str, session_service, track_side_effects: bool = False):
         session_id = payload.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise TrailError("SESSION_REQUIRED", f"cw method requires session: {method}")
@@ -126,13 +158,17 @@ class CwService:
         session = session_service.load_session(session_id)
         artifact_store = ArtifactStore(Path(workspace_root) / ".trail" / "artifacts")
         runtime_holder: dict[str, object] = {}
+        tracker = _RuntimeSideEffectTracker()
 
         def runtime():
             if "runtime" not in runtime_holder:
-                runtime_holder["runtime"] = self.runtime_service.get_runtime(
+                resolved_runtime = self.runtime_service.get_runtime(
                     workspace_root=workspace_root,
                     window_binding=session.window_binding,
                 )
+                if track_side_effects:
+                    resolved_runtime = _SideEffectTrackingRuntime(resolved_runtime, tracker)
+                runtime_holder["runtime"] = resolved_runtime
             return runtime_holder["runtime"]
 
         handlers = {
@@ -258,7 +294,7 @@ class CwService:
         if method not in handlers:
             raise TrailError("DAEMON_METHOD_NOT_SUPPORTED", f"unsupported method: {method}")
 
-        return session, artifact_store, runtime, handlers
+        return session, artifact_store, runtime, handlers, tracker
 
 
 def _current_guide(session):

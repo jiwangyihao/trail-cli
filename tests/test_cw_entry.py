@@ -273,7 +273,7 @@ def test_enter_cw_does_not_treat_generic_settle_template_as_top_level_entry_reco
     ]
 
 
-def _build_cw_harness(tmp_path: Path):
+def _build_cw_harness(tmp_path: Path, *, runtime=None):
     from trail.daemon.command_service import CommandService
     from trail.daemon.cw_service import CwService
     from trail.daemon.session_service import SessionServiceRegistry
@@ -281,7 +281,8 @@ def _build_cw_harness(tmp_path: Path):
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
-    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    runtime = SimpleNamespace() if runtime is None else runtime
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
     cw_service = CwService(runtime_service=runtime_service)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     return registry, service, session, cw_service, command_service
@@ -398,3 +399,106 @@ def test_cw_enter_mutation_rejects_tainted_session_until_reconciled(tmp_path: Pa
     assert envelope["ok"] is True
     assert enter_calls == [("continue", "current", "standard")]
     assert service.request_status("req-cw-enter-reconciled")["final_state"] == "completed"
+
+
+def test_cw_enter_duplicate_terminal_replay_precedes_tainted_gate(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    enter_calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.enter_cw",
+        lambda session, mode, difficulty, battle_mode, runtime: enter_calls.append((mode, difficulty, battle_mode))
+        or _set_entry(
+            session,
+            {"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode},
+        ),
+    )
+    risky_envelope = {
+        "ok": False,
+        "data": {},
+        "screenshot": ".trail/shots/req-cw-enter-tainted.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"detail": "mutation result unknown"},
+        "error": {"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+    }
+    service.begin_mutation(session_id=session.session_id, request_id="req-cw-enter-tainted", command_name="cw.enter")
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id="req-cw-enter-tainted",
+        command_name="cw.enter",
+        final_state="applied_but_not_persisted",
+        envelope=risky_envelope,
+    )
+
+    replay = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-enter-tainted",
+        method="cw.enter",
+        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+    )
+    blocked = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-enter-blocked",
+        method="cw.enter",
+        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+    )
+
+    assert replay["request_id"] == "req-cw-enter-tainted"
+    assert replay["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert replay["screenshot"] == ".trail/shots/req-cw-enter-tainted.png"
+    assert blocked["ok"] is False
+    assert blocked["error"] == {
+        "code": "SESSION_RECONCILE_REQUIRED",
+        "message": "session is tainted; reconcile before mutating cw commands",
+    }
+    assert enter_calls == []
+
+
+def test_cw_enter_marks_applied_but_not_persisted_when_ui_side_effect_fails_late(tmp_path: Path, monkeypatch):
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    runtime = Runtime()
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+
+    def late_failure(session, mode, difficulty, battle_mode, runtime):
+        del session, mode, difficulty, battle_mode
+        runtime.click_point(640, 360)
+        raise RuntimeError("cw enter late failure")
+
+    monkeypatch.setattr("trail.daemon.cw_service.enter_cw", late_failure)
+
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-enter-late-fail",
+        method="cw.enter",
+        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+    )
+    status = service.request_status("req-cw-enter-late-fail")
+    persisted = service.load_session(session.session_id)
+
+    assert runtime.clicks == [(640, 360)]
+    assert envelope["ok"] is False
+    assert envelope["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert "cw enter late failure" in envelope["debug"]["detail"]
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True
+    assert persisted.scene_state.get("cw", {}).get("entry") is None

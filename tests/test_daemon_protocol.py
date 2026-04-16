@@ -704,6 +704,48 @@ def test_server_handle_payload_keeps_unknown_result_envelope_when_unknown_marker
     assert status["last_visible_stage"] == "responded"
 
 
+def test_server_handle_payload_keeps_cw_unknown_result_envelope_for_late_ui_failure(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = ProtocolRuntimeService(ProtocolRuntime(tmp_path / "cw-enter-late-fail.png"))
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    def late_failure(session, mode, difficulty, battle_mode, runtime):
+        del session, mode, difficulty, battle_mode
+        runtime.click_point(640, 360)
+        raise TrailError("CW_ENTRY_UI_NOT_FOUND", "late failure after ui action")
+
+    monkeypatch.setattr("trail.daemon.cw_service.enter_cw", late_failure)
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-server-cw-enter-late-fail",
+            method="cw.enter",
+            payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+            session_id=session.session_id,
+        )
+    )
+
+    status = registry.for_workspace(str(tmp_path)).request_status("req-server-cw-enter-late-fail")
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert response["debug"] == {"detail": "TrailError: late failure after ui action"}
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True
+
+
 def test_server_handle_payload_keeps_risky_terminal_state_when_recovery_finish_fails(tmp_path: Path, monkeypatch):
     daemon_home = tmp_path / "daemon-home"
     write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")

@@ -282,6 +282,41 @@ def test_duplicate_request_id_returns_duplicate_terminal(tmp_path: Path):
     assert result["record"]["last_envelope"]["data"]["clicked"] == [10, 20]
 
 
+def test_begin_mutation_checks_duplicate_before_enforced_tainted_gate(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    envelope = _envelope(
+        ok=False,
+        screenshot=".trail/shots/req-tainted-replay.png",
+        error={"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+    )
+    service.begin_mutation(session_id=session.session_id, request_id="req-tainted-replay", command_name="cw.enter")
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id="req-tainted-replay",
+        command_name="cw.enter",
+        final_state="applied_but_not_persisted",
+        envelope=envelope,
+    )
+
+    replay = service.begin_mutation(
+        session_id=session.session_id,
+        request_id="req-tainted-replay",
+        command_name="cw.enter",
+        enforce_cw_tainted=True,
+    )
+    blocked = service.begin_mutation(
+        session_id=session.session_id,
+        request_id="req-tainted-fresh",
+        command_name="cw.enter",
+        enforce_cw_tainted=True,
+    )
+
+    assert replay["status"] == "duplicate_terminal"
+    assert replay["record"]["final_state"] == "applied_but_not_persisted"
+    assert blocked["status"] == "session_tainted"
+
+
 def test_duplicate_terminal_returns_original_failure_envelope(tmp_path: Path):
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))

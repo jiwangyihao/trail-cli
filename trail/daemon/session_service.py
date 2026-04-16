@@ -113,13 +113,16 @@ class SessionService:
 
     def is_session_tainted(self, session_id: str) -> bool:
         with self._mutex:
-            try:
-                session = self.load_session(session_id)
-            except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
-                session = None
-            if session is not None and bool(session.scene_state.get("daemon", {}).get("tainted", False)):
-                return True
-            return self._session_record_is_tainted(session_id)
+            return self._is_session_tainted_unlocked(session_id)
+
+    def _is_session_tainted_unlocked(self, session_id: str) -> bool:
+        try:
+            session = self.load_session(session_id)
+        except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+            session = None
+        if session is not None and bool(session.scene_state.get("daemon", {}).get("tainted", False)):
+            return True
+        return self._session_record_is_tainted(session_id)
 
     def ensure_cw_mutation_allowed(self, session_id: str) -> None:
         if not self.is_session_tainted(session_id):
@@ -129,7 +132,14 @@ class SessionService:
             "session is tainted; reconcile before mutating cw commands",
         )
 
-    def begin_mutation(self, *, session_id: str | None, request_id: str, command_name: str) -> dict:
+    def begin_mutation(
+        self,
+        *,
+        session_id: str | None,
+        request_id: str,
+        command_name: str,
+        enforce_cw_tainted: bool = False,
+    ) -> dict:
         with self._mutex:
             record = self._load_record(request_id)
             if record is not None:
@@ -138,6 +148,9 @@ class SessionService:
                 if record.get("final_state"):
                     return {"status": "duplicate_terminal", "record": deepcopy(record)}
                 return {"status": "duplicate_in_progress", "record": deepcopy(record)}
+
+            if enforce_cw_tainted and isinstance(session_id, str) and session_id and self._is_session_tainted_unlocked(session_id):
+                return {"status": "session_tainted", "session_id": session_id}
 
             now = _utc_now()
             fresh = {
