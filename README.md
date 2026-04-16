@@ -2,15 +2,29 @@
 
 Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输出结构化 envelope 和执行后截图，供多模态 agent 直接消费。
 
+## Daemon 模式
+
+- `trail` CLI 现在是非管理员薄壳，负责参数解析、workspace 解析、RPC 请求发送和 envelope 渲染
+- 常驻 `traild` daemon 持有 runtime、截图、OCR、找图、输入、guide、`cw` 场景执行和 session 热状态
+- 首次使用前先运行：`trail daemon install`
+- 查看常驻服务状态：`trail daemon status`
+- 如需显式预热或重启常驻服务：`trail daemon start`
+- 如果命令返回“结果未知”或需要排障，使用：`trail daemon request-status --request-id <id>`
+- 如果 session 被标记为 `tainted`，清理前先确认请求终态，再运行：`trail daemon reconcile-session --session <id>`
+
 ## Quick Start
 
 推荐入口：
 
+- 首次在当前用户环境启用常驻服务：`trail daemon install`
+- 开始前先确认 daemon 可用：`trail daemon status`
 - 先用 `trail-hsr` 创建 session、检查窗口，并把流程切到 `trail-cw`
 - 再由 `trail-cw` 负责编排完整一局货币战争
 
 手工 CLI 冒烟顺序：
 
+- 首次机器准备：`trail daemon install`
+- 确认或预热常驻服务：`trail daemon status`，必要时 `trail daemon start`
 - 如果游戏还没开：`trail window launch --game-path <StarRail.exe>`
 - `trail session create`
 - `trail guide fetch cw <lineup_url|lineup_id>`
@@ -20,6 +34,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 
 ## 命令面概览
 
+- `daemon`：安装、启动、停止、查看常驻服务，并提供 `request-status` / `reconcile-session` 管理查询面
 - `session`：创建并持久化 session
 - `guide`：拉取攻略内容、返回筛选枚举与攻略列表
 - `window`：做窗口绑定检查
@@ -37,7 +52,8 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 关键字段固定为 `ok`、`data`、`screenshot`、`timing`、`warnings`、`references`、`debug`、`error`
 - skill 应优先消费当前命令返回的 `screenshot` 与 `data`，不要沿用旧推断
 - 对多模态 agent 来说，`screenshot` 是第一手事实来源；CLI 自带的 `detect/read/status` 更适合作为辅助输入，而不是唯一真相
-- 对开发期调试，可加顶层 `--verbose` 查看复杂操作的中间 trace
+- CLI 侧应优先阅读当前 envelope 的 `screenshot` 和 `data`，只有在需要排障时再看 `warnings`、`references`、`debug`
+- 对开发期调试，可加顶层 `--verbose` 查看复杂操作的中间 trace；需要追踪 transport 或 daemon 请求时，可从 `debug.request_id` 继续查询 `trail daemon request-status --request-id <id>`
 
 ## Guide 字段语义
 

@@ -19,11 +19,13 @@ description: Use when an agent needs to fetch or apply a Currency Wars guide art
 
 ## 标准流程
 
-1. 拉取攻略内容：`trail guide fetch cw <lineup_url|lineup_id>`
-2. 由 Agent 读取返回内容，确认这是要执行的攻略
-3. 在游戏内应用：`trail cw guide apply --session <id> --lineup-id <lineup_id>`
-4. 如需回顾当前攻略：`trail cw guide current --session <id>`
-5. 确认返回的 `data` 已写入攻略引用、购买限制和约束快照
+1. 首次使用先确认当前用户已执行 `trail daemon install`
+2. 开始前查看常驻服务状态：`trail daemon status`
+3. 拉取攻略内容：`trail guide fetch cw <lineup_url|lineup_id>`
+4. 由 Agent 读取返回内容，确认这是要执行的攻略
+5. 在游戏内应用：`trail cw guide apply --session <id> --lineup-id <lineup_id>`
+6. 如需回顾当前攻略：`trail cw guide current --session <id>`
+7. 确认返回的 `data` 已写入攻略引用、购买限制和约束快照
 
 ## 执行规则
 
@@ -32,3 +34,5 @@ description: Use when an agent needs to fetch or apply a Currency Wars guide art
 - artifact 记录发生在 apply 成功后，便于后续通过 `trail cw guide current` 回顾当前实际应用的攻略
 - `support_hard`、`has_change_equip`、`has_expert` 这类字段主要用于“选攻略”阶段，不能替代实际截图判断
 - 攻略应用后，把旧的 `slots`、`shop`、`stage` 快照视为无效，交回主 skill 继续下一步
+- 如需排查 apply 是否已经落地，优先读取 `debug.request_id`，再执行 `trail daemon request-status --request-id <id>`
+- 如果攻略 apply 后 session 被标记为 `tainted`，先执行 `trail daemon reconcile-session --session <id>`，再回到主 skill

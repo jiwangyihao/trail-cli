@@ -18,17 +18,19 @@ description: Use when an agent needs to read or choose replenish, invest, encoun
 
 ## 标准流程
 
-1. 优先查看上一条命令返回的 `screenshot`，必要时再调用读取命令补充辅助信息：
+1. 首次使用先确认当前用户已执行 `trail daemon install`
+2. 开始前查看常驻服务状态：`trail daemon status`
+3. 优先查看上一条命令返回的 `screenshot`，必要时再调用读取命令补充辅助信息：
    - 补给：`trail cw replenish read --session <id>`
    - 投资：`trail cw invest read --session <id>`
    - 遭遇：`trail cw encounter read --session <id>`
    - 命运卜者：`trail cw fortune read --session <id>`
-2. 根据显式策略选择一个选项：
+4. 根据显式策略选择一个选项：
    - `trail cw replenish choose --session <id> --option <n>`
    - `trail cw invest choose --session <id> --option <n>`
    - `trail cw encounter choose --session <id> --option <n>`
    - `trail cw fortune choose --session <id> --option <n>`
-3. 动作完成后，把控制权交回主 skill 重新识别阶段
+5. 动作完成后，把控制权交回主 skill 重新识别阶段
 
 ## 执行规则
 
@@ -37,3 +39,5 @@ description: Use when an agent needs to read or choose replenish, invest, encoun
 - `--option` 必须显式给出
 - `choose` 之后把 `stage` 视为失效，回到 `trail-cw` 重新 `stage detect`
 - 这个 skill 不处理商店、编队和战斗逻辑
+- 如果选择动作返回未知结果，优先读取 `debug.request_id` 并执行 `trail daemon request-status --request-id <id>`
+- 如果 session 进入 `tainted`，先执行 `trail daemon reconcile-session --session <id>`，再回到主 skill

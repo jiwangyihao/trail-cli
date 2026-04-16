@@ -18,12 +18,14 @@ description: Use when an agent needs to create a Trail session, verify the HSR w
 
 ## 标准流程
 
-1. 如果游戏尚未启动，先运行 `trail window launch --game-path <StarRail.exe>`；必要时显式传 `--channel official|bilibili|global`
-2. 如果还不确定窗口是否可操作，运行 `trail window attach --window-title "崩坏：星穹铁道"`
-3. 运行 `trail session create`
-4. 从返回的 `data.session_id` 记录本局会话 ID
-5. 把后续所有场景命令都显式带上 `--session <id>`
-6. 需要进入货币战争时，切换到 `trail-cw`
+1. 首次使用先运行 `trail daemon install`
+2. 开始前确认常驻服务状态：`trail daemon status`；如果需要主动预热，运行 `trail daemon start`
+3. 如果游戏尚未启动，先运行 `trail window launch --game-path <StarRail.exe>`；必要时显式传 `--channel official|bilibili|global`
+4. 如果还不确定窗口是否可操作，运行 `trail window attach --window-title "崩坏：星穹铁道"`
+5. 运行 `trail session create`
+6. 从返回的 `data.session_id` 记录本局会话 ID
+7. 把后续所有场景命令都显式带上 `--session <id>`
+8. 需要进入货币战争时，切换到 `trail-cw`
 
 ## 执行规则
 
@@ -31,4 +33,6 @@ description: Use when an agent needs to create a Trail session, verify the HSR w
 - 如果窗口检查失败，先解决窗口焦点或绑定问题，再继续
 - 每次命令后优先阅读返回的 `screenshot` 与 `data`
 - 如果需要调试窗口绑定、前台状态或复杂场景动作，可给 CLI 加顶层 `--verbose`
+- 如果命令结果未知，优先读取 `debug.request_id`，再执行 `trail daemon request-status --request-id <id>`
+- 如果 session 被标记为 `tainted`，先查清请求终态，再执行 `trail daemon reconcile-session --session <id>`
 - 这个 skill 不负责货币战争具体策略
