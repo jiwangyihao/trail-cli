@@ -295,6 +295,57 @@ def test_duplicate_terminal_returns_original_failure_envelope(tmp_path: Path):
     assert response["screenshot"] == ".trail/shots/req-dup-fail.png"
 
 
+def test_duplicate_terminal_replay_normalizes_legacy_capture_payload(tmp_path: Path):
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.begin_mutation(session_id=session.session_id, request_id="req-dup-legacy", command_name="input.click")
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id="req-dup-legacy",
+        command_name="input.click",
+        final_state="failed_before_side_effect",
+        envelope={
+            "ok": False,
+            "data": {},
+            "screenshot": str(tmp_path / "input-fail.png"),
+            "timing": {},
+            "warnings": [],
+            "references": [
+                {
+                    "path": str(tmp_path / "trail" / "ref.png"),
+                    "similarity": 0.97,
+                }
+            ],
+            "debug": {"detail": "legacy journal"},
+            "error": {"code": "WINDOW_NOT_FOUND", "message": "window not found"},
+        },
+    )
+    command_service = CommandService(
+        runtime_service=StubRuntimeService(StubRuntime(tmp_path / "dup-terminal-legacy.png")),
+        session_service=registry,
+    )
+    request = _request(
+        tmp_path,
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        request_id="req-dup-legacy",
+        session_id=session.session_id,
+    )
+
+    response = command_service.handle(request)
+
+    assert response["request_id"] == "req-dup-legacy"
+    assert response["screenshot"] == "input-fail.png"
+    assert response["references"] == [
+        {
+            "path": "trail/ref.png",
+            "similarity": 0.97,
+            "screenshot": "input-fail.png",
+        }
+    ]
+
+
 def test_duplicate_terminal_without_last_envelope_returns_invalid_record_failure(tmp_path: Path, monkeypatch):
     registry = SessionServiceRegistry()
     command_service = CommandService(

@@ -379,7 +379,8 @@ class CommandService:
         if accepted["status"] == "duplicate_terminal":
             terminal_envelope = accepted["record"].get("last_envelope")
             if isinstance(terminal_envelope, dict):
-                return self._response_with_request_id(request.request_id, terminal_envelope)
+                normalized = _normalize_capture_payload(terminal_envelope, workspace_root=Path(request.workspace_root))
+                return self._response_with_request_id(request.request_id, normalized)
             return daemon_transport_failure(
                 request_id=request.request_id,
                 code="REQUEST_TERMINAL_RECORD_INVALID",
