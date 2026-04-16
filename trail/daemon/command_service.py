@@ -192,6 +192,17 @@ class CommandService:
             session_service=service,
         )
 
+    def _run_cw_mutation(self, request, *, service):
+        payload = deepcopy(request.payload)
+        if request.session_id is not None:
+            payload.setdefault("session_id", request.session_id)
+        return self._cw_service().handle_mutation(
+            method=request.method,
+            payload=payload,
+            workspace_root=request.workspace_root,
+            session_service=service,
+        )
+
     def handle(self, request):
         if request.method == "daemon.ping":
             return success(
@@ -328,10 +339,23 @@ class CommandService:
         if request.method.startswith("cw."):
             service = self._session_service(request)
             if request.method in CW_MUTATING_METHODS:
+                session_id = request.session_id or request.payload.get("session_id")
+                if isinstance(session_id, str) and session_id:
+                    try:
+                        service.ensure_cw_mutation_allowed(session_id)
+                    except TrailError as error:
+                        return daemon_transport_failure(
+                            request_id=request.request_id,
+                            code=error.code,
+                            message=str(error),
+                            debug={"session_id": session_id},
+                        )
                 return self._run_mutation(
                     request,
                     request.method,
-                    lambda session_service: success(self._run_cw(request, service=session_service)),
+                    lambda session_service: self._run_cw_mutation(request, service=session_service),
+                    handler_persisted_state=True,
+                    response_builder=success,
                 )
             return success(self._run_cw(request, service=service), request_id=request.request_id)
 
@@ -503,7 +527,9 @@ class CommandService:
             "error": {"code": code, "message": message},
         }
 
-    def _run_mutation(self, request, command_name: str, handler):
+    def _run_mutation(self, request, command_name: str, handler, *, handler_persisted_state: bool = False, response_builder=None):
+        if response_builder is None:
+            response_builder = lambda payload: payload
         service = self._session_service(request)
         accepted = service.begin_mutation(
             session_id=request.session_id,
@@ -531,13 +557,20 @@ class CommandService:
         if accepted["status"] == "request_id_conflict":
             raise TrailError("REQUEST_ID_CONFLICT", "request_id reused across a different session or command")
 
+        last_known_stage = "accepted"
+        handler_result = None
+        response = None
         try:
             service.mark_executing(
                 request_id=request.request_id,
                 session_id=request.session_id,
                 command_name=command_name,
             )
-            result = self._response_with_request_id(request.request_id, handler(service))
+            last_known_stage = "executing"
+            handler_result = handler(service)
+            last_known_stage = "state_persisted" if handler_persisted_state else "handler_completed"
+            response = response_builder(handler_result)
+            result = self._response_with_request_id(request.request_id, response)
         except FailedBeforeSideEffect as error:
             return self._persist_terminal_envelope(
                 service=service,
@@ -586,23 +619,34 @@ class CommandService:
                 envelope=envelope,
             )
         except Exception as error:
-            envelope = self._response_with_request_id(request.request_id, self._failure_envelope(error=error))
+            if last_known_stage in {"handler_completed", "state_persisted"}:
+                final_state = "persisted_but_response_unknown" if last_known_stage == "state_persisted" else "applied_but_not_persisted"
+                envelope = self._unknown_result_envelope(
+                    request_id=request.request_id,
+                    response=response,
+                    error=error,
+                    last_known_stage=last_known_stage,
+                )
+            else:
+                final_state = "failed_before_side_effect"
+                envelope = self._response_with_request_id(request.request_id, self._failure_envelope(error=error))
             return self._persist_terminal_envelope(
                 service=service,
                 request=request,
                 command_name=command_name,
-                final_state="failed_before_side_effect",
+                final_state=final_state,
                 envelope=envelope,
             )
 
-        last_known_stage = "handler_completed"
+        last_known_stage = "state_persisted" if handler_persisted_state else "handler_completed"
         try:
             service.mark_side_effect_applied(
                 request_id=request.request_id,
                 session_id=request.session_id,
                 command_name=command_name,
             )
-            last_known_stage = "side_effect_applied"
+            if not handler_persisted_state:
+                last_known_stage = "side_effect_applied"
             service.mark_state_persisted(
                 request_id=request.request_id,
                 session_id=request.session_id,

@@ -691,6 +691,104 @@ def test_cw_guide_apply_mutation_persists_artifact_and_session_state(tmp_path: P
     assert persisted.scene_state["cw"]["shop"]["stale"] is True
 
 
+def test_cw_guide_apply_marks_applied_but_not_persisted_when_save_fails_after_ui_side_effect(
+    tmp_path: Path,
+    monkeypatch,
+):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    applied_share_codes: list[str] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.fetch_cw_guide",
+        lambda lineup_id, fetcher: {
+            **fake_guide(),
+            "artifact_id": None,
+            "lineup_id": lineup_id,
+        },
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.apply_cw_guide_via_ui",
+        lambda runtime, share_code: applied_share_codes.append(share_code),
+    )
+    original_save_session = service.save_session
+
+    def fail_save_session(model):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(service, "save_session", fail_save_session)
+
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-guide-apply-save-fail",
+        method="cw.guide.apply",
+        payload={"lineup_id": "69c9014f24546dfbd2b26227"},
+    )
+
+    monkeypatch.setattr(service, "save_session", original_save_session)
+
+    status = service.request_status("req-cw-guide-apply-save-fail")
+    persisted = service.load_session(session.session_id)
+    artifacts = list((tmp_path / ".trail" / "artifacts").glob("*.json"))
+
+    assert applied_share_codes == ["##demo##"]
+    assert len(artifacts) == 1
+    assert envelope["ok"] is False
+    assert envelope["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True
+    assert persisted.scene_state.get("cw", {}).get("guide") is None
+
+
+def test_cw_guide_apply_marks_persisted_but_response_unknown_when_response_build_fails(
+    tmp_path: Path,
+    monkeypatch,
+):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    applied_share_codes: list[str] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.fetch_cw_guide",
+        lambda lineup_id, fetcher: {
+            **fake_guide(),
+            "artifact_id": None,
+            "lineup_id": lineup_id,
+        },
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.apply_cw_guide_via_ui",
+        lambda runtime, share_code: applied_share_codes.append(share_code),
+    )
+    monkeypatch.setattr(
+        "trail.daemon.command_service.success",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("response build failed")),
+    )
+
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-guide-apply-response-fail",
+        method="cw.guide.apply",
+        payload={"lineup_id": "69c9014f24546dfbd2b26227"},
+    )
+    status = service.request_status("req-cw-guide-apply-response-fail")
+    persisted = service.load_session(session.session_id)
+
+    assert applied_share_codes == ["##demo##"]
+    assert envelope["ok"] is False
+    assert envelope["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert envelope["debug"]["last_known_stage"] == "state_persisted"
+    assert status["final_state"] == "persisted_but_response_unknown"
+    assert status["tainted"] is True
+    assert persisted.scene_state["cw"]["guide"]["lineup_id"] == "69c9014f24546dfbd2b26227"
+
+
 def test_cw_guide_current_service_reads_applied_guide_from_session(tmp_path: Path):
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
     loaded = service.load_session(session.session_id)

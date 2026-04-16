@@ -182,6 +182,32 @@ def test_request_status_reflects_reconcile_clearing_taint(tmp_path: Path):
     assert service.request_status("req-reconcile-status")["tainted"] is False
 
 
+def test_ensure_cw_mutation_allowed_requires_reconcile_for_risky_session(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.begin_mutation(session_id=session.session_id, request_id="req-tainted-gate", command_name="cw.guide.apply")
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id="req-tainted-gate",
+        command_name="cw.guide.apply",
+        final_state="persisted_but_response_unknown",
+        envelope=_envelope(
+            ok=False,
+            screenshot=".trail/shots/req-tainted-gate.png",
+            error={"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+        ),
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        service.ensure_cw_mutation_allowed(session.session_id)
+
+    assert exc_info.value.code == "SESSION_RECONCILE_REQUIRED"
+
+    service.reconcile_session(session.session_id)
+
+    service.ensure_cw_mutation_allowed(session.session_id)
+
+
 def test_request_status_uses_record_taint_when_risky_record_saved_but_session_not_updated(tmp_path: Path, monkeypatch):
     service = SessionService(workspace_root=tmp_path)
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})

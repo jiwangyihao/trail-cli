@@ -4,6 +4,7 @@ from pathlib import Path
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
+from trail.daemon.command_service import SideEffectAppliedButStateNotPersisted
 from trail.scenes.cw.entry import enter_cw
 from trail.scenes.cw.events import (
     build_cw_battle_continuer,
@@ -86,6 +87,38 @@ class CwService:
         self.runtime_service = runtime_service
 
     def handle(self, *, method: str, payload: dict, workspace_root: str, session_service) -> dict | None:
+        session, _, _, handlers = self._context(
+            method=method,
+            payload=payload,
+            workspace_root=workspace_root,
+            session_service=session_service,
+        )
+
+        result = handlers[method]()
+        session_service.save_session(session)
+        return result
+
+    def handle_mutation(self, *, method: str, payload: dict, workspace_root: str, session_service) -> dict | None:
+        session, _, _, handlers = self._context(
+            method=method,
+            payload=payload,
+            workspace_root=workspace_root,
+            session_service=session_service,
+        )
+
+        try:
+            result = handlers[method]()
+        except CwSideEffectAppliedError as error:
+            raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
+
+        try:
+            session_service.save_session(session)
+        except Exception as error:
+            raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
+
+        return result
+
+    def _context(self, *, method: str, payload: dict, workspace_root: str, session_service):
         session_id = payload.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise TrailError("SESSION_REQUIRED", f"cw method requires session: {method}")
@@ -225,9 +258,7 @@ class CwService:
         if method not in handlers:
             raise TrailError("DAEMON_METHOD_NOT_SUPPORTED", f"unsupported method: {method}")
 
-        result = handlers[method]()
-        session_service.save_session(session)
-        return result
+        return session, artifact_store, runtime, handlers
 
 
 def _current_guide(session):
@@ -238,6 +269,36 @@ def _current_guide(session):
 def _apply_guide(session, *, runtime, artifact_store: ArtifactStore, lineup_id: str):
     guide_data = fetch_cw_guide(lineup_id, fetcher=fetch_cw_guide_payload)
     apply_cw_guide_via_ui(runtime, share_code=guide_data["share_code"])
-    artifact = artifact_store.create(scene="cw", kind="guide", payload=guide_data)
-    refreshed = apply_cw_guide(session, guide_data={**guide_data, "artifact_id": artifact.artifact_id})
+    try:
+        artifact = artifact_store.create(scene="cw", kind="guide", payload=guide_data)
+        refreshed = apply_cw_guide(session, guide_data={**guide_data, "artifact_id": artifact.artifact_id})
+    except Exception as error:
+        raise CwSideEffectAppliedError("cw.guide.apply side effect already ran") from error
     return refreshed.scene_state["cw"]["guide"]
+
+
+def _unknown_result_envelope(error: Exception) -> dict:
+    return {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"detail": _format_exception_detail(error)},
+        "error": {
+            "code": "DAEMON_UNAVAILABLE",
+            "message": "mutation result unknown",
+        },
+    }
+
+
+def _format_exception_detail(error: Exception) -> str:
+    message = str(error)
+    if not message:
+        return type(error).__name__
+    return f"{type(error).__name__}: {message}"
+
+
+class CwSideEffectAppliedError(Exception):
+    pass

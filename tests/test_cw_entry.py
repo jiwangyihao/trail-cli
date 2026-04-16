@@ -336,3 +336,65 @@ def test_cw_enter_mutation_flows_through_command_service_journal(tmp_path: Path,
     assert status["final_state"] == "completed"
     assert persisted.scene_state["cw"]["entry"]["battle_mode"] == "standard"
     assert persisted.scene_state["cw"]["stage"] == {"stale": True}
+
+
+def test_cw_enter_mutation_rejects_tainted_session_until_reconciled(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    service.begin_mutation(session_id=session.session_id, request_id="req-cw-tainted", command_name="cw.guide.apply")
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id="req-cw-tainted",
+        command_name="cw.guide.apply",
+        final_state="persisted_but_response_unknown",
+        envelope={
+            "ok": False,
+            "data": {},
+            "screenshot": ".trail/shots/req-cw-tainted.png",
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": {"detail": "mutation result unknown"},
+            "error": {"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+        },
+    )
+    enter_calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.enter_cw",
+        lambda session, mode, difficulty, battle_mode, runtime: enter_calls.append((mode, difficulty, battle_mode))
+        or _set_entry(
+            session,
+            {"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode},
+        ),
+    )
+
+    blocked = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-enter-blocked",
+        method="cw.enter",
+        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+    )
+
+    assert service.request_status("req-cw-tainted")["tainted"] is True
+    assert blocked["ok"] is False
+    assert blocked["error"] == {
+        "code": "SESSION_RECONCILE_REQUIRED",
+        "message": "session is tainted; reconcile before mutating cw commands",
+    }
+    assert enter_calls == []
+
+    service.reconcile_session(session.session_id)
+
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-enter-reconciled",
+        method="cw.enter",
+        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+    )
+
+    assert envelope["ok"] is True
+    assert enter_calls == [("continue", "current", "standard")]
+    assert service.request_status("req-cw-enter-reconciled")["final_state"] == "completed"

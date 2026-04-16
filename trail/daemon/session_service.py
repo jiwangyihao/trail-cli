@@ -98,7 +98,36 @@ class SessionService:
         self._store.save(session)
 
     def dump_state(self, *, session_id: str) -> dict:
-        return self.load_session(session_id).to_dict()
+        snapshot = self.load_session(session_id).to_dict()
+        snapshot.setdefault("scene_state", {}).setdefault("daemon", {})["tainted"] = self.is_session_tainted(session_id)
+        return snapshot
+
+    def _session_record_is_tainted(self, session_id: str) -> bool:
+        for path in self._journal_root.glob("*.json"):
+            record = json.loads(path.read_text(encoding="utf-8"))
+            if record.get("session_id") != session_id:
+                continue
+            if self._record_tainted(record):
+                return True
+        return False
+
+    def is_session_tainted(self, session_id: str) -> bool:
+        with self._mutex:
+            try:
+                session = self.load_session(session_id)
+            except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+                session = None
+            if session is not None and bool(session.scene_state.get("daemon", {}).get("tainted", False)):
+                return True
+            return self._session_record_is_tainted(session_id)
+
+    def ensure_cw_mutation_allowed(self, session_id: str) -> None:
+        if not self.is_session_tainted(session_id):
+            return
+        raise TrailError(
+            "SESSION_RECONCILE_REQUIRED",
+            "session is tainted; reconcile before mutating cw commands",
+        )
 
     def begin_mutation(self, *, session_id: str | None, request_id: str, command_name: str) -> dict:
         with self._mutex:
