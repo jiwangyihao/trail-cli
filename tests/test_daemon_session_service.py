@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import os
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -181,6 +182,62 @@ def test_request_status_reflects_reconcile_clearing_taint(tmp_path: Path):
     assert service.request_status("req-reconcile-status")["tainted"] is False
 
 
+def test_request_status_uses_record_taint_when_risky_record_saved_but_session_not_updated(tmp_path: Path, monkeypatch):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.begin_mutation(session_id=session.session_id, request_id="req-record-taint", command_name="input.click")
+    original_save_session = service.save_session
+
+    def fail_save_session(model):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(service, "save_session", fail_save_session)
+
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id="req-record-taint",
+        command_name="input.click",
+        final_state="persisted_but_response_unknown",
+        envelope=_envelope(
+            ok=False,
+            screenshot=".trail/shots/req-record-taint.png",
+            error={"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+        ),
+    )
+
+    monkeypatch.setattr(service, "save_session", original_save_session)
+
+    assert service.load_session(session.session_id).scene_state.get("daemon", {}).get("tainted", False) is False
+    assert service.request_status("req-record-taint")["tainted"] is True
+
+    service.reconcile_session(session.session_id)
+
+    assert service.request_status("req-record-taint")["tainted"] is False
+
+
+def test_request_status_reflects_reconcile_clearing_taint(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.begin_mutation(session_id=session.session_id, request_id="req-reconcile-status", command_name="input.click")
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id="req-reconcile-status",
+        command_name="input.click",
+        final_state="persisted_but_response_unknown",
+        envelope=_envelope(
+            ok=False,
+            screenshot=".trail/shots/req-reconcile-status.png",
+            error={"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+        ),
+    )
+
+    assert service.request_status("req-reconcile-status")["tainted"] is True
+
+    service.reconcile_session(session.session_id)
+
+    assert service.request_status("req-reconcile-status")["tainted"] is False
+
+
 def test_duplicate_request_id_returns_duplicate_terminal(tmp_path: Path):
     service = SessionService(workspace_root=tmp_path)
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
@@ -236,6 +293,43 @@ def test_duplicate_terminal_returns_original_failure_envelope(tmp_path: Path):
         "message": "window not found",
     }
     assert response["screenshot"] == ".trail/shots/req-dup-fail.png"
+
+
+def test_duplicate_terminal_without_last_envelope_returns_invalid_record_failure(tmp_path: Path, monkeypatch):
+    registry = SessionServiceRegistry()
+    command_service = CommandService(
+        runtime_service=StubRuntimeService(StubRuntime(tmp_path / "dup-terminal-invalid.png")),
+        session_service=registry,
+    )
+    service = registry.for_workspace(str(tmp_path))
+    request = _request(
+        tmp_path,
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        request_id="req-dup-invalid",
+        session_id=None,
+    )
+    monkeypatch.setattr(
+        service,
+        "begin_mutation",
+        lambda **kwargs: {
+            "status": "duplicate_terminal",
+            "record": {
+                "request_id": "req-dup-invalid",
+                "method": "input.click",
+                "session_id": None,
+                "final_state": "failed_before_side_effect",
+            },
+        },
+    )
+
+    response = command_service.handle(request)
+
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "REQUEST_TERMINAL_RECORD_INVALID",
+        "message": "terminal request record missing envelope",
+    }
 
 
 def test_duplicate_request_id_returns_duplicate_in_progress(tmp_path: Path):
@@ -548,6 +642,40 @@ def test_request_status_stays_conservative_when_unknown_result_session_is_unread
     assert status["tainted"] is True
 
 
+def test_request_status_waits_for_record_write_to_finish(tmp_path: Path, monkeypatch):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.begin_mutation(session_id=session.session_id, request_id="req-race", command_name="input.click")
+    original_save_record = service._save_record
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_save_record(record):
+        if record["request_id"] == "req-race" and record.get("last_visible_stage") == "executing":
+            started.set()
+            release.wait(timeout=2)
+        return original_save_record(record)
+
+    monkeypatch.setattr(service, "_save_record", blocking_save_record)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        writer = executor.submit(
+            service.mark_executing,
+            request_id="req-race",
+            session_id=session.session_id,
+            command_name="input.click",
+        )
+        assert started.wait(timeout=2) is True
+        reader = executor.submit(service.request_status, "req-race")
+        time.sleep(0.1)
+        assert reader.done() is False
+        release.set()
+        writer.result()
+        status = reader.result()
+
+    assert status["last_visible_stage"] == "executing"
+
+
 @pytest.mark.parametrize(
     ("method", "payload", "expected"),
     [
@@ -731,5 +859,6 @@ def test_handle_returns_unknown_result_when_recovery_finish_mutation_fails(tmp_p
     assert response["debug"]["last_known_stage"] == "side_effect_applied"
     assert "persist marker failed" in response["debug"]["detail"]
     assert "recovery finish failed" in response["debug"]["recovery_detail"]
-    assert status["last_visible_stage"] == "side_effect_applied"
-    assert status["final_state"] is None
+    assert status["last_visible_stage"] == "responded"
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True

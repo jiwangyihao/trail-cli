@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 from threading import Lock
+from uuid import uuid4
 
 from trail.core.errors import TrailError
 from trail.session.store import SessionStore
@@ -45,11 +46,34 @@ class SessionService:
 
     def _save_record(self, record: dict) -> dict:
         snapshot = deepcopy(record)
-        self._journal_path(snapshot["request_id"]).write_text(
+        path = self._journal_path(snapshot["request_id"])
+        temp_path = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
+        temp_path.write_text(
             json.dumps(snapshot, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        temp_path.replace(path)
         return snapshot
+
+    def _record_tainted(self, record: dict) -> bool:
+        if "tainted" in record:
+            return bool(record["tainted"])
+        return record.get("final_state") in RISKY_FINAL_STATES
+
+    def _apply_terminal_record(self, *, record: dict, command_name: str, final_state: str, envelope: dict, tainted: bool) -> dict:
+        record["method"] = command_name
+        record["final_state"] = final_state
+        record["last_visible_stage"] = "responded"
+        record["updated_at"] = _utc_now()
+        record["tainted"] = bool(tainted)
+        record["last_envelope"] = deepcopy(envelope)
+        record["last_result"] = {
+            "command": command_name,
+            "ok": envelope["ok"],
+            "data": deepcopy(envelope["data"]),
+            "error": deepcopy(envelope["error"]),
+        }
+        return record
 
     def _require_record(self, *, request_id: str) -> dict:
         record = self._load_record(request_id)
@@ -94,6 +118,7 @@ class SessionService:
                 "session_id": session_id,
                 "final_state": None,
                 "last_visible_stage": "accepted",
+                "tainted": False,
                 "started_at": now,
                 "updated_at": now,
             }
@@ -122,19 +147,14 @@ class SessionService:
     ) -> None:
         with self._mutex:
             record = self._require_record(request_id=request_id)
-            record["method"] = command_name
-            record["final_state"] = final_state
-            record["last_visible_stage"] = "responded"
-            record["updated_at"] = _utc_now()
-            record["last_envelope"] = deepcopy(envelope)
-            record["last_result"] = {
-                "command": command_name,
-                "ok": envelope["ok"],
-                "data": deepcopy(envelope["data"]),
-                "error": deepcopy(envelope["error"]),
-            }
-
             risky_final_state = final_state in RISKY_FINAL_STATES
+            record = self._apply_terminal_record(
+                record=record,
+                command_name=command_name,
+                final_state=final_state,
+                envelope=envelope,
+                tainted=risky_final_state,
+            )
             if risky_final_state:
                 self._save_record(record)
 
@@ -155,34 +175,57 @@ class SessionService:
             if not risky_final_state:
                 self._save_record(record)
 
+    def finalize_journal_record(self, *, request_id: str, command_name: str, final_state: str, envelope: dict) -> None:
+        with self._mutex:
+            record = self._require_record(request_id=request_id)
+            record = self._apply_terminal_record(
+                record=record,
+                command_name=command_name,
+                final_state=final_state,
+                envelope=envelope,
+                tainted=final_state in RISKY_FINAL_STATES,
+            )
+            self._save_record(record)
+
     def request_status(self, request_id: str) -> dict:
-        record = self._require_record(request_id=request_id)
-        tainted = False
-        session_id = record.get("session_id")
-        if session_id is not None:
-            try:
-                session = self.load_session(session_id)
-            except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
-                tainted = record.get("final_state") in RISKY_FINAL_STATES
-            else:
-                tainted = bool(session.scene_state.get("daemon", {}).get("tainted", False))
-        return {
-            "request_id": record["request_id"],
-            "method": record["method"],
-            "workspace_root": record["workspace_root"],
-            "session_id": record.get("session_id"),
-            "final_state": record.get("final_state"),
-            "last_visible_stage": record["last_visible_stage"],
-            "tainted": tainted,
-            "started_at": record["started_at"],
-            "updated_at": record["updated_at"],
-        }
+        with self._mutex:
+            record = self._require_record(request_id=request_id)
+            tainted = self._record_tainted(record)
+            session_id = record.get("session_id")
+            if session_id is not None:
+                try:
+                    session = self.load_session(session_id)
+                except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+                    pass
+                else:
+                    tainted = tainted or bool(session.scene_state.get("daemon", {}).get("tainted", False))
+            return {
+                "request_id": record["request_id"],
+                "method": record["method"],
+                "workspace_root": record["workspace_root"],
+                "session_id": record.get("session_id"),
+                "final_state": record.get("final_state"),
+                "last_visible_stage": record["last_visible_stage"],
+                "tainted": tainted,
+                "started_at": record["started_at"],
+                "updated_at": record["updated_at"],
+            }
 
     def reconcile_session(self, session_id: str) -> dict:
-        session = self.load_session(session_id)
-        session.scene_state.setdefault("daemon", {})["tainted"] = False
-        self.save_session(session)
-        return {"session_id": session_id, "tainted": False}
+        with self._mutex:
+            session = self.load_session(session_id)
+            session.scene_state.setdefault("daemon", {})["tainted"] = False
+            self.save_session(session)
+            for path in self._journal_root.glob("*.json"):
+                record = json.loads(path.read_text(encoding="utf-8"))
+                if record.get("session_id") != session_id:
+                    continue
+                if not self._record_tainted(record):
+                    continue
+                record["tainted"] = False
+                record["updated_at"] = _utc_now()
+                self._save_record(record)
+            return {"session_id": session_id, "tainted": False}
 
 
 class SessionServiceRegistry:

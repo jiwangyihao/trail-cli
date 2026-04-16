@@ -497,6 +497,55 @@ def test_server_handle_payload_keeps_unknown_result_envelope_for_post_handler_fa
     assert loaded.scene_state["daemon"]["tainted"] is True
 
 
+def test_server_handle_payload_keeps_risky_terminal_state_when_recovery_finish_fails(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    command_service = CommandService(
+        runtime_service=ProtocolRuntimeService(ProtocolRuntime(tmp_path / "recovery-finish-fail.png")),
+        session_service=registry,
+    )
+    service = registry.for_workspace(str(tmp_path))
+    original_finish_mutation = service.finish_mutation
+
+    def fail_mark_state_persisted(**kwargs):
+        raise OSError("persist marker failed")
+
+    def fail_recovery_finish_mutation(**kwargs):
+        if kwargs["final_state"] != "completed":
+            raise OSError("recovery finish failed")
+        return original_finish_mutation(**kwargs)
+
+    monkeypatch.setattr(service, "mark_state_persisted", fail_mark_state_persisted)
+    monkeypatch.setattr(service, "finish_mutation", fail_recovery_finish_mutation)
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-server-recovery-finish-fail",
+            method="input.click",
+            payload={"x": 10, "y": 20},
+            session_id=session.session_id,
+        )
+    )
+
+    status = registry.for_workspace(str(tmp_path)).request_status("req-server-recovery-finish-fail")
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert response["debug"]["last_known_stage"] == "side_effect_applied"
+    assert "recovery finish failed" in response["debug"]["recovery_detail"]
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["last_visible_stage"] == "responded"
+    assert status["tainted"] is True
+
+
 def test_client_attempts_bootstrap_when_ready_runtime_is_missing_endpoint(tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
     write_installed_manifest(daemon_home, runtime_state="ready")

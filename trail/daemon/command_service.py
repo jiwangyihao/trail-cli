@@ -250,7 +250,12 @@ class CommandService:
             terminal_envelope = accepted["record"].get("last_envelope")
             if isinstance(terminal_envelope, dict):
                 return self._response_with_request_id(request.request_id, terminal_envelope)
-            return success(accepted["record"], request_id=request.request_id)
+            return daemon_transport_failure(
+                request_id=request.request_id,
+                code="REQUEST_TERMINAL_RECORD_INVALID",
+                message="terminal request record missing envelope",
+                debug={"record": accepted["record"]},
+            )
         if accepted["status"] == "duplicate_in_progress":
             return daemon_transport_failure(
                 request_id=request.request_id,
@@ -362,6 +367,16 @@ class CommandService:
                     envelope=envelope,
                 )
             except Exception as recovery_error:
+                try:
+                    service.finalize_journal_record(
+                        request_id=request.request_id,
+                        command_name=command_name,
+                        final_state=final_state,
+                        envelope=envelope,
+                    )
+                except Exception as finalize_error:
+                    payload = self._attach_recovery_detail(envelope, recovery_error)
+                    return self._attach_recovery_detail(payload, finalize_error)
                 return self._attach_recovery_detail(envelope, recovery_error)
             return envelope
 
