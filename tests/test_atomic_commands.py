@@ -9,7 +9,6 @@ import pytest
 
 from trail.cli import app
 from trail.runtime.model import Box
-from trail.session.store import SessionStore
 from tests.support.fake_daemon import build_success_response
 
 
@@ -34,6 +33,43 @@ def test_window_attach_returns_envelope_and_binding(cli_runner, fake_daemon_clie
     assert client.calls == [
         {
             "method": "window.attach",
+            "payload": {"window_title": "Demo Window"},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_session_create_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path, monkeypatch):
+    def fail_local_session_create(*args, **kwargs):
+        raise AssertionError("local session create path used")
+
+    monkeypatch.setattr("trail.commands.session.attach_window", fail_local_session_create, raising=False)
+    client = fake_daemon_client(
+        {
+            "session.create": build_success_response(
+                request_id="req-session-create",
+                data={
+                    "session_id": "session-1",
+                    "window_binding": {"title": "Demo Window", "hwnd": 321},
+                },
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["session", "create", "--window-title", "Demo Window"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"] == {
+        "session_id": "session-1",
+        "window_binding": {"title": "Demo Window", "hwnd": 321},
+    }
+    assert client.calls == [
+        {
+            "method": "session.create",
             "payload": {"window_title": "Demo Window"},
             "workspace_root": str(tmp_path),
             "session_id": None,
@@ -410,28 +446,72 @@ def test_daemon_control_plane_errors_keep_request_id_in_debug(cli_runner, fake_d
     }
 
 
-def test_state_dump_returns_session_snapshot(cli_runner, fake_runtime, fake_session):
-    result = cli_runner.invoke(app, ["state", "dump", "--session", fake_session])
+def test_state_dump_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path, monkeypatch):
+    session_id = "a" * 32
+
+    def fail_local_state_dump(*args, **kwargs):
+        raise AssertionError("local state dump path used")
+
+    monkeypatch.setattr("trail.commands.state.run_session_command", fail_local_state_dump, raising=False)
+    client = fake_daemon_client(
+        {
+            "state.dump": build_success_response(
+                request_id="req-state-dump",
+                data={
+                    "session_id": session_id,
+                    "scene_state": {"cw": {"stage": "preparation"}},
+                    "window_binding": {"title": "崩坏：星穹铁道", "hwnd": 1},
+                },
+                screenshot=".trail/shots/req-state-dump.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["state", "dump", "--session", session_id])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
-    assert payload["data"]["session_id"] == fake_session
-    assert payload["data"]["scene_state"] == {}
-    assert payload["data"]["last_result"] is None
+    assert payload["data"]["scene_state"] == {"cw": {"stage": "preparation"}}
+    assert payload["data"]["window_binding"] == {"title": "崩坏：星穹铁道", "hwnd": 1}
+    assert client.calls == [
+        {
+            "method": "state.dump",
+            "payload": {"session_id": session_id},
+            "workspace_root": str(tmp_path),
+            "session_id": session_id,
+            "verbose": False,
+        }
+    ]
 
 
-def test_state_dump_returns_structured_error_for_missing_session(cli_runner, fake_runtime, tmp_path, monkeypatch):
-    import trail.commands.state as state_cmd
+def test_state_dump_returns_structured_error_for_missing_session(cli_runner, fake_daemon_client, tmp_path, monkeypatch):
+    session_id = "deadbeefdeadbeefdeadbeefdeadbeef"
 
-    monkeypatch.setattr(
-        state_cmd,
-        "session_store_factory",
-        lambda: SessionStore(tmp_path / ".trail" / "sessions"),
-        raising=False,
+    def fail_local_state_dump(*args, **kwargs):
+        raise AssertionError("local state dump path used")
+
+    monkeypatch.setattr("trail.commands.state.run_session_command", fail_local_state_dump, raising=False)
+    client = fake_daemon_client(
+        {
+            "state.dump": {
+                "request_id": "req-state-dump-missing",
+                "ok": False,
+                "data": {},
+                "screenshot": None,
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": None,
+                "error": {
+                    "code": "SESSION_NOT_FOUND",
+                    "message": "session missing",
+                },
+            }
+        }
     )
 
-    result = cli_runner.invoke(app, ["state", "dump", "--session", "deadbeefdeadbeefdeadbeefdeadbeef"])
+    result = cli_runner.invoke(app, ["state", "dump", "--session", session_id])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -439,40 +519,19 @@ def test_state_dump_returns_structured_error_for_missing_session(cli_runner, fak
     assert payload["data"] == {}
     assert payload["error"] == {
         "code": "SESSION_NOT_FOUND",
-        "message": "session not found: deadbeefdeadbeefdeadbeefdeadbeef",
+        "message": "session missing",
     }
-    assert payload["screenshot"]
+    assert payload["screenshot"] is None
     assert "Traceback" not in result.stdout
-
-
-def test_state_dump_uses_session_window_binding_for_runtime(cli_runner, tmp_path, monkeypatch):
-    import trail.commands.state as state_cmd
-
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.create(window_binding={"title": "自定义窗口", "hwnd": 456})
-    built_titles: list[str] = []
-
-    class RuntimeSpy:
-        def __init__(self, shot_path):
-            self._shot = shot_path
-
-        def capture_after_action(self, optional: bool = False):
-            return self._shot
-
-    monkeypatch.setattr(state_cmd, "session_store_factory", lambda: store, raising=False)
-    monkeypatch.setattr(
-        state_cmd,
-        "runtime_factory",
-        lambda **kwargs: built_titles.append(kwargs["window_title"]) or RuntimeSpy(tmp_path / "state-after.png"),
-        raising=False,
-    )
-
-    result = cli_runner.invoke(app, ["state", "dump", "--session", session.session_id])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert built_titles == ["自定义窗口"]
+    assert client.calls == [
+        {
+            "method": "state.dump",
+            "payload": {"session_id": session_id},
+            "workspace_root": str(tmp_path),
+            "session_id": session_id,
+            "verbose": False,
+        }
+    ]
 
 
 @pytest.mark.parametrize(
