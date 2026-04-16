@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from threading import Lock
 
@@ -14,9 +15,20 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+RISKY_FINAL_STATES = {"applied_but_not_persisted", "persisted_but_response_unknown"}
+
+
+def _normalize_workspace_root(workspace_root: Path | str) -> Path:
+    return Path(os.path.normpath(str(Path(workspace_root).resolve(strict=False))))
+
+
+def _workspace_registry_key(workspace_root: Path | str) -> str:
+    return os.path.normcase(str(_normalize_workspace_root(workspace_root)))
+
+
 class SessionService:
     def __init__(self, *, workspace_root: Path):
-        self.workspace_root = Path(workspace_root)
+        self.workspace_root = _normalize_workspace_root(workspace_root)
         self._store = SessionStore(self.workspace_root / ".trail" / "sessions")
         self._journal_root = self.workspace_root / ".trail" / "requests"
         self._journal_root.mkdir(parents=True, exist_ok=True)
@@ -122,21 +134,30 @@ class SessionService:
                 "error": deepcopy(envelope["error"]),
             }
 
-            if session_id is not None:
-                session = self.load_session(session_id)
-                if final_state in {"applied_but_not_persisted", "persisted_but_response_unknown"}:
-                    session.scene_state.setdefault("daemon", {})["tainted"] = True
-                session.last_result = deepcopy(record["last_result"])
-                screenshot = envelope.get("screenshot")
-                if screenshot:
-                    session.last_screenshot = screenshot
-                self.save_session(session)
+            risky_final_state = final_state in RISKY_FINAL_STATES
+            if risky_final_state:
+                self._save_record(record)
 
-            self._save_record(record)
+            if session_id is not None:
+                try:
+                    session = self.load_session(session_id)
+                    if risky_final_state:
+                        session.scene_state.setdefault("daemon", {})["tainted"] = True
+                    session.last_result = deepcopy(record["last_result"])
+                    screenshot = envelope.get("screenshot")
+                    if screenshot:
+                        session.last_screenshot = screenshot
+                    self.save_session(session)
+                except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+                    if not risky_final_state:
+                        raise
+
+            if not risky_final_state:
+                self._save_record(record)
 
     def request_status(self, request_id: str) -> dict:
         record = self._require_record(request_id=request_id)
-        tainted = False
+        tainted = record.get("final_state") in RISKY_FINAL_STATES
         session_id = record.get("session_id")
         if session_id is not None:
             try:
@@ -144,7 +165,7 @@ class SessionService:
             except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
                 session = None
             if session is not None:
-                tainted = bool(session.scene_state.get("daemon", {}).get("tainted", False))
+                tainted = tainted or bool(session.scene_state.get("daemon", {}).get("tainted", False))
         return {
             "request_id": record["request_id"],
             "method": record["method"],
@@ -170,8 +191,8 @@ class SessionServiceRegistry:
         self._mutex = Lock()
 
     def for_workspace(self, workspace_root: str) -> SessionService:
-        key = str(Path(workspace_root))
+        key = _workspace_registry_key(workspace_root)
         with self._mutex:
             if key not in self._services:
-                self._services[key] = SessionService(workspace_root=Path(workspace_root))
+                self._services[key] = SessionService(workspace_root=_normalize_workspace_root(workspace_root))
             return self._services[key]

@@ -412,6 +412,52 @@ def test_server_handle_payload_preserves_unknown_result_envelope(
     assert loaded.scene_state["daemon"]["tainted"] is True
 
 
+def test_server_handle_payload_keeps_unknown_result_envelope_for_post_handler_failure(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    command_service = CommandService(
+        runtime_service=ProtocolRuntimeService(ProtocolRuntime(tmp_path / "post-handler-fail.png")),
+        session_service=registry,
+    )
+    service = registry.for_workspace(str(tmp_path))
+    original_finish_mutation = service.finish_mutation
+
+    def fail_completed_finish_mutation(**kwargs):
+        if kwargs["final_state"] == "completed":
+            raise OSError("flush failed")
+        return original_finish_mutation(**kwargs)
+
+    monkeypatch.setattr(service, "finish_mutation", fail_completed_finish_mutation)
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-server-post-handler-fail",
+            method="input.click",
+            payload={"x": 10, "y": 20},
+            session_id=session.session_id,
+        )
+    )
+
+    status = registry.for_workspace(str(tmp_path)).request_status("req-server-post-handler-fail")
+    loaded = registry.for_workspace(str(tmp_path)).load_session(session.session_id)
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert response["screenshot"] == str(tmp_path / "post-handler-fail.png")
+    assert response["debug"]["last_known_stage"] == "state_persisted"
+    assert "OSError" in response["debug"]["detail"]
+    assert status["final_state"] == "persisted_but_response_unknown"
+    assert loaded.scene_state["daemon"]["tainted"] is True
+
+
 def test_client_attempts_bootstrap_when_ready_runtime_is_missing_endpoint(tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
     write_installed_manifest(daemon_home, runtime_state="ready")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -352,6 +353,85 @@ def test_run_mutation_marks_failed_before_side_effect(tmp_path: Path):
     assert loaded.last_screenshot is None
 
 
+def test_run_mutation_marks_post_handler_stage_failure_as_applied_but_not_persisted(tmp_path: Path, monkeypatch):
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
+    request = _request(
+        tmp_path,
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        request_id="req-post-side-effect-fail",
+        session_id=session.session_id,
+    )
+
+    def fail_mark_side_effect_applied(**kwargs):
+        raise OSError("journal write failed")
+
+    monkeypatch.setattr(service, "mark_side_effect_applied", fail_mark_side_effect_applied)
+
+    result = command_service._run_mutation(
+        request,
+        "input.click",
+        lambda svc: _envelope(data={"clicked": [10, 20]}, screenshot=".trail/shots/req-post-side-effect-fail.png"),
+    )
+
+    status = service.request_status(request.request_id)
+    loaded = service.load_session(session.session_id)
+    assert result["ok"] is False
+    assert result["screenshot"] == ".trail/shots/req-post-side-effect-fail.png"
+    assert result["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert result["debug"]["last_known_stage"] == "handler_completed"
+    assert "OSError" in result["debug"]["detail"]
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert loaded.scene_state["daemon"]["tainted"] is True
+
+
+def test_run_mutation_marks_finish_failure_as_persisted_but_response_unknown(tmp_path: Path, monkeypatch):
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
+    request = _request(
+        tmp_path,
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        request_id="req-finish-fail",
+        session_id=session.session_id,
+    )
+    original_finish_mutation = service.finish_mutation
+
+    def fail_completed_finish_mutation(**kwargs):
+        if kwargs["final_state"] == "completed":
+            raise OSError("flush failed")
+        return original_finish_mutation(**kwargs)
+
+    monkeypatch.setattr(service, "finish_mutation", fail_completed_finish_mutation)
+
+    result = command_service._run_mutation(
+        request,
+        "input.click",
+        lambda svc: _envelope(data={"clicked": [10, 20]}, screenshot=".trail/shots/req-finish-fail.png"),
+    )
+
+    status = service.request_status(request.request_id)
+    loaded = service.load_session(session.session_id)
+    assert result["ok"] is False
+    assert result["screenshot"] == ".trail/shots/req-finish-fail.png"
+    assert result["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert result["debug"]["last_known_stage"] == "state_persisted"
+    assert "OSError" in result["debug"]["detail"]
+    assert status["final_state"] == "persisted_but_response_unknown"
+    assert loaded.scene_state["daemon"]["tainted"] is True
+
+
 def test_request_status_survives_service_restart(tmp_path: Path):
     service = SessionService(workspace_root=tmp_path)
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
@@ -367,6 +447,34 @@ def test_request_status_survives_service_restart(tmp_path: Path):
     reloaded = SessionService(workspace_root=tmp_path)
 
     assert reloaded.request_status("req-7")["final_state"] == "completed"
+
+
+@pytest.mark.parametrize("final_state", ["applied_but_not_persisted", "persisted_but_response_unknown"])
+def test_request_status_stays_conservative_when_unknown_result_session_is_unreadable(
+    tmp_path: Path,
+    monkeypatch,
+    final_state: str,
+):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.begin_mutation(session_id=session.session_id, request_id=f"req-{final_state}", command_name="input.click")
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id=f"req-{final_state}",
+        command_name="input.click",
+        final_state=final_state,
+        envelope=_envelope(
+            ok=False,
+            screenshot=f".trail/shots/{final_state}.png",
+            error={"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+        ),
+    )
+    monkeypatch.setattr(service, "load_session", lambda session_id: (_ for _ in ()).throw(FileNotFoundError(session_id)))
+
+    status = service.request_status(f"req-{final_state}")
+
+    assert status["final_state"] == final_state
+    assert status["tainted"] is True
 
 
 @pytest.mark.parametrize(
@@ -466,3 +574,21 @@ def test_session_service_registry_is_thread_safe(tmp_path: Path, monkeypatch):
 
     assert len(created) == 1
     assert len({id(service) for service in services}) == 1
+
+
+def test_session_service_registry_reuses_equivalent_workspace_paths(tmp_path: Path):
+    registry = SessionServiceRegistry()
+    first = registry.for_workspace(str(tmp_path))
+    equivalent = os.path.join(str(tmp_path), os.pardir, tmp_path.name)
+    second = registry.for_workspace(equivalent)
+
+    assert second is first
+
+
+@pytest.mark.skipif(os.name != "nt", reason="case-insensitive path semantics are Windows-specific")
+def test_session_service_registry_reuses_workspace_paths_with_different_case(tmp_path: Path):
+    registry = SessionServiceRegistry()
+    first = registry.for_workspace(str(tmp_path))
+    second = registry.for_workspace(str(tmp_path).upper())
+
+    assert second is first

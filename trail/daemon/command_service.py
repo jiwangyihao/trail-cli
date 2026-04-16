@@ -183,6 +183,39 @@ class CommandService:
         payload["request_id"] = request_id
         return payload
 
+    def _format_exception_detail(self, error: Exception) -> str:
+        message = str(error)
+        if not message:
+            return type(error).__name__
+        return f"{type(error).__name__}: {message}"
+
+    def _unknown_result_envelope(
+        self,
+        *,
+        request_id: str,
+        response: dict[str, Any] | None,
+        error: Exception,
+        last_known_stage: str,
+    ) -> dict[str, Any]:
+        previous = deepcopy(response or {})
+        debug = deepcopy(previous.get("debug") or {})
+        debug["detail"] = self._format_exception_detail(error)
+        debug["last_known_stage"] = last_known_stage
+        return {
+            "request_id": request_id,
+            "ok": False,
+            "data": {},
+            "screenshot": previous.get("screenshot"),
+            "timing": deepcopy(previous.get("timing") or {}),
+            "warnings": deepcopy(previous.get("warnings") or []),
+            "references": deepcopy(previous.get("references") or []),
+            "debug": debug,
+            "error": {
+                "code": "DAEMON_UNAVAILABLE",
+                "message": "mutation result unknown",
+            },
+        }
+
     def _failure_envelope(self, *, error: Exception) -> dict[str, Any]:
         if isinstance(error, TrailError):
             code = error.code
@@ -227,24 +260,6 @@ class CommandService:
         )
         try:
             result = self._response_with_request_id(request.request_id, handler(service))
-            service.mark_side_effect_applied(
-                request_id=request.request_id,
-                session_id=request.session_id,
-                command_name=command_name,
-            )
-            service.mark_state_persisted(
-                request_id=request.request_id,
-                session_id=request.session_id,
-                command_name=command_name,
-            )
-            service.finish_mutation(
-                session_id=request.session_id,
-                request_id=request.request_id,
-                command_name=command_name,
-                final_state="completed",
-                envelope=result,
-            )
-            return result
         except FailedBeforeSideEffect as error:
             service.finish_mutation(
                 session_id=request.session_id,
@@ -296,6 +311,45 @@ class CommandService:
                 request_id=request.request_id,
                 command_name=command_name,
                 final_state="failed_before_side_effect",
+                envelope=envelope,
+            )
+            return envelope
+
+        last_known_stage = "handler_completed"
+        try:
+            service.mark_side_effect_applied(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                command_name=command_name,
+            )
+            last_known_stage = "side_effect_applied"
+            service.mark_state_persisted(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                command_name=command_name,
+            )
+            last_known_stage = "state_persisted"
+            service.finish_mutation(
+                session_id=request.session_id,
+                request_id=request.request_id,
+                command_name=command_name,
+                final_state="completed",
+                envelope=result,
+            )
+            return result
+        except Exception as error:
+            final_state = "persisted_but_response_unknown" if last_known_stage == "state_persisted" else "applied_but_not_persisted"
+            envelope = self._unknown_result_envelope(
+                request_id=request.request_id,
+                response=result,
+                error=error,
+                last_known_stage=last_known_stage,
+            )
+            service.finish_mutation(
+                session_id=request.session_id,
+                request_id=request.request_id,
+                command_name=command_name,
+                final_state=final_state,
                 envelope=envelope,
             )
             return envelope
