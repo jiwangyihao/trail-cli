@@ -92,6 +92,17 @@ def _supports_request_id(method) -> bool:
     return any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
+def _parse_optional_bool(value: str | None, *, option_name: str) -> bool | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    raise TrailError("GUIDE_INPUT_INVALID", f"guide option '{option_name}' must be true or false")
+
+
 class _RequestScopedCaptureRuntime:
     def __init__(self, runtime, request_id: str):
         self._runtime = runtime
@@ -250,7 +261,65 @@ class CommandService:
                 ),
             )
 
+        if request.method.startswith("guide.fetch."):
+            return self._handle_guide_fetch(request)
+
+        if request.method.startswith("guide.config."):
+            return self._handle_guide_config(request)
+
+        if request.method.startswith("guide.list."):
+            return self._handle_guide_list(request)
+
         raise TrailError("DAEMON_METHOD_NOT_SUPPORTED", f"unsupported method: {request.method}")
+
+    def _guide_scene(self, method: str, prefix: str) -> str:
+        scene = method.removeprefix(prefix)
+        if scene != "cw":
+            raise TrailError("SCENE_NOT_SUPPORTED", f"暂不支持场景 {scene}")
+        return scene
+
+    def _handle_guide_fetch(self, request):
+        self._guide_scene(request.method, "guide.fetch.")
+        from trail.scenes.cw import guide as cw_guide
+
+        return success(
+            to_jsonable(cw_guide.fetch_cw_guide(request.payload["url"], fetcher=cw_guide.fetch_cw_guide_payload)),
+            request_id=request.request_id,
+        )
+
+    def _handle_guide_config(self, request):
+        self._guide_scene(request.method, "guide.config.")
+        from trail.scenes.cw.guide import fetch_cw_guide_config
+
+        return success(
+            to_jsonable(fetch_cw_guide_config()),
+            request_id=request.request_id,
+        )
+
+    def _handle_guide_list(self, request):
+        self._guide_scene(request.method, "guide.list.")
+        from trail.scenes.cw.guide import fetch_cw_guide_list
+
+        return success(
+            to_jsonable(
+                fetch_cw_guide_list(
+                    page=request.payload["page"],
+                    limit=request.payload["limit"],
+                    trait_id=request.payload.get("trait_id"),
+                    order=request.payload.get("order"),
+                    next_page_token=request.payload.get("next_page_token"),
+                    match_change_job=_parse_optional_bool(
+                        request.payload.get("match_change_job"),
+                        option_name="match-change-job",
+                    ),
+                    match_hard=_parse_optional_bool(
+                        request.payload.get("match_hard"),
+                        option_name="match-hard",
+                    ),
+                )
+            ),
+            request_id=request.request_id,
+        )
 
     def _capture_response(self, request, runtime, action):
         capture_runtime = None if runtime is None else _RequestScopedCaptureRuntime(runtime, request.request_id)
