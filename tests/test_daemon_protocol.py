@@ -1219,3 +1219,54 @@ def test_send_daemon_request_round_trips_over_real_socket(tmp_path: Path):
             "token": "token-1",
         }
     ]
+
+
+def test_send_daemon_request_uses_extended_read_timeout(monkeypatch, tmp_path: Path):
+    settimeouts: list[float] = []
+    sent: list[bytes] = []
+
+    class Reader:
+        def readline(self):
+            return json.dumps(build_success_response(request_id="req-timeout", data={"captured": True}), ensure_ascii=False)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class Connection:
+        def settimeout(self, value):
+            settimeouts.append(value)
+
+        def sendall(self, payload):
+            sent.append(payload)
+
+        def makefile(self, *args, **kwargs):
+            return Reader()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("trail.daemon.client.socket.create_connection", lambda *args, **kwargs: Connection())
+
+    payload = send_daemon_request(
+        DaemonRequest(
+            request_id="req-timeout",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="ocr.read",
+            payload={},
+        ),
+        "token-1",
+        endpoint="127.0.0.1:8765",
+    )
+
+    assert payload["ok"] is True
+    assert settimeouts == [15.0]
+    assert sent

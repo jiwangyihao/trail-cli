@@ -116,7 +116,19 @@ daemon_app = typer.Typer(no_args_is_help=True)
 
 @daemon_app.command("install")
 def daemon_install() -> None:
-    path = install_bootstrap(resolve_daemon_home())
+    try:
+        path = install_bootstrap(resolve_daemon_home())
+    except Exception as error:
+        print_json(
+            daemon_transport_failure(
+                request_id="local-install",
+                code="DAEMON_INSTALL_FAILED",
+                message="daemon install failed",
+                debug={"detail": format_exception_detail(error)},
+            )
+        )
+        return
+
     print_json(command_success(data={"manifest_path": str(path)}, screenshot=None))
 
 

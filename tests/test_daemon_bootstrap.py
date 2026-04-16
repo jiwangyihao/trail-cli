@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import socket
+import subprocess
 import threading
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -65,6 +67,7 @@ def test_daemon_control_commands_return_structured_failure_when_manifest_invalid
 def test_daemon_install_writes_manifest(cli_runner, monkeypatch, tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr("trail.daemon.bootstrap.subprocess.run", lambda *args, **kwargs: SimpleNamespace(returncode=0))
 
     result = cli_runner.invoke(app, ["daemon", "install"])
     payload = json.loads(result.stdout)
@@ -75,12 +78,104 @@ def test_daemon_install_writes_manifest(cli_runner, monkeypatch, tmp_path: Path)
     assert manifest.runtime.state == "installed"
 
 
+def test_install_bootstrap_registers_scheduled_task(monkeypatch, tmp_path: Path):
+    import trail.daemon.bootstrap as bootstrap_module
+
+    daemon_home = tmp_path / "daemon-home"
+    worktree_root = tmp_path / "worktree"
+    worktree_root.mkdir()
+    monkeypatch.chdir(worktree_root)
+    python_exe = tmp_path / "venv" / "Scripts" / "python.exe"
+    pythonw_exe = tmp_path / "venv" / "Scripts" / "pythonw.exe"
+    python_exe.parent.mkdir(parents=True)
+    python_exe.write_text("", encoding="utf-8")
+    pythonw_exe.write_text("", encoding="utf-8")
+    monkeypatch.setattr(bootstrap_module.sys, "executable", str(python_exe))
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(bootstrap_module.subprocess, "run", fake_run)
+
+    manifest_path = bootstrap_module.install_bootstrap(daemon_home)
+    launcher = daemon_home / "traild-launch.pyw"
+    manifest = load_manifest(manifest_path)
+
+    assert launcher.exists()
+    launcher_text = launcher.read_text(encoding="utf-8")
+    assert str(worktree_root) in launcher_text
+    assert calls[0][0:3] == ["powershell", "-NoProfile", "-Command"]
+    assert "Start-Process" in calls[0][3]
+    assert "-Verb RunAs" in calls[0][3]
+    assert "schtasks.exe" in calls[0][3]
+    assert "/Create" in calls[0][3]
+    assert "traild-user" in calls[0][3]
+    assert subprocess.list2cmdline([str(pythonw_exe), str(launcher)]) in calls[0][3]
+    assert manifest.install.bootstrap_type == "scheduled_task"
+
+
+def test_install_bootstrap_uses_hidden_pythonw_launcher(monkeypatch, tmp_path: Path):
+    import trail.daemon.bootstrap as bootstrap_module
+
+    daemon_home = tmp_path / "daemon-home"
+    worktree_root = tmp_path / "worktree"
+    worktree_root.mkdir()
+    monkeypatch.chdir(worktree_root)
+    python_exe = tmp_path / "venv" / "Scripts" / "python.exe"
+    pythonw_exe = tmp_path / "venv" / "Scripts" / "pythonw.exe"
+    python_exe.parent.mkdir(parents=True)
+    python_exe.write_text("", encoding="utf-8")
+    pythonw_exe.write_text("", encoding="utf-8")
+    monkeypatch.setattr(bootstrap_module.sys, "executable", str(python_exe))
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(bootstrap_module.subprocess, "run", fake_run)
+
+    bootstrap_module.install_bootstrap(daemon_home)
+
+    launcher = daemon_home / "traild-launch.pyw"
+    assert launcher.exists()
+    launcher_text = launcher.read_text(encoding="utf-8")
+    assert str(worktree_root) in launcher_text
+    assert subprocess.list2cmdline([str(pythonw_exe), str(launcher)]) in calls[0][3]
+    assert "from trail.daemon.server import main" in launcher_text
+    assert "main()" in launcher_text
+
+
+def test_daemon_install_returns_structured_failure_when_bootstrap_registration_fails(cli_runner, monkeypatch, tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+
+    def fail_run(*args, **kwargs):
+        raise PermissionError("elevation denied")
+
+    monkeypatch.setattr("trail.daemon.bootstrap.subprocess.run", fail_run)
+
+    result = cli_runner.invoke(app, ["daemon", "install"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_INSTALL_FAILED",
+        "message": "daemon install failed",
+    }
+    assert "PermissionError" in payload["debug"]["detail"]
+
+
 def test_daemon_install_recovers_from_invalid_manifest(cli_runner, monkeypatch, tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
     manifest_path = manifest_path_for_user(daemon_home)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text("{invalid-json", encoding="utf-8")
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr("trail.daemon.bootstrap.subprocess.run", lambda *args, **kwargs: SimpleNamespace(returncode=0))
 
     result = cli_runner.invoke(app, ["daemon", "install"])
 
@@ -102,6 +197,7 @@ def test_daemon_install_is_idempotent_for_existing_ready_runtime(cli_runner, mon
     before = load_manifest(manifest_path)
     token_before = Path(before.install.token_file).read_text(encoding="utf-8")
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr("trail.daemon.bootstrap.subprocess.run", lambda *args, **kwargs: SimpleNamespace(returncode=0))
 
     result = cli_runner.invoke(app, ["daemon", "install"])
 
@@ -262,28 +358,57 @@ def test_daemon_stop_clears_stale_runtime_without_killing_unverified_pid(cli_run
         listener.close()
 
 
-def test_start_bootstrap_marks_runtime_starting_and_invokes_traild(monkeypatch, tmp_path: Path):
+def test_start_bootstrap_marks_runtime_starting_and_launches_elevated_pythonw(monkeypatch, tmp_path: Path):
+    from trail.daemon.bootstrap import start_bootstrap
+    import trail.daemon.bootstrap as bootstrap_module
+
+    daemon_home = tmp_path / "daemon-home"
+    write_installed_manifest(daemon_home, runtime_state="installed")
+    python_exe = tmp_path / "venv" / "Scripts" / "python.exe"
+    pythonw_exe = tmp_path / "venv" / "Scripts" / "pythonw.exe"
+    python_exe.parent.mkdir(parents=True)
+    python_exe.write_text("", encoding="utf-8")
+    pythonw_exe.write_text("", encoding="utf-8")
+    monkeypatch.setattr(bootstrap_module.sys, "executable", str(python_exe))
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("trail.daemon.bootstrap.subprocess.run", fake_run)
+
+    started = start_bootstrap(daemon_home)
+    manifest = load_manifest(manifest_path_for_user(daemon_home))
+    launcher = daemon_home / "traild-launch.pyw"
+
+    assert started is True
+    assert calls[0][0:3] == ["powershell", "-NoProfile", "-Command"]
+    assert "Start-Process" in calls[0][3]
+    assert "-Verb RunAs" in calls[0][3]
+    assert "-WindowStyle Hidden" in calls[0][3]
+    assert str(pythonw_exe) in calls[0][3]
+    assert str(launcher) in calls[0][3]
+    assert manifest.runtime.state == "starting"
+
+
+def test_start_bootstrap_returns_false_when_elevated_launch_fails(monkeypatch, tmp_path: Path):
     from trail.daemon.bootstrap import start_bootstrap
 
     daemon_home = tmp_path / "daemon-home"
     write_installed_manifest(daemon_home, runtime_state="installed")
-    calls: list[tuple[list[str], str]] = []
 
-    class FakeProcess:
-        pid = 4321
+    def fail_run(command: list[str], **kwargs):
+        raise OSError("schtasks failed")
 
-    def fake_popen(command: list[str], *, cwd: str):
-        calls.append((command, cwd))
-        return FakeProcess()
-
-    monkeypatch.setattr("trail.daemon.bootstrap.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("trail.daemon.bootstrap.subprocess.run", fail_run)
 
     started = start_bootstrap(daemon_home)
     manifest = load_manifest(manifest_path_for_user(daemon_home))
 
-    assert started is True
-    assert calls == [(["traild"], str(Path.cwd()))]
-    assert manifest.runtime.state == "starting"
+    assert started is False
+    assert manifest.runtime.state == "degraded"
+    assert "schtasks failed" in (manifest.runtime.last_start_error or "")
 
 
 def test_wait_until_runtime_ready_returns_runtime_snapshot(tmp_path: Path):

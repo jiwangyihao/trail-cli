@@ -334,6 +334,15 @@ class RapidOcrAdapter:
 class PyAutoGuiInputDriver:
     MOUSEEVENTF_LEFTDOWN = 0x0002
     MOUSEEVENTF_LEFTUP = 0x0004
+    KEYEVENTF_KEYUP = 0x0002
+    VIRTUAL_KEY_OVERRIDES = {
+        "esc": 0x1B,
+        "escape": 0x1B,
+        "enter": 0x0D,
+        "return": 0x0D,
+        "space": 0x20,
+        "tab": 0x09,
+    }
 
     @staticmethod
     def _load_backend():
@@ -345,7 +354,7 @@ class PyAutoGuiInputDriver:
 
     @staticmethod
     def _should_use_virtual_screen_path(*coords: float) -> bool:
-        return sys.platform == "win32" and any(round(value) < 0 for value in coords)
+        return sys.platform == "win32"
 
     @staticmethod
     def _virtual_click(x: float, y: float) -> None:
@@ -363,6 +372,22 @@ class PyAutoGuiInputDriver:
         user32.SetCursorPos(round(to_x), round(to_y))
         sleep(0.1)
         user32.mouse_event(PyAutoGuiInputDriver.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+    @classmethod
+    def _virtual_key_code(cls, key: str) -> int:
+        normalized = key.lower()
+        if normalized in cls.VIRTUAL_KEY_OVERRIDES:
+            return cls.VIRTUAL_KEY_OVERRIDES[normalized]
+        if len(normalized) == 1:
+            return ord(normalized.upper())
+        raise TrailError("INPUT_BACKEND_UNAVAILABLE", f"unsupported windows key: {key}")
+
+    @classmethod
+    def _virtual_press(cls, key: str) -> None:
+        key_code = cls._virtual_key_code(key)
+        user32 = ctypes.windll.user32
+        user32.keybd_event(key_code, 0, 0, 0)
+        user32.keybd_event(key_code, 0, cls.KEYEVENTF_KEYUP, 0)
 
     def click(self, x: float, y: float, **kwargs) -> None:
         if self._should_use_virtual_screen_path(x, y):
@@ -383,6 +408,9 @@ class PyAutoGuiInputDriver:
         pyautogui.dragTo(to_x, to_y, duration=0.5)
 
     def press(self, key: str) -> None:
+        if sys.platform == "win32":
+            self._virtual_press(key)
+            return
         pyautogui = self._load_backend()
         pyautogui.press(key)
 

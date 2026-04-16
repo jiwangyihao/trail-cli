@@ -20,6 +20,7 @@ RETRIABLE_TRANSPORT_ERRORS = (
     ConnectionAbortedError,
     BrokenPipeError,
 )
+SOCKET_RESPONSE_TIMEOUT_SECONDS = 15.0
 
 
 class DaemonTransport(Protocol):
@@ -100,6 +101,7 @@ def send_daemon_request(
 
     host, port_text = endpoint.split(":", 1)
     with socket.create_connection((host, int(port_text)), timeout=5) as sock:
+        sock.settimeout(SOCKET_RESPONSE_TIMEOUT_SECONDS)
         sock.sendall(json.dumps(body, ensure_ascii=False).encode("utf-8") + b"\n")
         with sock.makefile("r", encoding="utf-8") as reader:
             return json.loads(reader.readline())

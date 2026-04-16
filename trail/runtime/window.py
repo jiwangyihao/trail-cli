@@ -19,6 +19,10 @@ def _enable_dpi_awareness() -> None:
     if sys.platform != "win32":
         return
     try:
+        awareness_context = getattr(ctypes.windll.user32, "SetProcessDpiAwarenessContext", None)
+        if callable(awareness_context):
+            awareness_context(-4)
+            return
         ctypes.windll.user32.SetProcessDPIAware()
     except Exception:
         return
@@ -231,8 +235,37 @@ def _grab_region_with_imagegrab(region: Region):
     return ImageGrab.grab(**kwargs)
 
 
+def _scale_region_for_screen_capture(region: Region, hwnd: int | None) -> Region:
+    if sys.platform != "win32" or hwnd is None:
+        return region
+    get_dpi = getattr(ctypes.windll.user32, "GetDpiForWindow", None)
+    if not callable(get_dpi):
+        return region
+    try:
+        dpi = get_dpi(hwnd)
+    except Exception:
+        return region
+    if not dpi or dpi == 96:
+        return region
+    scale = dpi / 96
+    return Region(
+        left=round(region.left * scale),
+        top=round(region.top * scale),
+        width=round(region.width * scale),
+        height=round(region.height * scale),
+    )
+
+
 def _grab_window_with_imagegrab(hwnd: int):
     return ImageGrab.grab(window=hwnd)
+
+
+def _live_capture_target_size(hwnd: int) -> tuple[int, int] | None:
+    try:
+        image = _grab_window_with_imagegrab(hwnd)
+    except Exception:
+        return None
+    return image.width, image.height
 
 
 class WindowsWindowController:
@@ -298,6 +331,16 @@ class WindowsWindowController:
 
     def prepare_input(self) -> None:
         window = self._resolve_window()
+        hwnd = getattr(window, "_hWnd", None)
+        if sys.platform == "win32" and hwnd is not None:
+            user32 = ctypes.windll.user32
+            if getattr(window, "isMinimized", False):
+                user32.ShowWindow(int(hwnd), 9)
+                sleep(0.1)
+            user32.BringWindowToTop(int(hwnd))
+            user32.SetForegroundWindow(int(hwnd))
+            sleep(0.1)
+            return
         if getattr(window, "isMinimized", False):
             window.restore()
             sleep(0.1)
@@ -318,15 +361,22 @@ class WindowsWindowController:
         hwnd = getattr(window, "_hWnd", None)
         if sys.platform == "win32" and hwnd is not None:
             try:
-                image = _grab_window_with_imagegrab(int(hwnd))
+                capture_region = _scale_region_for_screen_capture(region, int(hwnd))
+                image = _grab_region_with_imagegrab(capture_region)
+                target_size = _live_capture_target_size(int(hwnd))
+                if target_size is not None and image.size != target_size:
+                    image = image.resize(target_size)
             except Exception:
                 try:
-                    image = _capture_win32_window(int(hwnd), region)
-                except TrailError as exc:
-                    if exc.code != "SCREENSHOT_FAILED":
-                        raise
-                    self.prepare_input()
-                    image = _grab_region_with_imagegrab(region)
+                    image = _grab_window_with_imagegrab(int(hwnd))
+                except Exception:
+                    try:
+                        image = _capture_win32_window(int(hwnd), region)
+                    except TrailError as exc:
+                        if exc.code != "SCREENSHOT_FAILED":
+                            raise
+                        self.prepare_input()
+                        image = _grab_region_with_imagegrab(region)
         else:
             image = _grab_region_with_imagegrab(region)
         buffer = BytesIO()
