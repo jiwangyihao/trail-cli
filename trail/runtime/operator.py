@@ -16,7 +16,7 @@ from trail.runtime.window import WindowsWindowController
 
 class WindowController(Protocol):
     def capture(self, *, from_x=None, from_y=None, to_x=None, to_y=None): ...
-    def capture_to_workspace(self) -> Path: ...
+    def capture_to_workspace(self, request_id: str | None = None) -> Path: ...
     def prepare_input(self) -> None: ...
     def is_foreground(self) -> bool: ...
     def client_region(self): ...
@@ -231,9 +231,12 @@ class RuntimeOperator:
         self._record_trace("type_text", text=text)
         self._check_foreground_after_input()
 
-    def capture_after_action(self, optional: bool = False):
+    def capture_after_action(self, optional: bool = False, request_id: str | None = None):
         try:
-            path = self.window.capture_to_workspace()
+            if request_id is None:
+                path = self.window.capture_to_workspace()
+            else:
+                path = self.window.capture_to_workspace(request_id=request_id)
             self._record_trace("capture_after_action", optional=optional, screenshot=str(path))
             return path
         except Exception:

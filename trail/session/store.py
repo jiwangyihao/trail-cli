@@ -18,6 +18,11 @@ class SessionStore:
         self.workspace = Path(workspace)
         self.workspace.mkdir(parents=True, exist_ok=True)
 
+    def _workspace_root(self) -> Path:
+        if self.workspace.parent.name == ".trail":
+            return self.workspace.parent.parent
+        return self.workspace
+
     def _validate_session_id(self, session_id: str) -> str:
         if not SESSION_ID_PATTERN.fullmatch(session_id):
             raise ValueError("invalid session_id")
@@ -40,15 +45,14 @@ class SessionStore:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if payload.get("session_id") != path.stem:
             raise ValueError("session_id mismatch")
-        payload["workspace"] = str(self.workspace)
-        return SessionModel.from_dict(payload)
+        return SessionModel.from_dict(payload, workspace_root=self._workspace_root())
 
     def save(self, session: SessionModel) -> SessionModel:
         safe_session_id = self._validate_session_id(session.session_id)
         session.workspace = self.workspace
         path = self.workspace / f"{safe_session_id}.json"
         path.write_text(
-            json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
+            json.dumps(session.to_dict(workspace_root=self._workspace_root()), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         return session

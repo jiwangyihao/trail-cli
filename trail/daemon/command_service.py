@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import inspect
+from pathlib import Path
 from typing import Any
 
 from trail.commands.helpers import to_jsonable
@@ -17,17 +19,117 @@ def success(
     references: list[dict[str, Any]] | None = None,
     debug: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
-        "request_id": request_id,
-        "ok": True,
-        "data": deepcopy(data),
-        "screenshot": screenshot,
-        "timing": {},
-        "warnings": [],
-        "references": deepcopy(references or []),
-        "debug": deepcopy(debug),
-        "error": None,
-    }
+    return _bind_references_to_screenshot(
+        {
+            "request_id": request_id,
+            "ok": True,
+            "data": deepcopy(data),
+            "screenshot": screenshot,
+            "timing": {},
+            "warnings": [],
+            "references": deepcopy(references or []),
+            "debug": deepcopy(debug),
+            "error": None,
+        }
+    )
+
+
+def _normalize_workspace_path(path_value, *, workspace_root: Path) -> str | None:
+    if path_value is None:
+        return None
+    path = Path(path_value)
+    if not path.is_absolute():
+        return path.as_posix()
+    try:
+        return path.resolve().relative_to(workspace_root.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _normalize_daemon_screenshot_path(path_value, *, workspace_root: Path) -> str | None:
+    if path_value is None:
+        return None
+    path = Path(path_value)
+    if not path.is_absolute():
+        return path.as_posix()
+    trail_root = workspace_root / ".trail"
+    try:
+        path.resolve().relative_to(trail_root.resolve())
+    except ValueError:
+        return str(path)
+    return _normalize_workspace_path(path, workspace_root=workspace_root)
+
+
+def _bind_references_to_screenshot(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = deepcopy(payload)
+    screenshot = normalized.get("screenshot")
+    if screenshot is None:
+        return normalized
+    if Path(screenshot).is_absolute():
+        return normalized
+    references = normalized.get("references")
+    if not isinstance(references, list):
+        return normalized
+    normalized["references"] = [
+        {**reference, "screenshot": screenshot} if isinstance(reference, dict) else reference
+        for reference in references
+    ]
+    return normalized
+
+
+def _normalize_capture_payload(response: dict[str, Any], *, workspace_root: Path) -> dict[str, Any]:
+    normalized = deepcopy(response)
+    normalized["screenshot"] = _normalize_daemon_screenshot_path(normalized.get("screenshot"), workspace_root=workspace_root)
+    references = normalized.get("references")
+    if isinstance(references, list):
+        normalized["references"] = [
+            {
+                **reference,
+                "path": _normalize_workspace_path(reference.get("path"), workspace_root=workspace_root),
+            }
+            if isinstance(reference, dict) and "path" in reference
+            else reference
+            for reference in references
+        ]
+    return _bind_references_to_screenshot(normalized)
+
+
+def _supports_request_id(method) -> bool:
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return True
+    if "request_id" in signature.parameters:
+        return True
+    return any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+class _RequestScopedCaptureRuntime:
+    def __init__(self, runtime, request_id: str):
+        self._runtime = runtime
+        self._request_id = request_id
+
+    def _resolve(self):
+        if callable(self._runtime) and not hasattr(self._runtime, "capture_after_action"):
+            return self._runtime()
+        return self._runtime
+
+    def capture_after_action(self, optional: bool = False):
+        runtime = self._resolve()
+        if runtime is None:
+            return None
+        capture_after_action = getattr(runtime, "capture_after_action", None)
+        if not callable(capture_after_action):
+            return None
+        if _supports_request_id(capture_after_action):
+            return capture_after_action(optional=optional, request_id=self._request_id)
+        return capture_after_action(optional=optional)
+
+    def __getattr__(self, name: str):
+        runtime = self._resolve()
+        if runtime is None:
+            raise AttributeError(name)
+        return getattr(runtime, name)
 
 
 class CommandService:
@@ -163,7 +265,9 @@ class CommandService:
         raise TrailError("DAEMON_METHOD_NOT_SUPPORTED", f"unsupported method: {request.method}")
 
     def _capture_response(self, request, runtime, action):
-        response = with_auto_capture(runtime, action, verbose=request.verbose)
+        capture_runtime = None if runtime is None else _RequestScopedCaptureRuntime(runtime, request.request_id)
+        response = with_auto_capture(capture_runtime, action, verbose=request.verbose)
+        response = _normalize_capture_payload(response, workspace_root=Path(request.workspace_root))
         return self._response_with_request_id(request.request_id, response)
 
     def _mutating_capture(self, request, runtime, action):

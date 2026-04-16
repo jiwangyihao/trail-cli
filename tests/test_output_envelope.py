@@ -1,7 +1,9 @@
+import json
 from pathlib import Path
 
 import pytest
 
+from trail.artifacts.store import ArtifactStore
 from trail.commands.helpers import run_session_command
 from trail.core.errors import TrailError
 from trail.output.capture import with_auto_capture
@@ -132,6 +134,52 @@ def test_with_auto_capture_omits_debug_without_verbose(tmp_path):
     ]
     assert result["references"] == [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.97}]
     assert result["debug"] is None
+
+
+def test_session_store_persists_relative_last_screenshot(tmp_path):
+    store = SessionStore(tmp_path / ".trail" / "sessions")
+    session = store.create(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.last_screenshot = str(tmp_path / ".trail" / "shots" / "req-123.png")
+
+    store.save(session)
+
+    payload = json.loads((tmp_path / ".trail" / "sessions" / f"{session.session_id}.json").read_text(encoding="utf-8"))
+    loaded = store.load(session.session_id)
+
+    assert payload["workspace"] == ".trail/sessions"
+    assert payload["last_screenshot"] == ".trail/shots/req-123.png"
+    assert loaded.workspace == tmp_path / ".trail" / "sessions"
+    assert loaded.last_screenshot == ".trail/shots/req-123.png"
+
+
+def test_artifact_store_persists_relative_path_fields(tmp_path):
+    store = ArtifactStore(tmp_path / ".trail" / "artifacts")
+
+    artifact = store.create(
+        scene="cw",
+        kind="guide",
+        payload={
+            "path": str(tmp_path / ".trail" / "artifacts" / "guide.json"),
+            "screenshot": str(tmp_path / ".trail" / "shots" / "req-123.png"),
+            "references": [
+                {
+                    "path": str(tmp_path / "trail" / "scenes" / "cw" / "references" / "1.png"),
+                    "screenshot": str(tmp_path / ".trail" / "shots" / "req-123.png"),
+                }
+            ],
+        },
+    )
+
+    payload = json.loads(artifact.path.read_text(encoding="utf-8"))
+
+    assert payload["path"] == ".trail/artifacts/guide.json"
+    assert payload["screenshot"] == ".trail/shots/req-123.png"
+    assert payload["references"] == [
+        {
+            "path": "trail/scenes/cw/references/1.png",
+            "screenshot": ".trail/shots/req-123.png",
+        }
+    ]
 
 
 def test_run_session_command_persists_last_result_and_last_screenshot(tmp_path):

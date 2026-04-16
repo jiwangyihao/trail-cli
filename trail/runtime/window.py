@@ -307,7 +307,7 @@ class WindowsWindowController:
         image.save(buffer, format="PNG")
         return buffer.getvalue()
 
-    def capture_to_workspace(self) -> Path:
-        path = self.workspace / "last-action.png"
+    def capture_to_workspace(self, request_id: str | None = None) -> Path:
+        path = self.workspace / f"{request_id or 'last-action'}.png"
         path.write_bytes(self.capture())
         return path

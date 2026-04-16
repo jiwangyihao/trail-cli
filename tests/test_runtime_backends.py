@@ -145,7 +145,7 @@ def test_command_service_handles_window_methods(tmp_path: Path):
     assert attach_payload["ok"] is True
     assert attach_payload["data"] == {"title": "Demo Window", "hwnd": 321}
     assert attach_payload["request_id"] == "req-window.attach"
-    assert attach_payload["screenshot"] == str(Path(".trail/shots/daemon-command.png"))
+    assert attach_payload["screenshot"] == ".trail/shots/daemon-command.png"
     assert launch_payload["ok"] is True
     assert launch_payload["data"] == {
         "started": True,
@@ -271,7 +271,13 @@ def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Pa
             "message": "输入命令执行后窗口不在前台，本次操作可能失败",
         }
     ]
-    assert click_payload["references"] == [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.88}]
+    assert click_payload["references"] == [
+        {
+            "path": "trail/scenes/cw/references/1-1.png",
+            "similarity": 0.88,
+            "screenshot": ".trail/shots/daemon-command.png",
+        }
+    ]
     assert click_payload["debug"] == {"trace": [{"step": "click", "point": [10, 20]}]}
     assert click_payload["request_id"] == "req-input.click"
     assert drag_payload["ok"] is True
@@ -531,6 +537,21 @@ def test_windows_window_controller_uses_resolved_hwnd_when_binding_missing(monke
 
     assert FakeImageGrab.called_with == {"bbox": None, "all_screens": False, "window": 654}
     assert image_bytes.startswith(b"\x89PNG")
+
+
+def test_capture_to_workspace_uses_request_id_filename(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+    monkeypatch.setattr(controller, "capture", lambda **kwargs: b"demo-bytes")
+
+    path = controller.capture_to_workspace(request_id="req-123")
+
+    assert path == tmp_path / "req-123.png"
+    assert path.read_bytes() == b"demo-bytes"
 
 
 def test_pyscreeze_matcher_returns_box(monkeypatch):
@@ -1073,6 +1094,38 @@ def test_runtime_operator_warns_when_window_not_foreground_after_input():
     ]
 
 
+def test_runtime_operator_capture_after_action_passes_request_id_to_window():
+    import trail.runtime.operator as operator_module
+
+    class WindowStub:
+        def __init__(self):
+            self.request_ids: list[str | None] = []
+
+        def capture(self, **kwargs):
+            del kwargs
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self, request_id=None):
+            self.request_ids.append(request_id)
+            return Path(f".trail/shots/{request_id}.png")
+
+        def prepare_input(self):
+            raise AssertionError("not used")
+
+    window = WindowStub()
+    runtime = operator_module.RuntimeOperator(
+        window=window,
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(click=lambda *args, **kwargs: None, drag=lambda *args, **kwargs: None, press=lambda key: None),
+    )
+
+    path = runtime.capture_after_action(request_id="req-operator")
+
+    assert path == Path(".trail/shots/req-operator.png")
+    assert window.request_ids == ["req-operator"]
+
+
 def test_runtime_operator_matches_reference_images_from_project_tree(tmp_path, monkeypatch):
     import trail.runtime.operator as operator_module
 
@@ -1166,6 +1219,33 @@ def test_runtime_service_builds_runtime_with_workspace_reference_root(tmp_path, 
             "window_title": "崩坏：星穹铁道",
             "window_binding": None,
             "reference_root": workspace_root,
+        }
+    ]
+
+
+def test_command_service_binds_references_to_current_screenshot(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+
+    runtime = _CommandRuntimeStub()
+    runtime._shot = tmp_path / ".trail" / "shots" / "req-ocr-read.png"
+    runtime.references = [
+        {
+            "path": str(tmp_path / "trail" / "scenes" / "cw" / "references" / "1-1.png"),
+            "similarity": 0.88,
+            "screenshot": "stale.png",
+        }
+    ]
+    runtime_service = _CommandRuntimeServiceStub(runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    payload = service.handle(_command_request(workspace_root=tmp_path, method="ocr.read"))
+
+    assert payload["screenshot"] == ".trail/shots/req-ocr-read.png"
+    assert payload["references"] == [
+        {
+            "path": "trail/scenes/cw/references/1-1.png",
+            "similarity": 0.88,
+            "screenshot": ".trail/shots/req-ocr-read.png",
         }
     ]
 
