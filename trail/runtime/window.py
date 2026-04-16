@@ -4,10 +4,12 @@ import ctypes
 import hashlib
 import subprocess
 import sys
+import tempfile
 from time import sleep
 from pathlib import Path
 from io import BytesIO
 from ctypes.wintypes import POINT, RECT
+from threading import Event
 
 from PIL import ImageGrab
 
@@ -109,6 +111,67 @@ def _capture_win32_window(hwnd: int, region: Region):
             mfc_dc.DeleteDC()
         if hwnd_dc is not None:
             win32gui.ReleaseDC(hwnd, hwnd_dc)
+
+
+def _resolve_window_region(hwnd: int) -> Region:
+    import win32gui  # type: ignore
+
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    return Region(left=left, top=top, width=right - left, height=bottom - top)
+
+
+def _window_capture_crop_box(frame_size: tuple[int, int], window_region: Region, client_region: Region) -> tuple[int, int, int, int]:
+    frame_width, frame_height = frame_size
+    scale_x = frame_width / window_region.width
+    scale_y = frame_height / window_region.height
+    left = max(0, round((client_region.left - window_region.left) * scale_x))
+    top = max(0, round((client_region.top - window_region.top) * scale_y))
+    right = min(frame_width, round((client_region.left - window_region.left + client_region.width) * scale_x))
+    bottom = min(frame_height, round((client_region.top - window_region.top + client_region.height) * scale_y))
+    return left, top, right, bottom
+
+
+def _capture_with_windows_capture(hwnd: int, client_region: Region):
+    from PIL import Image
+    from windows_capture import WindowsCapture
+
+    completed = Event()
+    frame_path: Path | None = None
+
+    capture = WindowsCapture(cursor_capture=False, draw_border=False, window_hwnd=hwnd)
+
+    @capture.event
+    def on_frame_arrived(frame, capture_control):
+        nonlocal frame_path
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+            frame_path = Path(temp_file.name)
+        frame.save_as_image(str(frame_path))
+        capture_control.stop()
+        completed.set()
+
+    @capture.event
+    def on_closed():
+        completed.set()
+
+    control = capture.start_free_threaded()
+    try:
+        if not completed.wait(5):
+            control.stop()
+            raise TrailError("SCREENSHOT_FAILED", "windows graphics capture timed out")
+        control.wait()
+        if frame_path is None or not frame_path.exists():
+            raise TrailError("SCREENSHOT_FAILED", "windows graphics capture returned no frame")
+
+        image = Image.open(frame_path).convert("RGB")
+        crop_box = _window_capture_crop_box(image.size, _resolve_window_region(hwnd), client_region)
+        cropped = image.crop(crop_box)
+        target_size = _target_capture_size(client_region, hwnd)
+        if cropped.size != target_size:
+            cropped = cropped.resize(target_size)
+        return cropped
+    finally:
+        if frame_path is not None:
+            frame_path.unlink(missing_ok=True)
 
 
 def attach_window(window_title: str) -> WindowBinding:
@@ -256,6 +319,11 @@ def _scale_region_for_screen_capture(region: Region, hwnd: int | None) -> Region
     )
 
 
+def _target_capture_size(client_region: Region, hwnd: int | None) -> tuple[int, int]:
+    scaled = _scale_region_for_screen_capture(client_region, hwnd)
+    return scaled.width, scaled.height
+
+
 def _grab_window_with_imagegrab(hwnd: int):
     return ImageGrab.grab(window=hwnd)
 
@@ -361,22 +429,25 @@ class WindowsWindowController:
         hwnd = getattr(window, "_hWnd", None)
         if sys.platform == "win32" and hwnd is not None:
             try:
-                capture_region = _scale_region_for_screen_capture(region, int(hwnd))
-                image = _grab_region_with_imagegrab(capture_region)
-                target_size = _live_capture_target_size(int(hwnd))
-                if target_size is not None and image.size != target_size:
-                    image = image.resize(target_size)
+                image = _capture_with_windows_capture(int(hwnd), region)
             except Exception:
                 try:
-                    image = _grab_window_with_imagegrab(int(hwnd))
+                    capture_region = _scale_region_for_screen_capture(region, int(hwnd))
+                    image = _grab_region_with_imagegrab(capture_region)
+                    target_size = _live_capture_target_size(int(hwnd))
+                    if target_size is not None and image.size != target_size:
+                        image = image.resize(target_size)
                 except Exception:
                     try:
-                        image = _capture_win32_window(int(hwnd), region)
-                    except TrailError as exc:
-                        if exc.code != "SCREENSHOT_FAILED":
-                            raise
-                        self.prepare_input()
-                        image = _grab_region_with_imagegrab(region)
+                        image = _grab_window_with_imagegrab(int(hwnd))
+                    except Exception:
+                        try:
+                            image = _capture_win32_window(int(hwnd), region)
+                        except TrailError as exc:
+                            if exc.code != "SCREENSHOT_FAILED":
+                                raise
+                            self.prepare_input()
+                            image = _grab_region_with_imagegrab(region)
         else:
             image = _grab_region_with_imagegrab(region)
         buffer = BytesIO()

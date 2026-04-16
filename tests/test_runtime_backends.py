@@ -424,6 +424,7 @@ def test_windows_window_controller_capture_falls_back_to_printwindow_when_window
             raise OSError("window grab unavailable")
 
     monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(window_module, "_capture_with_windows_capture", lambda hwnd, region: (_ for _ in ()).throw(OSError("graphics capture unavailable")))
     called = {}
     monkeypatch.setattr(
         window_module,
@@ -473,6 +474,7 @@ def test_windows_window_controller_capture_falls_back_to_bbox_grab_when_window_g
             return Image.new("RGB", (10, 6), color="white")
 
     monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(window_module, "_capture_with_windows_capture", lambda hwnd, region: (_ for _ in ()).throw(OSError("graphics capture unavailable")))
     monkeypatch.setattr(
         window_module,
         "_capture_win32_window",
@@ -519,6 +521,7 @@ def test_windows_window_controller_prefers_bbox_grab_for_live_capture_when_hwnd_
             return Image.new("RGB", (2688, 1512), color="white")
 
     monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(window_module, "_capture_with_windows_capture", lambda hwnd, region: (_ for _ in ()).throw(OSError("graphics capture unavailable")))
     monkeypatch.setattr(window_module, "ImageGrab", FakeImageGrab)
     monkeypatch.setattr(window_module, "_capture_win32_window", lambda hwnd, region: Image.new("RGB", (4, 4), color="black"))
 
@@ -562,6 +565,7 @@ def test_windows_window_controller_scales_bbox_capture_using_window_dpi(monkeypa
             return Image.new("RGB", (1920, 1080), color="white")
 
     monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(window_module, "_capture_with_windows_capture", lambda hwnd, region: (_ for _ in ()).throw(OSError("graphics capture unavailable")))
     monkeypatch.setattr(window_module.ctypes, "windll", SimpleNamespace(user32=User32()))
     monkeypatch.setattr(window_module, "ImageGrab", FakeImageGrab)
     monkeypatch.setattr(window_module, "_capture_win32_window", lambda hwnd, region: Image.new("RGB", (4, 4), color="black"))
@@ -588,6 +592,21 @@ def test_windows_window_controller_scales_bbox_capture_using_window_dpi(monkeypa
     assert image_bytes.startswith(b"\x89PNG")
 
 
+def test_target_capture_size_uses_scaled_client_region(monkeypatch):
+    import trail.runtime.window as window_module
+
+    class User32:
+        def GetDpiForWindow(self, hwnd: int):
+            return 168
+
+    monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(window_module.ctypes, "windll", SimpleNamespace(user32=User32()))
+
+    target = window_module._target_capture_size(window_module.Region(left=183, top=160, width=1097, height=617), 321)
+
+    assert target == (1920, 1080)
+
+
 def test_windows_window_controller_uses_resolved_hwnd_when_binding_missing(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
     from PIL import Image
@@ -603,6 +622,7 @@ def test_windows_window_controller_uses_resolved_hwnd_when_binding_missing(monke
             return Image.new("RGB", (2688, 1512), color="white")
 
     monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(window_module, "_capture_with_windows_capture", lambda hwnd, region: (_ for _ in ()).throw(OSError("graphics capture unavailable")))
     monkeypatch.setattr(window_module, "ImageGrab", FakeImageGrab)
     monkeypatch.setattr(window_module, "_capture_win32_window", lambda hwnd, region: Image.new("RGB", (4, 4), color="black"))
 
@@ -627,6 +647,54 @@ def test_windows_window_controller_uses_resolved_hwnd_when_binding_missing(monke
     ]
     assert image.size == (1920, 1080)
     assert image_bytes.startswith(b"\x89PNG")
+
+
+def test_window_capture_crop_box_maps_client_region_into_frame_space():
+    import trail.runtime.window as window_module
+
+    window_region = window_module.Region(left=176, top=130, width=1111, height=654)
+    client_region = window_module.Region(left=183, top=160, width=1097, height=617)
+
+    crop = window_module._window_capture_crop_box((1920, 1080), window_region, client_region)
+
+    assert crop == (12, 50, 1908, 1068)
+
+
+def test_windows_window_controller_uses_windows_capture_backend_when_available(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    class FakeImageGrab:
+        called = False
+
+        @staticmethod
+        def grab(*args, **kwargs):
+            FakeImageGrab.called = True
+            return Image.new("RGB", (1, 1), color="black")
+
+    monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(window_module, "ImageGrab", FakeImageGrab)
+    monkeypatch.setattr(
+        window_module,
+        "_capture_with_windows_capture",
+        lambda hwnd, region: Image.new("RGB", (1920, 1080), color="white"),
+    )
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+    monkeypatch.setattr(controller, "_resolve_window", lambda: SimpleNamespace(_hWnd=321))
+    monkeypatch.setattr(
+        controller,
+        "_resolve_region",
+        lambda window=None: window_module.Region(left=183, top=160, width=1097, height=617),
+    )
+
+    image_bytes = controller.capture()
+    image = Image.open(BytesIO(image_bytes))
+
+    assert FakeImageGrab.called is False
+    assert image.size == (1920, 1080)
 
 
 def test_capture_to_workspace_uses_request_id_filename(monkeypatch, tmp_path):
