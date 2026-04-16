@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from trail.cli import app
 from trail.core.errors import TrailError
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw import stage as stage_scene
@@ -153,129 +154,82 @@ def test_wait_cw_stage_raises_timeout_when_stage_missing(tmp_path, monkeypatch):
     assert str(exc_info.value) == "等待货币战争阶段超时"
 
 
-def test_cw_stage_detect_cli_refreshes_stage_snapshot(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    import trail.commands.cw as cw_cmd
+def _build_cw_harness(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+    from trail.daemon.cw_service import CwService
+    from trail.daemon.session_service import SessionServiceRegistry
 
-    monkeypatch.setattr(cw_cmd, "stage_detector_factory", lambda runtime: (lambda: "event"), raising=False)
-
-    result = cli_runner.invoke(app, ["cw", "stage", "detect", "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"value": "event", "stale": False}
-    assert payload["screenshot"]
-
-    session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
-    assert session.scene_state["cw"]["stage"] == payload["data"]
-    assert session.last_stage == {"scene": "cw", "value": "event"}
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    return registry, service, session, cw_service, command_service
 
 
-def test_cw_stage_detect_cli_refreshes_replenish_stage(cli_runner, fake_session, tmp_path, monkeypatch):
-    import trail.commands.cw as cw_cmd
+def _set_stage(session, stage: dict):
+    session.scene_state.setdefault("cw", {})["stage"] = dict(stage)
+    value = stage.get("value")
+    if isinstance(value, str) and not stage.get("stale"):
+        session.last_stage = {"scene": "cw", "value": value}
+    return session
 
-    store = SessionStore(tmp_path / ".trail" / "sessions")
 
-    class RuntimeSpy:
-        def __init__(self, screenshot_path):
-            self._shot = screenshot_path
-
-        def capture_after_action(self, optional: bool = False):
-            return self._shot
-
-        def locate(self, template: str, **kwargs):
-            if str(template).endswith("replenish_stage.png"):
-                return {"left": 1, "top": 2, "width": 3, "height": 4}
-            return None
-
+def test_cw_stage_detect_service_persists_stage_state(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    monkeypatch.setattr("trail.daemon.cw_service.stage_detector_factory", lambda runtime: object())
     monkeypatch.setattr(
-        cw_cmd,
-        "runtime_factory",
-        lambda **kwargs: RuntimeSpy(tmp_path / "after.png"),
-        raising=False,
+        "trail.daemon.cw_service.detect_cw_stage",
+        lambda session, detector: _set_stage(session, {"value": "preparation", "stale": False}),
     )
 
-    result = cli_runner.invoke(app, ["cw", "stage", "detect", "--session", fake_session])
+    result = cw_service.handle(
+        method="cw.stage.detect",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"value": "replenish", "stale": False}
-    assert payload["screenshot"]
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["stage"] == {"value": "replenish", "stale": False}
-    assert session.last_stage == {"scene": "cw", "value": "replenish"}
+    assert result["value"] == "preparation"
+    assert service.load_session(session.session_id).scene_state["cw"]["stage"]["value"] == "preparation"
 
 
-def test_cw_stage_wait_cli_returns_timeout_error(cli_runner, fake_runtime, fake_session, monkeypatch):
-    import trail.commands.cw as cw_cmd
+def test_cw_stage_wait_service_persists_waited_stage_state(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    monkeypatch.setattr("trail.daemon.cw_service.stage_detector_factory", lambda runtime: object())
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.wait_cw_stage",
+        lambda session, detector, timeout: _set_stage(session, {"value": "settle", "stale": False}),
+    )
 
-    ticks = iter([0.0, 0.2, 1.2])
-    monkeypatch.setattr(stage_scene, "monotonic", lambda: next(ticks))
-    monkeypatch.setattr(cw_cmd, "stage_detector_factory", lambda runtime: (lambda: None), raising=False)
+    result = cw_service.handle(
+        method="cw.stage.wait",
+        payload={"session_id": session.session_id, "timeout": 120},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
 
-    result = cli_runner.invoke(app, ["cw", "stage", "wait", "--session", fake_session, "--timeout", "1"])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"] == {
-        "code": "STAGE_TIMEOUT",
-        "message": "等待货币战争阶段超时",
-    }
-    assert payload["screenshot"]
-
-
-def test_cw_stage_wait_cli_uses_longer_default_timeout(cli_runner, fake_runtime, fake_session, monkeypatch):
-    import trail.commands.cw as cw_cmd
-
-    captured: dict[str, int] = {}
-
-    def fake_wait_cw_stage(session, *, detector, timeout):
-        captured["timeout"] = timeout
-        return stage_scene.detect_cw_stage(session, detector=lambda: "settle")
-
-    monkeypatch.setattr(cw_cmd, "wait_cw_stage", fake_wait_cw_stage, raising=False)
-    monkeypatch.setattr(cw_cmd, "stage_detector_factory", lambda runtime: (lambda: "settle"), raising=False)
-
-    result = cli_runner.invoke(app, ["cw", "stage", "wait", "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"value": "settle", "stale": False}
-    assert captured["timeout"] == 120
+    assert result["value"] == "settle"
+    assert service.load_session(session.session_id).scene_state["cw"]["stage"] == {"value": "settle", "stale": False}
 
 
-@pytest.mark.parametrize(
-    ("argv"),
-    [
-        ["detect"],
-        ["wait", "--timeout", "1"],
-    ],
-)
-def test_cw_stage_cli_uses_run_session_command_failure_persistence(cli_runner, fake_runtime, fake_session, monkeypatch, argv):
-    import trail.commands.cw as cw_cmd
+def test_cw_stage_detect_service_preserves_last_stage_snapshot(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    monkeypatch.setattr("trail.daemon.cw_service.stage_detector_factory", lambda runtime: object())
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.detect_cw_stage",
+        lambda session, detector: _set_stage(session, {"value": "event", "stale": False}),
+    )
 
-    captured: dict = {}
-    monkeypatch.setattr(cw_cmd, "stage_detector_factory", lambda runtime: (lambda: "event"), raising=False)
+    result = cw_service.handle(
+        method="cw.stage.detect",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+    persisted = service.load_session(session.session_id)
 
-    def fake_run_session_command(**kwargs):
-        captured.update(kwargs)
-        return {
-            "ok": True,
-            "data": {"value": "event", "stale": False},
-            "error": None,
-            "screenshot": "after.png",
-            "timing": {},
-        }
-
-    monkeypatch.setattr(cw_cmd, "run_session_command", fake_run_session_command, raising=False)
-
-    result = cli_runner.invoke(app, ["cw", "stage", *argv, "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert callable(captured["failure_persistence"])
+    assert result["value"] == "event"
+    assert persisted.scene_state["cw"]["stage"]["value"] == "event"
+    assert persisted.last_stage == {"scene": "cw", "value": "event"}

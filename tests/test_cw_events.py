@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import importlib
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from trail.cli import app
 from trail.scenes.cw.models import ensure_cw_state
 from trail.session.store import SessionStore
 
@@ -115,271 +116,194 @@ def test_boss_preview_settle_and_battle_actions_invalidate_stage_snapshot(tmp_pa
     assert calls == ["called"]
 
 
+def _build_cw_harness(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+    from trail.daemon.cw_service import CwService
+    from trail.daemon.session_service import SessionServiceRegistry
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    return registry, service, session, cw_service, command_service
+
+
+def _run_cw_mutation(*, command_service, session, workspace_root: Path, request_id: str, method: str, payload: dict):
+    from trail.daemon.models import DaemonRequest
+    from trail.daemon.protocol import PROTOCOL_VERSION
+
+    return command_service.handle(
+        DaemonRequest(
+            request_id=request_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(workspace_root),
+            session_id=session.session_id,
+            verbose=False,
+            method=method,
+            payload={"session_id": session.session_id, **payload},
+        )
+    )
+
+
+def _set_stage(session, stage: dict):
+    session.scene_state.setdefault("cw", {})["stage"] = dict(stage)
+    session.last_stage = None
+    return session
+
+
+def _set_event_result(session, result: dict):
+    session.scene_state.setdefault("cw", {})["stage"] = {"stale": True}
+    session.last_stage = None
+    return result
+
+
 @pytest.mark.parametrize(
-    ("argv", "expected_options"),
+    ("method", "patch_name", "expected_options"),
     [
-        (["cw", "replenish", "read"], [1, 2, 3]),
-        (["cw", "invest", "read"], [1, 2, 3]),
-        (["cw", "encounter", "read"], [1, 2]),
-        (["cw", "fortune", "read"], [1, 2]),
+        ("cw.replenish.read", "read_cw_replenish", [1, 2, 3]),
+        ("cw.invest.read", "read_cw_invest", [1, 2, 3]),
+        ("cw.encounter.read", "read_cw_encounter", [1, 2]),
+        ("cw.fortune.read", "read_cw_fortune", [1, 2]),
     ],
 )
-def test_cw_event_read_cli_returns_options(cli_runner, fake_runtime, fake_session, argv, expected_options, tmp_path):
-    result = cli_runner.invoke(app, [*argv, "--session", fake_session])
+def test_cw_event_read_services_return_options(tmp_path: Path, monkeypatch, method: str, patch_name: str, expected_options: list[int]):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    monkeypatch.setattr(f"trail.daemon.cw_service.{patch_name}", lambda session: {"options": expected_options})
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"options": expected_options}
-    assert payload["screenshot"]
+    result = cw_service.handle(
+        method=method,
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
 
-    session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
-    assert session.last_result == {
-        "command": ".".join(argv),
-        "ok": True,
-        "data": {"options": expected_options},
-        "error": None,
-    }
+    assert result == {"options": expected_options}
 
 
 @pytest.mark.parametrize(
-    ("factory_name", "argv", "option"),
+    ("method", "request_id", "payload", "setup_patches", "expected_data"),
     [
-        ("replenish_chooser_factory", ["cw", "replenish", "choose"], 1),
-        ("invest_chooser_factory", ["cw", "invest", "choose"], 2),
-        ("encounter_chooser_factory", ["cw", "encounter", "choose"], 1),
-        ("fortune_chooser_factory", ["cw", "fortune", "choose"], 2),
+        (
+            "cw.event.handle",
+            "req-event-handle-1",
+            {},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.event_handler_factory", lambda runtime: object()),
+                monkeypatch.setattr(
+                    "trail.daemon.cw_service.handle_cw_event",
+                    lambda session, handler: _set_event_result(session, {"event_type": "special", "handled_action": "confirm"}),
+                ),
+            ),
+            {"event_type": "special", "handled_action": "confirm"},
+        ),
+        (
+            "cw.replenish.choose",
+            "req-replenish-choose-1",
+            {"option": 2},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.replenish_chooser_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.choose_cw_replenish", lambda session, option, chooser: _set_stage(session, {"stale": True})),
+            ),
+            {"stale": True},
+        ),
+        (
+            "cw.invest.choose",
+            "req-invest-choose-1",
+            {"option": 1},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.invest_chooser_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.choose_cw_invest", lambda session, option, chooser: _set_stage(session, {"stale": True})),
+            ),
+            {"stale": True},
+        ),
+        (
+            "cw.encounter.choose",
+            "req-encounter-choose-1",
+            {"option": 1},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.encounter_chooser_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.choose_cw_encounter", lambda session, option, chooser: _set_stage(session, {"stale": True})),
+            ),
+            {"stale": True},
+        ),
+        (
+            "cw.fortune.choose",
+            "req-fortune-choose-1",
+            {"option": 2},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.fortune_chooser_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.choose_cw_fortune", lambda session, option, chooser: _set_stage(session, {"stale": True})),
+            ),
+            {"stale": True},
+        ),
+        (
+            "cw.boss_preview.confirm",
+            "req-boss-confirm-1",
+            {},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.boss_preview_confirmer_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.confirm_cw_boss_preview", lambda session, confirmer: _set_stage(session, {"stale": True})),
+            ),
+            {"stale": True},
+        ),
+        (
+            "cw.battle.start",
+            "req-battle-start-1",
+            {},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.battle_starter_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.start_cw_battle", lambda session, starter: _set_stage(session, {"stale": True})),
+            ),
+            {"stale": True},
+        ),
+        (
+            "cw.battle.continue",
+            "req-battle-continue-1",
+            {},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.battle_continuer_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.continue_cw_battle", lambda session, continuer: _set_stage(session, {"stale": True})),
+            ),
+            {"stale": True},
+        ),
+        (
+            "cw.settle.next",
+            "req-settle-next-1",
+            {},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.settle_continuer_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.settle_cw_next", lambda session, continuer: _set_stage(session, {"stale": True})),
+            ),
+            {"stale": True},
+        ),
     ],
 )
-def test_cw_event_choose_cli_invalidates_stage_snapshot(
-    cli_runner,
-    fake_runtime,
-    fake_session,
-    argv,
-    factory_name,
-    option,
-    tmp_path,
+def test_cw_event_mutations_flow_through_command_service_journal(
+    tmp_path: Path,
     monkeypatch,
+    method: str,
+    request_id: str,
+    payload: dict,
+    setup_patches,
+    expected_data: dict,
 ):
-    import trail.commands.cw as cw_cmd
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    setup_patches(monkeypatch)
 
-    chosen: list[int] = []
-    monkeypatch.setattr(cw_cmd, factory_name, lambda runtime: (lambda selected: chosen.append(selected)), raising=False)
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id=request_id,
+        method=method,
+        payload=payload,
+    )
+    status = service.request_status(request_id)
+    persisted = service.load_session(session.session_id)
 
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["stage"] = {"value": "shop", "stale": False}
-    session.last_stage = {"scene": "cw", "value": "shop"}
-    store.save(session)
-
-    result = cli_runner.invoke(app, [*argv, "--session", fake_session, "--option", str(option)])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"stale": True}
-    assert payload["screenshot"]
-    assert chosen == [option]
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["stage"] == {"stale": True}
-    assert session.last_stage is None
-
-
-@pytest.mark.parametrize(
-    ("argv", "option", "expected_clicks"),
-    [
-        (["cw", "replenish", "choose"], 1, [(384, 561), (1689, 982)]),
-        (["cw", "invest", "choose"], 2, [(960, 324), (1478, 562)]),
-        (["cw", "encounter", "choose"], 1, [(672, 540), (960, 907)]),
-        (["cw", "fortune", "choose"], 2, [(1536, 324), (1478, 562)]),
-    ],
-)
-def test_cw_event_choose_cli_uses_default_runtime_actions_and_clears_last_stage(
-    cli_runner,
-    fake_runtime,
-    fake_session,
-    argv,
-    option,
-    expected_clicks,
-    tmp_path,
-):
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["stage"] = {"value": "shop", "stale": False}
-    session.last_stage = {"scene": "cw", "value": "shop"}
-    store.save(session)
-
-    result = cli_runner.invoke(app, [*argv, "--session", fake_session, "--option", str(option)])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"stale": True}
-    assert fake_runtime.clicks == expected_clicks
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["stage"] == {"stale": True}
-    assert session.last_stage is None
-
-
-def test_cw_event_handle_cli_returns_type_and_action(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    import trail.commands.cw as cw_cmd
-
-    monkeypatch.setattr(cw_cmd, "event_handler_factory", lambda runtime: (lambda: ("special", "confirm")), raising=False)
-
-    result = cli_runner.invoke(app, ["cw", "event", "handle", "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"event_type": "special", "handled_action": "confirm"}
-    assert payload["screenshot"]
-
-    session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
-    assert session.last_result == {
-        "command": "cw.event.handle",
-        "ok": True,
-        "data": {"event_type": "special", "handled_action": "confirm"},
-        "error": None,
-    }
-
-
-@pytest.mark.parametrize(
-    ("factory_name", "argv"),
-    [
-        ("boss_preview_confirmer_factory", ["cw", "boss-preview", "confirm"]),
-        ("settle_continuer_factory", ["cw", "settle", "next"]),
-        ("battle_starter_factory", ["cw", "battle", "start"]),
-        ("battle_continuer_factory", ["cw", "battle", "continue"]),
-    ],
-)
-def test_cw_boss_preview_settle_and_battle_cli_invalidates_stage_snapshot(
-    cli_runner,
-    fake_runtime,
-    fake_session,
-    argv,
-    factory_name,
-    tmp_path,
-    monkeypatch,
-):
-    import trail.commands.cw as cw_cmd
-
-    calls: list[str] = []
-    monkeypatch.setattr(cw_cmd, factory_name, lambda runtime: (lambda: calls.append("called")), raising=False)
-
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["stage"] = {"value": "settle", "stale": False}
-    session.last_stage = {"scene": "cw", "value": "settle"}
-    store.save(session)
-
-    result = cli_runner.invoke(app, [*argv, "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"stale": True}
-    assert payload["screenshot"]
-    assert calls == ["called"]
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["stage"] == {"stale": True}
-    assert session.last_stage is None
-
-
-def test_cw_event_handle_cli_uses_default_handler_and_clears_last_stage(cli_runner, fake_runtime, fake_session, tmp_path):
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["stage"] = {"value": "event", "stale": False}
-    session.last_stage = {"scene": "cw", "value": "event"}
-    store.save(session)
-
-    result = cli_runner.invoke(app, ["cw", "event", "handle", "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"event_type": "special", "handled_action": "confirm"}
-    assert fake_runtime.clicks == [(960, 270), (1478, 562)]
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["stage"] == {"stale": True}
-    assert session.last_stage is None
-
-
-@pytest.mark.parametrize(
-    ("argv", "expected_clicks"),
-    [
-        (["cw", "boss-preview", "confirm"], [(960, 756)]),
-        (["cw", "settle", "next"], [(960, 885)]),
-        (["cw", "battle", "start"], [(960, 889)]),
-        (["cw", "battle", "continue"], [(960, 889)]),
-    ],
-)
-def test_cw_boss_preview_settle_and_battle_cli_uses_default_runtime_actions_and_clears_last_stage(
-    cli_runner,
-    fake_runtime,
-    fake_session,
-    argv,
-    expected_clicks,
-    tmp_path,
-):
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["stage"] = {"value": "settle", "stale": False}
-    session.last_stage = {"scene": "cw", "value": "settle"}
-    store.save(session)
-
-    result = cli_runner.invoke(app, [*argv, "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"stale": True}
-    assert fake_runtime.clicks == expected_clicks
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["stage"] == {"stale": True}
-    assert session.last_stage is None
-
-
-@pytest.mark.parametrize(
-    ("argv"),
-    [
-        ["cw", "replenish", "read"],
-        ["cw", "invest", "read"],
-        ["cw", "encounter", "read"],
-        ["cw", "fortune", "read"],
-        ["cw", "boss-preview", "confirm"],
-        ["cw", "battle", "start"],
-        ["cw", "battle", "continue"],
-        ["cw", "settle", "next"],
-        ["cw", "event", "handle"],
-    ],
-)
-def test_cw_event_cli_requires_session_for_read_and_handle_commands(cli_runner, argv):
-    result = cli_runner.invoke(app, argv)
-    output = result_text(result)
-
-    assert result.exit_code != 0
-    assert "Missing option" in output
-    assert "--session" in output
-
-
-@pytest.mark.parametrize(
-    ("argv"),
-    [
-        ["cw", "replenish", "choose", "--option", "1"],
-        ["cw", "invest", "choose", "--option", "2"],
-        ["cw", "encounter", "choose", "--option", "1"],
-        ["cw", "fortune", "choose", "--option", "2"],
-    ],
-)
-def test_cw_event_choose_cli_requires_session_when_option_is_present(cli_runner, argv):
-    result = cli_runner.invoke(app, argv)
-    output = result_text(result)
-
-    assert result.exit_code != 0
-    assert "Missing option" in output
-    assert "--session" in output
+    assert envelope["ok"] is True
+    assert envelope["data"] == expected_data
+    assert status["final_state"] == "completed"
+    assert persisted.scene_state["cw"]["stage"] == ({"stale": True} if method != "cw.event.handle" else {"stale": True})

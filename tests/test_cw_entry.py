@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
-from trail.cli import app
 from trail.runtime.model import Box
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.entry import enter_cw
@@ -272,40 +273,66 @@ def test_enter_cw_does_not_treat_generic_settle_template_as_top_level_entry_reco
     ]
 
 
-def test_cw_enter_cli_persists_entry_snapshot(cli_runner, fake_runtime, fake_session, tmp_path):
-    continue_box = _box("entry.continue", left=60, top=80)
-    blank_box = _box("stage.boss_preview", left=160, top=180)
-    _install_template_runtime(
-        fake_runtime,
-        locate_results={
-            _asset("stage.preparation"): None,
-            _asset("entry.continue"): continue_box,
-        },
-        wait_results={
-            _asset("entry.continue"): continue_box,
-            _asset("stage.boss_preview"): blank_box,
-        },
+def _build_cw_harness(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+    from trail.daemon.cw_service import CwService
+    from trail.daemon.session_service import SessionServiceRegistry
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    return registry, service, session, cw_service, command_service
+
+
+def _run_cw_mutation(*, command_service, session, workspace_root: Path, request_id: str, method: str, payload: dict):
+    from trail.daemon.models import DaemonRequest
+    from trail.daemon.protocol import PROTOCOL_VERSION
+
+    return command_service.handle(
+        DaemonRequest(
+            request_id=request_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(workspace_root),
+            session_id=session.session_id,
+            verbose=False,
+            method=method,
+            payload={"session_id": session.session_id, **payload},
+        )
     )
 
-    result = cli_runner.invoke(app, ["cw", "enter", "--session", fake_session, "--mode", "continue"])
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {
-        "mode": "continue",
-        "difficulty": "current",
-        "battle_mode": "standard",
-    }
-    assert payload["screenshot"]
-    assert fake_runtime.clicks == [continue_box.center, blank_box.center]
+def _set_entry(session, entry: dict):
+    session.scene_state.setdefault("cw", {})["entry"] = dict(entry)
+    session.scene_state["cw"]["stage"] = {"stale": True}
+    return session
 
-    session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
-    assert session.scene_state["cw"]["entry"] == payload["data"]
-    assert session.scene_state["cw"]["stage"] == {"stale": True}
-    assert session.last_result == {
-        "command": "cw.enter",
-        "ok": True,
-        "data": payload["data"],
-        "error": None,
-    }
+
+def test_cw_enter_mutation_flows_through_command_service_journal(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.enter_cw",
+        lambda session, mode, difficulty, battle_mode, runtime: _set_entry(
+            session,
+            {"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode},
+        ),
+    )
+
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-enter-1",
+        method="cw.enter",
+        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+    )
+    status = registry.for_workspace(str(tmp_path)).request_status("req-cw-enter-1")
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"]["mode"] == "continue"
+    assert status["final_state"] == "completed"
+    assert persisted.scene_state["cw"]["entry"]["battle_mode"] == "standard"
+    assert persisted.scene_state["cw"]["stage"] == {"stale": True}

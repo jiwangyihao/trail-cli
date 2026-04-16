@@ -3,11 +3,11 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from trail.artifacts.store import ArtifactStore
-from trail.cli import app
 from trail.core.errors import TrailError
 from trail.runtime.model import Box
 from trail.session.store import SessionStore
@@ -623,138 +623,98 @@ def test_apply_cw_guide_rejects_non_cw_guide_payload(tmp_path, scene, kind, code
     assert exc_info.value.code == code
 
 
-def test_cw_guide_apply_cli_fetches_lineup_applies_ui_and_persists_artifact(
-    cli_runner,
-    fake_runtime,
-    fake_session,
-    tmp_path,
-    monkeypatch,
-):
-    import trail.commands.cw as cw_cmd
-    import trail.scenes.cw.guide as guide_scene
+def _build_cw_harness(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+    from trail.daemon.cw_service import CwService
+    from trail.daemon.session_service import SessionServiceRegistry
 
-    artifact_store = ArtifactStore(tmp_path / ".trail" / "artifacts")
-    monkeypatch.setattr(cw_cmd, "artifact_store_factory", lambda: artifact_store, raising=False)
-    captured_requests: list[str] = []
-
-    def fake_urlopen(request, timeout=10):
-        captured_requests.append(request.full_url)
-        return FakeHttpResponse(fake_lineup_detail_response(lineup_id="69c9014f24546dfbd2b26227"))
-
-    monkeypatch.setattr(guide_scene, "urlopen", fake_urlopen, raising=False)
-    fake_runtime.wait_result = Box(left=10, top=20, width=40, height=20, source="guide.png")
-
-    result = cli_runner.invoke(app, ["cw", "guide", "apply", "--session", fake_session, "--guide", "69c9014f24546dfbd2b26227"])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    artifact_id = payload["data"]["artifact"]
-    assert isinstance(artifact_id, str) and len(artifact_id) == 32
-    saved_artifact = json.loads((artifact_store.workspace / f"{artifact_id}.json").read_text(encoding="utf-8"))
-    assert captured_requests == [
-        "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/lineup/detail?id=69c9014f24546dfbd2b26227&game=hkrpg"
-    ]
-    assert saved_artifact["lineup_id"] == "69c9014f24546dfbd2b26227"
-    assert payload["data"]["share_code"] == "##REAL-CODE##"
-    assert fake_runtime.wait_calls == [
-        str((CW_ASSET_ROOT / "strategy.png").resolve()),
-        str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve()),
-        str((CW_ASSET_ROOT / "ensure2.png").resolve()),
-        str((CW_ASSET_ROOT / "apply_strategy.png").resolve()),
-    ]
-    assert fake_runtime.clicks == [
-        (30, 30),
-        (30, 30),
-        (960, 540),
-        (30, 30),
-        (30, 30),
-    ]
-    assert fake_runtime.keys == [("esc", 3, 1)]
-    assert fake_runtime.hotkeys == []
-    assert fake_runtime.texts == ["##REAL-CODE##"]
-    assert fake_runtime.locate_calls == [
-        str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve()),
-        str((CW_ASSET_ROOT / "apply_strategy.png").resolve()),
-    ]
-
-    session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
-    assert session.scene_state["cw"]["guide"]["artifact"] == artifact_id
-    assert session.scene_state["cw"]["guide"]["lineup_id"] == "69c9014f24546dfbd2b26227"
-    assert session.scene_state["cw"]["guide"]["on_field"] == {"希儿": 9}
-    assert session.scene_state["cw"]["guide"]["off_field"] == {"佩拉": 3}
-    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"希儿": 9, "佩拉": 3}
-    assert session.scene_state["cw"]["constraints"]["min_coins"] == 40
-    assert session.scene_state["cw"]["constraints"]["min_level"] == 9
-    assert session.scene_state["cw"]["constraints"]["mid_level"] == 9
-    assert session.scene_state["cw"]["shop"]["stale"] is True
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    return registry, service, session, cw_service, command_service
 
 
-def test_cw_guide_apply_cli_rejects_invalid_guide_input(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    import trail.commands.cw as cw_cmd
-    import trail.scenes.cw.guide as guide_scene
+def _run_cw_mutation(*, command_service, session, workspace_root: Path, request_id: str, method: str, payload: dict):
+    from trail.daemon.models import DaemonRequest
+    from trail.daemon.protocol import PROTOCOL_VERSION
 
-    artifact_store = ArtifactStore(tmp_path / ".trail" / "artifacts")
-    monkeypatch.setattr(cw_cmd, "artifact_store_factory", lambda: artifact_store, raising=False)
-    monkeypatch.setattr(
-        guide_scene,
-        "urlopen",
-        lambda request, timeout=10: pytest.fail("invalid lineup id should fail before requesting api"),
-        raising=False,
+    return command_service.handle(
+        DaemonRequest(
+            request_id=request_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(workspace_root),
+            session_id=session.session_id,
+            verbose=False,
+            method=method,
+            payload={"session_id": session.session_id, **payload},
+        )
     )
 
-    result = cli_runner.invoke(app, ["cw", "guide", "apply", "--session", fake_session, "--guide", "bad id!!"])
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"] == {
-        "code": "GUIDE_URL_INVALID",
-        "message": "unsupported cw guide url: bad id!!",
-    }
-    assert fake_runtime.wait_calls == []
-    assert fake_runtime.hotkeys == []
-    assert fake_runtime.texts == []
-    assert fake_runtime.clicks == []
-    assert fake_runtime.keys == []
-
-
-def test_cw_guide_current_cli_reads_applied_guide_from_session_without_network(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    import trail.commands.cw as cw_cmd
-    import trail.scenes.cw.guide as guide_scene
-
-    artifact_store = ArtifactStore(tmp_path / ".trail" / "artifacts")
-    monkeypatch.setattr(cw_cmd, "artifact_store_factory", lambda: artifact_store, raising=False)
+def test_cw_guide_apply_mutation_persists_artifact_and_session_state(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    applied_share_codes: list[str] = []
     monkeypatch.setattr(
-        guide_scene,
-        "urlopen",
-        lambda request, timeout=10: pytest.fail("cw guide current should not request network"),
-        raising=False,
+        "trail.daemon.cw_service.fetch_cw_guide",
+        lambda lineup_id, fetcher: {
+            **fake_guide(),
+            "artifact_id": None,
+            "lineup_id": lineup_id,
+        },
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.apply_cw_guide_via_ui",
+        lambda runtime, share_code: applied_share_codes.append(share_code),
     )
 
-    session_store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = session_store.load(fake_session)
-    session.scene_state.setdefault("cw", {})["guide"] = {
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-guide-apply-1",
+        method="cw.guide.apply",
+        payload={"lineup_id": "69c9014f24546dfbd2b26227"},
+    )
+    status = service.request_status("req-cw-guide-apply-1")
+    persisted = service.load_session(session.session_id)
+    artifact_id = envelope["data"]["artifact"]
+    artifact_payload = json.loads((tmp_path / ".trail" / "artifacts" / f"{artifact_id}.json").read_text(encoding="utf-8"))
+
+    assert envelope["ok"] is True
+    assert applied_share_codes == ["##demo##"]
+    assert status["final_state"] == "completed"
+    assert artifact_payload["lineup_id"] == "69c9014f24546dfbd2b26227"
+    assert persisted.scene_state["cw"]["guide"]["artifact"] == artifact_id
+    assert persisted.scene_state["cw"]["shop"]["stale"] is True
+
+
+def test_cw_guide_current_service_reads_applied_guide_from_session(tmp_path: Path):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    loaded = service.load_session(session.session_id)
+    loaded.scene_state.setdefault("cw", {})["guide"] = {
         "artifact": "artifact-demo",
         "lineup_id": "69c9014f24546dfbd2b26227",
         "share_code": "##demo##",
         "title": "7群攻2银河学者",
     }
-    session_store.save(session)
+    service.save_session(loaded)
 
-    result = cli_runner.invoke(app, ["cw", "guide", "current", "--session", fake_session])
+    payload = cw_service.handle(
+        method="cw.guide.current",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {
+    assert payload == {
         "artifact": "artifact-demo",
         "lineup_id": "69c9014f24546dfbd2b26227",
         "share_code": "##demo##",
         "title": "7群攻2银河学者",
     }
-    assert fake_runtime.wait_calls == []
-    assert fake_runtime.clicks == []
 
 
 def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit():

@@ -3,10 +3,11 @@ from __future__ import annotations
 from copy import deepcopy
 import importlib
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from trail.cli import app
 from trail.core.errors import TrailError
 from trail.session.store import SessionStore
 
@@ -309,291 +310,145 @@ def test_shop_close_marks_shop_closed_and_stale(tmp_path):
     assert closed == ["close"]
 
 
-def test_cw_shop_open_cli_persists_snapshot(cli_runner, fake_runtime, fake_session, tmp_path):
-    result = cli_runner.invoke(app, ["cw", "shop", "open", "--session", fake_session])
+def _build_cw_harness(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+    from trail.daemon.cw_service import CwService
+    from trail.daemon.session_service import SessionServiceRegistry
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"]["stale"] is True
-    assert payload["data"]["opened"] is True
-    assert fake_runtime.clicks == [(1620, 915)]
-
-    session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
-    assert session.scene_state["cw"]["shop"] == payload["data"]
-
-
-def test_cw_shop_scan_cli_uses_runtime_scanner(cli_runner, fake_runtime, fake_session, tmp_path):
-    calls: list[dict] = []
-
-    def fake_ocr(**kwargs):
-        calls.append(kwargs)
-        if kwargs == {"from_x": 364, "from_y": 280, "to_x": 1689, "to_y": 334}:
-            return [(None, "银狼"), (None, "20"), (None, "希儿"), (None, "30")]
-        if kwargs == {"from_x": 1612, "from_y": 874, "to_x": 1708, "to_y": 961}:
-            return [(None, "40")]
-        if kwargs == {"from_x": 96, "from_y": 880, "to_x": 576, "to_y": 939}:
-            return [(None, "等级.7")]
-        if kwargs == {"from_x": 969, "from_y": 194, "to_x": 1167, "to_y": 291}:
-            return [(None, "8")]
-        return []
-
-    fake_runtime.ocr = fake_ocr
-
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    session.scene_state["cw"] = {
-        "guide": {"remaining_purchases": {"银狼": 2}},
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        "slots": {"stale": False, "hand": ["银狼"]},
-        "shop": {"stale": True, "opened": True},
-        "stage": {"stale": True},
-        "metrics": {},
-    }
-    store.save(session)
-
-    result = cli_runner.invoke(app, ["cw", "shop", "scan", "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {
-        "opened": True,
-        "items": [{"name": "银狼", "price": 20}, {"name": "希儿", "price": 30}],
-        "coins": 40,
-        "level": 7,
-        "reserve_full": False,
-        "max_team_size": 8,
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 2},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
-        "stale": False,
-    }
-    assert calls == [
-        {"from_x": 364, "from_y": 280, "to_x": 1689, "to_y": 334},
-        {"from_x": 1612, "from_y": 874, "to_x": 1708, "to_y": 961},
-        {"from_x": 96, "from_y": 880, "to_x": 576, "to_y": 939},
-        {"from_x": 969, "from_y": 194, "to_x": 1167, "to_y": 291},
-    ]
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    return registry, service, session, cw_service, command_service
 
 
-def test_cw_shop_scan_cli_refreshes_snapshot(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    import trail.commands.cw as cw_cmd
+def _run_cw_mutation(*, command_service, session, workspace_root: Path, request_id: str, method: str, payload: dict):
+    from trail.daemon.models import DaemonRequest
+    from trail.daemon.protocol import PROTOCOL_VERSION
 
-    monkeypatch.setattr(cw_cmd, "shop_scanner_factory", lambda runtime: fake_shop_snapshot, raising=False)
-
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    session.scene_state["cw"] = {
-        "guide": {"remaining_purchases": {"银狼": 2}},
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        "slots": {"stale": False, "hand": ["银狼"]},
-        "shop": {"stale": True, "opened": True},
-        "stage": {"stale": True},
-        "metrics": {},
-    }
-    store.save(session)
-
-    result = cli_runner.invoke(app, ["cw", "shop", "scan", "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {
-        "opened": True,
-        "items": [{"name": "银狼", "price": 20}],
-        "coins": 40,
-        "level": 7,
-        "reserve_full": False,
-        "max_team_size": 8,
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 2},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
-        "stale": False,
-    }
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["shop"] == payload["data"]
+    return command_service.handle(
+        DaemonRequest(
+            request_id=request_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(workspace_root),
+            session_id=session.session_id,
+            verbose=False,
+            method=method,
+            payload={"session_id": session.session_id, **payload},
+        )
+    )
 
 
-def test_cw_shop_buy_slot_cli_mutates_remaining_purchases(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    import trail.commands.cw as cw_cmd
-
-    from tests.conftest import fake_buy_success
-
-    monkeypatch.setattr(cw_cmd, "shop_buyer_factory", lambda runtime: fake_buy_success, raising=False)
-    monkeypatch.setattr(cw_cmd, "shop_scanner_factory", lambda runtime: fake_shop_snapshot_after_purchase, raising=False)
-
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    session.scene_state["cw"] = {
-        "guide": {"remaining_purchases": {"银狼": 1}},
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        "slots": {"stale": False, "hand": ["银狼"]},
-        "shop": {"stale": False, "opened": True, "items": [{"name": "银狼", "price": 20}]},
-        "stage": {"stale": True},
-        "metrics": {},
-    }
-    store.save(session)
-
-    result = cli_runner.invoke(app, ["cw", "shop", "buy-slot", "--session", fake_session, "--slot", "1", "--expect", "银狼"])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {
-        "opened": True,
-        "items": [{"name": "阮·梅", "price": 30}],
-        "coins": 22,
-        "level": 8,
-        "reserve_full": False,
-        "max_team_size": 8,
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 0},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
-        "stale": False,
-    }
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 0}
-    assert session.scene_state["cw"]["shop"] == payload["data"]
-    assert session.scene_state["cw"]["slots"]["stale"] is True
+def _set_shop(session, shop: dict):
+    session.scene_state.setdefault("cw", {})["shop"] = deepcopy(shop)
+    return session
 
 
-def test_cw_shop_buy_slot_cli_without_guide_refreshes_without_crashing(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    import trail.commands.cw as cw_cmd
+@pytest.mark.parametrize(
+    ("method", "request_id", "payload", "setup_patches", "expected_key", "expected_value"),
+    [
+        (
+            "cw.shop.open",
+            "req-shop-open-1",
+            {},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.shop_opener_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.open_cw_shop", lambda session, opener: _set_shop(session, {"opened": True, "stale": True})),
+            ),
+            "opened",
+            True,
+        ),
+        (
+            "cw.shop.buy_slot",
+            "req-shop-buy-1",
+            {"slot": 2, "expect": "希儿"},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.shop_buyer_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.shop_scanner_factory", lambda runtime: object()),
+                monkeypatch.setattr(
+                    "trail.daemon.cw_service.buy_cw_shop_slot",
+                    lambda session, slot, expect, buyer, scanner: _set_shop(session, {"slot": slot, "expect": expect, "opened": True, "stale": False}),
+                ),
+            ),
+            "expect",
+            "希儿",
+        ),
+        (
+            "cw.shop.refresh",
+            "req-shop-refresh-1",
+            {},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.shop_refresher_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.refresh_cw_shop", lambda session, refresher: _set_shop(session, {"refreshed": True, "opened": True, "stale": False})),
+            ),
+            "refreshed",
+            True,
+        ),
+        (
+            "cw.shop.close",
+            "req-shop-close-1",
+            {},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.shop_closer_factory", lambda runtime: object()),
+                monkeypatch.setattr("trail.daemon.cw_service.close_cw_shop", lambda session, closer: _set_shop(session, {"opened": False, "stale": True})),
+            ),
+            "opened",
+            False,
+        ),
+    ],
+)
+def test_cw_shop_mutating_commands_flow_through_command_service_journal(
+    tmp_path: Path,
+    monkeypatch,
+    method: str,
+    request_id: str,
+    payload: dict,
+    setup_patches,
+    expected_key: str,
+    expected_value,
+):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    setup_patches(monkeypatch)
 
-    from tests.conftest import fake_buy_success
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id=request_id,
+        method=method,
+        payload=payload,
+    )
+    status = service.request_status(request_id)
 
-    monkeypatch.setattr(cw_cmd, "shop_buyer_factory", lambda runtime: fake_buy_success, raising=False)
-    monkeypatch.setattr(cw_cmd, "shop_scanner_factory", lambda runtime: fake_shop_snapshot_after_purchase, raising=False)
-
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    session.scene_state["cw"] = {
-        "guide": None,
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        "slots": {"stale": False, "hand": ["银狼"]},
-        "shop": {"stale": False, "opened": True, "items": [{"name": "银狼", "price": 20}]},
-        "stage": {"stale": True},
-        "metrics": {},
-    }
-    store.save(session)
-
-    result = cli_runner.invoke(app, ["cw", "shop", "buy-slot", "--session", fake_session, "--slot", "1", "--expect", "银狼"])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"]["opened"] is True
-    assert payload["data"]["items"] == [{"name": "阮·梅", "price": 30}]
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["guide"] is None
-
-
-def test_cw_shop_buy_slot_cli_noop_does_not_decrement_remaining_purchases(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    import trail.commands.cw as cw_cmd
-
-    from tests.conftest import fake_buy_success
-
-    monkeypatch.setattr(cw_cmd, "shop_buyer_factory", lambda runtime: fake_buy_success, raising=False)
-    monkeypatch.setattr(cw_cmd, "shop_scanner_factory", lambda runtime: fake_shop_snapshot, raising=False)
-
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    session.scene_state["cw"] = {
-        "guide": {"remaining_purchases": {"银狼": 1}},
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        "slots": {"stale": False, "hand": ["银狼"]},
-        "shop": {"stale": False, "opened": True, "items": [{"name": "银狼", "price": 20}]},
-        "stage": {"stale": True},
-        "metrics": {},
-    }
-    store.save(session)
-    before_shop = deepcopy(session.scene_state["cw"]["shop"])
-
-    result = cli_runner.invoke(app, ["cw", "shop", "buy-slot", "--session", fake_session, "--slot", "1", "--expect", "银狼"])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "SHOP_BUY_NOT_CONFIRMED"
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
-    assert session.scene_state["cw"]["shop"] == before_shop
-
-
-def test_cw_shop_buy_slot_cli_clicks_requested_slot(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    import trail.commands.cw as cw_cmd
-
-    monkeypatch.setattr(cw_cmd, "shop_scanner_factory", lambda runtime: fake_shop_snapshot_after_purchase, raising=False)
-
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    session.scene_state["cw"] = {
-        "guide": {"remaining_purchases": {"银狼": 1}},
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        "slots": {"stale": False, "hand": ["银狼"]},
-        "shop": {
-            "stale": False,
-            "opened": True,
-            "items": [
-                {"name": "希儿", "price": 10},
-                {"name": "卡芙卡", "price": 15},
-                {"name": "银狼", "price": 20},
-            ],
-        },
-        "stage": {"stale": True},
-        "metrics": {},
-    }
-    store.save(session)
-
-    result = cli_runner.invoke(app, ["cw", "shop", "buy-slot", "--session", fake_session, "--slot", "3", "--expect", "银狼"])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert fake_runtime.clicks == [(1056, 194)]
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 0}
-    assert session.scene_state["cw"]["shop"] == payload["data"]
+    assert envelope["ok"] is True
+    assert envelope["data"][expected_key] == expected_value
+    assert status["final_state"] == "completed"
+    assert service.load_session(session.session_id).scene_state["cw"]["shop"][expected_key] == expected_value
 
 
-def test_cw_shop_refresh_close_and_status_cli_follow_state_contract(cli_runner, fake_runtime, fake_session, tmp_path):
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    session.scene_state["cw"] = {
-        "guide": {"remaining_purchases": {"银狼": 1}},
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        "slots": {"stale": False, "hand": ["银狼"]},
-        "shop": {"stale": False, "opened": True, "items": [{"name": "银狼", "price": 20}]},
-        "stage": {"stale": True},
-        "metrics": {},
-    }
-    store.save(session)
+def test_cw_shop_read_commands_persist_shop_snapshot(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    loaded = service.load_session(session.session_id)
+    loaded.scene_state.setdefault("cw", {})["guide"] = {"remaining_purchases": {"银狼": 2}}
+    loaded.scene_state["cw"]["constraints"] = {"min_coins": 40, "min_level": 7, "mid_level": 7}
+    service.save_session(loaded)
+    monkeypatch.setattr("trail.daemon.cw_service.shop_scanner_factory", lambda runtime: fake_shop_snapshot)
 
-    refresh_result = cli_runner.invoke(app, ["cw", "shop", "refresh", "--session", fake_session])
-    assert refresh_result.exit_code == 0
-    refresh_payload = json.loads(refresh_result.stdout)
-    assert refresh_payload["ok"] is True
-    assert refresh_payload["data"] == {"stale": True, "opened": True, "items": [{"name": "银狼", "price": 20}]}
-    assert fake_runtime.keys == [("d", 1, 0.2)]
+    scanned = cw_service.handle(
+        method="cw.shop.scan",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+    status = cw_service.handle(
+        method="cw.shop.status",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
 
-    close_result = cli_runner.invoke(app, ["cw", "shop", "close", "--session", fake_session])
-    assert close_result.exit_code == 0
-    close_payload = json.loads(close_result.stdout)
-    assert close_payload["ok"] is True
-    assert close_payload["data"] == {"stale": True, "opened": False, "items": [{"name": "银狼", "price": 20}]}
-    assert fake_runtime.clicks == [(960, 594)]
-
-    status_result = cli_runner.invoke(app, ["cw", "shop", "status", "--session", fake_session])
-    assert status_result.exit_code == 0
-    status_payload = json.loads(status_result.stdout)
-    assert status_payload["ok"] is True
-    assert status_payload["data"] == {"stale": True, "opened": False, "items": [{"name": "银狼", "price": 20}]}
+    assert scanned["items"] == [{"name": "银狼", "price": 20}]
+    assert status["items"] == [{"name": "银狼", "price": 20}]
+    assert service.load_session(session.session_id).scene_state["cw"]["shop"]["coins"] == 40

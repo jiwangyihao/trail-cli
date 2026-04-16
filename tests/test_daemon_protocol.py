@@ -97,6 +97,16 @@ def _server_payload(
     }
 
 
+def _set_stage(session, stage: dict):
+    session.scene_state.setdefault("cw", {})["stage"] = dict(stage)
+    return session
+
+
+def _set_shop(session, shop: dict):
+    session.scene_state.setdefault("cw", {})["shop"] = dict(shop)
+    return session
+
+
 def test_protocol_version_is_fixed():
     assert PROTOCOL_VERSION == 1
 
@@ -292,6 +302,108 @@ def test_daemon_reconcile_session_command_calls_daemon_method(cli_runner, fake_d
     ]
 
 
+def test_command_service_handles_session_create(tmp_path: Path):
+    registry = SessionServiceRegistry()
+    runtime_service = SimpleNamespace(attach_window=lambda window_title: {"title": window_title, "hwnd": 1})
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry)
+    request = DaemonRequest(
+        request_id="req-session-create",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=None,
+        verbose=False,
+        method="session.create",
+        payload={"window_title": "崩坏：星穹铁道"},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"]["session_id"]
+    assert payload["data"]["window_binding"] == {"title": "崩坏：星穹铁道", "hwnd": 1}
+
+
+def test_command_service_handles_state_dump(tmp_path: Path):
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(attach_window=lambda window_title: {"title": window_title, "hwnd": 1})
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry)
+    request = DaemonRequest(
+        request_id="req-state-dump",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="state.dump",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"]["session_id"] == session.session_id
+
+
+def test_command_service_handles_cw_stage_detect(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr("trail.daemon.cw_service.stage_detector_factory", lambda runtime: object())
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.detect_cw_stage",
+        lambda session, detector: _set_stage(session, {"value": "preparation", "stale": False}),
+    )
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-stage-detect",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.stage.detect",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert registry.for_workspace(str(tmp_path)).load_session(session.session_id).scene_state["cw"]["stage"]["value"] == "preparation"
+
+
+def test_command_service_routes_cw_shop_buy_slot_through_mutation_journal(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr("trail.daemon.cw_service.shop_buyer_factory", lambda runtime: object())
+    monkeypatch.setattr("trail.daemon.cw_service.shop_scanner_factory", lambda runtime: object())
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.buy_cw_shop_slot",
+        lambda session, slot, expect, buyer, scanner: _set_shop(session, {"slot": slot, "expect": expect}),
+    )
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-shop-buy-slot",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.shop.buy_slot",
+        payload={"session_id": session.session_id, "slot": 2, "expect": "希儿"},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert registry.for_workspace(str(tmp_path)).request_status("req-cw-shop-buy-slot")["final_state"] == "completed"
+    assert registry.for_workspace(str(tmp_path)).load_session(session.session_id).scene_state["cw"]["shop"]["slot"] == 2
+
+
 def test_server_main_injects_session_service_registry(monkeypatch):
     captured: dict[str, object] = {}
     runtime_service = object()
@@ -318,6 +430,8 @@ def test_server_main_injects_session_service_registry(monkeypatch):
 
     assert captured["runtime_service"] is runtime_service
     assert isinstance(captured["session_service"], SessionServiceRegistry)
+    assert captured["cw_service"] is not None
+    assert getattr(captured["cw_service"], "runtime_service") is runtime_service
     assert captured["served"] is True
 
 

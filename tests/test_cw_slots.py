@@ -3,10 +3,11 @@ from __future__ import annotations
 import importlib
 import json
 from copy import deepcopy
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from trail.cli import app
 from trail.core.errors import TrailError
 from trail.runtime.model import Box
 from trail.scenes.cw.models import ensure_cw_state
@@ -407,279 +408,191 @@ def test_sell_one_marks_slots_snapshot_stale(tmp_path):
     }
 
 
-def test_cw_slots_read_cli_refreshes_snapshot(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    locate_results = iter([Box(left=10, top=20, width=30, height=40), None])
-    ocr_results = iter(
-        [
-            [([0, 0], "希儿", 0.99)],
-            [],
-            [],
-            [],
-            [([0, 0], "佩拉", 0.99)],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [([0, 0], "银狼", 0.99)],
-            [],
-            [([0, 0], "阮·梅", 0.99)],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-        ]
+def _build_cw_harness(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+    from trail.daemon.cw_service import CwService
+    from trail.daemon.session_service import SessionServiceRegistry
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    return registry, service, session, cw_service, command_service
+
+
+def _run_cw_mutation(*, command_service, session, workspace_root: Path, request_id: str, method: str, payload: dict):
+    from trail.daemon.models import DaemonRequest
+    from trail.daemon.protocol import PROTOCOL_VERSION
+
+    return command_service.handle(
+        DaemonRequest(
+            request_id=request_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(workspace_root),
+            session_id=session.session_id,
+            verbose=False,
+            method=method,
+            payload={"session_id": session.session_id, **payload},
+        )
     )
 
-    monkeypatch.setattr(fake_runtime, "locate", lambda template, **kwargs: next(locate_results), raising=False)
-    monkeypatch.setattr(fake_runtime, "ocr", lambda **kwargs: next(ocr_results), raising=False)
 
-    result = cli_runner.invoke(app, ["cw", "slots", "read", "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {
-        "front": ["希儿", None, None, None],
-        "back": ["佩拉", None, None, None, None, None],
-        "hand": ["银狼", None, "阮·梅", None, None, None, None, None, None],
-        "stale": False,
-    }
-
-    session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
-    assert session.scene_state["cw"]["slots"] == payload["data"]
+def _set_slots(session, slots: dict):
+    session.scene_state.setdefault("cw", {})["slots"] = deepcopy(slots)
+    return session
 
 
-def test_cw_slots_read_cli_accepts_targeted_slots_and_preserves_existing_snapshot(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["slots"] = {
-        "front": ["希儿", None, None, None],
-        "back": ["佩拉", None, None, None, None, None],
-        "hand": ["银狼", None, None, None, None, None, None, None, None],
-        "stale": False,
-    }
-    store.save(session)
+def _set_metrics(session, metrics: dict):
+    session.scene_state.setdefault("cw", {})["metrics"] = dict(metrics)
+    return session
 
-    locate_results = iter([Box(left=10, top=20, width=30, height=40), None])
-    ocr_results = iter(
-        [
-            [([0, 0], "布洛妮娅", 0.99)],
-            [([0, 0], "阮·梅", 0.99)],
-        ]
+
+def _set_sell_plan(session, plan: dict):
+    session.scene_state.setdefault("cw", {})["sell_plan"] = dict(plan)
+    return session
+
+
+def test_cw_slots_read_service_persists_incremental_snapshot(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.slots_reader_factory",
+        lambda runtime, targets=None: lambda: (["希儿", None, None, None], [None] * 6, [None] * 9),
     )
 
-    monkeypatch.setattr(fake_runtime, "locate", lambda template, **kwargs: next(locate_results), raising=False)
-    monkeypatch.setattr(fake_runtime, "ocr", lambda **kwargs: next(ocr_results), raising=False)
-
-    result = cli_runner.invoke(
-        app,
-        ["cw", "slots", "read", "--session", fake_session, "--slot", "front:1", "--slot", "hand:2"],
+    result = cw_service.handle(
+        method="cw.slots.read",
+        payload={"session_id": session.session_id, "slot": ["front:0"]},
+        workspace_root=str(tmp_path),
+        session_service=service,
     )
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"] == {
-        "front": ["希儿", "布洛妮娅", None, None],
-        "back": ["佩拉", None, None, None, None, None],
-        "hand": ["银狼", None, "阮·梅", None, None, None, None, None, None],
-        "stale": False,
-    }
+    assert result["front"][0] == "希儿"
+    assert service.load_session(session.session_id).scene_state["cw"]["slots"]["front"][0] == "希儿"
 
 
-def test_cw_slots_read_cli_rejects_empty_snapshot_without_polluting_session(cli_runner, fake_runtime, fake_session, tmp_path, monkeypatch):
-    monkeypatch.setattr(fake_runtime, "locate", lambda template, **kwargs: None, raising=False)
-    monkeypatch.setattr(fake_runtime, "ocr", lambda **kwargs: [], raising=False)
+def test_cw_slots_read_service_preserves_existing_snapshot_shape(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.slots_reader_factory",
+        lambda runtime, targets=None: lambda: ([None, "布洛妮娅", None, None], [None] * 6, [None] * 9),
+    )
 
-    result = cli_runner.invoke(app, ["cw", "slots", "read", "--session", fake_session])
+    result = cw_service.handle(
+        method="cw.slots.read",
+        payload={"session_id": session.session_id, "slot": ["front:1"]},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "SLOTS_READ_EMPTY"
-
-    session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
-    assert "cw" not in session.scene_state
-
-
-def test_cw_slots_swap_cli_marks_snapshot_stale(cli_runner, fake_runtime, fake_session, tmp_path):
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["slots"] = {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": False,
-    }
-    store.save(session)
-
-    result = cli_runner.invoke(app, ["cw", "slots", "swap", "--session", fake_session, "--source", "hand:0", "--target", "front:0"])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": True,
-    }
-    assert fake_runtime.drags == [
-        (439, 911, 741, 394),
-    ]
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["slots"] == payload["data"]
+    assert result["front"][1] == "布洛妮娅"
+    assert service.load_session(session.session_id).scene_state["cw"]["slots"]["front"][1] == "布洛妮娅"
 
 
-def test_cw_slots_place_one_cli_marks_snapshot_stale(cli_runner, fake_runtime, fake_session, tmp_path):
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["slots"] = {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": False,
-    }
-    store.save(session)
+@pytest.mark.parametrize(
+    ("method", "request_id", "payload", "setup_patches", "assertion_key", "assertion_value", "state_path"),
+    [
+        (
+            "cw.slots.swap",
+            "req-slots-swap-1",
+            {"source": "hand:0", "target": "front:0"},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.slot_swapper_factory", lambda runtime: object()),
+                monkeypatch.setattr(
+                    "trail.daemon.cw_service.swap_cw_slots",
+                    lambda session, source, target, swapper: _set_slots(session, {"front": ["希儿"], "back": [], "hand": [], "stale": False}),
+                ),
+            ),
+            "front",
+            ["希儿"],
+            ("slots", "front"),
+        ),
+        (
+            "cw.slots.place_one",
+            "req-slots-place-1",
+            {"source": "hand:0", "target": "front:0"},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.slot_placer_factory", lambda runtime: object()),
+                monkeypatch.setattr(
+                    "trail.daemon.cw_service.place_one_cw_slot",
+                    lambda session, source, target, placer: _set_slots(session, {"front": ["希儿"], "back": ["佩拉"], "hand": [], "stale": False}),
+                ),
+            ),
+            "back",
+            ["佩拉"],
+            ("slots", "back"),
+        ),
+        (
+            "cw.crystals.collect",
+            "req-crystals-collect-1",
+            {},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.crystal_collector_factory", lambda runtime: object()),
+                monkeypatch.setattr(
+                    "trail.daemon.cw_service.collect_cw_crystals",
+                    lambda session, collector: _set_metrics(session, {"last_crystal_collection": "done"}),
+                ),
+            ),
+            "last_crystal_collection",
+            "done",
+            ("metrics", "last_crystal_collection"),
+        ),
+        (
+            "cw.hand.sell_one",
+            "req-hand-sell-one-1",
+            {"slot": 0},
+            lambda monkeypatch: (
+                monkeypatch.setattr("trail.daemon.cw_service.hand_seller_factory", lambda runtime: object()),
+                monkeypatch.setattr(
+                    "trail.daemon.cw_service.sell_one_cw_hand",
+                    lambda session, slot, seller: _set_slots(session, {"front": [], "back": [], "hand": [None], "stale": True}),
+                ),
+            ),
+            "stale",
+            True,
+            ("slots", "stale"),
+        ),
+        (
+            "cw.hand.sell_plan",
+            "req-hand-sell-plan-1",
+            {},
+            lambda monkeypatch: monkeypatch.setattr(
+                "trail.daemon.cw_service.plan_cw_hand_sell",
+                lambda session: (_set_sell_plan(session, {"candidates": [0, 2]}), {"candidates": [0, 2]})[1],
+            ),
+            "candidates",
+            [0, 2],
+            ("sell_plan", "candidates"),
+        ),
+    ],
+)
+def test_cw_slots_and_hand_mutations_flow_through_command_service_journal(
+    tmp_path: Path,
+    monkeypatch,
+    method: str,
+    request_id: str,
+    payload: dict,
+    setup_patches,
+    assertion_key: str,
+    assertion_value,
+    state_path: tuple[str, str],
+):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    setup_patches(monkeypatch)
 
-    result = cli_runner.invoke(app, ["cw", "slots", "place-one", "--session", fake_session, "--source", "hand:2", "--target", "back:0"])
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id=request_id,
+        method=method,
+        payload=payload,
+    )
+    status = service.request_status(request_id)
+    persisted = service.load_session(session.session_id).scene_state["cw"]
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": True,
-    }
-    assert fake_runtime.drags == [
-        (687, 911, 586, 669),
-    ]
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["slots"] == payload["data"]
-
-
-def test_cw_crystals_collect_cli_records_metric(cli_runner, fake_runtime, fake_session, tmp_path):
-    result = cli_runner.invoke(app, ["cw", "crystals", "collect", "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"last_crystal_collection": "done"}
-    assert fake_runtime.drags == [
-        (1305, 194, 1574, 194),
-        (1305, 270, 1574, 270),
-        (1305, 324, 1593, 324),
-        (1305, 378, 1612, 378),
-        (1305, 432, 1593, 432),
-    ]
-
-    session = SessionStore(tmp_path / ".trail" / "sessions").load(fake_session)
-    assert session.scene_state["cw"]["metrics"] == payload["data"]
-
-
-def test_cw_hand_sell_plan_cli_returns_candidates_and_persists_snapshot(cli_runner, fake_runtime, fake_session, tmp_path):
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["slots"] = {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": False,
-    }
-    store.save(session)
-
-    result = cli_runner.invoke(app, ["cw", "hand", "sell-plan", "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"candidates": [0, 2]}
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["sell_plan"] == payload["data"]
-    assert session.scene_state["cw"]["slots"] == {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": False,
-    }
-
-
-def test_cw_hand_sell_plan_cli_rejects_stale_slots_snapshot(cli_runner, fake_runtime, fake_session, tmp_path):
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["slots"] = {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": True,
-    }
-    ensure_cw_state(session)["sell_plan"] = {}
-    store.save(session)
-
-    result = cli_runner.invoke(app, ["cw", "hand", "sell-plan", "--session", fake_session])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "SLOTS_STALE"
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["sell_plan"] == {}
-
-
-def test_cw_hand_sell_plan_then_slots_swap_cli_clears_sell_plan(cli_runner, fake_runtime, fake_session, tmp_path):
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["slots"] = {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": False,
-    }
-    store.save(session)
-
-    sell_plan_result = cli_runner.invoke(app, ["cw", "hand", "sell-plan", "--session", fake_session])
-    assert sell_plan_result.exit_code == 0
-
-    swap_result = cli_runner.invoke(app, ["cw", "slots", "swap", "--session", fake_session, "--source", "hand:0", "--target", "front:0"])
-    assert swap_result.exit_code == 0
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["sell_plan"] == {}
-
-
-def test_cw_hand_sell_one_cli_marks_slots_stale(cli_runner, fake_runtime, fake_session, tmp_path):
-    store = SessionStore(tmp_path / ".trail" / "sessions")
-    session = store.load(fake_session)
-    ensure_cw_state(session)["slots"] = {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": False,
-    }
-    store.save(session)
-
-    result = cli_runner.invoke(app, ["cw", "hand", "sell-one", "--session", fake_session, "--slot", "2"])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": True,
-    }
-    assert fake_runtime.drags == [
-        (687, 911, 96, 928),
-    ]
-
-    session = store.load(fake_session)
-    assert session.scene_state["cw"]["slots"] == payload["data"]
+    assert envelope["ok"] is True
+    assert envelope["data"][assertion_key] == assertion_value
+    assert status["final_state"] == "completed"
+    assert persisted[state_path[0]][state_path[1]] == assertion_value

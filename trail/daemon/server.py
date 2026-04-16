@@ -16,6 +16,7 @@ from trail.daemon.command_service import (
     PersistedButResponseUnknown,
     SideEffectAppliedButStateNotPersisted,
 )
+from trail.daemon.cw_service import CwService
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
 from trail.daemon.models import DaemonRequest
 from trail.daemon.runtime_service import RuntimeService
@@ -176,5 +177,6 @@ class TrailDaemonServer:
 def main() -> None:
     runtime_service = RuntimeService()
     session_service = SessionServiceRegistry()
-    command_service = CommandService(runtime_service=runtime_service, session_service=session_service)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=session_service, cw_service=cw_service)
     TrailDaemonServer(command_service=command_service).serve_forever()

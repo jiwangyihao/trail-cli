@@ -11,6 +11,30 @@ from trail.daemon.client import daemon_transport_failure
 from trail.output.capture import with_auto_capture
 
 
+CW_MUTATING_METHODS = {
+    "cw.enter",
+    "cw.guide.apply",
+    "cw.slots.swap",
+    "cw.slots.place_one",
+    "cw.shop.open",
+    "cw.shop.buy_slot",
+    "cw.shop.refresh",
+    "cw.shop.close",
+    "cw.crystals.collect",
+    "cw.hand.sell_one",
+    "cw.hand.sell_plan",
+    "cw.replenish.choose",
+    "cw.invest.choose",
+    "cw.encounter.choose",
+    "cw.fortune.choose",
+    "cw.boss_preview.confirm",
+    "cw.battle.start",
+    "cw.battle.continue",
+    "cw.settle.next",
+    "cw.event.handle",
+}
+
+
 def success(
     data: dict[str, Any],
     *,
@@ -152,6 +176,22 @@ class CommandService:
             window_binding=None,
         )
 
+    def _cw_service(self):
+        if self.cw_service is None:
+            raise TrailError("DAEMON_UNAVAILABLE", "cw service not configured")
+        return self.cw_service
+
+    def _run_cw(self, request, *, service):
+        payload = deepcopy(request.payload)
+        if request.session_id is not None:
+            payload.setdefault("session_id", request.session_id)
+        return self._cw_service().handle(
+            method=request.method,
+            payload=payload,
+            workspace_root=request.workspace_root,
+            session_service=service,
+        )
+
     def handle(self, request):
         if request.method == "daemon.ping":
             return success(
@@ -172,6 +212,17 @@ class CommandService:
                 service.reconcile_session(request.payload["session_id"]),
                 request_id=request.request_id,
             )
+
+        if request.method == "session.create":
+            binding = to_jsonable(self.runtime_service.attach_window(window_title=request.payload["window_title"]))
+            service = self._session_service(request)
+            session = service.create_session(window_binding=binding)
+            return success(session.to_dict(), request_id=request.request_id)
+
+        if request.method == "state.dump":
+            service = self._session_service(request)
+            session_id = request.payload.get("session_id") or request.session_id
+            return success(service.dump_state(session_id=session_id), request_id=request.request_id)
 
         if request.method == "ocr.read":
             runtime = self._runtime(request)
@@ -273,6 +324,16 @@ class CommandService:
 
         if request.method.startswith("guide.list."):
             return self._handle_guide_list(request)
+
+        if request.method.startswith("cw."):
+            service = self._session_service(request)
+            if request.method in CW_MUTATING_METHODS:
+                return self._run_mutation(
+                    request,
+                    request.method,
+                    lambda session_service: success(self._run_cw(request, service=session_service)),
+                )
+            return success(self._run_cw(request, service=service), request_id=request.request_id)
 
         raise TrailError("DAEMON_METHOD_NOT_SUPPORTED", f"unsupported method: {request.method}")
 
