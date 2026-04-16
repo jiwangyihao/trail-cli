@@ -99,7 +99,7 @@ def test_guide_list_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path:
         {
             "guide.list.cw": build_success_response(
                 request_id="req-guide-list",
-                data={"items": [{"lineup_id": "abc"}], "next_page_token": "next-token"},
+                data={"list": [{"lineup_id": "abc"}], "next_page_token": "next-token"},
             )
         }
     )
@@ -130,7 +130,7 @@ def test_guide_list_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
-    assert payload["data"] == {"items": [{"lineup_id": "abc"}], "next_page_token": "next-token"}
+    assert payload["data"] == {"list": [{"lineup_id": "abc"}], "next_page_token": "next-token"}
     assert client.calls == [
         {
             "method": "guide.list.cw",
@@ -201,14 +201,14 @@ def test_command_service_handles_guide_fetch_cw(tmp_path: Path, monkeypatch):
     assert calls == [("fetch_guide", "abc"), ("fetch_payload", "abc")]
 
 
-def test_command_service_handles_guide_list_cw(tmp_path: Path, monkeypatch):
+def test_command_service_handles_guide_list_cw_accepts_boolean_filters(tmp_path: Path, monkeypatch):
     from trail.daemon.command_service import CommandService
 
     observed: list[dict[str, object]] = []
 
     def fake_fetch_guide_list(**kwargs):
         observed.append(kwargs)
-        return {"items": [{"lineup_id": "abc"}], "next_page_token": "next-token"}
+        return {"list": [{"lineup_id": "abc"}], "next_page_token": "next-token"}
 
     monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide_list", fake_fetch_guide_list)
 
@@ -223,8 +223,8 @@ def test_command_service_handles_guide_list_cw(tmp_path: Path, monkeypatch):
                 "trait_id": 1005,
                 "order": "Recent",
                 "next_page_token": "token-2",
-                "match_change_job": "true",
-                "match_hard": "false",
+                "match_change_job": True,
+                "match_hard": False,
             },
         )
     )
@@ -232,7 +232,7 @@ def test_command_service_handles_guide_list_cw(tmp_path: Path, monkeypatch):
     assert payload == {
         "request_id": "req-guide.list.cw",
         "ok": True,
-        "data": {"items": [{"lineup_id": "abc"}], "next_page_token": "next-token"},
+        "data": {"list": [{"lineup_id": "abc"}], "next_page_token": "next-token"},
         "screenshot": None,
         "timing": {},
         "warnings": [],

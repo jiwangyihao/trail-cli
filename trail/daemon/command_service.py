@@ -92,9 +92,13 @@ def _supports_request_id(method) -> bool:
     return any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
-def _parse_optional_bool(value: str | None, *, option_name: str) -> bool | None:
+def _parse_optional_bool(value: str | bool | None, *, option_name: str) -> bool | None:
     if value is None:
         return None
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, str):
+        raise TrailError("GUIDE_INPUT_INVALID", f"guide option '{option_name}' must be true or false")
     normalized = value.strip().lower()
     if normalized in {"true", "1", "yes"}:
         return True
