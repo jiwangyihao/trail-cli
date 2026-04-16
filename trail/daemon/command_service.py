@@ -121,26 +121,22 @@ class CommandService:
             )
 
         if request.method == "input.click":
-            runtime = self._runtime(request)
             return self._run_mutation(
                 request,
                 "input.click",
-                lambda service: self._mutating_capture(
+                lambda service: self._capture_mutation_with_runtime(
                     request,
-                    runtime,
-                    lambda: self._click(runtime, x=request.payload["x"], y=request.payload["y"]),
+                    lambda runtime: self._click(runtime, x=request.payload["x"], y=request.payload["y"]),
                 ),
             )
 
         if request.method == "input.drag":
-            runtime = self._runtime(request)
             return self._run_mutation(
                 request,
                 "input.drag",
-                lambda service: self._mutating_capture(
+                lambda service: self._capture_mutation_with_runtime(
                     request,
-                    runtime,
-                    lambda: self._drag(
+                    lambda runtime: self._drag(
                         runtime,
                         from_x=request.payload["from_x"],
                         from_y=request.payload["from_y"],
@@ -151,14 +147,12 @@ class CommandService:
             )
 
         if request.method == "input.key":
-            runtime = self._runtime(request)
             return self._run_mutation(
                 request,
                 "input.key",
-                lambda service: self._mutating_capture(
+                lambda service: self._capture_mutation_with_runtime(
                     request,
-                    runtime,
-                    lambda: self._press_key(
+                    lambda runtime: self._press_key(
                         runtime,
                         key=request.payload["key"],
                         presses=request.payload.get("presses", 1),
@@ -177,6 +171,10 @@ class CommandService:
         if response["ok"]:
             return response
         raise FailedBeforeSideEffect(response)
+
+    def _capture_mutation_with_runtime(self, request, action):
+        runtime = self._runtime(request)
+        return self._mutating_capture(request, runtime, lambda: action(runtime))
 
     def _response_with_request_id(self, request_id: str, response: dict[str, Any]) -> dict[str, Any]:
         payload = deepcopy(response)
@@ -216,6 +214,13 @@ class CommandService:
             },
         }
 
+    def _attach_recovery_detail(self, envelope: dict[str, Any], recovery_error: Exception) -> dict[str, Any]:
+        payload = deepcopy(envelope)
+        debug = deepcopy(payload.get("debug") or {})
+        debug["recovery_detail"] = self._format_exception_detail(recovery_error)
+        payload["debug"] = debug
+        return payload
+
     def _failure_envelope(self, *, error: Exception) -> dict[str, Any]:
         if isinstance(error, TrailError):
             code = error.code
@@ -242,6 +247,9 @@ class CommandService:
             command_name=command_name,
         )
         if accepted["status"] == "duplicate_terminal":
+            terminal_envelope = accepted["record"].get("last_envelope")
+            if isinstance(terminal_envelope, dict):
+                return self._response_with_request_id(request.request_id, terminal_envelope)
             return success(accepted["record"], request_id=request.request_id)
         if accepted["status"] == "duplicate_in_progress":
             return daemon_transport_failure(
@@ -345,13 +353,16 @@ class CommandService:
                 error=error,
                 last_known_stage=last_known_stage,
             )
-            service.finish_mutation(
-                session_id=request.session_id,
-                request_id=request.request_id,
-                command_name=command_name,
-                final_state=final_state,
-                envelope=envelope,
-            )
+            try:
+                service.finish_mutation(
+                    session_id=request.session_id,
+                    request_id=request.request_id,
+                    command_name=command_name,
+                    final_state=final_state,
+                    envelope=envelope,
+                )
+            except Exception as recovery_error:
+                return self._attach_recovery_detail(envelope, recovery_error)
             return envelope
 
     def _read_ocr(self, runtime, payload: dict[str, Any]) -> dict[str, Any]:

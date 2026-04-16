@@ -157,15 +157,15 @@ class SessionService:
 
     def request_status(self, request_id: str) -> dict:
         record = self._require_record(request_id=request_id)
-        tainted = record.get("final_state") in RISKY_FINAL_STATES
+        tainted = False
         session_id = record.get("session_id")
         if session_id is not None:
             try:
                 session = self.load_session(session_id)
             except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
-                session = None
-            if session is not None:
-                tainted = tainted or bool(session.scene_state.get("daemon", {}).get("tainted", False))
+                tainted = record.get("final_state") in RISKY_FINAL_STATES
+            else:
+                tainted = bool(session.scene_state.get("daemon", {}).get("tainted", False))
         return {
             "request_id": record["request_id"],
             "method": record["method"],

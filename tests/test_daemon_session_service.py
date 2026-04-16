@@ -118,6 +118,15 @@ class StubRuntimeService:
         return self._runtime
 
 
+class FailingRuntimeService:
+    def __init__(self, error: Exception):
+        self._error = error
+
+    def get_runtime(self, *, workspace_root: str, window_binding):
+        del workspace_root, window_binding
+        raise self._error
+
+
 def test_request_status_returns_machine_readable_fields(tmp_path: Path):
     service = SessionService(workspace_root=tmp_path)
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
@@ -149,6 +158,29 @@ def test_reconcile_session_clears_tainted_state(tmp_path: Path):
     assert service.load_session(session.session_id).scene_state["daemon"]["tainted"] is False
 
 
+def test_request_status_reflects_reconcile_clearing_taint(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.begin_mutation(session_id=session.session_id, request_id="req-reconcile-status", command_name="input.click")
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id="req-reconcile-status",
+        command_name="input.click",
+        final_state="persisted_but_response_unknown",
+        envelope=_envelope(
+            ok=False,
+            screenshot=".trail/shots/req-reconcile-status.png",
+            error={"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+        ),
+    )
+
+    assert service.request_status("req-reconcile-status")["tainted"] is True
+
+    service.reconcile_session(session.session_id)
+
+    assert service.request_status("req-reconcile-status")["tainted"] is False
+
+
 def test_duplicate_request_id_returns_duplicate_terminal(tmp_path: Path):
     service = SessionService(workspace_root=tmp_path)
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
@@ -165,6 +197,45 @@ def test_duplicate_request_id_returns_duplicate_terminal(tmp_path: Path):
 
     assert result["status"] == "duplicate_terminal"
     assert result["record"]["last_envelope"]["data"]["clicked"] == [10, 20]
+
+
+def test_duplicate_terminal_returns_original_failure_envelope(tmp_path: Path):
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.begin_mutation(session_id=session.session_id, request_id="req-dup-fail", command_name="input.click")
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id="req-dup-fail",
+        command_name="input.click",
+        final_state="failed_before_side_effect",
+        envelope=_envelope(
+            ok=False,
+            screenshot=".trail/shots/req-dup-fail.png",
+            error={"code": "WINDOW_NOT_FOUND", "message": "window not found"},
+        ),
+    )
+    command_service = CommandService(
+        runtime_service=StubRuntimeService(StubRuntime(tmp_path / "dup-terminal.png")),
+        session_service=registry,
+    )
+    request = _request(
+        tmp_path,
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        request_id="req-dup-fail",
+        session_id=session.session_id,
+    )
+
+    response = command_service.handle(request)
+
+    assert response["request_id"] == "req-dup-fail"
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "WINDOW_NOT_FOUND",
+        "message": "window not found",
+    }
+    assert response["screenshot"] == ".trail/shots/req-dup-fail.png"
 
 
 def test_duplicate_request_id_returns_duplicate_in_progress(tmp_path: Path):
@@ -555,6 +626,31 @@ def test_handle_returns_captured_failure_envelope_for_input_mutation_error(tmp_p
     assert registry.for_workspace(str(tmp_path)).request_status("req-handle-fail")["final_state"] == "failed_before_side_effect"
 
 
+def test_handle_records_runtime_preflight_failure_in_journal(tmp_path: Path):
+    registry = SessionServiceRegistry()
+    command_service = CommandService(
+        runtime_service=FailingRuntimeService(TrailError("WINDOW_NOT_FOUND", "window not found")),
+        session_service=registry,
+    )
+    request = _request(
+        tmp_path,
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        request_id="req-runtime-prefight-fail",
+        session_id=None,
+    )
+
+    response = command_service.handle(request)
+
+    status = registry.for_workspace(str(tmp_path)).request_status("req-runtime-prefight-fail")
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "WINDOW_NOT_FOUND",
+        "message": "window not found",
+    }
+    assert status["final_state"] == "failed_before_side_effect"
+
+
 def test_session_service_registry_is_thread_safe(tmp_path: Path, monkeypatch):
     created: list[object] = []
 
@@ -592,3 +688,48 @@ def test_session_service_registry_reuses_workspace_paths_with_different_case(tmp
     second = registry.for_workspace(str(tmp_path).upper())
 
     assert second is first
+
+
+def test_handle_returns_unknown_result_when_recovery_finish_mutation_fails(tmp_path: Path, monkeypatch):
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = StubRuntime(tmp_path / "recovery-finish-fail.png")
+    command_service = CommandService(
+        runtime_service=StubRuntimeService(runtime),
+        session_service=registry,
+    )
+    request = _request(
+        tmp_path,
+        method="input.click",
+        payload={"x": 10, "y": 20},
+        request_id="req-recovery-finish-fail",
+        session_id=session.session_id,
+    )
+    original_finish_mutation = service.finish_mutation
+
+    def fail_mark_state_persisted(**kwargs):
+        raise OSError("persist marker failed")
+
+    def fail_recovery_finish_mutation(**kwargs):
+        if kwargs["final_state"] != "completed":
+            raise OSError("recovery finish failed")
+        return original_finish_mutation(**kwargs)
+
+    monkeypatch.setattr(service, "mark_state_persisted", fail_mark_state_persisted)
+    monkeypatch.setattr(service, "finish_mutation", fail_recovery_finish_mutation)
+
+    response = command_service.handle(request)
+
+    status = registry.for_workspace(str(tmp_path)).request_status("req-recovery-finish-fail")
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert response["screenshot"] == str(tmp_path / "recovery-finish-fail.png")
+    assert response["debug"]["last_known_stage"] == "side_effect_applied"
+    assert "persist marker failed" in response["debug"]["detail"]
+    assert "recovery finish failed" in response["debug"]["recovery_detail"]
+    assert status["last_visible_stage"] == "side_effect_applied"
+    assert status["final_state"] is None

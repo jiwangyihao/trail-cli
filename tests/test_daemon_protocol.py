@@ -66,6 +66,15 @@ class ProtocolRuntimeService:
         return self._runtime
 
 
+class FailingProtocolRuntimeService:
+    def __init__(self, error: Exception):
+        self._error = error
+
+    def get_runtime(self, *, workspace_root: str, window_binding):
+        del workspace_root, window_binding
+        raise self._error
+
+
 def _server_payload(
     tmp_path: Path,
     *,
@@ -351,6 +360,36 @@ def test_server_handle_payload_preserves_captured_mutation_failure_envelope(tmp_
     assert response["references"] == [{"path": "trail/ref.png", "similarity": 0.97}]
     assert response["debug"] == {"trace": [{"step": "click"}]}
     assert registry.for_workspace(str(tmp_path)).request_status("req-server-fail")["final_state"] == "failed_before_side_effect"
+
+
+def test_server_handle_payload_records_runtime_prefight_failure_in_journal(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    command_service = CommandService(
+        runtime_service=FailingProtocolRuntimeService(TrailError("WINDOW_NOT_FOUND", "window not found")),
+        session_service=registry,
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-server-runtime-fail",
+            method="input.click",
+            payload={"x": 10, "y": 20},
+        )
+    )
+
+    status = registry.for_workspace(str(tmp_path)).request_status("req-server-runtime-fail")
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "WINDOW_NOT_FOUND",
+        "message": "window not found",
+    }
+    assert status["final_state"] == "failed_before_side_effect"
 
 
 @pytest.mark.parametrize(
