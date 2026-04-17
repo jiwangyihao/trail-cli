@@ -12,22 +12,57 @@ import pytest
 
 from trail.cli import app
 from trail.daemon.client import send_daemon_request
-from trail.daemon.manifest import load_manifest, manifest_path_for_user
+from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
 from trail.daemon.models import DaemonRequest
 from trail.daemon.protocol import PROTOCOL_VERSION
 from tests.support.fake_daemon import write_installed_manifest, write_ready_manifest
 
 
-def test_daemon_status_reports_installed_runtime_state(cli_runner, monkeypatch, tmp_path: Path):
+def test_daemon_status_renders_summary_and_yaml(cli_runner, monkeypatch, tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-live")
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+
+    text_result = cli_runner.invoke(app, ["daemon", "status"])
+    yaml_result = cli_runner.invoke(app, ["--format", "yaml", "daemon", "status"])
+
+    assert text_result.exit_code == 0
+    assert yaml_result.exit_code == 0
+    assert text_result.stdout.splitlines() == [
+        "ok daemon.status state=ready pid=1234 endpoint=127.0.0.1:8765 protocol=1"
+    ]
+    assert yaml_result.stdout.splitlines()[0] == "ok daemon.status state=ready pid=1234 endpoint=127.0.0.1:8765 protocol=1"
+    assert "runtime:" in yaml_result.stdout
+
+
+def test_daemon_status_surfaces_last_start_error_summary(cli_runner, monkeypatch, tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    manifest_path = write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-live")
+    manifest = load_manifest(manifest_path)
+    manifest.runtime.last_start_error = "port already in use"
+    save_manifest(manifest_path, manifest)
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+
+    result = cli_runner.invoke(app, ["daemon", "status"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "ok daemon.status state=ready pid=1234 endpoint=127.0.0.1:8765 protocol=1",
+        'why msg="port already in use"',
+    ]
+
+
+def test_daemon_status_omits_missing_runtime_fields(cli_runner, monkeypatch, tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
     write_installed_manifest(daemon_home, runtime_state="installed")
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
 
     result = cli_runner.invoke(app, ["daemon", "status"])
-    payload = json.loads(result.stdout)
 
-    assert payload["ok"] is True
-    assert payload["data"]["runtime"]["state"] == "installed"
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok daemon.status state=installed protocol=1"]
+    assert "pid=null" not in result.stdout
+    assert "endpoint=null" not in result.stdout
 
 
 def test_daemon_status_returns_structured_failure_when_manifest_invalid(cli_runner, monkeypatch, tmp_path: Path):
@@ -39,10 +74,11 @@ def test_daemon_status_returns_structured_failure_when_manifest_invalid(cli_runn
     result = cli_runner.invoke(app, ["daemon", "status"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "DAEMON_MANIFEST_INVALID"
-    assert "JSONDecodeError" in payload["debug"]["detail"]
+    assert result.stdout.splitlines() == [
+        "fail daemon.status code=DAEMON_MANIFEST_INVALID",
+        "request id=local-status",
+        'why msg="daemon manifest invalid"',
+    ]
 
 
 @pytest.mark.parametrize("command", ["start", "stop", "logs"])
@@ -55,13 +91,11 @@ def test_daemon_control_commands_return_structured_failure_when_manifest_invalid
     result = cli_runner.invoke(app, ["daemon", command])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"] == {
-        "code": "DAEMON_MANIFEST_INVALID",
-        "message": "daemon manifest invalid",
-    }
-    assert "JSONDecodeError" in payload["debug"]["detail"]
+    assert result.stdout.splitlines() == [
+        f"fail daemon.{command} code=DAEMON_MANIFEST_INVALID",
+        f"request id=local-{command}",
+        'why msg="daemon manifest invalid"',
+    ]
 
 
 def test_daemon_install_writes_manifest(cli_runner, monkeypatch, tmp_path: Path):
@@ -70,11 +104,12 @@ def test_daemon_install_writes_manifest(cli_runner, monkeypatch, tmp_path: Path)
     monkeypatch.setattr("trail.daemon.bootstrap.subprocess.run", lambda *args, **kwargs: SimpleNamespace(returncode=0))
 
     result = cli_runner.invoke(app, ["daemon", "install"])
-    payload = json.loads(result.stdout)
     manifest = load_manifest(manifest_path_for_user(daemon_home))
 
-    assert payload["ok"] is True
-    assert payload["data"]["manifest_path"].endswith("manifest.json")
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        f"ok daemon.install manifest_path={json.dumps(str(manifest_path_for_user(daemon_home)), ensure_ascii=False)}"
+    ]
     assert manifest.runtime.state == "installed"
 
 
@@ -160,13 +195,11 @@ def test_daemon_install_returns_structured_failure_when_bootstrap_registration_f
     result = cli_runner.invoke(app, ["daemon", "install"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"] == {
-        "code": "DAEMON_INSTALL_FAILED",
-        "message": "daemon install failed",
-    }
-    assert "PermissionError" in payload["debug"]["detail"]
+    assert result.stdout.splitlines() == [
+        "fail daemon.install code=DAEMON_INSTALL_FAILED",
+        "request id=local-install",
+        'why msg="daemon install failed"',
+    ]
 
 
 def test_daemon_install_recovers_from_invalid_manifest(cli_runner, monkeypatch, tmp_path: Path):
@@ -180,11 +213,11 @@ def test_daemon_install_recovers_from_invalid_manifest(cli_runner, monkeypatch, 
     result = cli_runner.invoke(app, ["daemon", "install"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
     manifest = load_manifest(manifest_path)
     token_value = Path(manifest.install.token_file).read_text(encoding="utf-8").strip()
-    assert payload["ok"] is True
-    assert payload["data"]["manifest_path"] == str(manifest_path)
+    assert result.stdout.splitlines() == [
+        f"ok daemon.install manifest_path={json.dumps(str(manifest_path), ensure_ascii=False)}"
+    ]
     assert manifest.runtime.state == "installed"
     assert manifest.runtime.endpoint is None
     assert token_value
@@ -202,10 +235,11 @@ def test_daemon_install_is_idempotent_for_existing_ready_runtime(cli_runner, mon
     result = cli_runner.invoke(app, ["daemon", "install"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
     after = load_manifest(manifest_path)
     token_after = Path(after.install.token_file).read_text(encoding="utf-8")
-    assert payload["ok"] is True
+    assert result.stdout.splitlines() == [
+        f"ok daemon.install manifest_path={json.dumps(str(manifest_path), ensure_ascii=False)}"
+    ]
     assert after.runtime.state == before.runtime.state
     assert after.runtime.endpoint == before.runtime.endpoint
     assert after.runtime.pid == before.runtime.pid
@@ -217,10 +251,12 @@ def test_daemon_start_returns_bootstrap_required_when_not_installed(cli_runner, 
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: tmp_path / "daemon-home")
 
     result = cli_runner.invoke(app, ["daemon", "start"])
-    payload = json.loads(result.stdout)
 
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "DAEMON_BOOTSTRAP_REQUIRED"
+    assert result.stdout.splitlines() == [
+        "fail daemon.start code=DAEMON_BOOTSTRAP_REQUIRED",
+        "request id=local-start",
+        'why msg="daemon bootstrap not installed"',
+    ]
 
 
 def test_daemon_start_is_idempotent_when_runtime_ready(cli_runner, monkeypatch, tmp_path: Path):
@@ -237,11 +273,9 @@ def test_daemon_start_is_idempotent_when_runtime_ready(cli_runner, monkeypatch, 
     result = cli_runner.invoke(app, ["daemon", "start"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
     after = load_manifest(manifest_path)
     token_after = Path(after.install.token_file).read_text(encoding="utf-8")
-    assert payload["ok"] is True
-    assert payload["data"] == {"started": False, "already_running": True}
+    assert result.stdout.splitlines() == ["ok daemon.start started=0 already_running=1"]
     assert started == []
     assert after.runtime.state == before.runtime.state
     assert after.runtime.endpoint == before.runtime.endpoint
@@ -262,9 +296,7 @@ def test_daemon_start_restarts_stale_ready_runtime(cli_runner, monkeypatch, tmp_
         result = cli_runner.invoke(app, ["daemon", "start"])
 
         assert result.exit_code == 0
-        payload = json.loads(result.stdout)
-        assert payload["ok"] is True
-        assert payload["data"] == {"started": True}
+        assert result.stdout.splitlines() == ["ok daemon.start started=1 already_running=0"]
         assert started == [daemon_home]
     finally:
         listener.close()
@@ -276,10 +308,11 @@ def test_daemon_logs_returns_log_dir(cli_runner, monkeypatch, tmp_path: Path):
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
 
     result = cli_runner.invoke(app, ["daemon", "logs"])
-    payload = json.loads(result.stdout)
 
-    assert payload["ok"] is True
-    assert payload["data"]["log_dir"] == str(daemon_home / "logs")
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        f"ok daemon.logs log_dir={json.dumps(str(daemon_home / 'logs'), ensure_ascii=False)}"
+    ]
 
 
 def test_daemon_stop_returns_stopped_and_clears_runtime(cli_runner, monkeypatch, tmp_path: Path):
@@ -291,11 +324,10 @@ def test_daemon_stop_returns_stopped_and_clears_runtime(cli_runner, monkeypatch,
     monkeypatch.setattr("trail.commands.daemon.terminate_daemon_process", lambda pid: terminated.append(pid))
 
     result = cli_runner.invoke(app, ["daemon", "stop"])
-    payload = json.loads(result.stdout)
     manifest = load_manifest(manifest_path_for_user(daemon_home))
 
-    assert payload["ok"] is True
-    assert payload["data"] == {"stopped": True}
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok daemon.stop stopped=1"]
     assert terminated == [1234]
     assert manifest.runtime.state == "stopped"
     assert manifest.runtime.endpoint is None
@@ -317,14 +349,12 @@ def test_daemon_stop_returns_failure_when_process_termination_fails(cli_runner, 
     result = cli_runner.invoke(app, ["daemon", "stop"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
     manifest = load_manifest(manifest_path_for_user(daemon_home))
-    assert payload["ok"] is False
-    assert payload["error"] == {
-        "code": "DAEMON_STOP_FAILED",
-        "message": "daemon stop failed",
-    }
-    assert "PermissionError" in payload["debug"]["detail"]
+    assert result.stdout.splitlines() == [
+        "fail daemon.stop code=DAEMON_STOP_FAILED",
+        "request id=local-stop",
+        'why msg="daemon stop failed"',
+    ]
     assert manifest.runtime.state == "ready"
     assert manifest.runtime.endpoint == "127.0.0.1:8765"
     assert manifest.runtime.pid == 1234
@@ -345,10 +375,8 @@ def test_daemon_stop_clears_stale_runtime_without_killing_unverified_pid(cli_run
         result = cli_runner.invoke(app, ["daemon", "stop"])
 
         assert result.exit_code == 0
-        payload = json.loads(result.stdout)
         manifest = load_manifest(manifest_path_for_user(daemon_home))
-        assert payload["ok"] is True
-        assert payload["data"] == {"stopped": True}
+        assert result.stdout.splitlines() == ["ok daemon.stop stopped=1"]
         assert terminated == []
         assert manifest.runtime.state == "stopped"
         assert manifest.runtime.endpoint is None

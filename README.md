@@ -1,10 +1,10 @@
 # Trail CLI
 
-Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输出结构化 envelope 和执行后截图，供多模态 agent 直接消费。
+Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输出 Agent 友好的紧凑文本协议，并在命令产生截图时显式返回截图路径，供多模态 agent 直接消费。
 
 ## Daemon 模式
 
-- `trail` CLI 现在是非管理员薄壳，负责参数解析、workspace 解析、RPC 请求发送和 envelope 渲染
+- `trail` CLI 现在是非管理员薄壳，负责参数解析、workspace 解析、RPC 请求发送，以及把结果渲染为默认文本协议、显式 `--format yaml` 兜底或 `--verbose` 调试层
 - 常驻 `traild` daemon 持有 runtime、截图、OCR、找图、输入、guide、`cw` 场景执行和 session 热状态
 - 首次使用前先运行：`trail daemon install`
 - 查看常驻服务状态：`trail daemon status`
@@ -48,12 +48,47 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 
 ## 输出约定
 
-- 所有命令默认返回结构化 envelope
-- 关键字段固定为 `ok`、`data`、`screenshot`、`timing`、`warnings`、`references`、`debug`、`error`
-- skill 应优先消费当前命令返回的 `screenshot` 与 `data`，不要沿用旧推断
-- 对多模态 agent 来说，`screenshot` 是第一手事实来源；CLI 自带的 `detect/read/status` 更适合作为辅助输入，而不是唯一真相
-- CLI 侧应优先阅读当前 envelope 的 `screenshot` 和 `data`，只有在需要排障时再看 `warnings`、`references`、`debug`
-- 对开发期调试，可加顶层 `--verbose` 查看复杂操作的中间 trace；需要追踪 transport 或 daemon 请求时，可从 `debug.request_id` 继续查询 `trail daemon request-status --request-id <id>`
+- 默认输出是紧凑文本协议，统一首行为 `<ok|fail> <command> <核心事实...>`，例如 `ok cw.shop.status count=2`
+- 默认模式是常规消费层；`--format yaml` 是结构化兜底，`--verbose` 是开发/排障层，不应作为终端 Agent 的常规依赖
+- 默认模式绝不输出 YAML；只有显式指定 `--format yaml` 且命令进入 allowlist 时，才会在首行摘要后追加结构化块
+- 常见正文前缀包括 `shot`、`item`、`guide`、`text`、`why`、`warn`、`ref`、`request`、`recover`；`debug` 仅在 `--verbose` 下追加
+- `shot path=...` 表示当前命令结果对应的截图路径；只要当前命令有截图，就会输出 `shot path=...`，且位于实体行之前
+- 默认失败路径只要当前结果携带 `request_id`，就会保留 `request id=<id>`，用于恢复与排障
+- 只有结果未知或当前失败显式可恢复时，才会出现 `recover action=daemon.request_status request=<id>`；仅有 `request id=<id>` 不等于当前失败一定可恢复
+- `trail daemon request-status --request-id <id>` 用于回查某个请求的终态、最近可见阶段与污染状态，典型输出是 `ok daemon.request_status request=req-42 final_state=completed last_visible_stage=responded tainted=0`
+- `tainted=1` 表示当前 failure 或状态带有运行态污染风险；继续执行前，先确认请求终态，再决定是否执行 `trail daemon reconcile-session --session <id>`
+- `--format yaml` 仍然保留同一条首行摘要，但只在允许的命令上提供结构化视图；当前更适合 `daemon status`、`state dump`、`guide config cw` 这类结果体量更大或层级更深的命令
+- `--verbose` 只追加 `debug kind=...` 调试行，不改变默认文本协议里的事实集合与顺序
+- 对多模态 agent 来说，截图仍是第一手事实来源；默认文本里的 `detect/read/status` 结果是压缩后的动作信号，而不是替代截图的唯一真相
+
+文本协议示例：
+
+```text
+ok guide.list.cw count=2 more=1 next=token-2
+guide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1
+guide id=def idx=2 hard=0 change_equip=1 expert=0
+```
+
+```text
+ok ocr.read hits=2
+shot path=.trail/shots/req-ocr.png
+text rank=1 value=点击进入 score=0.98 box=122,88,74,20
+text rank=2 value=开始挑战 score=0.93 box=410,502,120,36
+```
+
+```text
+ok cw.shop.status count=2
+shot path=.trail/shots/req-shop.png
+item idx=1 slot=1 name=希儿 cost=2
+item idx=2 slot=2 name=停云 cost=1
+```
+
+```text
+fail input.click code=INPUT_BACKEND_MISSING tainted=1
+request id=req-42
+why msg="input backend missing"
+recover action=daemon.request_status request=req-42
+```
 
 ## Guide 字段语义
 

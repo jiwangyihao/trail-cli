@@ -12,7 +12,7 @@ from trail.runtime.model import Box
 from tests.support.fake_daemon import build_success_response
 
 
-def test_window_attach_returns_envelope_and_binding(cli_runner, fake_daemon_client, tmp_path):
+def test_window_attach_renders_text_output(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "window.attach": build_success_response(
@@ -26,10 +26,10 @@ def test_window_attach_returns_envelope_and_binding(cli_runner, fake_daemon_clie
     result = cli_runner.invoke(app, ["window", "attach", "--window-title", "Demo Window"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"title": "Demo Window", "hwnd": 123}
-    assert payload["screenshot"]
+    assert result.stdout.splitlines() == [
+        'ok window.attach title="Demo Window" hwnd=123',
+        "shot path=.trail/shots/req-window-attach.png",
+    ]
     assert client.calls == [
         {
             "method": "window.attach",
@@ -61,12 +61,9 @@ def test_session_create_uses_daemon_client(cli_runner, fake_daemon_client, tmp_p
     result = cli_runner.invoke(app, ["session", "create", "--window-title", "Demo Window"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {
-        "session_id": "session-1",
-        "window_binding": {"title": "Demo Window", "hwnd": 321},
-    }
+    assert result.stdout.splitlines() == [
+        'ok session.create session=session-1 title="Demo Window" hwnd=321'
+    ]
     assert client.calls == [
         {
             "method": "session.create",
@@ -111,15 +108,9 @@ def test_window_launch_returns_structured_payload(cli_runner, fake_daemon_client
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {
-        "started": True,
-        "already_running": False,
-        "path": str(executable),
-        "channel": "bilibili",
-        "args": ["-popupwindow"],
-    }
+    assert result.stdout.splitlines() == [
+        f"ok window.launch started=1 already_running=0 path={json.dumps(str(executable), ensure_ascii=False)}"
+    ]
     assert client.calls == [
         {
             "method": "window.launch",
@@ -150,10 +141,10 @@ def test_screen_shot_returns_envelope_and_screenshot(cli_runner, fake_daemon_cli
     result = cli_runner.invoke(app, ["screen", "shot"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"captured": True}
-    assert payload["screenshot"]
+    assert result.stdout.splitlines() == [
+        "ok screen.shot captured=1",
+        "shot path=.trail/shots/req-screen-shot.png",
+    ]
     assert client.calls == [
         {
             "method": "screen.shot",
@@ -179,9 +170,11 @@ def test_ocr_read_returns_runtime_payload(cli_runner, fake_daemon_client, tmp_pa
     result = cli_runner.invoke(app, ["ocr", "read"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"]["result"] == [{"text": "银狼"}]
+    assert result.stdout.splitlines() == [
+        "ok ocr.read hits=1",
+        "shot path=.trail/shots/req-ocr-read.png",
+        "text rank=1 value=银狼",
+    ]
     assert client.calls == [
         {
             "method": "ocr.read",
@@ -207,9 +200,10 @@ def test_image_locate_returns_box_payload(cli_runner, fake_daemon_client, tmp_pa
     result = cli_runner.invoke(app, ["image", "locate", "demo.png"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"]["box"] == {"left": 1, "top": 2, "width": 3, "height": 4}
+    assert result.stdout.splitlines() == [
+        "ok image.locate box=1,2,3,4",
+        "shot path=.trail/shots/req-image-locate.png",
+    ]
     assert client.calls == [
         {
             "method": "image.locate",
@@ -235,15 +229,10 @@ def test_image_locate_serializes_numpy_box_values(cli_runner, fake_daemon_client
     result = cli_runner.invoke(app, ["image", "locate", "demo.png"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"]["box"] == {
-        "left": 1,
-        "top": 2,
-        "width": 3,
-        "height": 4,
-        "source": "demo.png",
-    }
+    assert result.stdout.splitlines() == [
+        "ok image.locate box=1,2,3,4",
+        "shot path=.trail/shots/req-image-locate-numpy.png",
+    ]
 
 
 def test_image_wait_returns_error_when_template_missing(cli_runner, fake_daemon_client, tmp_path):
@@ -265,10 +254,11 @@ def test_image_wait_returns_error_when_template_missing(cli_runner, fake_daemon_
     result = cli_runner.invoke(app, ["image", "wait", "missing.png"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"] == {"code": "IMAGE_NOT_FOUND", "message": "未找到 missing.png"}
-    assert payload["screenshot"]
+    assert result.stdout.splitlines() == [
+        "fail image.wait code=IMAGE_NOT_FOUND",
+        "shot path=.trail/shots/req-image-wait.png",
+        'why msg="未找到 missing.png"',
+    ]
     assert client.calls == [
         {
             "method": "image.wait",
@@ -305,16 +295,21 @@ def test_input_click_drag_and_key_return_envelopes(cli_runner, fake_daemon_clien
     drag_result = cli_runner.invoke(app, ["input", "drag", "1", "2", "3", "4"])
     key_result = cli_runner.invoke(app, ["input", "key", "space", "--presses", "2"])
 
-    click_payload = json.loads(click_result.stdout)
-    drag_payload = json.loads(drag_result.stdout)
-    key_payload = json.loads(key_result.stdout)
-
     assert click_result.exit_code == 0
     assert drag_result.exit_code == 0
     assert key_result.exit_code == 0
-    assert click_payload["data"] == {"clicked": [10, 20]}
-    assert drag_payload["data"] == {"dragged": [1, 2, 3, 4]}
-    assert key_payload["data"] == {"key": "space", "presses": 2}
+    assert click_result.stdout.splitlines() == [
+        "ok input.click",
+        "shot path=.trail/shots/req-input-click.png",
+    ]
+    assert drag_result.stdout.splitlines() == [
+        "ok input.drag",
+        "shot path=.trail/shots/req-input-drag.png",
+    ]
+    assert key_result.stdout.splitlines() == [
+        "ok input.key",
+        "shot path=.trail/shots/req-input-key.png",
+    ]
     assert client.calls == [
         {
             "method": "input.click",
@@ -364,15 +359,12 @@ def test_input_click_returns_runtime_warnings_and_reference_matches(cli_runner, 
     result = cli_runner.invoke(app, ["input", "click", "10", "20"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["warnings"] == [
-        {
-            "code": "WINDOW_NOT_FOREGROUND",
-            "message": "输入命令执行后窗口不在前台，本次操作可能失败",
-        }
+    assert result.stdout.splitlines() == [
+        "ok input.click",
+        "shot path=.trail/shots/req-input-click.png",
+        "warn code=WINDOW_NOT_FOREGROUND msg=输入命令执行后窗口不在前台，本次操作可能失败",
+        "ref path=trail/scenes/cw/references/1-1.png sim=0.88",
     ]
-    assert payload["references"] == [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.88}]
-    assert payload["debug"] is None
 
 
 def test_top_level_verbose_emits_runtime_debug_trace(cli_runner, fake_daemon_client, tmp_path):
@@ -395,11 +387,12 @@ def test_top_level_verbose_emits_runtime_debug_trace(cli_runner, fake_daemon_cli
     result = cli_runner.invoke(app, ["--verbose", "input", "click", "10", "20"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["debug"] == {
-        "trace": [{"step": "click", "point": [10, 20]}],
-        "request_id": "req-input-click-verbose",
-    }
+    assert result.stdout.splitlines() == [
+        "ok input.click",
+        "shot path=.trail/shots/req-input-click-verbose.png",
+        "debug kind=request msg=req-input-click-verbose",
+        'debug kind=trace step=click point="[10, 20]"',
+    ]
     assert client.calls == [
         {
             "method": "input.click",
@@ -411,8 +404,8 @@ def test_top_level_verbose_emits_runtime_debug_trace(cli_runner, fake_daemon_cli
     ]
 
 
-def test_daemon_control_plane_errors_keep_request_id_in_debug(cli_runner, fake_daemon_client):
-    fake_daemon_client(
+def test_daemon_control_plane_errors_keep_request_id_in_debug(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
         {
             "screen.shot": {
                 "request_id": "req-screen-shot-daemon-error",
@@ -432,22 +425,42 @@ def test_daemon_control_plane_errors_keep_request_id_in_debug(cli_runner, fake_d
     )
 
     result = cli_runner.invoke(app, ["screen", "shot"])
+    verbose_result = cli_runner.invoke(app, ["--verbose", "screen", "shot"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"] == {
-        "code": "DAEMON_BOOTSTRAP_REQUIRED",
-        "message": "daemon bootstrap not installed",
-    }
-    assert payload["debug"] == {
-        "detail": "bootstrap missing",
-        "request_id": "req-screen-shot-daemon-error",
-    }
+    assert verbose_result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail screen.shot code=DAEMON_BOOTSTRAP_REQUIRED",
+        "request id=req-screen-shot-daemon-error",
+        'why msg="daemon bootstrap not installed"',
+    ]
+    assert verbose_result.stdout.splitlines() == [
+        "fail screen.shot code=DAEMON_BOOTSTRAP_REQUIRED",
+        "request id=req-screen-shot-daemon-error",
+        'why msg="daemon bootstrap not installed"',
+        "debug kind=request msg=req-screen-shot-daemon-error",
+        'debug kind=detail msg="bootstrap missing"',
+    ]
+    assert client.calls == [
+        {
+            "method": "screen.shot",
+            "payload": {},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        },
+        {
+            "method": "screen.shot",
+            "payload": {},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": True,
+        },
+    ]
 
 
-def test_state_dump_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path, monkeypatch):
-    session_id = "a" * 32
+def test_state_dump_renders_summary_before_yaml(cli_runner, fake_daemon_client, tmp_path, monkeypatch):
+    session_id = "session-1"
 
     def fail_local_state_dump(*args, **kwargs):
         raise AssertionError("local state dump path used")
@@ -459,10 +472,63 @@ def test_state_dump_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path,
                 request_id="req-state-dump",
                 data={
                     "session_id": session_id,
-                    "scene_state": {"cw": {"stage": "preparation"}},
-                    "window_binding": {"title": "崩坏：星穹铁道", "hwnd": 1},
+                    "last_stage": {"scene": "cw", "value": "shop"},
+                    "scene_state": {
+                        "daemon": {"tainted": False},
+                        "cw": {"stage": {"value": "shop", "stale": False}},
+                    },
                 },
                 screenshot=".trail/shots/req-state-dump.png",
+            )
+        }
+    )
+
+    text_result = cli_runner.invoke(app, ["state", "dump", "--session", session_id])
+    yaml_result = cli_runner.invoke(app, ["--format", "yaml", "state", "dump", "--session", session_id])
+
+    assert text_result.exit_code == 0
+    assert yaml_result.exit_code == 0
+    assert text_result.stdout.splitlines() == [
+        "ok state.dump session=session-1 scene=cw last_stage=shop tainted=0",
+        "shot path=.trail/shots/req-state-dump.png",
+    ]
+    assert yaml_result.stdout.splitlines()[0:2] == [
+        "ok state.dump session=session-1 scene=cw last_stage=shop tainted=0",
+        "shot path=.trail/shots/req-state-dump.png",
+    ]
+    assert "scene_state:" in yaml_result.stdout
+    assert client.calls == [
+        {
+            "method": "state.dump",
+            "payload": {"session_id": session_id},
+            "workspace_root": str(tmp_path),
+            "session_id": session_id,
+            "verbose": False,
+        },
+        {
+            "method": "state.dump",
+            "payload": {"session_id": session_id},
+            "workspace_root": str(tmp_path),
+            "session_id": session_id,
+            "verbose": False,
+        },
+    ]
+
+
+def test_state_dump_surfaces_stage_error_summary(cli_runner, fake_daemon_client, tmp_path):
+    session_id = "session-2"
+    client = fake_daemon_client(
+        {
+            "state.dump": build_success_response(
+                request_id="req-state-dump-stale",
+                data={
+                    "session_id": session_id,
+                    "last_stage": None,
+                    "scene_state": {
+                        "daemon": {"tainted": True},
+                        "cw": {"stage": {"stale": True, "error": {"code": "STAGE_AMBIGUOUS"}}},
+                    },
+                },
             )
         }
     )
@@ -470,10 +536,9 @@ def test_state_dump_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path,
     result = cli_runner.invoke(app, ["state", "dump", "--session", session_id])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"]["scene_state"] == {"cw": {"stage": "preparation"}}
-    assert payload["data"]["window_binding"] == {"title": "崩坏：星穹铁道", "hwnd": 1}
+    assert result.stdout.splitlines() == [
+        "ok state.dump session=session-2 scene=cw stage_stale=1 stage_error=STAGE_AMBIGUOUS tainted=1"
+    ]
     assert client.calls == [
         {
             "method": "state.dump",
@@ -514,14 +579,10 @@ def test_state_dump_returns_structured_error_for_missing_session(cli_runner, fak
     result = cli_runner.invoke(app, ["state", "dump", "--session", session_id])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["data"] == {}
-    assert payload["error"] == {
-        "code": "SESSION_NOT_FOUND",
-        "message": "session missing",
-    }
-    assert payload["screenshot"] is None
+    assert result.stdout.splitlines() == [
+        "fail state.dump code=SESSION_NOT_FOUND",
+        'why msg="session missing"',
+    ]
     assert "Traceback" not in result.stdout
     assert client.calls == [
         {
@@ -571,9 +632,10 @@ def test_input_click_returns_structured_error_when_backend_missing(cli_runner, t
     result = cli_runner.invoke(app, ["input", "click", "10", "20"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"clicked": [10, 20]}
+    assert result.stdout.splitlines() == [
+        "ok input.click",
+        "shot path=.trail/shots/req-input-click-backendless.png",
+    ]
     assert client.calls == [
         {
             "method": "input.click",

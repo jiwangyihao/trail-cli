@@ -5,7 +5,8 @@ from pathlib import Path
 
 import typer
 
-from trail.commands.helpers import call_daemon, print_json
+from trail.commands.helpers import call_daemon
+from trail.output.rendering import print_output
 
 
 window_app = typer.Typer(no_args_is_help=True)
@@ -19,7 +20,7 @@ class LaunchChannel(StrEnum):
 
 @window_app.command("attach")
 def window_attach(window_title: str = typer.Option("崩坏：星穹铁道", "--window-title")) -> None:
-    print_json(call_daemon("window.attach", {"window_title": window_title}))
+    print_output("window.attach", call_daemon("window.attach", {"window_title": window_title}))
 
 
 @window_app.command("launch")
@@ -29,7 +30,8 @@ def window_launch(
     arg: list[str] | None = typer.Option(None, "--arg"),
     use_cmd: bool = typer.Option(False, "--use-cmd"),
 ) -> None:
-    print_json(
+    print_output(
+        "window.launch",
         call_daemon(
             "window.launch",
             {

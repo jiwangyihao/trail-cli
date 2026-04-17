@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,7 +23,16 @@ def _guide_request(*, workspace_root: Path, method: str, payload: dict | None = 
     )
 
 
-def test_guide_fetch_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
+def _expected_lines(summary: str, *, screenshot: str | None = None, body: list[str] | None = None) -> list[str]:
+    lines = [summary]
+    if screenshot:
+        lines.append(f"shot path={screenshot}")
+    if body:
+        lines.extend(body)
+    return lines
+
+
+def test_guide_fetch_renders_summary_and_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "trail.commands.guide.fetch_cw_guide",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide fetch path used")),
@@ -35,7 +42,24 @@ def test_guide_fetch_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path
         {
             "guide.fetch.cw": build_success_response(
                 request_id="req-guide-fetch",
-                data={"lineup_id": "abc", "share_code": "##demo##"},
+                data={
+                    "lineup_id": "abc",
+                    "share_code": "##demo##",
+                    "version": "3.2",
+                    "min_level": 7,
+                    "mid_level": 8,
+                    "support_hard": True,
+                    "has_change_equip": False,
+                    "has_expert": True,
+                    "on_field": {"希儿": 9, "停云": 3},
+                    "off_field": {"佩拉": 1},
+                    "portals": ["商店", "事件"],
+                    "first_fight_augments": ["快攻", "回蓝"],
+                    "second_fight_augments": ["暴击", "连携"],
+                    "order_basic": ["升级", "买卡", "打精英"],
+                    "order_compose": ["希儿", "停云"],
+                    "role_stages": [{"name": "希儿", "stage": 1}, {"name": "停云", "stage": 2}],
+                },
             )
         }
     )
@@ -43,9 +67,14 @@ def test_guide_fetch_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path
     result = cli_runner.invoke(app, ["guide", "fetch", "cw", "abc"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"lineup_id": "abc", "share_code": "##demo##"}
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok guide.fetch.cw id=abc share_code=##demo## version=3.2 min_level=7 mid_level=8 hard=1 change_equip=0 expert=1",
+        body=[
+            "guide on_field=希儿:9|停云:3 off_field=佩拉:1",
+            "guide portals=商店|事件 first_augments=快攻|回蓝 second_augments=暴击|连携",
+            "guide order_basic=升级|买卡|打精英 order_compose=希儿|停云 role_stages=name:希儿/stage:1|name:停云/stage:2",
+        ],
+    )
     assert client.calls == [
         {
             "method": "guide.fetch.cw",
@@ -57,7 +86,7 @@ def test_guide_fetch_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path
     ]
 
 
-def test_guide_config_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
+def test_guide_config_renders_summary_and_yaml(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "trail.commands.guide.fetch_cw_guide_config",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide config path used")),
@@ -67,18 +96,39 @@ def test_guide_config_uses_daemon_client(cli_runner, fake_daemon_client, tmp_pat
         {
             "guide.config.cw": build_success_response(
                 request_id="req-guide-config",
-                data={"season_id": 12},
+                data={
+                    "meta": {"season_id": 12, "sub_season_id": 3, "big_version": "3.2"},
+                    "lineup_levels": [{"id": 1}],
+                    "traits": [{"id": 1001}, {"id": 1002}],
+                    "roles": [{"id": 1}, {"id": 2}, {"id": 3}],
+                    "role_tags": [{"id": 11}],
+                },
             )
         }
     )
 
-    result = cli_runner.invoke(app, ["guide", "config", "cw"])
+    text_result = cli_runner.invoke(app, ["guide", "config", "cw"])
+    yaml_result = cli_runner.invoke(app, ["--format", "yaml", "guide", "config", "cw"])
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"season_id": 12}
+    assert text_result.exit_code == 0
+    assert yaml_result.exit_code == 0
+    assert text_result.stdout.splitlines() == [
+        "ok guide.config.cw season=12 sub_season=3 big_version=3.2",
+        "info lineup_levels=1 traits=2 roles=3 role_tags=1",
+    ]
+    assert yaml_result.stdout.splitlines()[0:2] == [
+        "ok guide.config.cw season=12 sub_season=3 big_version=3.2",
+        "info lineup_levels=1 traits=2 roles=3 role_tags=1",
+    ]
+    assert "meta:" in yaml_result.stdout
     assert client.calls == [
+        {
+            "method": "guide.config.cw",
+            "payload": {},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        },
         {
             "method": "guide.config.cw",
             "payload": {},
@@ -89,7 +139,7 @@ def test_guide_config_uses_daemon_client(cli_runner, fake_daemon_client, tmp_pat
     ]
 
 
-def test_guide_list_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
+def test_guide_list_renders_paging_and_facts(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "trail.commands.guide.fetch_cw_guide_list",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide list path used")),
@@ -99,7 +149,23 @@ def test_guide_list_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path:
         {
             "guide.list.cw": build_success_response(
                 request_id="req-guide-list",
-                data={"list": [{"lineup_id": "abc"}], "next_page_token": "next-token"},
+                data={
+                    "list": [
+                        {
+                            "lineup_id": "abc",
+                            "carry_roles": ["希儿", "停云"],
+                            "final_role_cards": [
+                                {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
+                                {"name": "布洛妮娅", "star": 5, "rarity": 3, "is_carry": False},
+                                {"name": "佩拉", "star": 4, "rarity": 2, "is_carry": False},
+                            ],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": True,
+                        }
+                    ],
+                    "next_page_token": "next-token",
+                },
             )
         }
     )
@@ -128,9 +194,11 @@ def test_guide_list_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path:
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"list": [{"lineup_id": "abc"}], "next_page_token": "next-token"}
+    assert result.stdout.splitlines() == [
+        "ok guide.list.cw count=1 more=1 next=next-token",
+        "guide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1",
+        "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3|佩拉/star:4/rarity:2",
+    ]
     assert client.calls == [
         {
             "method": "guide.list.cw",
@@ -150,16 +218,22 @@ def test_guide_list_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path:
     ]
 
 
-def test_guide_fetch_returns_stable_error_when_scene_not_supported(cli_runner):
-    result = cli_runner.invoke(app, ["guide", "fetch", "boss", "abc"])
+@pytest.mark.parametrize(
+    ("args", "command"),
+    [
+        (["guide", "fetch", "boss", "abc"], "guide.fetch.boss"),
+        (["guide", "config", "boss"], "guide.config.boss"),
+        (["guide", "list", "boss"], "guide.list.boss"),
+    ],
+)
+def test_guide_commands_render_text_error_when_scene_not_supported(cli_runner, args, command: str):
+    result = cli_runner.invoke(app, args)
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["error"] == {
-        "code": "SCENE_NOT_SUPPORTED",
-        "message": "暂不支持场景 boss",
-    }
+    assert result.stdout.splitlines() == _expected_lines(
+        f"fail {command} code=SCENE_NOT_SUPPORTED",
+        body=['why msg="暂不支持场景 boss"'],
+    )
 
 
 def test_command_service_handles_guide_fetch_cw(tmp_path: Path, monkeypatch):

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import typer
 
-from trail.commands.helpers import call_daemon, print_json
+from trail.commands.helpers import call_daemon
 from trail.core.errors import TrailError
 from trail.output.capture import with_auto_capture
+from trail.output.rendering import print_output
 
 
 guide_app = typer.Typer(no_args_is_help=True)
@@ -25,18 +26,20 @@ def _require_cw_scene(scene: str) -> bool:
 def guide_fetch(scene: str, url: str) -> None:
     """拉取攻略内容并直接返回给 Agent；货币战争支持 lineup_url 或 lineup_id。"""
     if not _require_cw_scene(scene):
-        print_json(_unsupported_scene_response(scene))
+        print_output(f"guide.fetch.{scene}", _unsupported_scene_response(scene))
         return
-    print_json(call_daemon(f"guide.fetch.{scene}", {"url": url}))
+    print_output(f"guide.fetch.{scene}", call_daemon(f"guide.fetch.{scene}", {"url": url}))
 
 
 @guide_app.command("config")
 def guide_config(scene: str) -> None:
     """返回货币战争攻略筛选会用到的动态枚举字典。"""
     if not _require_cw_scene(scene):
-        print_json(_unsupported_scene_response(scene))
+        print_output(f"guide.config.{scene}", _unsupported_scene_response(scene))
         return
-    print_json(call_daemon(f"guide.config.{scene}", {}))
+    print_output(f"guide.config.{scene}", call_daemon(f"guide.config.{scene}", {}))
+
+
 @guide_app.command("list")
 def guide_list(
     scene: str,
@@ -51,9 +54,10 @@ def guide_list(
     """列出可选攻略。默认字段面向“选攻略”，会保留 has_change_equip / has_expert / support_hard / final_role_cards 等高价值信息。"""
 
     if not _require_cw_scene(scene):
-        print_json(_unsupported_scene_response(scene))
+        print_output(f"guide.list.{scene}", _unsupported_scene_response(scene))
         return
-    print_json(
+    print_output(
+        f"guide.list.{scene}",
         call_daemon(
             f"guide.list.{scene}",
             {

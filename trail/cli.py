@@ -15,13 +15,18 @@ from trail.commands.session import session_app
 from trail.commands.state import state_app
 from trail.commands.window import window_app
 from trail.output.capture import set_capture_options
+from trail.output.rendering import OutputFormat, set_output_options
 
 app = typer.Typer(no_args_is_help=True)
 
 
 @app.callback()
-def main(verbose: bool = typer.Option(False, "--verbose", help="输出复杂操作的中间流程，便于开发期调试")) -> None:
+def main(
+    verbose: bool = typer.Option(False, "--verbose", help="输出复杂操作的中间流程，便于开发期调试"),
+    output_format: OutputFormat = typer.Option(OutputFormat.TEXT, "--format", help="text 或 yaml"),
+) -> None:
     set_capture_options(verbose=verbose)
+    set_output_options(output_format=output_format, verbose=verbose)
 
 
 @app.command()

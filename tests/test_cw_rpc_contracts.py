@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from trail.cli import app
@@ -34,7 +32,16 @@ def _assert_single_call(client, *, method: str, payload: dict, tmp_path) -> None
     ]
 
 
-def test_cw_stage_detect_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+def _expected_lines(summary: str, *, screenshot: str | None = None, body: list[str] | None = None) -> list[str]:
+    lines = [summary]
+    if screenshot:
+        lines.append(f"shot path={screenshot}")
+    if body:
+        lines.extend(body)
+    return lines
+
+
+def test_cw_stage_detect_renders_stage_and_shot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.stage.detect": build_success_response(
@@ -48,12 +55,14 @@ def test_cw_stage_detect_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
     result = cli_runner.invoke(app, ["cw", "stage", "detect", "--session", SESSION_ID])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"] == {"value": "preparation", "stale": False}
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.stage.detect stage=preparation stale=0",
+        screenshot=".trail/shots/req-cw-stage-detect.png",
+    )
     _assert_single_call(client, method="cw.stage.detect", payload={}, tmp_path=tmp_path)
 
 
-def test_cw_enter_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_enter_renders_entry_summary_and_shot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.enter": build_success_response(
@@ -81,8 +90,10 @@ def test_cw_enter_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"]["mode"] == "new"
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.enter mode=new difficulty=current battle=standard",
+        screenshot=".trail/shots/req-cw-enter.png",
+    )
     _assert_single_call(
         client,
         method="cw.enter",
@@ -91,12 +102,20 @@ def test_cw_enter_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
     )
 
 
-def test_cw_shop_buy_slot_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_shop_buy_slot_renders_purchase_summary_and_shot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.shop.buy_slot": build_success_response(
                 request_id="req-cw-shop-buy-slot",
-                data={"slot": 2, "expect": "希儿"},
+                data={
+                    "items": [
+                        {"slot": 2, "name": "停云", "price": 10},
+                        {"slot": 1, "name": "银狼", "price": 20},
+                    ],
+                    "opened": True,
+                    "stale": False,
+                    "guide_summary": {"remaining_purchases": {"银狼": 0}},
+                },
                 screenshot=".trail/shots/req-cw-shop-buy-slot.png",
             )
         }
@@ -108,12 +127,18 @@ def test_cw_shop_buy_slot_rpc_contract(cli_runner, fake_daemon_client, tmp_path)
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"] == {"slot": 2, "expect": "希儿"}
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.shop.buy_slot opened=1 stale=0 count=2",
+        screenshot=".trail/shots/req-cw-shop-buy-slot.png",
+        body=[
+            "item idx=1 slot=1 name=银狼 cost=20",
+            "item idx=2 slot=2 name=停云 cost=10",
+        ],
+    )
     _assert_single_call(client, method="cw.shop.buy_slot", payload={"slot": 2, "expect": "希儿"}, tmp_path=tmp_path)
 
 
-def test_cw_guide_current_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_guide_current_renders_guide_summary(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.guide.current": build_success_response(
@@ -126,13 +151,12 @@ def test_cw_guide_current_rpc_contract(cli_runner, fake_daemon_client, tmp_path)
     result = cli_runner.invoke(app, ["cw", "guide", "current", "--session", SESSION_ID])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"] == {"lineup_id": "abc", "artifact_id": "art-1"}
+    assert result.stdout.splitlines() == ["ok cw.guide.current id=abc artifact=art-1"]
     _assert_single_call(client, method="cw.guide.current", payload={}, tmp_path=tmp_path)
 
 
 @pytest.mark.parametrize("guide_flag", ["--lineup-id", "--guide"])
-def test_cw_guide_apply_rpc_contract(cli_runner, fake_daemon_client, tmp_path, guide_flag: str):
+def test_cw_guide_apply_renders_guide_summary(cli_runner, fake_daemon_client, tmp_path, guide_flag: str):
     client = fake_daemon_client(
         {
             "cw.guide.apply": build_success_response(
@@ -146,12 +170,14 @@ def test_cw_guide_apply_rpc_contract(cli_runner, fake_daemon_client, tmp_path, g
     result = cli_runner.invoke(app, ["cw", "guide", "apply", "--session", SESSION_ID, guide_flag, "abc"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"] == {"lineup_id": "abc", "artifact_id": "art-1"}
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.guide.apply id=abc artifact=art-1",
+        screenshot=".trail/shots/req-cw-guide-apply.png",
+    )
     _assert_single_call(client, method="cw.guide.apply", payload={"lineup_id": "abc"}, tmp_path=tmp_path)
 
 
-def test_cw_slots_place_one_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_slots_place_one_renders_slot_counts_and_shot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.slots.place_one": build_success_response(
@@ -168,8 +194,10 @@ def test_cw_slots_place_one_rpc_contract(cli_runner, fake_daemon_client, tmp_pat
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"]["front"] == ["希儿"]
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.slots.place_one front=1 back=0 hand=0 stale=0",
+        screenshot=".trail/shots/req-cw-slots-place-one.png",
+    )
     _assert_single_call(
         client,
         method="cw.slots.place_one",
@@ -178,7 +206,7 @@ def test_cw_slots_place_one_rpc_contract(cli_runner, fake_daemon_client, tmp_pat
     )
 
 
-def test_cw_invest_choose_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_invest_choose_renders_stage_summary(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.invest.choose": build_success_response(
@@ -192,12 +220,14 @@ def test_cw_invest_choose_rpc_contract(cli_runner, fake_daemon_client, tmp_path)
     result = cli_runner.invoke(app, ["cw", "invest", "choose", "--session", SESSION_ID, "--option", "2"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"] == {"value": "battle", "stale": False}
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.invest.choose stage=battle stale=0",
+        screenshot=".trail/shots/req-cw-invest-choose.png",
+    )
     _assert_single_call(client, method="cw.invest.choose", payload={"option": 2}, tmp_path=tmp_path)
 
 
-def test_cw_battle_continue_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_battle_continue_renders_stage_summary(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.battle.continue": build_success_response(
@@ -211,12 +241,14 @@ def test_cw_battle_continue_rpc_contract(cli_runner, fake_daemon_client, tmp_pat
     result = cli_runner.invoke(app, ["cw", "battle", "continue", "--session", SESSION_ID])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"] == {"value": "settle", "stale": False}
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.battle.continue stage=settle stale=0",
+        screenshot=".trail/shots/req-cw-battle-continue.png",
+    )
     _assert_single_call(client, method="cw.battle.continue", payload={}, tmp_path=tmp_path)
 
 
-def test_cw_stage_wait_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_stage_wait_renders_stage_and_shot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.stage.wait": build_success_response(
@@ -230,17 +262,24 @@ def test_cw_stage_wait_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
     result = cli_runner.invoke(app, ["cw", "stage", "wait", "--session", SESSION_ID, "--timeout", "120"])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"] == {"value": "settle", "stale": False}
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.stage.wait stage=settle stale=0",
+        screenshot=".trail/shots/req-cw-stage-wait.png",
+    )
     _assert_single_call(client, method="cw.stage.wait", payload={"timeout": 120}, tmp_path=tmp_path)
 
 
-def test_cw_shop_status_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_shop_status_renders_items_in_slot_order(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.shop.status": build_success_response(
                 request_id="req-cw-shop-status",
-                data={"items": [{"slot": 1, "name": "希儿"}]},
+                data={
+                    "items": [
+                        {"slot": 2, "name": "停云", "price": 1},
+                        {"slot": 1, "name": "希儿", "price": 2},
+                    ]
+                },
                 screenshot=".trail/shots/req-cw-shop-status.png",
             )
         }
@@ -249,18 +288,23 @@ def test_cw_shop_status_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
     result = cli_runner.invoke(app, ["cw", "shop", "status", "--session", SESSION_ID])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"] == {"items": [{"slot": 1, "name": "希儿"}]}
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.shop.status count=2",
+        screenshot=".trail/shots/req-cw-shop-status.png",
+        body=[
+            "item idx=1 slot=1 name=希儿 cost=2",
+            "item idx=2 slot=2 name=停云 cost=1",
+        ],
+    )
     _assert_single_call(client, method="cw.shop.status", payload={}, tmp_path=tmp_path)
 
 
-def test_cw_event_handle_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_event_handle_renders_event_result(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.event.handle": build_success_response(
                 request_id="req-cw-event-handle",
-                data={"value": "settle", "stale": False},
-                screenshot=".trail/shots/req-cw-event-handle.png",
+                data={"event_type": "special", "handled_action": "confirm"},
             )
         }
     )
@@ -268,12 +312,11 @@ def test_cw_event_handle_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
     result = cli_runner.invoke(app, ["cw", "event", "handle", "--session", SESSION_ID])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"] == {"value": "settle", "stale": False}
+    assert result.stdout.splitlines() == ["ok cw.event.handle event_type=special handled_action=confirm"]
     _assert_single_call(client, method="cw.event.handle", payload={}, tmp_path=tmp_path)
 
 
-def test_cw_invest_read_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.invest.read": build_success_response(
@@ -287,40 +330,225 @@ def test_cw_invest_read_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
     result = cli_runner.invoke(app, ["cw", "invest", "read", "--session", SESSION_ID])
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["data"] == {"options": [{"id": 1, "name": "量子力学"}]}
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.invest.read count=1",
+        screenshot=".trail/shots/req-cw-invest-read.png",
+        body=["opt idx=1 id=1 name=量子力学"],
+    )
     _assert_single_call(client, method="cw.invest.read", payload={}, tmp_path=tmp_path)
 
 
 @pytest.mark.parametrize(
-    ("args", "method", "payload"),
+    ("args", "method", "payload", "response_data", "screenshot", "expected_lines"),
     [
-        (["cw", "slots", "read", "--session", SESSION_ID, "--slot", "front:0", "--slot", "back:1"], "cw.slots.read", {"slot": ["front:0", "back:1"]}),
-        (["cw", "slots", "swap", "--session", SESSION_ID, "--source", "hand:0", "--target", "front:0"], "cw.slots.swap", {"source": "hand:0", "target": "front:0"}),
-        (["cw", "replenish", "read", "--session", SESSION_ID], "cw.replenish.read", {}),
-        (["cw", "replenish", "choose", "--session", SESSION_ID, "--option", "2"], "cw.replenish.choose", {"option": 2}),
-        (["cw", "crystals", "collect", "--session", SESSION_ID], "cw.crystals.collect", {}),
-        (["cw", "hand", "sell-one", "--session", SESSION_ID, "--slot", "1"], "cw.hand.sell_one", {"slot": 1}),
-        (["cw", "hand", "sell-plan", "--session", SESSION_ID], "cw.hand.sell_plan", {}),
-        (["cw", "shop", "open", "--session", SESSION_ID], "cw.shop.open", {}),
-        (["cw", "shop", "scan", "--session", SESSION_ID], "cw.shop.scan", {}),
-        (["cw", "shop", "refresh", "--session", SESSION_ID], "cw.shop.refresh", {}),
-        (["cw", "shop", "close", "--session", SESSION_ID], "cw.shop.close", {}),
-        (["cw", "encounter", "read", "--session", SESSION_ID], "cw.encounter.read", {}),
-        (["cw", "encounter", "choose", "--session", SESSION_ID, "--option", "1"], "cw.encounter.choose", {"option": 1}),
-        (["cw", "fortune", "read", "--session", SESSION_ID], "cw.fortune.read", {}),
-        (["cw", "fortune", "choose", "--session", SESSION_ID, "--option", "1"], "cw.fortune.choose", {"option": 1}),
-        (["cw", "boss-preview", "confirm", "--session", SESSION_ID], "cw.boss_preview.confirm", {}),
-        (["cw", "battle", "start", "--session", SESSION_ID], "cw.battle.start", {}),
-        (["cw", "settle", "next", "--session", SESSION_ID], "cw.settle.next", {}),
+        (
+            ["cw", "slots", "read", "--session", SESSION_ID, "--slot", "front:0", "--slot", "back:1"],
+            "cw.slots.read",
+            {"slot": ["front:0", "back:1"]},
+            {"front": ["希儿", None], "back": [None], "hand": ["停云", None], "stale": False},
+            ".trail/shots/req-cw-slots-read.png",
+            _expected_lines(
+                "ok cw.slots.read front=1 back=0 hand=1 stale=0",
+                screenshot=".trail/shots/req-cw-slots-read.png",
+                body=[
+                    "slot pos=front:0 name=希儿",
+                    "slot pos=front:1 empty=1",
+                    "slot pos=back:0 empty=1",
+                    "slot pos=hand:0 name=停云",
+                    "slot pos=hand:1 empty=1",
+                ],
+            ),
+        ),
+        (
+            ["cw", "slots", "swap", "--session", SESSION_ID, "--source", "hand:0", "--target", "front:0"],
+            "cw.slots.swap",
+            {"source": "hand:0", "target": "front:0"},
+            {"front": ["希儿"], "back": ["佩拉"], "hand": [], "stale": True},
+            ".trail/shots/req-cw-slots-swap.png",
+            _expected_lines(
+                "ok cw.slots.swap front=1 back=1 hand=0 stale=1",
+                screenshot=".trail/shots/req-cw-slots-swap.png",
+            ),
+        ),
+        (
+            ["cw", "replenish", "read", "--session", SESSION_ID],
+            "cw.replenish.read",
+            {},
+            {"options": [1, 2, 3]},
+            ".trail/shots/req-cw-replenish-read.png",
+            _expected_lines(
+                "ok cw.replenish.read count=3",
+                screenshot=".trail/shots/req-cw-replenish-read.png",
+                body=["opt idx=1 value=1", "opt idx=2 value=2", "opt idx=3 value=3"],
+            ),
+        ),
+        (
+            ["cw", "replenish", "choose", "--session", SESSION_ID, "--option", "2"],
+            "cw.replenish.choose",
+            {"option": 2},
+            {"value": "shop", "stale": False},
+            ".trail/shots/req-cw-replenish-choose.png",
+            _expected_lines(
+                "ok cw.replenish.choose stage=shop stale=0",
+                screenshot=".trail/shots/req-cw-replenish-choose.png",
+            ),
+        ),
+        (
+            ["cw", "crystals", "collect", "--session", SESSION_ID],
+            "cw.crystals.collect",
+            {},
+            {"last_crystal_collection": "done"},
+            ".trail/shots/req-cw-crystals-collect.png",
+            _expected_lines(
+                "ok cw.crystals.collect status=done",
+                screenshot=".trail/shots/req-cw-crystals-collect.png",
+            ),
+        ),
+        (
+            ["cw", "hand", "sell-one", "--session", SESSION_ID, "--slot", "1"],
+            "cw.hand.sell_one",
+            {"slot": 1},
+            {"front": ["希儿"], "back": ["佩拉"], "hand": ["银狼", None, "阮·梅"], "stale": True},
+            ".trail/shots/req-cw-hand-sell-one.png",
+            _expected_lines(
+                "ok cw.hand.sell_one front=1 back=1 hand=2 stale=1",
+                screenshot=".trail/shots/req-cw-hand-sell-one.png",
+            ),
+        ),
+        (
+            ["cw", "hand", "sell-plan", "--session", SESSION_ID],
+            "cw.hand.sell_plan",
+            {},
+            {"candidates": [0, 2]},
+            None,
+            ["ok cw.hand.sell_plan count=2"],
+        ),
+        (
+            ["cw", "shop", "open", "--session", SESSION_ID],
+            "cw.shop.open",
+            {},
+            {
+                "items": [{"slot": 2, "name": "停云", "price": 10}, {"slot": 1, "name": "银狼", "price": 20}],
+                "opened": True,
+                "stale": True,
+            },
+            ".trail/shots/req-cw-shop-open.png",
+            _expected_lines(
+                "ok cw.shop.open opened=1 stale=1 count=2",
+                screenshot=".trail/shots/req-cw-shop-open.png",
+                body=["item idx=1 slot=1 name=银狼 cost=20", "item idx=2 slot=2 name=停云 cost=10"],
+            ),
+        ),
+        (
+            ["cw", "shop", "scan", "--session", SESSION_ID],
+            "cw.shop.scan",
+            {},
+            {"items": [{"slot": 1, "name": "银狼", "price": 20}], "opened": True, "stale": False},
+            ".trail/shots/req-cw-shop-scan.png",
+            _expected_lines(
+                "ok cw.shop.scan opened=1 stale=0 count=1",
+                screenshot=".trail/shots/req-cw-shop-scan.png",
+                body=["item idx=1 slot=1 name=银狼 cost=20"],
+            ),
+        ),
+        (
+            ["cw", "shop", "refresh", "--session", SESSION_ID],
+            "cw.shop.refresh",
+            {},
+            {"items": [{"slot": 1, "name": "阮·梅", "price": 30}], "opened": False, "stale": True},
+            ".trail/shots/req-cw-shop-refresh.png",
+            _expected_lines(
+                "ok cw.shop.refresh opened=0 stale=1 count=1",
+                screenshot=".trail/shots/req-cw-shop-refresh.png",
+                body=["item idx=1 slot=1 name=阮·梅 cost=30"],
+            ),
+        ),
+        (
+            ["cw", "shop", "close", "--session", SESSION_ID],
+            "cw.shop.close",
+            {},
+            {"items": [], "opened": False, "stale": True},
+            ".trail/shots/req-cw-shop-close.png",
+            _expected_lines(
+                "ok cw.shop.close opened=0 stale=1 count=0",
+                screenshot=".trail/shots/req-cw-shop-close.png",
+            ),
+        ),
+        (
+            ["cw", "encounter", "read", "--session", SESSION_ID],
+            "cw.encounter.read",
+            {},
+            {"options": [1, 2]},
+            None,
+            ["ok cw.encounter.read count=2", "opt idx=1 value=1", "opt idx=2 value=2"],
+        ),
+        (
+            ["cw", "encounter", "choose", "--session", SESSION_ID, "--option", "1"],
+            "cw.encounter.choose",
+            {"option": 1},
+            {"value": "event", "stale": False},
+            None,
+            ["ok cw.encounter.choose stage=event stale=0"],
+        ),
+        (
+            ["cw", "fortune", "read", "--session", SESSION_ID],
+            "cw.fortune.read",
+            {},
+            {"options": [1, 2]},
+            None,
+            ["ok cw.fortune.read count=2", "opt idx=1 value=1", "opt idx=2 value=2"],
+        ),
+        (
+            ["cw", "fortune", "choose", "--session", SESSION_ID, "--option", "1"],
+            "cw.fortune.choose",
+            {"option": 1},
+            {"value": "battle", "stale": False},
+            None,
+            ["ok cw.fortune.choose stage=battle stale=0"],
+        ),
+        (
+            ["cw", "boss-preview", "confirm", "--session", SESSION_ID],
+            "cw.boss_preview.confirm",
+            {},
+            {"value": "battle", "stale": False},
+            None,
+            ["ok cw.boss_preview.confirm stage=battle stale=0"],
+        ),
+        (
+            ["cw", "battle", "start", "--session", SESSION_ID],
+            "cw.battle.start",
+            {},
+            {"value": "battle", "stale": False},
+            None,
+            ["ok cw.battle.start stage=battle stale=0"],
+        ),
+        (
+            ["cw", "settle", "next", "--session", SESSION_ID],
+            "cw.settle.next",
+            {},
+            {"value": "shop", "stale": False},
+            None,
+            ["ok cw.settle.next stage=shop stale=0"],
+        ),
     ],
 )
-def test_cw_rpc_wrapper_matrix(cli_runner, fake_daemon_client, tmp_path, args, method: str, payload: dict):
+def test_cw_rpc_wrapper_matrix(
+    cli_runner,
+    fake_daemon_client,
+    tmp_path,
+    args,
+    method: str,
+    payload: dict,
+    response_data: dict,
+    screenshot: str | None,
+    expected_lines: list[str],
+):
     client = fake_daemon_client(
         {
             method: build_success_response(
                 request_id=f"req-{method}",
-                data={"ok": True},
+                data=response_data,
+                screenshot=screenshot,
             )
         }
     )
@@ -328,6 +556,5 @@ def test_cw_rpc_wrapper_matrix(cli_runner, fake_daemon_client, tmp_path, args, m
     result = cli_runner.invoke(app, args)
 
     assert result.exit_code == 0
-    response_payload = json.loads(result.stdout)
-    assert response_payload["ok"] is True
+    assert result.stdout.splitlines() == expected_lines
     _assert_single_call(client, method=method, payload=payload, tmp_path=tmp_path)

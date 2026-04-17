@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from trail.cli import app
 from trail.core.errors import TrailError
 import trail.daemon.server as daemon_server_module
 from trail.daemon.command_service import CommandService, PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
@@ -169,6 +168,8 @@ def test_client_call_builds_protocol_request(tmp_path: Path):
 
 
 def test_client_moves_transport_request_id_into_debug_when_verbose(tmp_path: Path):
+    request_ids: list[str] = []
+
     write_ready_manifest(
         tmp_path / "daemon-home",
         endpoint="127.0.0.1:8765",
@@ -177,7 +178,8 @@ def test_client_moves_transport_request_id_into_debug_when_verbose(tmp_path: Pat
     client = TrailDaemonClient(
         workspace_root=tmp_path,
         daemon_home=tmp_path / "daemon-home",
-        transport=lambda request, token, *, endpoint: {
+        transport=lambda request, token, *, endpoint: request_ids.append(request.request_id)
+        or {
             "request_id": request.request_id,
             "ok": True,
             "data": {"clicked": [10, 20]},
@@ -192,14 +194,17 @@ def test_client_moves_transport_request_id_into_debug_when_verbose(tmp_path: Pat
 
     payload = client.call("input.click", {"x": 10, "y": 20}, verbose=True)
 
+    assert request_ids == [payload["debug"]["request_id"]]
     assert payload["debug"] == {
         "transport": "fake",
-        "request_id": payload["debug"]["request_id"],
+        "request_id": request_ids[0],
     }
     assert "request_id" not in payload
 
 
 def test_client_preserves_request_id_in_debug_for_daemon_transport_errors(tmp_path: Path):
+    request_ids: list[str] = []
+
     write_ready_manifest(
         tmp_path / "daemon-home",
         endpoint="127.0.0.1:8765",
@@ -208,7 +213,8 @@ def test_client_preserves_request_id_in_debug_for_daemon_transport_errors(tmp_pa
     client = TrailDaemonClient(
         workspace_root=tmp_path,
         daemon_home=tmp_path / "daemon-home",
-        transport=lambda request, token, *, endpoint: {
+        transport=lambda request, token, *, endpoint: request_ids.append(request.request_id)
+        or {
             "request_id": request.request_id,
             "ok": False,
             "data": None,
@@ -231,75 +237,61 @@ def test_client_preserves_request_id_in_debug_for_daemon_transport_errors(tmp_pa
         "code": "DAEMON_AUTH_FAILED",
         "message": "daemon token mismatch",
     }
+    assert request_ids == [payload["debug"]["request_id"]]
     assert payload["debug"] == {
         "source": "daemon",
-        "request_id": payload["debug"]["request_id"],
+        "request_id": request_ids[0],
     }
     assert "request_id" not in payload
 
 
-def test_daemon_request_status_command_calls_daemon_method(cli_runner, fake_daemon_client, tmp_path: Path):
-    client = fake_daemon_client(
-        {
-            "daemon.request_status": build_success_response(
-                request_id="req-daemon-request-status",
-                data={
-                    "request_id": "req-42",
-                    "method": "input.click",
-                    "workspace_root": str(tmp_path),
-                    "session_id": None,
-                    "final_state": "completed",
-                    "last_visible_stage": "responded",
-                    "tainted": False,
-                    "started_at": "2026-04-16T00:00:00+00:00",
-                    "updated_at": "2026-04-16T00:00:01+00:00",
-                },
-            )
-        }
+def test_client_preserves_unknown_result_debug_fields_when_daemon_unavailable(tmp_path: Path):
+    request_ids: list[str] = []
+
+    write_ready_manifest(
+        tmp_path / "daemon-home",
+        endpoint="127.0.0.1:8765",
+        token_value="token-1",
+    )
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=tmp_path / "daemon-home",
+        transport=lambda request, token, *, endpoint: request_ids.append(request.request_id)
+        or {
+            "request_id": request.request_id,
+            "ok": False,
+            "data": {},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": {
+                "last_known_stage": "side_effect_applied",
+                "stage_detail": "state persisted marker failed",
+                "recovery_detail": "recovery finish failed",
+            },
+            "error": {
+                "code": "DAEMON_UNAVAILABLE",
+                "message": "mutation result unknown",
+            },
+        },
     )
 
-    result = cli_runner.invoke(app, ["daemon", "request-status", "--request-id", "req-42"])
+    payload = client.call("input.click", {"x": 10, "y": 20})
 
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"]["request_id"] == "req-42"
-    assert client.calls == [
-        {
-            "method": "daemon.request_status",
-            "payload": {"request_id": "req-42"},
-            "workspace_root": str(tmp_path),
-            "session_id": None,
-            "verbose": False,
-        }
-    ]
-
-
-def test_daemon_reconcile_session_command_calls_daemon_method(cli_runner, fake_daemon_client, tmp_path: Path):
-    client = fake_daemon_client(
-        {
-            "daemon.reconcile_session": build_success_response(
-                request_id="req-daemon-reconcile-session",
-                data={"session_id": "session-1", "tainted": False},
-            )
-        }
-    )
-
-    result = cli_runner.invoke(app, ["daemon", "reconcile-session", "--session", "session-1"])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["data"] == {"session_id": "session-1", "tainted": False}
-    assert client.calls == [
-        {
-            "method": "daemon.reconcile_session",
-            "payload": {"session_id": "session-1"},
-            "workspace_root": str(tmp_path),
-            "session_id": None,
-            "verbose": False,
-        }
-    ]
+    assert request_ids == [payload["debug"]["request_id"]]
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert payload["debug"] == {
+        "request_id": request_ids[0],
+        "last_known_stage": "side_effect_applied",
+        "stage_detail": "state persisted marker failed",
+        "recovery_detail": "recovery finish failed",
+    }
+    assert "request_id" not in payload
 
 
 def test_command_service_handles_session_create(tmp_path: Path):

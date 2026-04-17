@@ -11,11 +11,12 @@ import socket
 
 import typer
 
-from trail.commands.helpers import call_daemon, print_json
+from trail.commands.helpers import call_daemon
 from trail.daemon.bootstrap import install_bootstrap, resolve_daemon_home, start_bootstrap
 from trail.daemon.client import daemon_transport_failure, format_exception_detail
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
 from trail.output.envelope import command_success
+from trail.output.rendering import print_output
 
 
 def _utc_now() -> str:
@@ -119,7 +120,8 @@ def daemon_install() -> None:
     try:
         path = install_bootstrap(resolve_daemon_home())
     except Exception as error:
-        print_json(
+        print_output(
+            "daemon.install",
             daemon_transport_failure(
                 request_id="local-install",
                 code="DAEMON_INSTALL_FAILED",
@@ -129,7 +131,7 @@ def daemon_install() -> None:
         )
         return
 
-    print_json(command_success(data={"manifest_path": str(path)}, screenshot=None))
+    print_output("daemon.install", command_success(data={"manifest_path": str(path)}, screenshot=None))
 
 
 @daemon_app.command("start")
@@ -137,15 +139,16 @@ def daemon_start() -> None:
     daemon_home = resolve_daemon_home()
     manifest, failure = _load_manifest_for_command(daemon_home=daemon_home, request_id="local-start")
     if failure is not None:
-        print_json(failure)
+        print_output("daemon.start", failure)
         return
 
     if runtime_manifest_is_live(manifest):
-        print_json(command_success(data={"started": False, "already_running": True}, screenshot=None))
+        print_output("daemon.start", command_success(data={"started": False, "already_running": True}, screenshot=None))
         return
 
     if not start_bootstrap(daemon_home):
-        print_json(
+        print_output(
+            "daemon.start",
             daemon_transport_failure(
                 request_id="local-start",
                 code="DAEMON_START_FAILED",
@@ -154,7 +157,7 @@ def daemon_start() -> None:
         )
         return
 
-    print_json(command_success(data={"started": True}, screenshot=None))
+    print_output("daemon.start", command_success(data={"started": True}, screenshot=None))
 
 
 @daemon_app.command("status")
@@ -162,10 +165,11 @@ def daemon_status() -> None:
     daemon_home = resolve_daemon_home()
     manifest, failure = _load_manifest_for_command(daemon_home=daemon_home, request_id="local-status")
     if failure is not None:
-        print_json(failure)
+        print_output("daemon.status", failure)
         return
 
-    print_json(
+    print_output(
+        "daemon.status",
         command_success(
             data={
                 "install": asdict(manifest.install),
@@ -182,20 +186,21 @@ def daemon_stop() -> None:
     manifest_path = manifest_path_for_user(daemon_home)
     manifest, failure = _load_manifest_for_command(daemon_home=daemon_home, request_id="local-stop")
     if failure is not None:
-        print_json(failure)
+        print_output("daemon.stop", failure)
         return
 
     runtime_is_live = runtime_manifest_is_live(manifest)
     if not runtime_is_live and (manifest.runtime.endpoint or manifest.runtime.pid):
         clear_runtime_manifest_state(manifest_path=manifest_path, manifest=manifest)
-        print_json(command_success(data={"stopped": True}, screenshot=None))
+        print_output("daemon.stop", command_success(data={"stopped": True}, screenshot=None))
         return
 
     if manifest.runtime.pid is not None:
         try:
             terminate_daemon_process(manifest.runtime.pid)
         except OSError as error:
-            print_json(
+            print_output(
+                "daemon.stop",
                 daemon_transport_failure(
                     request_id="local-stop",
                     code="DAEMON_STOP_FAILED",
@@ -209,7 +214,7 @@ def daemon_stop() -> None:
             return
 
     clear_runtime_manifest_state(manifest_path=manifest_path, manifest=manifest)
-    print_json(command_success(data={"stopped": True}, screenshot=None))
+    print_output("daemon.stop", command_success(data={"stopped": True}, screenshot=None))
 
 
 @daemon_app.command("logs")
@@ -217,17 +222,17 @@ def daemon_logs() -> None:
     daemon_home = resolve_daemon_home()
     manifest, failure = _load_manifest_for_command(daemon_home=daemon_home, request_id="local-logs")
     if failure is not None:
-        print_json(failure)
+        print_output("daemon.logs", failure)
         return
 
-    print_json(command_success(data={"log_dir": manifest.install.log_dir}, screenshot=None))
+    print_output("daemon.logs", command_success(data={"log_dir": manifest.install.log_dir}, screenshot=None))
 
 
 @daemon_app.command("request-status")
 def daemon_request_status(request_id: Annotated[str, typer.Option("--request-id")]) -> None:
-    print_json(call_daemon("daemon.request_status", {"request_id": request_id}))
+    print_output("daemon.request_status", call_daemon("daemon.request_status", {"request_id": request_id}))
 
 
 @daemon_app.command("reconcile-session")
 def daemon_reconcile_session(session: Annotated[str, typer.Option("--session")]) -> None:
-    print_json(call_daemon("daemon.reconcile_session", {"session_id": session}))
+    print_output("daemon.reconcile_session", call_daemon("daemon.reconcile_session", {"session_id": session}))

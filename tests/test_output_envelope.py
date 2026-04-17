@@ -6,9 +6,16 @@ import pytest
 from trail.artifacts.store import ArtifactStore
 from trail.commands.helpers import run_session_command
 from trail.core.errors import TrailError
-from trail.output.capture import with_auto_capture
+from trail.output.capture import set_capture_options, with_auto_capture
 from trail.output.envelope import command_failure, command_success
 from trail.session.store import SessionStore
+
+
+@pytest.fixture(autouse=True)
+def reset_capture_options():
+    set_capture_options(verbose=False)
+    yield
+    set_capture_options(verbose=False)
 
 
 def test_failure_envelope_contains_error_code_and_screenshot(tmp_path):

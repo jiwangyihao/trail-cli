@@ -8,6 +8,7 @@ from pathlib import Path
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
 from trail.output.capture import resolve_capture_verbose, with_auto_capture
+from trail.output.rendering import print_output
 from trail.runtime.operator import build_runtime
 from trail.session.store import SessionStore
 
