@@ -697,6 +697,53 @@ def test_windows_window_controller_uses_windows_capture_backend_when_available(m
     assert image.size == (1920, 1080)
 
 
+def test_get_windows_capture_session_reuses_live_session(monkeypatch):
+    import trail.runtime.window as window_module
+
+    created: list[int] = []
+    window_module._WINDOWS_CAPTURE_SESSIONS.clear()
+
+    class FakeSession:
+        def __init__(self, hwnd: int):
+            created.append(hwnd)
+            self.hwnd = hwnd
+
+        def is_finished(self) -> bool:
+            return False
+
+    monkeypatch.setattr(window_module, "_WindowsCaptureSession", FakeSession)
+
+    first = window_module._get_windows_capture_session(321)
+    second = window_module._get_windows_capture_session(321)
+
+    assert first is second
+    assert created == [321]
+
+
+def test_get_windows_capture_session_recreates_finished_session(monkeypatch):
+    import trail.runtime.window as window_module
+
+    created: list[int] = []
+    window_module._WINDOWS_CAPTURE_SESSIONS.clear()
+
+    class FakeSession:
+        def __init__(self, hwnd: int):
+            created.append(hwnd)
+            self.hwnd = hwnd
+            self._finished = len(created) == 1
+
+        def is_finished(self) -> bool:
+            return self._finished
+
+    monkeypatch.setattr(window_module, "_WindowsCaptureSession", FakeSession)
+
+    first = window_module._get_windows_capture_session(321)
+    second = window_module._get_windows_capture_session(321)
+
+    assert first is not second
+    assert created == [321, 321]
+
+
 def test_capture_to_workspace_uses_request_id_filename(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
 

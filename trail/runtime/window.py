@@ -4,12 +4,11 @@ import ctypes
 import hashlib
 import subprocess
 import sys
-import tempfile
 from time import sleep
 from pathlib import Path
 from io import BytesIO
 from ctypes.wintypes import POINT, RECT
-from threading import Event
+from threading import Event, Lock
 
 from PIL import ImageGrab
 
@@ -46,6 +45,9 @@ WINDOWS_RESERVED_CAPTURE_STEMS = {
     *(f"COM{index}" for index in range(1, 10)),
     *(f"LPT{index}" for index in range(1, 10)),
 }
+
+_WINDOWS_CAPTURE_SESSIONS: dict[int, "_WindowsCaptureSession"] = {}
+_WINDOWS_CAPTURE_SESSIONS_LOCK = Lock()
 
 
 def _safe_capture_request_id(request_id: str | None) -> str:
@@ -133,46 +135,66 @@ def _window_capture_crop_box(frame_size: tuple[int, int], window_region: Region,
 
 def _capture_with_windows_capture(hwnd: int, client_region: Region):
     from PIL import Image
+    session = _get_windows_capture_session(hwnd)
+    frame_buffer, frame_size = session.snapshot()
+    crop_box = _window_capture_crop_box(frame_size, _resolve_window_region(hwnd), client_region)
+    left, top, right, bottom = crop_box
+    cropped = Image.fromarray(frame_buffer[top:bottom, left:right, :3][:, :, ::-1], "RGB")
+    target_size = _target_capture_size(client_region, hwnd)
+    if cropped.size != target_size:
+        cropped = cropped.resize(target_size)
+    return cropped
+
+
+def _create_windows_capture(hwnd: int):
     from windows_capture import WindowsCapture
 
-    completed = Event()
-    frame_path: Path | None = None
+    return WindowsCapture(cursor_capture=False, draw_border=False, window_hwnd=hwnd)
 
-    capture = WindowsCapture(cursor_capture=False, draw_border=False, window_hwnd=hwnd)
 
-    @capture.event
-    def on_frame_arrived(frame, capture_control):
-        nonlocal frame_path
-        frame_size = (frame.width, frame.height)
-        crop_box = _window_capture_crop_box(frame_size, _resolve_window_region(hwnd), client_region)
-        cropped = frame.crop(*crop_box)
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-            frame_path = Path(temp_file.name)
-        cropped.save_as_image(str(frame_path))
-        capture_control.stop()
-        completed.set()
+class _WindowsCaptureSession:
+    def __init__(self, hwnd: int):
+        self.hwnd = hwnd
+        self._lock = Lock()
+        self._frame_ready = Event()
+        self._frame_buffer = None
+        self._frame_size: tuple[int, int] | None = None
+        capture = _create_windows_capture(hwnd)
 
-    @capture.event
-    def on_closed():
-        completed.set()
+        @capture.event
+        def on_frame_arrived(frame, capture_control):
+            with self._lock:
+                self._frame_buffer = frame.frame_buffer.copy()
+                self._frame_size = (frame.width, frame.height)
+            self._frame_ready.set()
 
-    control = capture.start_free_threaded()
-    try:
-        if not completed.wait(5):
-            control.stop()
+        @capture.event
+        def on_closed():
+            self._frame_ready.set()
+
+        self.capture = capture
+        self.control = capture.start_free_threaded()
+
+    def is_finished(self) -> bool:
+        return bool(self.control.is_finished())
+
+    def snapshot(self) -> tuple[object, tuple[int, int]]:
+        if not self._frame_ready.wait(5):
             raise TrailError("SCREENSHOT_FAILED", "windows graphics capture timed out")
-        control.wait()
-        if frame_path is None or not frame_path.exists():
-            raise TrailError("SCREENSHOT_FAILED", "windows graphics capture returned no frame")
+        with self._lock:
+            if self._frame_buffer is None or self._frame_size is None:
+                raise TrailError("SCREENSHOT_FAILED", "windows graphics capture returned no frame")
+            return self._frame_buffer.copy(), self._frame_size
 
-        cropped = Image.open(frame_path).convert("RGB")
-        target_size = _target_capture_size(client_region, hwnd)
-        if cropped.size != target_size:
-            cropped = cropped.resize(target_size)
-        return cropped
-    finally:
-        if frame_path is not None:
-            frame_path.unlink(missing_ok=True)
+
+def _get_windows_capture_session(hwnd: int) -> _WindowsCaptureSession:
+    with _WINDOWS_CAPTURE_SESSIONS_LOCK:
+        session = _WINDOWS_CAPTURE_SESSIONS.get(hwnd)
+        if session is not None and not session.is_finished():
+            return session
+        session = _WindowsCaptureSession(hwnd)
+        _WINDOWS_CAPTURE_SESSIONS[hwnd] = session
+        return session
 
 
 def attach_window(window_title: str) -> WindowBinding:
