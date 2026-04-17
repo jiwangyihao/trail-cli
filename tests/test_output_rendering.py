@@ -359,7 +359,7 @@ def test_render_output_ocr_read_success_does_not_expand_provider_or_lang_fields(
     assert render_output("ocr.read", payload).splitlines() == [
         "ok ocr.read hits=1",
         "shot path=.trail/shots/req-ocr-provider-hidden.png",
-        "text rank=1 value=点击进入 score=0.98 box=122,88,74,20",
+        "text value=点击进入 box=122,88,74,20 center=159,98",
     ]
 
 

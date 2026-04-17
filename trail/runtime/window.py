@@ -10,7 +10,7 @@ from io import BytesIO
 from ctypes.wintypes import POINT, RECT
 from threading import Event, Lock
 
-from PIL import ImageGrab
+from PIL import Image, ImageGrab
 
 from trail.core.errors import TrailError
 from trail.runtime.model import Region, WindowBinding
@@ -47,6 +47,7 @@ WINDOWS_RESERVED_CAPTURE_STEMS = {
 }
 CANONICAL_CLIENT_WIDTH = 1920
 CANONICAL_CLIENT_HEIGHT = 1080
+CANONICAL_ASPECT_RATIO = CANONICAL_CLIENT_WIDTH / CANONICAL_CLIENT_HEIGHT
 
 _WINDOWS_CAPTURE_SESSIONS: dict[int, "_WindowsCaptureSession"] = {}
 _WINDOWS_CAPTURE_SESSIONS_LOCK = Lock()
@@ -141,11 +142,7 @@ def _capture_with_windows_capture(hwnd: int, client_region: Region):
     frame_buffer, frame_size = session.snapshot()
     crop_box = _window_capture_crop_box(frame_size, _resolve_window_region(hwnd), client_region)
     left, top, right, bottom = crop_box
-    cropped = Image.fromarray(frame_buffer[top:bottom, left:right, :3][:, :, ::-1], "RGB")
-    target_size = _target_capture_size(client_region, hwnd)
-    if cropped.size != target_size:
-        cropped = cropped.resize(target_size)
-    return cropped
+    return Image.fromarray(frame_buffer[top:bottom, left:right, :3][:, :, ::-1], "RGB")
 
 
 def _create_windows_capture(hwnd: int):
@@ -345,8 +342,8 @@ def _scale_region_for_screen_capture(region: Region, hwnd: int | None) -> Region
 
 
 def _target_capture_size(client_region: Region, hwnd: int | None) -> tuple[int, int]:
-    scaled = _scale_region_for_screen_capture(client_region, hwnd)
-    return scaled.width, scaled.height
+    del client_region, hwnd
+    return CANONICAL_CLIENT_WIDTH, CANONICAL_CLIENT_HEIGHT
 
 
 def _scale_canonical_point(value: int | float, *, target_size: int, canonical_size: int) -> int:
@@ -375,6 +372,28 @@ class WindowsWindowController:
         self.window_title = self.window_binding.title
         self.workspace = Path(workspace)
         self.workspace.mkdir(parents=True, exist_ok=True)
+        self._warnings: list[dict[str, str]] = []
+
+    def collect_warnings(self) -> list[dict[str, str]]:
+        warnings = list(self._warnings)
+        self._warnings.clear()
+        return warnings
+
+    def _normalize_captured_image(self, image, *, target_size: tuple[int, int]):
+        source_width, source_height = image.size
+        target_width, target_height = target_size
+        if source_width > 0 and source_height > 0:
+            source_ratio = source_width / source_height
+            if abs(source_ratio - CANONICAL_ASPECT_RATIO) > 0.01:
+                self._warnings.append(
+                    {
+                        "code": "WINDOW_CAPTURE_ASPECT_RATIO_MISMATCH",
+                        "message": "captured image aspect ratio differs from 1920x1080; resized to canonical output",
+                    }
+                )
+        if image.size != target_size:
+            image = image.resize((target_width, target_height))
+        return image
 
     def _resolve_window(self):
         try:
@@ -456,6 +475,7 @@ class WindowsWindowController:
             region = region.sub_region(from_x, from_y, to_x, to_y)
 
         hwnd = getattr(window, "_hWnd", None)
+        target_size = _target_capture_size(region, int(hwnd) if hwnd is not None else None)
         if sys.platform == "win32" and hwnd is not None:
             try:
                 image = _capture_with_windows_capture(int(hwnd), region)
@@ -463,9 +483,6 @@ class WindowsWindowController:
                 try:
                     capture_region = _scale_region_for_screen_capture(region, int(hwnd))
                     image = _grab_region_with_imagegrab(capture_region)
-                    target_size = _live_capture_target_size(int(hwnd))
-                    if target_size is not None and image.size != target_size:
-                        image = image.resize(target_size)
                 except Exception:
                     try:
                         image = _grab_window_with_imagegrab(int(hwnd))
@@ -479,11 +496,13 @@ class WindowsWindowController:
                             image = _grab_region_with_imagegrab(region)
         else:
             image = _grab_region_with_imagegrab(region)
+        image = self._normalize_captured_image(image, target_size=target_size)
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue()
 
     def capture_to_workspace(self, request_id: str | None = None) -> Path:
-        path = self.workspace / f"{_safe_capture_request_id(request_id)}.png"
-        path.write_bytes(self.capture())
+        path = self.workspace / f"{_safe_capture_request_id(request_id)}.jpg"
+        image = Image.open(BytesIO(self.capture())).convert("RGB")
+        image.save(path, format="JPEG", quality=90, optimize=True)
         return path

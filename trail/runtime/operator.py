@@ -176,6 +176,9 @@ class RuntimeOperator:
             return warnings
         warnings = list(self._warnings)
         self._warnings.clear()
+        collect_window_warnings = getattr(self.window, "collect_warnings", None)
+        if callable(collect_window_warnings):
+            warnings.extend(collect_window_warnings() or [])
         return warnings
 
     def consume_debug_trace(self) -> list[dict[str, Any]]:

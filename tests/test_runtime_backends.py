@@ -684,7 +684,6 @@ def test_windows_window_controller_prefers_bbox_grab_for_live_capture_when_hwnd_
 
     assert FakeImageGrab.calls == [
         {"bbox": (10, 20, 110, 80), "all_screens": True, "window": None},
-        {"bbox": None, "all_screens": False, "window": 321},
     ]
     assert image.size == (1920, 1080)
     assert image_bytes.startswith(b"\x89PNG")
@@ -729,7 +728,6 @@ def test_windows_window_controller_scales_bbox_capture_using_window_dpi(monkeypa
 
     assert FakeImageGrab.calls == [
         {"bbox": (320, -1240, 2240, -160), "all_screens": True, "window": None},
-        {"bbox": None, "all_screens": False, "window": 321},
     ]
     assert image.size == (1920, 1080)
     assert image_bytes.startswith(b"\x89PNG")
@@ -748,6 +746,39 @@ def test_target_capture_size_uses_scaled_client_region(monkeypatch):
     target = window_module._target_capture_size(window_module.Region(left=183, top=160, width=1097, height=617), 321)
 
     assert target == (1920, 1080)
+
+
+def test_windows_window_controller_capture_warns_when_source_aspect_ratio_differs(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        window_module,
+        "_capture_with_windows_capture",
+        lambda hwnd, region: Image.new("RGB", (2000, 1000), color="white"),
+    )
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+    monkeypatch.setattr(controller, "_resolve_window", lambda: SimpleNamespace(_hWnd=321))
+    monkeypatch.setattr(
+        controller,
+        "_resolve_region",
+        lambda window=None: window_module.Region(left=183, top=160, width=1097, height=617),
+    )
+
+    image_bytes = controller.capture()
+    image = Image.open(BytesIO(image_bytes))
+
+    assert image.size == (1920, 1080)
+    assert controller.collect_warnings() == [
+        {
+            "code": "WINDOW_CAPTURE_ASPECT_RATIO_MISMATCH",
+            "message": "captured image aspect ratio differs from 1920x1080; resized to canonical output",
+        }
+    ]
 
 
 def test_windows_window_controller_uses_resolved_hwnd_when_binding_missing(monkeypatch, tmp_path):
@@ -786,7 +817,6 @@ def test_windows_window_controller_uses_resolved_hwnd_when_binding_missing(monke
 
     assert FakeImageGrab.calls == [
         {"bbox": (10, 20, 110, 80), "all_screens": True, "window": None},
-        {"bbox": None, "all_screens": False, "window": 654},
     ]
     assert image.size == (1920, 1080)
     assert image_bytes.startswith(b"\x89PNG")
@@ -889,29 +919,39 @@ def test_get_windows_capture_session_recreates_finished_session(monkeypatch):
 
 def test_capture_to_workspace_uses_request_id_filename(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
+    from PIL import Image
+    from io import BytesIO
 
     controller = window_module.WindowsWindowController(
         workspace=tmp_path,
         window_binding=WindowBinding(title="Demo", hwnd=321),
     )
-    monkeypatch.setattr(controller, "capture", lambda **kwargs: b"demo-bytes")
+    image_buffer = BytesIO()
+    Image.new("RGB", (1, 1), color="white").save(image_buffer, format="PNG")
+    monkeypatch.setattr(controller, "capture", lambda **kwargs: image_buffer.getvalue())
 
     path = controller.capture_to_workspace(request_id="req-123")
 
     assert path.parent == tmp_path
     assert path.name.startswith("req-123-")
-    assert path.suffix == ".png"
-    assert path.read_bytes() == b"demo-bytes"
+    assert path.suffix == ".jpg"
+    with Image.open(path) as image:
+        assert image.format == "JPEG"
+        assert image.size == (1, 1)
 
 
 def test_capture_to_workspace_distinguishes_colliding_request_ids_and_avoids_reserved_names(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
+    from PIL import Image
+    from io import BytesIO
 
     controller = window_module.WindowsWindowController(
         workspace=tmp_path,
         window_binding=WindowBinding(title="Demo", hwnd=321),
     )
-    monkeypatch.setattr(controller, "capture", lambda **kwargs: b"demo-bytes")
+    image_buffer = BytesIO()
+    Image.new("RGB", (1, 1), color="white").save(image_buffer, format="PNG")
+    monkeypatch.setattr(controller, "capture", lambda **kwargs: image_buffer.getvalue())
 
     plain = controller.capture_to_workspace(request_id="escape")
     parent = controller.capture_to_workspace(request_id="../escape")
@@ -924,7 +964,9 @@ def test_capture_to_workspace_distinguishes_colliding_request_ids_and_avoids_res
     assert len({plain.name, parent.name, backslash.name}) == 3
     assert device.resolve().parent == tmp_path.resolve()
     assert device.stem.upper() != "CON"
-    assert device.read_bytes() == b"demo-bytes"
+    with Image.open(device) as image:
+        assert image.format == "JPEG"
+        assert image.size == (1, 1)
 
 
 def test_pyscreeze_matcher_returns_box(monkeypatch):
@@ -2417,6 +2459,40 @@ def test_runtime_operator_capture_after_action_waits_after_recent_input(monkeypa
     assert sleep_calls == [pytest.approx(0.75, rel=0.001)]
 
 
+def test_runtime_operator_collect_warnings_includes_window_warnings():
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: b"demo",
+            capture_to_workspace=lambda request_id=None: Path("shot.png"),
+            collect_warnings=lambda: [
+                {
+                    "code": "WINDOW_CAPTURE_ASPECT_RATIO_MISMATCH",
+                    "message": "captured image aspect ratio differs from 1920x1080; resized to canonical output",
+                }
+            ],
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    assert runtime.collect_warnings() == [
+        {
+            "code": "WINDOW_CAPTURE_ASPECT_RATIO_MISMATCH",
+            "message": "captured image aspect ratio differs from 1920x1080; resized to canonical output",
+        }
+    ]
+
+
 def test_runtime_operator_matches_reference_images_from_project_tree(tmp_path, monkeypatch):
     import trail.runtime.operator as operator_module
 
@@ -2576,12 +2652,16 @@ def test_command_service_capture_chain_keeps_request_scoped_screenshot_inside_wo
     from trail.daemon.command_service import CommandService
     from trail.runtime.operator import RuntimeOperator
     import trail.runtime.window as window_module
+    from PIL import Image
+    from io import BytesIO
 
     controller = window_module.WindowsWindowController(
         workspace=tmp_path / ".trail" / "shots",
         window_binding=WindowBinding(title="Demo", hwnd=321),
     )
-    monkeypatch.setattr(controller, "capture", lambda **kwargs: b"demo-bytes")
+    image_buffer = BytesIO()
+    Image.new("RGB", (1, 1), color="white").save(image_buffer, format="PNG")
+    monkeypatch.setattr(controller, "capture", lambda **kwargs: image_buffer.getvalue())
     runtime = RuntimeOperator(
         window=controller,
         matcher=SimpleNamespace(locate=lambda template, image: None),
@@ -2617,7 +2697,9 @@ def test_command_service_capture_chain_keeps_request_scoped_screenshot_inside_wo
     assert screenshot_path.stem.upper() != "CON"
     assert screenshot_path.exists()
     assert screenshot_path.resolve().parent == (tmp_path / ".trail" / "shots").resolve()
-    assert screenshot_path.read_bytes() == b"demo-bytes"
+    with Image.open(screenshot_path) as image:
+        assert image.format == "JPEG"
+        assert image.size == (1, 1)
 
 
 def test_fake_daemon_client_moves_request_id_into_debug_when_verbose():
