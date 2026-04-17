@@ -143,9 +143,12 @@ def _capture_with_windows_capture(hwnd: int, client_region: Region):
     @capture.event
     def on_frame_arrived(frame, capture_control):
         nonlocal frame_path
+        frame_size = (frame.width, frame.height)
+        crop_box = _window_capture_crop_box(frame_size, _resolve_window_region(hwnd), client_region)
+        cropped = frame.crop(*crop_box)
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
             frame_path = Path(temp_file.name)
-        frame.save_as_image(str(frame_path))
+        cropped.save_as_image(str(frame_path))
         capture_control.stop()
         completed.set()
 
@@ -162,9 +165,7 @@ def _capture_with_windows_capture(hwnd: int, client_region: Region):
         if frame_path is None or not frame_path.exists():
             raise TrailError("SCREENSHOT_FAILED", "windows graphics capture returned no frame")
 
-        image = Image.open(frame_path).convert("RGB")
-        crop_box = _window_capture_crop_box(image.size, _resolve_window_region(hwnd), client_region)
-        cropped = image.crop(crop_box)
+        cropped = Image.open(frame_path).convert("RGB")
         target_size = _target_capture_size(client_region, hwnd)
         if cropped.size != target_size:
             cropped = cropped.resize(target_size)
