@@ -33,5 +33,5 @@ description: Use when an agent needs to handle boss preview, special events, bat
 - 这个 skill 负责固定事件处理，不负责决定何时购物、何时补给、何时换阵容，也不负责决定何时退出整局
 - 如果事件截图和 `event_type` / `handled_action` 不一致，以截图为准，并由主 skill 决定下一步是否重试或改走别的命令
 - 即使 CLI 提供了 `event_type`，也不要假设它已经穷尽所有事件分支；必要时直接根据截图做多模态判断
-- 如果事件、战斗或结算命令返回未知结果，先用 `debug.request_id` 查询 `trail daemon request-status --request-id <id>`
+- 如果事件、战斗或结算命令返回未知结果，先读默认文本里的 `request id=<id>`；只有 transport/control-plane 失败或显式 `--verbose` 调试时，再看 `debug.request_id`，随后查询 `trail daemon request-status --request-id <id>`
 - 如果对应 session 被标记为 `tainted`，先执行 `trail daemon reconcile-session --session <id>`，再交回主 skill 处理下一步

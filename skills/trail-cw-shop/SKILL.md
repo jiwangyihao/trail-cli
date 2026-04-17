@@ -31,5 +31,5 @@ description: Use when an agent is in the Currency Wars shop stage and needs to s
 - `buy-slot` 必须显式指定 `--slot` 和 `--expect`
 - 如果返回 `reserve_full` 或 `needs_reserve_clear`，把控制权交回主 skill 或 `trail-cw-slots` 处理卖牌，不在这里私自决定卖谁
 - 每次购买或刷新后，优先使用最新返回结果，必要时重新 `scan`
-- 如果购买或刷新后结果未知，使用 `debug.request_id` 执行 `trail daemon request-status --request-id <id>`，不要直接重复点击
+- 如果购买或刷新后结果未知，优先读取默认文本里的 `request id=<id>`；只有 transport/control-plane 失败或显式 `--verbose` 调试时，再看 `debug.request_id`，随后执行 `trail daemon request-status --request-id <id>`，不要直接重复点击
 - 如果商店动作后 session 进入 `tainted`，先执行 `trail daemon reconcile-session --session <id>`，再交回主 skill 决策

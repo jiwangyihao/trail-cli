@@ -39,5 +39,5 @@ description: Use when an agent needs to read or choose replenish, invest, encoun
 - `--option` 必须显式给出
 - `choose` 之后把 `stage` 视为失效，回到 `trail-cw` 重新 `stage detect`
 - 这个 skill 不处理商店、编队和战斗逻辑
-- 如果选择动作返回未知结果，优先读取 `debug.request_id` 并执行 `trail daemon request-status --request-id <id>`
+- 如果选择动作返回未知结果，优先读取默认文本里的 `request id=<id>`；只有 transport/control-plane 失败或显式 `--verbose` 调试时，再看 `debug.request_id`，随后执行 `trail daemon request-status --request-id <id>`
 - 如果 session 进入 `tainted`，先执行 `trail daemon reconcile-session --session <id>`，再回到主 skill

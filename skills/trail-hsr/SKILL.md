@@ -33,6 +33,6 @@ description: Use when an agent needs to create a Trail session, verify the HSR w
 - 如果窗口检查失败，先解决窗口焦点或绑定问题，再继续
 - 每次命令后优先阅读返回的 `screenshot` 与 `data`
 - 如果需要调试窗口绑定、前台状态或复杂场景动作，可给 CLI 加顶层 `--verbose`
-- 如果命令结果未知，优先读取 `debug.request_id`，再执行 `trail daemon request-status --request-id <id>`
+- 如果命令结果未知，优先读取默认文本里的 `request id=<id>`；只有 transport/control-plane 失败或显式 `--verbose` 调试时，再看 `debug.request_id`，随后执行 `trail daemon request-status --request-id <id>`
 - 如果 session 被标记为 `tainted`，先查清请求终态，再执行 `trail daemon reconcile-session --session <id>`
 - 这个 skill 不负责货币战争具体策略

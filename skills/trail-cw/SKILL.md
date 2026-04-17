@@ -60,5 +60,5 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 - 不要假设 `read_*` 命令已经穷尽了所有 UI 语义；必要时直接根据 screenshot 做多模态判断后，再调用显式动作命令
 - 如果 `detect/read` 与截图观感冲突，以截图为准；guide 相关元数据（如 `support_hard`、`has_change_equip`、`has_expert`）主要用于选攻略，不用于替代实屏判断
 - 开发期调试场景命令时，可给 CLI 加顶层 `--verbose` 查看中间 trace
-- 如果命令返回未知结果，立即用 `debug.request_id` 执行 `trail daemon request-status --request-id <id>`，不要盲目重放 mutating 命令
+- 如果命令返回未知结果，先读默认文本里的 `request id=<id>` 与 `recover action=daemon.request_status request=<id>`；只有 transport/control-plane 失败或显式 `--verbose` 调试时，再看 `debug.request_id`，不要盲目重放 mutating 命令
 - 如果 `request-status` 或 `state dump` 显示 session 已 tainted，先执行 `trail daemon reconcile-session --session <id>`，再继续整局编排
