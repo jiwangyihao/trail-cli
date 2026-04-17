@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -160,6 +161,25 @@ def start_bootstrap(daemon_home: Path) -> bool:
     return True
 
 
+def stop_bootstrap(pid: int) -> bool:
+    command = (
+        "$process = Start-Process "
+        "-FilePath 'powershell' "
+        f"-Verb RunAs -WindowStyle Hidden -ArgumentList '-NoProfile -Command Stop-Process -Id {pid} -Force' "
+        "-PassThru; exit 0"
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", command],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return False
+    return True
+
+
 def wait_until_runtime_ready(
     daemon_home: Path,
     *,
@@ -170,10 +190,14 @@ def wait_until_runtime_ready(
     deadline = monotonic() + timeout_seconds
 
     while monotonic() < deadline:
-        manifest = load_manifest(manifest_path)
-        runtime = manifest.runtime
-        token_path = Path(manifest.install.token_file)
-        token_value = token_path.read_text(encoding="utf-8").strip() if token_path.exists() else ""
+        try:
+            manifest = load_manifest(manifest_path)
+            runtime = manifest.runtime
+            token_path = Path(manifest.install.token_file)
+            token_value = token_path.read_text(encoding="utf-8").strip() if token_path.exists() else ""
+        except (OSError, json.JSONDecodeError, ValueError):
+            sleep(interval_seconds)
+            continue
         if runtime.state in {"ready", "degraded"} and runtime.endpoint and runtime.pid and runtime.token_generation and token_value:
             return asdict(runtime)
         sleep(interval_seconds)

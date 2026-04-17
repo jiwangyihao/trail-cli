@@ -94,7 +94,7 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert (
-        "```text\nok ocr.read hits=2\nshot path=.trail/shots/req-ocr.png\ntext rank=1 value=点击进入 score=0.98 box=122,88,74,20\ntext rank=2 value=开始挑战 score=0.93 box=410,502,120,36\n```"
+        "```text\nok ocr.read hits=2\nshot path=.trail/shots/req-ocr.png\ntext value=点击进入 box=122,88,74,20 center=159,98\ntext value=开始挑战 box=410,502,120,36 center=470,520\n```"
         in readme
     )
     assert (
@@ -259,8 +259,8 @@ def test_render_output_renders_cw_shop_status_sorted_items_and_costs():
             [
                 "ok ocr.read hits=2",
                 "shot path=.trail/shots/req-ocr-focused.png",
-                "text rank=1 value=点击进入 score=0.98 box=122,88,74,20",
-                "text rank=2 value=开始挑战 score=0.93 box=410,502,120,36",
+                "text value=点击进入 box=122,88,74,20 center=159,98",
+                "text value=开始挑战 box=410,502,120,36 center=470,520",
             ],
         ),
     ],
@@ -473,6 +473,43 @@ def test_render_output_renders_cw_shop_buy_slot_summary_text():
         "shot path=.trail/shots/req-buy-slot.png",
         "item idx=1 slot=1 name=银狼 cost=20",
         "item idx=2 slot=2 name=停云 cost=10",
+    ]
+
+
+def test_render_output_renders_ocr_read_from_rapidocr_tuple_items():
+    payload = {
+        "ok": True,
+        "data": {
+            "result": [
+                [[122, 88], [196, 88], [196, 108], [122, 108]],
+            ]
+        },
+        "screenshot": ".trail/shots/req-ocr-raw.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    payload["data"]["result"] = [
+        [
+            [[122, 88], [196, 88], [196, 108], [122, 108]],
+            "点击进入",
+            0.98,
+        ],
+        [
+            [[410, 502], [530, 502], [530, 538], [410, 538]],
+            "开始挑战",
+            0.93,
+        ],
+    ]
+
+    assert render_output("ocr.read", payload).splitlines() == [
+        "ok ocr.read hits=2",
+        "shot path=.trail/shots/req-ocr-raw.png",
+        "text value=点击进入 box=122,88,74,20 center=159,98",
+        "text value=开始挑战 box=410,502,120,36 center=470,520",
     ]
 
 

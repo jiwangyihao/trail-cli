@@ -173,7 +173,7 @@ def test_ocr_read_returns_runtime_payload(cli_runner, fake_daemon_client, tmp_pa
     assert result.stdout.splitlines() == [
         "ok ocr.read hits=1",
         "shot path=.trail/shots/req-ocr-read.png",
-        "text rank=1 value=银狼",
+        "text value=银狼",
     ]
     assert client.calls == [
         {

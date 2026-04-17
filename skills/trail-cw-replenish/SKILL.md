@@ -35,6 +35,7 @@ description: Use when an agent needs to read or choose replenish, invest, encoun
 ## 执行规则
 
 - 优先看截图，再决定是否调用 `read`；不要把 `read` 的返回当成唯一事实来源
+- 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补一条 `trail screen shot`
 - `read` 返回的编号只是辅助输入，真正该选哪个仍应结合截图、攻略细节和当前局内目标判断
 - `--option` 必须显式给出
 - `choose` 之后把 `stage` 视为失效，回到 `trail-cw` 重新 `stage detect`

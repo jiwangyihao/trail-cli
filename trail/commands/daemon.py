@@ -12,7 +12,7 @@ import socket
 import typer
 
 from trail.commands.helpers import call_daemon
-from trail.daemon.bootstrap import install_bootstrap, resolve_daemon_home, start_bootstrap
+from trail.daemon.bootstrap import install_bootstrap, resolve_daemon_home, start_bootstrap, stop_bootstrap
 from trail.daemon.client import daemon_transport_failure, format_exception_detail
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
 from trail.output.envelope import command_success
@@ -197,8 +197,8 @@ def daemon_stop() -> None:
 
     if manifest.runtime.pid is not None:
         try:
-            terminate_daemon_process(manifest.runtime.pid)
-        except OSError as error:
+            stopped = stop_bootstrap(manifest.runtime.pid)
+        except Exception as error:
             print_output(
                 "daemon.stop",
                 daemon_transport_failure(
@@ -207,6 +207,21 @@ def daemon_stop() -> None:
                     message="daemon stop failed",
                     debug={
                         "detail": format_exception_detail(error),
+                        "pid": manifest.runtime.pid,
+                    },
+                )
+            )
+            return
+
+        if not stopped:
+            print_output(
+                "daemon.stop",
+                daemon_transport_failure(
+                    request_id="local-stop",
+                    code="DAEMON_STOP_FAILED",
+                    message="daemon stop failed",
+                    debug={
+                        "detail": "failed to launch elevated stop",
                         "pid": manifest.runtime.pid,
                     },
                 )

@@ -321,7 +321,7 @@ def test_daemon_stop_returns_stopped_and_clears_runtime(cli_runner, monkeypatch,
     terminated: list[int] = []
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
     monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_traild", lambda **kwargs: True)
-    monkeypatch.setattr("trail.commands.daemon.terminate_daemon_process", lambda pid: terminated.append(pid))
+    monkeypatch.setattr("trail.commands.daemon.stop_bootstrap", lambda pid: terminated.append(pid) or True)
 
     result = cli_runner.invoke(app, ["daemon", "stop"])
     manifest = load_manifest(manifest_path_for_user(daemon_home))
@@ -341,10 +341,10 @@ def test_daemon_stop_returns_failure_when_process_termination_fails(cli_runner, 
     monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
     monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_traild", lambda **kwargs: True)
 
-    def fail_terminate(pid: int) -> None:
+    def fail_terminate(pid: int) -> bool:
         raise PermissionError(f"denied: {pid}")
 
-    monkeypatch.setattr("trail.commands.daemon.terminate_daemon_process", fail_terminate)
+    monkeypatch.setattr("trail.commands.daemon.stop_bootstrap", fail_terminate)
 
     result = cli_runner.invoke(app, ["daemon", "stop"])
 
@@ -420,6 +420,37 @@ def test_start_bootstrap_marks_runtime_starting_and_launches_elevated_pythonw(mo
     assert manifest.runtime.state == "starting"
 
 
+def test_stop_bootstrap_launches_elevated_stop(monkeypatch):
+    from trail.daemon.bootstrap import stop_bootstrap
+
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("trail.daemon.bootstrap.subprocess.run", fake_run)
+
+    stopped = stop_bootstrap(4321)
+
+    assert stopped is True
+    assert calls[0][0:3] == ["powershell", "-NoProfile", "-Command"]
+    assert "Start-Process" in calls[0][3]
+    assert "-Verb RunAs" in calls[0][3]
+    assert "Stop-Process -Id 4321 -Force" in calls[0][3]
+
+
+def test_stop_bootstrap_returns_false_when_elevated_stop_fails(monkeypatch):
+    from trail.daemon.bootstrap import stop_bootstrap
+
+    def fail_run(command: list[str], **kwargs):
+        raise OSError("stop failed")
+
+    monkeypatch.setattr("trail.daemon.bootstrap.subprocess.run", fail_run)
+
+    assert stop_bootstrap(4321) is False
+
+
 def test_start_bootstrap_returns_false_when_elevated_launch_fails(monkeypatch, tmp_path: Path):
     from trail.daemon.bootstrap import start_bootstrap
 
@@ -456,6 +487,31 @@ def test_wait_until_runtime_ready_returns_runtime_snapshot(tmp_path: Path):
     assert runtime["state"] == "ready"
     assert runtime["endpoint"] == "127.0.0.1:8765"
     assert runtime["pid"] == 1234
+
+
+def test_wait_until_runtime_ready_retries_transient_manifest_read_errors(monkeypatch, tmp_path: Path):
+    import trail.daemon.bootstrap as bootstrap_module
+
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    manifest_path = manifest_path_for_user(daemon_home)
+
+    real_load_manifest = bootstrap_module.load_manifest
+    attempts = {"count": 0}
+
+    def flaky_load_manifest(path: Path):
+        assert path == manifest_path
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise PermissionError("manifest busy")
+        return real_load_manifest(path)
+
+    monkeypatch.setattr(bootstrap_module, "load_manifest", flaky_load_manifest)
+
+    runtime = bootstrap_module.wait_until_runtime_ready(daemon_home, timeout_seconds=1.0, interval_seconds=0.01)
+
+    assert attempts["count"] >= 2
+    assert runtime["state"] == "ready"
 
 
 def test_runtime_service_caches_runtime_and_delegates_window_ops(monkeypatch, tmp_path: Path):

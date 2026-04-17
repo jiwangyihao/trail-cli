@@ -32,6 +32,7 @@ description: Use when an agent needs to create a Trail session, verify the HSR w
 - `session create` 成功前，不要开始场景命令
 - 如果窗口检查失败，先解决窗口焦点或绑定问题，再继续
 - 每次命令后优先阅读返回的 `screenshot` 与 `data`
+- 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补一条 `trail screen shot`
 - 如果需要调试窗口绑定、前台状态或复杂场景动作，可给 CLI 加顶层 `--verbose`
 - 如果命令结果未知，优先读取默认文本里的 `request id=<id>`；只有 transport/control-plane 失败或显式 `--verbose` 调试时，再看 `debug.request_id`，随后执行 `trail daemon request-status --request-id <id>`
 - 如果 session 被标记为 `tainted`，先查清请求终态，再执行 `trail daemon reconcile-session --session <id>`

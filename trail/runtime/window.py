@@ -45,6 +45,8 @@ WINDOWS_RESERVED_CAPTURE_STEMS = {
     *(f"COM{index}" for index in range(1, 10)),
     *(f"LPT{index}" for index in range(1, 10)),
 }
+CANONICAL_CLIENT_WIDTH = 1920
+CANONICAL_CLIENT_HEIGHT = 1080
 
 _WINDOWS_CAPTURE_SESSIONS: dict[int, "_WindowsCaptureSession"] = {}
 _WINDOWS_CAPTURE_SESSIONS_LOCK = Lock()
@@ -347,6 +349,14 @@ def _target_capture_size(client_region: Region, hwnd: int | None) -> tuple[int, 
     return scaled.width, scaled.height
 
 
+def _scale_canonical_point(value: int | float, *, target_size: int, canonical_size: int) -> int:
+    if isinstance(value, float) and 0.0 <= value <= 1.0:
+        scaled = round(target_size * value)
+    else:
+        scaled = round(target_size * (float(value) / canonical_size))
+    return min(max(scaled, 0), max(target_size - 1, 0))
+
+
 def _grab_window_with_imagegrab(hwnd: int):
     return ImageGrab.grab(window=hwnd)
 
@@ -412,13 +422,9 @@ class WindowsWindowController:
 
     def to_screen_point(self, x: int | float, y: int | float) -> tuple[int, int]:
         region = self.client_region()
-
-        def _convert(value: int | float, size: int, origin: int) -> int:
-            if isinstance(value, float) and 0.0 <= value <= 1.0:
-                return origin + round(size * value)
-            return origin + round(value)
-
-        return _convert(x, region.width, region.left), _convert(y, region.height, region.top)
+        scaled_x = _scale_canonical_point(x, target_size=region.width, canonical_size=CANONICAL_CLIENT_WIDTH)
+        scaled_y = _scale_canonical_point(y, target_size=region.height, canonical_size=CANONICAL_CLIENT_HEIGHT)
+        return region.left + scaled_x, region.top + scaled_y
 
     def prepare_input(self) -> None:
         window = self._resolve_window()

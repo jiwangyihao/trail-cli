@@ -72,8 +72,8 @@ guide id=def idx=2 hard=0 change_equip=1 expert=0
 ```text
 ok ocr.read hits=2
 shot path=.trail/shots/req-ocr.png
-text rank=1 value=点击进入 score=0.98 box=122,88,74,20
-text rank=2 value=开始挑战 score=0.93 box=410,502,120,36
+text value=点击进入 box=122,88,74,20 center=159,98
+text value=开始挑战 box=410,502,120,36 center=470,520
 ```
 
 ```text

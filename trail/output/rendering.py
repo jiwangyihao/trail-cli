@@ -408,6 +408,91 @@ def _render_cw_event_result(command: str, payload: dict[str, Any]) -> list[str]:
     )
 
 
+def _extract_ocr_points(value: Any) -> list[tuple[float, float]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+
+    direct_points: list[tuple[float, float]] = []
+    for item in value:
+        if (
+            isinstance(item, (list, tuple))
+            and len(item) >= 2
+            and isinstance(item[0], (int, float))
+            and isinstance(item[1], (int, float))
+        ):
+            direct_points.append((float(item[0]), float(item[1])))
+    if direct_points:
+        return direct_points
+
+    nested_points: list[tuple[float, float]] = []
+    for item in value:
+        nested_points.extend(_extract_ocr_points(item))
+    return nested_points
+
+
+def _normalize_ocr_box(value: Any) -> dict[str, int] | None:
+    if isinstance(value, dict):
+        box = _format_box(value)
+        if box is None:
+            return None
+        left, top, width, height = [int(part) for part in box.split(",")]
+        return {"left": left, "top": top, "width": width, "height": height}
+
+    points = _extract_ocr_points(value)
+    if not points:
+        return None
+
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    left = int(min(xs))
+    top = int(min(ys))
+    right = int(max(xs))
+    bottom = int(max(ys))
+    return {"left": left, "top": top, "width": right - left, "height": bottom - top}
+
+
+def _format_box_center(box: Any) -> str | None:
+    if not isinstance(box, dict):
+        return None
+    left = box.get("left")
+    top = box.get("top")
+    width = box.get("width")
+    height = box.get("height")
+    if left is None or top is None or width is None or height is None:
+        return None
+    center_x = round(left + width / 2)
+    center_y = round(top + height / 2)
+    return f"{center_x},{center_y}"
+
+
+def _normalize_ocr_item(item: Any) -> dict[str, Any] | None:
+    if isinstance(item, dict):
+        text = item.get("text")
+        if text in (None, ""):
+            return None
+        normalized = {"text": text}
+        if item.get("score") is not None:
+            normalized["score"] = item.get("score")
+        box = _normalize_ocr_box(item.get("box"))
+        if box is not None:
+            normalized["box"] = box
+        return normalized
+
+    if not isinstance(item, (list, tuple)) or len(item) < 2:
+        return None
+
+    text = item[1]
+    if text in (None, ""):
+        return None
+    normalized = {"text": text}
+    if len(item) >= 3 and isinstance(item[2], (int, float)):
+        normalized["score"] = item[2]
+    box = _normalize_ocr_box(item[0])
+    if box is not None:
+        normalized["box"] = box
+    return normalized
+
+
 def _render_guide_fetch(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     summary = _format_fact_sequence(
@@ -524,15 +609,17 @@ def _render_ocr_read(command: str, payload: dict[str, Any]) -> list[str]:
     result = data.get("result") or []
     lines = [f"ok {command} hits={_encode_value(len(result))}"]
     _append_shot(lines, payload)
-    for index, item in enumerate(result, start=1):
-        if not isinstance(item, dict):
+    for item in result:
+        normalized = _normalize_ocr_item(item)
+        if normalized is None:
             continue
-        line = f"text rank={_encode_value(index)} value={_encode_value(item.get('text'))}"
-        if item.get("score") is not None:
-            line += f" score={_encode_value(item.get('score'))}"
-        box = _format_box(item.get("box"))
+        line = f"text value={_encode_value(normalized.get('text'))}"
+        box = _format_box(normalized.get("box"))
         if box is not None:
             line += f" box={box}"
+        center = _format_box_center(normalized.get("box"))
+        if center is not None:
+            line += f" center={center}"
         lines.append(line)
     _append_warnings(lines, payload)
     _append_references(lines, payload)

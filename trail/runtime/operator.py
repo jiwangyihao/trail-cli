@@ -57,6 +57,9 @@ class RuntimeOperator:
         self.reference_root = Path.cwd() if reference_root is None else Path(reference_root)
         self._warnings: list[dict[str, Any]] = []
         self._trace: list[dict[str, Any]] = []
+        self._last_input_at: float | None = None
+
+    POST_INPUT_CAPTURE_DELAY_SECONDS = 1.0
 
     def _record_trace(self, step: str, **payload: Any) -> None:
         self._trace.append({"step": step, **payload})
@@ -90,6 +93,19 @@ class RuntimeOperator:
                 "message": "输入命令执行后窗口不在前台，本次操作可能失败；可能是窗口未在前台，或拉回前台失败",
             }
         )
+
+    def _mark_input_action(self) -> None:
+        self._last_input_at = monotonic()
+
+    def _wait_for_post_input_settle(self) -> None:
+        if self._last_input_at is None:
+            return
+        elapsed = monotonic() - self._last_input_at
+        remaining = self.POST_INPUT_CAPTURE_DELAY_SECONDS - elapsed
+        if remaining <= 0:
+            return
+        sleep(remaining)
+        self._record_trace("capture_settle_delay", seconds=round(remaining, 3))
 
     def collect_warnings(self) -> list[dict[str, Any]]:
         warnings = list(self._warnings)
@@ -193,6 +209,7 @@ class RuntimeOperator:
         self._prepare_input_target()
         screen_x, screen_y = self._to_screen_point(x, y)
         self.input.click(screen_x, screen_y, **kwargs)
+        self._mark_input_action()
         self._record_trace("click_point", point=[x, y], screen_point=[screen_x, screen_y])
         self._check_foreground_after_input()
 
@@ -201,6 +218,7 @@ class RuntimeOperator:
         screen_from_x, screen_from_y = self._to_screen_point(from_x, from_y)
         screen_to_x, screen_to_y = self._to_screen_point(to_x, to_y)
         self.input.drag(screen_from_x, screen_from_y, screen_to_x, screen_to_y)
+        self._mark_input_action()
         self._record_trace(
             "drag_to",
             from_point=[from_x, from_y],
@@ -216,23 +234,27 @@ class RuntimeOperator:
             self.input.press(key)
             if index + 1 < presses:
                 sleep(interval)
+        self._mark_input_action()
         self._record_trace("press_key", key=key, presses=presses, interval=interval)
         self._check_foreground_after_input()
 
     def hotkey(self, *keys: str):
         self._prepare_input_target()
         self.input.hotkey(*keys)
+        self._mark_input_action()
         self._record_trace("hotkey", keys=list(keys))
         self._check_foreground_after_input()
 
     def type_text(self, text: str):
         self._prepare_input_target()
         self.input.type_text(text)
+        self._mark_input_action()
         self._record_trace("type_text", text=text)
         self._check_foreground_after_input()
 
     def capture_after_action(self, optional: bool = False, request_id: str | None = None):
         try:
+            self._wait_for_post_input_settle()
             if request_id is None:
                 path = self.window.capture_to_workspace()
             else:

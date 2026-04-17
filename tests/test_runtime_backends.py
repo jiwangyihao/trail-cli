@@ -1207,6 +1207,23 @@ def test_windows_window_controller_prepare_input_uses_win32_foreground_apis_when
     ]
 
 
+def test_windows_window_controller_scales_canonical_points_to_client_region(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+    monkeypatch.setattr(
+        controller,
+        "client_region",
+        lambda: window_module.Region(left=496, top=-1034, width=1536, height=864),
+    )
+
+    assert controller.to_screen_point(960, 540) == (1264, -602)
+    assert controller.to_screen_point(1920, 1080) == (2031, -171)
+
+
 def test_change_game_config_updates_channel_values(tmp_path):
     import trail.runtime.window as window_module
 
@@ -1391,6 +1408,41 @@ def test_runtime_operator_capture_after_action_passes_request_id_to_window():
 
     assert path == Path(".trail/shots/req-operator.png")
     assert window.request_ids == ["req-operator"]
+
+
+def test_runtime_operator_capture_after_action_waits_after_recent_input(monkeypatch, tmp_path):
+    import trail.runtime.operator as operator_module
+
+    sleep_calls: list[float] = []
+    monotonic_values = iter([100.0, 100.25])
+
+    monkeypatch.setattr(operator_module, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(operator_module, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            prepare_input=lambda: None,
+            is_foreground=lambda: True,
+            to_screen_point=lambda x, y: (x, y),
+            capture_to_workspace=lambda request_id=None: tmp_path / f"{request_id or 'shot'}.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    runtime.click_point(10, 20)
+    path = runtime.capture_after_action(request_id="req-delay")
+
+    assert path == tmp_path / "req-delay.png"
+    assert sleep_calls == [pytest.approx(0.75, rel=0.001)]
 
 
 def test_runtime_operator_matches_reference_images_from_project_tree(tmp_path, monkeypatch):
