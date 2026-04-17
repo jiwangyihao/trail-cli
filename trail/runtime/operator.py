@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import ctypes
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 import sys
+import threading
 from time import monotonic, sleep
 from typing import Any, Protocol
 
@@ -11,6 +13,7 @@ from PIL import Image, ImageChops, ImageOps, ImageStat
 
 from trail.core.errors import TrailError
 from trail.runtime.model import Box, Region
+from trail.runtime.ocr_config import OCR_PROVIDER_UNAVAILABLE, OcrRequestConfig, normalize_runtime_ocr_request_config
 from trail.runtime.window import WindowsWindowController
 
 
@@ -27,8 +30,22 @@ class ImageMatcher(Protocol):
     def locate(self, template: str, image) -> Box | None: ...
 
 
+@dataclass(frozen=True)
+class OcrRunResult:
+    pieces: list[Any]
+    warnings: list[dict[str, Any]]
+    trace: list[dict[str, Any]]
+
+
+class OcrRunFailure(TrailError):
+    def __init__(self, code: str, message: str, *, warnings: list[dict[str, Any]] | None = None, trace: list[dict[str, Any]] | None = None):
+        super().__init__(code, message)
+        self.warnings = [dict(item) for item in (warnings or [])]
+        self.trace = [dict(item) for item in (trace or [])]
+
+
 class OcrEngine(Protocol):
-    def run(self, image) -> list[Any]: ...
+    def run(self, image, *, ocr: OcrRequestConfig | None = None) -> OcrRunResult: ...
 
 
 class InputDriver(Protocol):
@@ -57,12 +74,57 @@ class RuntimeOperator:
         self.reference_root = Path.cwd() if reference_root is None else Path(reference_root)
         self._warnings: list[dict[str, Any]] = []
         self._trace: list[dict[str, Any]] = []
+        self._request_local = threading.local()
         self._last_input_at: float | None = None
+
+    def _capture_scope_active(self) -> bool:
+        return bool(getattr(self._request_local, "capture_scope_depth", 0))
+
+    def begin_capture_scope(self) -> None:
+        depth = int(getattr(self._request_local, "capture_scope_depth", 0)) + 1
+        self._request_local.capture_scope_depth = depth
+        if depth == 1:
+            self._request_local.warnings = []
+            self._request_local.trace = []
+
+    def end_capture_scope(self) -> None:
+        depth = int(getattr(self._request_local, "capture_scope_depth", 0))
+        self._request_local.capture_scope_depth = max(0, depth - 1)
 
     POST_INPUT_CAPTURE_DELAY_SECONDS = 1.0
 
     def _record_trace(self, step: str, **payload: Any) -> None:
-        self._trace.append({"step": step, **payload})
+        self._active_trace_buffer().append({"step": step, **payload})
+
+    def _append_trace(self, payload: dict[str, Any]) -> None:
+        self._active_trace_buffer().append(dict(payload))
+
+    def _request_warnings_buffer(self) -> list[dict[str, Any]]:
+        warnings = getattr(self._request_local, "warnings", None)
+        if warnings is None:
+            warnings = []
+            self._request_local.warnings = warnings
+        return warnings
+
+    def _request_trace_buffer(self) -> list[dict[str, Any]]:
+        trace = getattr(self._request_local, "trace", None)
+        if trace is None:
+            trace = []
+            self._request_local.trace = trace
+        return trace
+
+    def _active_warnings_buffer(self) -> list[dict[str, Any]]:
+        if self._capture_scope_active():
+            return self._request_warnings_buffer()
+        return self._warnings
+
+    def _active_trace_buffer(self) -> list[dict[str, Any]]:
+        if self._capture_scope_active():
+            return self._request_trace_buffer()
+        return self._trace
+
+    def _append_warning(self, warning: dict[str, Any]) -> None:
+        self._active_warnings_buffer().append(dict(warning))
 
     @staticmethod
     def _serialize_box(box: Box | None) -> dict[str, Any] | None:
@@ -87,7 +149,7 @@ class RuntimeOperator:
         self._record_trace("foreground_check", foreground=foreground)
         if foreground:
             return
-        self._warnings.append(
+        self._append_warning(
             {
                 "code": "WINDOW_NOT_FOREGROUND",
                 "message": "输入命令执行后窗口不在前台，本次操作可能失败；可能是窗口未在前台，或拉回前台失败",
@@ -108,11 +170,19 @@ class RuntimeOperator:
         self._record_trace("capture_settle_delay", seconds=round(remaining, 3))
 
     def collect_warnings(self) -> list[dict[str, Any]]:
+        if self._capture_scope_active():
+            warnings = list(self._request_warnings_buffer())
+            self._request_local.warnings = []
+            return warnings
         warnings = list(self._warnings)
         self._warnings.clear()
         return warnings
 
     def consume_debug_trace(self) -> list[dict[str, Any]]:
+        if self._capture_scope_active():
+            trace = list(self._request_trace_buffer())
+            self._request_local.trace = []
+            return trace
         trace = list(self._trace)
         self._trace.clear()
         return trace
@@ -152,11 +222,31 @@ class RuntimeOperator:
         self._record_trace("wait_img", template=template, timeout=timeout, interval=interval, found=False)
         return None
 
-    def ocr(self, **kwargs):
-        image = self.screenshot(**kwargs)
-        result = self.ocr_engine.run(image)
-        self._record_trace("ocr", kwargs=dict(kwargs), pieces=len(result or []))
-        return result
+    def ocr(
+        self,
+        *,
+        capture: dict[str, Any] | None = None,
+        ocr: OcrRequestConfig | None = None,
+    ):
+        capture_payload = dict(capture or {})
+        ocr_config = normalize_runtime_ocr_request_config(ocr)
+        image = self.screenshot(**capture_payload)
+        try:
+            result = self.ocr_engine.run(image, ocr=ocr_config)
+        except OcrRunFailure as exc:
+            for warning in exc.warnings:
+                self._append_warning(warning)
+            for trace in exc.trace:
+                self._append_trace(trace)
+            raise
+        if not isinstance(result, OcrRunResult):
+            raise TypeError("ocr engine must return OcrRunResult")
+        for warning in result.warnings:
+            self._append_warning(warning)
+        for trace in result.trace:
+            self._append_trace(trace)
+        self._record_trace("ocr", kwargs=dict(capture_payload), pieces=len(result.pieces))
+        return result.pieces
 
     def _prepare_input_target(self) -> None:
         ensure_available = getattr(self.input, "ensure_available", None)
@@ -335,22 +425,320 @@ class PyScreezeMatcher:
         return Box(left=left, top=top, width=width, height=height, source=template)
 
 
+@dataclass(frozen=True)
+class OcrEngineKey:
+    effective_provider: str
+    model_identity: str
+    use_cls: bool
+
+
+@dataclass
+class _PendingOcrEngineBuild:
+    ready: threading.Event
+    wrapper: "CachedOcrEngine | None" = None
+    error: Exception | None = None
+
+
+class CachedOcrEngine:
+    def __init__(self, engine, *, key: OcrEngineKey, session_providers: dict[str, list[str]]):
+        self.engine = engine
+        self.key = key
+        self.session_providers = {name: list(providers) for name, providers in session_providers.items()}
+        self._run_lock = threading.Lock()
+
+    def run(self, image, *, ocr: OcrRequestConfig) -> list[Any]:
+        with self._run_lock:
+            result, _ = self.engine(image, use_det=True, use_cls=ocr.use_cls, use_rec=True, text_score=ocr.text_score)
+        return result or []
+
+
 class RapidOcrAdapter:
     def __init__(self):
-        self._engine = None
+        self._engine_cache: dict[OcrEngineKey, CachedOcrEngine] = {}
+        self._pending_builds: dict[OcrEngineKey, _PendingOcrEngineBuild] = {}
+        self._auto_dml_negative_cache: dict[OcrEngineKey, str] = {}
+        self._cache_lock = threading.Lock()
 
-    def run(self, image) -> list[Any]:
+    @staticmethod
+    def _available_providers() -> list[str]:
         try:
-            from rapidocr_onnxruntime import RapidOCR  # type: ignore
+            import onnxruntime  # type: ignore
+        except Exception:
+            return []
+        get_available_providers = getattr(onnxruntime, "get_available_providers", None)
+        if not callable(get_available_providers):
+            return []
+        providers = get_available_providers() or []
+        return [str(provider) for provider in providers]
+
+    @staticmethod
+    def _provider_name(effective_provider: str) -> str:
+        if effective_provider == "dml":
+            return "DmlExecutionProvider"
+        return "CPUExecutionProvider"
+
+    @staticmethod
+    def _format_exception_reason(error: Exception) -> str:
+        message = str(error)
+        if not message:
+            return type(error).__name__
+        return f"{type(error).__name__}: {message}"
+
+    @staticmethod
+    def _model_identity(ocr_config: OcrRequestConfig) -> str:
+        return f"rapidocr:ppocrv4-mobile:{ocr_config.lang}"
+
+    def _provider_attempts(self, requested_provider: str, *, available_providers: list[str]) -> tuple[str, ...]:
+        dml_available = "DmlExecutionProvider" in available_providers
+        if requested_provider == "cpu":
+            return ("cpu",)
+        if requested_provider == "dml":
+            if not dml_available:
+                raise TrailError(OCR_PROVIDER_UNAVAILABLE, "requested dml provider unavailable")
+            return ("dml",)
+        if dml_available:
+            return ("dml", "cpu")
+        return ("cpu",)
+
+    def _build_run_result(
+        self,
+        *,
+        pieces: list[Any],
+        ocr_config: OcrRequestConfig,
+        effective_provider: str,
+        available_providers: list[str],
+        fallback_from: str | None = None,
+        reason: str | None = None,
+    ) -> OcrRunResult:
+        trace: dict[str, Any] = {
+            "step": "ocr_provider",
+            "requested_provider": ocr_config.provider,
+            "effective_provider": effective_provider,
+            "lang": ocr_config.lang,
+            "available_providers": list(available_providers),
+        }
+        if fallback_from is not None:
+            trace["fallback_from"] = fallback_from
+        if reason is not None:
+            trace["reason"] = reason
+        return OcrRunResult(pieces=list(pieces), warnings=[], trace=[trace])
+
+    def _provider_failure(
+        self,
+        *,
+        ocr_config: OcrRequestConfig,
+        effective_provider: str,
+        available_providers: list[str],
+        reason: str | None = None,
+    ) -> OcrRunFailure:
+        result = self._build_run_result(
+            pieces=[],
+            ocr_config=ocr_config,
+            effective_provider=effective_provider,
+            available_providers=available_providers,
+            reason=reason,
+        )
+        return OcrRunFailure(
+            OCR_PROVIDER_UNAVAILABLE,
+            "requested dml provider unavailable",
+            warnings=result.warnings,
+            trace=result.trace,
+        )
+
+    @staticmethod
+    def _session_providers(engine, *, use_cls: bool) -> dict[str, list[str]]:
+        providers = {
+            "det": list(engine.text_det.infer.session.get_providers()),
+            "rec": list(engine.text_rec.session.session.get_providers()),
+        }
+        if use_cls:
+            providers["cls"] = list(engine.text_cls.infer.session.get_providers())
+        return providers
+
+    def _validate_session_providers(
+        self,
+        *,
+        effective_provider: str,
+        session_providers: dict[str, list[str]],
+    ) -> None:
+        expected = self._provider_name(effective_provider)
+        for name, providers in session_providers.items():
+            if providers and providers[0] == expected:
+                continue
+            raise TrailError(OCR_PROVIDER_UNAVAILABLE, f"requested {effective_provider} provider unavailable")
+
+    def _build_engine(self, *, effective_provider: str, use_cls: bool):
+        from rapidocr_onnxruntime import RapidOCR  # type: ignore
+
+        use_dml = effective_provider == "dml"
+        return RapidOCR(
+            det_use_dml=use_dml,
+            cls_use_dml=use_dml and use_cls,
+            rec_use_dml=use_dml,
+        )
+
+    def _build_cached_engine(self, *, key: OcrEngineKey):
+        engine = self._build_engine(effective_provider=key.effective_provider, use_cls=key.use_cls)
+        session_providers = self._session_providers(engine, use_cls=key.use_cls)
+        self._validate_session_providers(
+            effective_provider=key.effective_provider,
+            session_providers=session_providers,
+        )
+        return CachedOcrEngine(engine, key=key, session_providers=session_providers)
+
+    def _get_or_build_cached_engine(self, key: OcrEngineKey) -> CachedOcrEngine:
+        while True:
+            with self._cache_lock:
+                cached = self._engine_cache.get(key)
+                if cached is not None:
+                    return cached
+                pending = self._pending_builds.get(key)
+                if pending is None:
+                    pending = _PendingOcrEngineBuild(ready=threading.Event())
+                    self._pending_builds[key] = pending
+                    owner = True
+                else:
+                    owner = False
+
+            if owner:
+                try:
+                    wrapper = self._build_cached_engine(key=key)
+                except Exception as exc:
+                    with self._cache_lock:
+                        pending = self._pending_builds.pop(key, pending)
+                        pending.error = exc
+                        pending.ready.set()
+                    raise
+
+                with self._cache_lock:
+                    pending = self._pending_builds.pop(key, pending)
+                    self._engine_cache[key] = wrapper
+                    self._auto_dml_negative_cache.pop(key, None)
+                    pending.wrapper = wrapper
+                    pending.ready.set()
+                return wrapper
+
+            pending.ready.wait()
+            if pending.wrapper is not None:
+                return pending.wrapper
+            if pending.error is not None:
+                raise pending.error
+
+    def _discard_cached_engine(self, key: OcrEngineKey, wrapper: CachedOcrEngine | None = None) -> None:
+        with self._cache_lock:
+            cached = self._engine_cache.get(key)
+            if cached is None:
+                return
+            if wrapper is not None and cached is not wrapper:
+                return
+            self._engine_cache.pop(key, None)
+
+    def _mark_auto_dml_negative(self, key: OcrEngineKey, reason: str) -> None:
+        with self._cache_lock:
+            self._auto_dml_negative_cache[key] = reason
+
+    def _auto_dml_negative_reason(self, key: OcrEngineKey) -> str | None:
+        with self._cache_lock:
+            return self._auto_dml_negative_cache.get(key)
+
+    def run(self, image, *, ocr: OcrRequestConfig | None = None) -> OcrRunResult:
+        ocr_config = normalize_runtime_ocr_request_config(ocr)
+        try:
+            import rapidocr_onnxruntime  # type: ignore
         except Exception as exc:
             raise TrailError("OCR_BACKEND_UNAVAILABLE", "rapidocr backend unavailable") from exc
 
-        if self._engine is None:
-            self._engine = RapidOCR()
-
         screenshot = Image.open(BytesIO(image)) if isinstance(image, (bytes, bytearray)) else image
-        result, _ = self._engine(screenshot, use_det=True, use_cls=False, use_rec=True)
-        return result or []
+        available_providers = self._available_providers()
+        last_error: Exception | None = None
+        fallback_reason: str | None = None
+        try:
+            attempts = self._provider_attempts(ocr_config.provider, available_providers=available_providers)
+        except TrailError as exc:
+            raise self._provider_failure(
+                ocr_config=ocr_config,
+                effective_provider="unavailable",
+                available_providers=available_providers,
+                reason=str(exc),
+            ) from exc
+
+        for effective_provider in attempts:
+            key = OcrEngineKey(
+                effective_provider=effective_provider,
+                model_identity=self._model_identity(ocr_config),
+                use_cls=bool(ocr_config.use_cls),
+            )
+            if ocr_config.provider == "auto" and effective_provider == "dml":
+                negative_reason = self._auto_dml_negative_reason(key)
+                if negative_reason is not None:
+                    fallback_reason = negative_reason
+                    continue
+            try:
+                wrapper = self._get_or_build_cached_engine(key)
+            except TrailError as exc:
+                last_error = exc
+                if ocr_config.provider == "auto" and effective_provider == "dml":
+                    fallback_reason = str(exc)
+                    self._mark_auto_dml_negative(key, fallback_reason)
+                    continue
+                raise self._provider_failure(
+                    ocr_config=ocr_config,
+                    effective_provider=effective_provider,
+                    available_providers=available_providers,
+                    reason=str(exc),
+                ) from exc
+            except Exception as exc:
+                mapped_error: Exception = exc
+                if effective_provider == "dml":
+                    mapped_error = self._provider_failure(
+                        ocr_config=ocr_config,
+                        effective_provider=effective_provider,
+                        available_providers=available_providers,
+                        reason=self._format_exception_reason(exc),
+                    )
+                    if ocr_config.provider == "auto":
+                        fallback_reason = self._format_exception_reason(exc)
+                        self._mark_auto_dml_negative(key, fallback_reason)
+                        last_error = mapped_error
+                        continue
+                    raise mapped_error from exc
+                last_error = mapped_error
+                raise
+            try:
+                pieces = wrapper.run(screenshot, ocr=ocr_config)
+            except Exception as exc:
+                if effective_provider == "dml":
+                    self._discard_cached_engine(key, wrapper)
+                    if ocr_config.provider == "auto":
+                        fallback_reason = self._format_exception_reason(exc)
+                        last_error = self._provider_failure(
+                            ocr_config=ocr_config,
+                            effective_provider=effective_provider,
+                            available_providers=available_providers,
+                            reason=fallback_reason,
+                        )
+                        continue
+                    raise self._provider_failure(
+                        ocr_config=ocr_config,
+                        effective_provider=effective_provider,
+                        available_providers=available_providers,
+                        reason=self._format_exception_reason(exc),
+                    ) from exc
+                raise
+            return self._build_run_result(
+                pieces=pieces,
+                ocr_config=ocr_config,
+                effective_provider=effective_provider,
+                available_providers=available_providers,
+                fallback_from="dml" if fallback_reason is not None else None,
+                reason=fallback_reason,
+            )
+
+        if isinstance(last_error, TrailError):
+            raise last_error
+        if last_error is not None:
+            raise last_error
+        raise TrailError(OCR_PROVIDER_UNAVAILABLE, "requested dml provider unavailable")
 
 
 class PyAutoGuiInputDriver:

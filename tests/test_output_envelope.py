@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -141,6 +142,57 @@ def test_with_auto_capture_omits_debug_without_verbose(tmp_path):
     ]
     assert result["references"] == [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.97}]
     assert result["debug"] is None
+
+
+def test_with_auto_capture_keeps_capture_trace_request_local_under_concurrency(tmp_path):
+    barrier = threading.Barrier(2)
+    payloads: dict[str, dict] = {}
+
+    class RequestScopedRuntime(FakeRuntime):
+        def __init__(self, screenshot_path: Path):
+            super().__init__(screenshot_path)
+            self._local = threading.local()
+
+        def begin_capture_scope(self):
+            self._local.scoped = True
+            self._local.trace = []
+
+        def end_capture_scope(self):
+            self._local.scoped = False
+
+        def capture_after_action(self, optional: bool = False):
+            self.calls.append(optional)
+            trace = {"step": "capture_after_action", "thread": threading.current_thread().name}
+            if getattr(self._local, "scoped", False):
+                self._local.trace.append(trace)
+            else:
+                self.trace.append(trace)
+            barrier.wait()
+            return tmp_path / f"{threading.current_thread().name}.png"
+
+        def consume_debug_trace(self):
+            if getattr(self._local, "scoped", False):
+                trace = list(getattr(self._local, "trace", []))
+                self._local.trace = []
+                return trace
+            trace = list(self.trace)
+            self.trace.clear()
+            return trace
+
+    runtime = RequestScopedRuntime(tmp_path / "shared.png")
+
+    def worker(name: str):
+        payloads[name] = with_auto_capture(runtime, lambda: {"thread": name}, verbose=True)
+
+    left = threading.Thread(target=worker, name="left", args=("left",))
+    right = threading.Thread(target=worker, name="right", args=("right",))
+    left.start()
+    right.start()
+    left.join(timeout=2)
+    right.join(timeout=2)
+
+    assert payloads["left"]["debug"] == {"trace": [{"step": "capture_after_action", "thread": "left"}]}
+    assert payloads["right"]["debug"] == {"trace": [{"step": "capture_after_action", "thread": "right"}]}
 
 
 def test_session_store_persists_relative_last_screenshot(tmp_path):

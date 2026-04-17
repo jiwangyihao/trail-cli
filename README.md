@@ -46,6 +46,32 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `state`：读取 session 与 scene state
 - `cw`：货币战争固定流程命令，包含 `enter`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
+## OCR 选项
+
+`trail ocr read` 当前冻结以下稳定参数与默认值入口：
+
+- `trail ocr read --provider auto|cpu|dml`
+- `trail ocr read --lang ch`
+- `trail ocr read --use-cls/--no-use-cls`
+- `trail ocr read --text-score <float>`
+- `TRAIL_OCR_PROVIDER`、`TRAIL_OCR_LANG`、`TRAIL_OCR_USE_CLS`、`TRAIL_OCR_TEXT_SCORE` 用于设置低优先级默认值
+
+OCR 首版语义：
+
+- `lang` 首版仅支持 `ch`；其他值返回 `OCR_LANG_UNSUPPORTED`
+- `provider=auto` 会优先尝试 DirectML；如果当前环境不可用或本次 DML 推理失败，会自动回退 CPU
+- `provider=cpu` 强制走 CPU
+- `provider=dml` 会把 DirectML 视为硬约束；环境不可用或推理期 DML 失败都会返回 `OCR_PROVIDER_UNAVAILABLE`
+- 默认成功输出协议保持不变：仍然是 `ok ocr.read hits=<n>`，有截图时先输出 `shot`，再输出 `text`
+
+DirectML 安装与环境 profile 说明：
+
+- DirectML 目前只作为 Windows 定向的可选加速 profile，不承诺为通用跨平台 GPU 方案
+- 需要使用项目明确支持的 DirectML 环境 profile，而不是在任意现有 OCR 环境上直接叠加依赖
+- 默认安装仍以 CPU 基线依赖为准；只有需要 DirectML 时，才切换到单独准备好的 Windows DirectML profile
+- 不要在同一环境里模糊共存 `onnxruntime` 与 `onnxruntime-directml`；应确认当前环境最终只保留预期的 ONNX Runtime 变体
+- 排障时先确认当前 profile、已安装的 ORT 变体和 `trail ocr read --provider dml` 的实际 failure/success 结果，再判断是否属于环境不满足或运行期 DML 失败
+
 ## 输出约定
 
 - 默认输出是紧凑文本协议，统一首行为 `<ok|fail> <command> <核心事实...>`，例如 `ok cw.shop.status count=2`

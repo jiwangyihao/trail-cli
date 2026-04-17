@@ -221,10 +221,10 @@ def build_cw_shop_opener(runtime) -> ShopAction:
 
 def build_cw_shop_scanner(runtime) -> ShopScanner:
     def scanner() -> tuple[list[dict[str, Any]], int | None, int | None, bool, int | None]:
-        items, reserve_full = _parse_shop_items(runtime.ocr(**SHOP_SCAN_REGION))
-        coins = _parse_first_int(runtime.ocr(**SHOP_COINS_REGION) or [], default=0)
-        level = _parse_last_int(runtime.ocr(**SHOP_LEVEL_REGION) or [], default=None)
-        max_team_size = _parse_last_int(runtime.ocr(**SHOP_MAX_TEAM_SIZE_REGION) or [], default=None)
+        items, reserve_full = _parse_shop_items(runtime.ocr(capture=SHOP_SCAN_REGION))
+        coins = _parse_first_int(runtime.ocr(capture=SHOP_COINS_REGION) or [], default=0)
+        level = _parse_last_int(runtime.ocr(capture=SHOP_LEVEL_REGION) or [], default=None)
+        max_team_size = _parse_last_int(runtime.ocr(capture=SHOP_MAX_TEAM_SIZE_REGION) or [], default=None)
         return items, coins, level, reserve_full, max_team_size
 
     return scanner

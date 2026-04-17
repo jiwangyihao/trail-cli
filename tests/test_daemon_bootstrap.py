@@ -574,7 +574,9 @@ def _start_server_in_thread(*, daemon_home: Path, monkeypatch):
 
     class StubRuntime:
         def ocr(self, **kwargs):
-            return [{"text": f"ocr:{kwargs.get('lang', 'default')}"}]
+            ocr = kwargs.get("ocr")
+            lang = getattr(ocr, "lang", "default")
+            return [{"text": f"ocr:{lang}"}]
 
     class StubRuntimeService:
         def __init__(self):
@@ -612,7 +614,7 @@ def test_traild_server_accepts_socket_requests(tmp_path: Path, monkeypatch):
                 session_id=None,
                 verbose=False,
                 method="ocr.read",
-                payload={"lang": "zh"},
+                payload={"lang": "ch"},
             ),
             token=token,
             endpoint=endpoint,
@@ -624,11 +626,43 @@ def test_traild_server_accepts_socket_requests(tmp_path: Path, monkeypatch):
 
     assert payload["ok"] is True
     assert payload["request_id"] == "req-server-1"
-    assert payload["data"] == {"result": [{"text": "ocr:zh"}]}
+    assert payload["data"] == {"result": [{"text": "ocr:ch"}]}
     assert runtime_service.calls == [{"workspace_root": str(tmp_path), "window_binding": None}]
     assert manifest.runtime.state == "ready"
     assert manifest.runtime.endpoint == endpoint
     assert manifest.runtime.pid
+
+
+def test_traild_server_rejects_unsupported_ocr_lang_over_socket(tmp_path: Path, monkeypatch):
+    server, thread, _runtime_service, endpoint, token = _start_server_in_thread(
+        daemon_home=tmp_path / "daemon-home",
+        monkeypatch=monkeypatch,
+    )
+
+    try:
+        payload = send_daemon_request(
+            DaemonRequest(
+                request_id="req-server-lang-unsupported",
+                protocol_version=PROTOCOL_VERSION,
+                workspace_root=str(tmp_path),
+                session_id=None,
+                verbose=False,
+                method="ocr.read",
+                payload={"lang": "zh"},
+            ),
+            token=token,
+            endpoint=endpoint,
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    assert payload["ok"] is False
+    assert payload["request_id"] == "req-server-lang-unsupported"
+    assert payload["error"] == {
+        "code": "OCR_LANG_UNSUPPORTED",
+        "message": "unsupported ocr lang: zh",
+    }
 
 
 def test_traild_server_responds_to_ping(tmp_path: Path, monkeypatch):

@@ -9,6 +9,7 @@ from trail.commands.helpers import to_jsonable
 from trail.core.errors import TrailError
 from trail.daemon.client import daemon_transport_failure
 from trail.output.capture import with_auto_capture
+from trail.runtime.ocr_config import OCR_LANG_UNSUPPORTED, split_ocr_call
 
 
 CW_MUTATING_METHODS = {
@@ -33,7 +34,6 @@ CW_MUTATING_METHODS = {
     "cw.settle.next",
     "cw.event.handle",
 }
-
 
 def success(
     data: dict[str, Any],
@@ -688,7 +688,14 @@ class CommandService:
             )
 
     def _read_ocr(self, runtime, payload: dict[str, Any]) -> dict[str, Any]:
-        result = runtime.ocr(**payload)
+        try:
+            ocr_call = split_ocr_call(payload)
+        except ValueError as error:
+            message = str(error)
+            if message.startswith("unsupported ocr lang:"):
+                raise TrailError(OCR_LANG_UNSUPPORTED, message) from error
+            raise TrailError("OCR_INPUT_INVALID", message) from error
+        result = runtime.ocr(capture=ocr_call.capture, ocr=ocr_call.ocr)
         if not result:
             raise TrailError("OCR_NO_RESULT", "OCR 无结果")
         return {"result": to_jsonable(result)}

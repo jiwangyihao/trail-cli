@@ -97,6 +97,40 @@ def test_verbose_output_keeps_extra_debug_fields():
     ]
 
 
+def test_verbose_output_ocr_provider_trace_uses_existing_debug_pipeline():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": ".trail/shots/req-ocr-dml.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "request_id": "req-ocr-dml",
+            "trace": [
+                {
+                    "step": "ocr_provider",
+                    "requested_provider": "dml",
+                    "effective_provider": "dml",
+                    "lang": "ch",
+                    "available_providers": ["DmlExecutionProvider", "CPUExecutionProvider"],
+                    "reason": "RuntimeError: explicit dml run failed",
+                }
+            ],
+        },
+        "error": {"code": "OCR_PROVIDER_UNAVAILABLE", "message": "requested dml provider unavailable"},
+    }
+
+    assert render_output("ocr.read", payload, verbose=True).splitlines() == [
+        "fail ocr.read code=OCR_PROVIDER_UNAVAILABLE",
+        "request id=req-ocr-dml",
+        "shot path=.trail/shots/req-ocr-dml.png",
+        'why msg="requested dml provider unavailable"',
+        "debug kind=request msg=req-ocr-dml",
+        'debug kind=trace step=ocr_provider requested_provider=dml effective_provider=dml lang=ch available_providers="[\'DmlExecutionProvider\', \'CPUExecutionProvider\']" reason="RuntimeError: explicit dml run failed"',
+    ]
+
+
 def test_project_agents_declares_renderer_contracts() -> None:
     agents_path = PROJECT_ROOT / "AGENTS.md"
     agents = agents_path.read_text(encoding="utf-8") if agents_path.exists() else ""

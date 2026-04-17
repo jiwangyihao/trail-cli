@@ -28,6 +28,8 @@ class ProtocolRuntime:
     def __init__(self, screenshot_path: Path, *, click_error: Exception | None = None):
         self._screenshot_path = screenshot_path
         self.click_error = click_error
+        self.ocr_result = [{"text": "点击进入"}]
+        self.ocr_calls: list[dict[str, object | None]] = []
         self.warnings: list[dict] = []
         self.references: list[dict] = []
         self.trace: list[dict] = []
@@ -49,6 +51,16 @@ class ProtocolRuntime:
         trace = list(self.trace)
         self.trace.clear()
         return trace
+
+    def ocr(self, *, capture=None, ocr=None, **kwargs):
+        self.ocr_calls.append(
+            {
+                "capture": None if capture is None else dict(capture),
+                "ocr": ocr,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return list(self.ocr_result)
 
     def click_point(self, x: int, y: int):
         del x, y
@@ -468,6 +480,93 @@ def test_server_handle_payload_preserves_captured_mutation_failure_envelope(tmp_
     assert response["references"] == [{"path": "trail/ref.png", "similarity": 0.97, "screenshot": "input-fail.png"}]
     assert response["debug"] == {"trace": [{"step": "click"}]}
     assert registry.for_workspace(str(tmp_path)).request_status("req-server-fail")["final_state"] == "failed_before_side_effect"
+
+
+def test_server_handle_payload_routes_ocr_options_to_runtime(tmp_path: Path, monkeypatch):
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    runtime = ProtocolRuntime(tmp_path / "ocr-provider.png")
+    command_service = CommandService(
+        runtime_service=ProtocolRuntimeService(runtime),
+        session_service=registry,
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-server-ocr-provider",
+            method="ocr.read",
+            payload={
+                "from_x": 1,
+                "from_y": 2,
+                "to_x": 3,
+                "to_y": 4,
+                "provider": "dml",
+                "lang": "ch",
+                "use_cls": "false",
+                "text_score": "0.6",
+            },
+        )
+    )
+
+    assert response["ok"] is True
+    assert response["data"] == {"result": [{"text": "点击进入"}]}
+    assert response["screenshot"] == "ocr-provider.png"
+    assert runtime.ocr_calls == [
+        {
+            "capture": {"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4},
+            "ocr": OcrRequestConfig(provider="dml", lang="ch", use_cls=False, text_score=0.6),
+            "kwargs": {},
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("invalid_payload", "expected_code", "expected_message"),
+    [
+        ({"provider": "gpu"}, "OCR_INPUT_INVALID", "unsupported ocr provider: gpu"),
+        ({"lang": "en"}, "OCR_LANG_UNSUPPORTED", "unsupported ocr lang: en"),
+        ({"text_score": "not-a-float"}, "OCR_INPUT_INVALID", "invalid ocr text score: not-a-float"),
+        ({"provider": "dml", "use_clss": True}, "OCR_INPUT_INVALID", "unknown ocr payload fields: use_clss"),
+    ],
+)
+def test_server_handle_payload_rejects_invalid_ocr_payload_values(
+    tmp_path: Path,
+    monkeypatch,
+    invalid_payload: dict[str, object],
+    expected_code: str,
+    expected_message: str,
+):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    runtime = ProtocolRuntime(tmp_path / "ocr-invalid.png")
+    command_service = CommandService(
+        runtime_service=ProtocolRuntimeService(runtime),
+        session_service=registry,
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-server-ocr-invalid",
+            method="ocr.read",
+            payload=invalid_payload,
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == {"code": expected_code, "message": expected_message}
+    assert runtime.ocr_calls == []
 
 
 def test_server_handle_payload_records_runtime_prefight_failure_in_journal(tmp_path: Path, monkeypatch):
