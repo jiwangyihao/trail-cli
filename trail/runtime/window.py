@@ -125,6 +125,60 @@ def _resolve_window_region(hwnd: int) -> Region:
     return Region(left=left, top=top, width=right - left, height=bottom - top)
 
 
+def _overlap_area(left: Region, right: Region) -> int:
+    overlap_left = max(left.left, right.left)
+    overlap_top = max(left.top, right.top)
+    overlap_right = min(left.left + left.width, right.left + right.width)
+    overlap_bottom = min(left.top + left.height, right.top + right.height)
+    if overlap_right <= overlap_left or overlap_bottom <= overlap_top:
+        return 0
+    return (overlap_right - overlap_left) * (overlap_bottom - overlap_top)
+
+
+def _find_owned_overlay_target(main_hwnd: int, client_region: Region) -> tuple[int, Region] | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        import win32gui  # type: ignore
+    except Exception:
+        return None
+
+    client_area = client_region.width * client_region.height
+    if client_area <= 0:
+        return None
+
+    best: tuple[int, int, Region] | None = None
+
+    def callback(hwnd: int, extra) -> bool:
+        del extra
+        try:
+            if win32gui.GetWindow(hwnd, 4) != main_hwnd:
+                return True
+            if not win32gui.IsWindowVisible(hwnd):
+                return True
+            region = _resolve_window_region(hwnd)
+        except Exception:
+            return True
+
+        overlap = _overlap_area(region, client_region)
+        if overlap < client_area * 0.5:
+            return True
+
+        nonlocal best
+        if best is None or overlap > best[0]:
+            best = (overlap, hwnd, region)
+        return True
+
+    try:
+        win32gui.EnumWindows(callback, None)
+    except Exception:
+        return None
+
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
 def _window_capture_crop_box(frame_size: tuple[int, int], window_region: Region, client_region: Region) -> tuple[int, int, int, int]:
     frame_width, frame_height = frame_size
     scale_x = frame_width / window_region.width
@@ -475,25 +529,31 @@ class WindowsWindowController:
             region = region.sub_region(from_x, from_y, to_x, to_y)
 
         hwnd = getattr(window, "_hWnd", None)
+        capture_hwnd = int(hwnd) if hwnd is not None else None
+        capture_region = region
+        if capture_hwnd is not None and all(value is None for value in (from_x, from_y, to_x, to_y)):
+            overlay_target = _find_owned_overlay_target(capture_hwnd, region)
+            if overlay_target is not None:
+                capture_hwnd, capture_region = overlay_target
         target_size = _target_capture_size(region, int(hwnd) if hwnd is not None else None)
-        if sys.platform == "win32" and hwnd is not None:
+        if sys.platform == "win32" and capture_hwnd is not None:
             try:
-                image = _capture_with_windows_capture(int(hwnd), region)
+                image = _capture_with_windows_capture(capture_hwnd, capture_region)
             except Exception:
                 try:
-                    capture_region = _scale_region_for_screen_capture(region, int(hwnd))
-                    image = _grab_region_with_imagegrab(capture_region)
+                    scaled_region = _scale_region_for_screen_capture(capture_region, capture_hwnd)
+                    image = _grab_region_with_imagegrab(scaled_region)
                 except Exception:
                     try:
-                        image = _grab_window_with_imagegrab(int(hwnd))
+                        image = _grab_window_with_imagegrab(capture_hwnd)
                     except Exception:
                         try:
-                            image = _capture_win32_window(int(hwnd), region)
+                            image = _capture_win32_window(capture_hwnd, capture_region)
                         except TrailError as exc:
                             if exc.code != "SCREENSHOT_FAILED":
                                 raise
                             self.prepare_input()
-                            image = _grab_region_with_imagegrab(region)
+                            image = _grab_region_with_imagegrab(capture_region)
         else:
             image = _grab_region_with_imagegrab(region)
         image = self._normalize_captured_image(image, target_size=target_size)

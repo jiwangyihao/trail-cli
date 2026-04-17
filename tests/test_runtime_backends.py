@@ -748,6 +748,63 @@ def test_target_capture_size_uses_scaled_client_region(monkeypatch):
     assert target == (1920, 1080)
 
 
+def test_find_owned_overlay_target_prefers_large_visible_owner_window(monkeypatch):
+    import trail.runtime.window as window_module
+
+    windows = {
+        654: {"owner": 321, "visible": True, "rect": (12, 22, 110, 82)},
+        655: {"owner": 321, "visible": True, "rect": (90, 90, 100, 100)},
+        656: {"owner": 0, "visible": True, "rect": (12, 22, 110, 82)},
+    }
+
+    fake_win32gui = SimpleNamespace(
+        GetWindow=lambda hwnd, flag: windows[hwnd]["owner"],
+        IsWindowVisible=lambda hwnd: windows[hwnd]["visible"],
+        GetWindowRect=lambda hwnd: windows[hwnd]["rect"],
+        EnumWindows=lambda callback, extra: [callback(hwnd, extra) for hwnd in windows],
+    )
+    monkeypatch.setitem(sys.modules, "win32gui", fake_win32gui)
+
+    overlay = window_module._find_owned_overlay_target(321, window_module.Region(left=10, top=20, width=100, height=60))
+
+    assert overlay == (654, window_module.Region(left=12, top=22, width=98, height=60))
+
+
+def test_windows_window_controller_capture_uses_owned_overlay_window_when_present(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+    monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(controller, "_resolve_window", lambda: SimpleNamespace(_hWnd=321))
+    monkeypatch.setattr(
+        controller,
+        "_resolve_region",
+        lambda window=None: window_module.Region(left=10, top=20, width=100, height=60),
+    )
+    monkeypatch.setattr(
+        window_module,
+        "_find_owned_overlay_target",
+        lambda hwnd, client_region: (654, window_module.Region(left=12, top=22, width=98, height=60)),
+    )
+    captured = {}
+    monkeypatch.setattr(
+        window_module,
+        "_capture_with_windows_capture",
+        lambda hwnd, region: captured.update({"hwnd": hwnd, "region": region}) or Image.new("RGB", (98, 60), color="white"),
+    )
+
+    image_bytes = controller.capture()
+
+    assert captured == {
+        "hwnd": 654,
+        "region": window_module.Region(left=12, top=22, width=98, height=60),
+    }
+    assert image_bytes.startswith(b"\x89PNG")
+
+
 def test_windows_window_controller_capture_warns_when_source_aspect_ratio_differs(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
 
