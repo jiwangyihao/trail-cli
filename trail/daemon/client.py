@@ -250,7 +250,7 @@ class TrailDaemonClient:
             )
 
         returned_request_id = response.pop("request_id", request_id)
-        if verbose or is_daemon_control_plane_error(response):
+        if verbose or response.get("ok") is False or is_daemon_control_plane_error(response):
             response["debug"] = {
                 **(response.get("debug") or {}),
                 "request_id": returned_request_id,

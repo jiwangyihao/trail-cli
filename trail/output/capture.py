@@ -50,6 +50,18 @@ def resolve_capture_verbose(verbose: bool | None = None) -> bool:
     return _resolve_verbose(verbose)
 
 
+def _begin_capture_scope(runtime) -> None:
+    begin_capture_scope = getattr(runtime, "begin_capture_scope", None)
+    if callable(begin_capture_scope):
+        begin_capture_scope()
+
+
+def _end_capture_scope(runtime) -> None:
+    end_capture_scope = getattr(runtime, "end_capture_scope", None)
+    if callable(end_capture_scope):
+        end_capture_scope()
+
+
 def _collect_capture_metadata(runtime, *, screenshot, verbose: bool) -> dict:
     runtime = _resolve_runtime(runtime)
     warnings: list[dict] = []
@@ -80,34 +92,39 @@ def _collect_capture_metadata(runtime, *, screenshot, verbose: bool) -> dict:
 def with_auto_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None = None):
     effective_verbose = _resolve_verbose(verbose)
     started = perf_counter()
+    resolved_runtime = _resolve_runtime(runtime)
+    _begin_capture_scope(resolved_runtime)
     try:
-        data = fn()
-    except TrailError as exc:
-        screenshot = _capture_optional_screenshot(runtime)
-        metadata = _collect_capture_metadata(runtime, screenshot=screenshot, verbose=effective_verbose)
-        return command_failure(
-            code=exc.code,
-            message=str(exc),
-            screenshot=screenshot,
-            timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
-            **metadata,
-        )
-    except Exception as exc:
-        screenshot = _capture_optional_screenshot(runtime)
-        metadata = _collect_capture_metadata(runtime, screenshot=screenshot, verbose=effective_verbose)
-        return command_failure(
-            code="UNEXPECTED_ERROR",
-            message=_format_unexpected_exception(exc),
-            screenshot=screenshot,
-            timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
-            **metadata,
-        )
+        try:
+            data = fn()
+        except TrailError as exc:
+            screenshot = _capture_optional_screenshot(resolved_runtime)
+            metadata = _collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
+            return command_failure(
+                code=exc.code,
+                message=str(exc),
+                screenshot=screenshot,
+                timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
+                **metadata,
+            )
+        except Exception as exc:
+            screenshot = _capture_optional_screenshot(resolved_runtime)
+            metadata = _collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
+            return command_failure(
+                code="UNEXPECTED_ERROR",
+                message=_format_unexpected_exception(exc),
+                screenshot=screenshot,
+                timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
+                **metadata,
+            )
 
-    screenshot = _capture_screenshot(runtime, optional=False)
-    metadata = _collect_capture_metadata(runtime, screenshot=screenshot, verbose=effective_verbose)
-    return command_success(
-        data=data,
-        screenshot=screenshot,
-        timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
-        **metadata,
-    )
+        screenshot = _capture_screenshot(resolved_runtime, optional=False)
+        metadata = _collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
+        return command_success(
+            data=data,
+            screenshot=screenshot,
+            timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
+            **metadata,
+        )
+    finally:
+        _end_capture_scope(resolved_runtime)

@@ -44,6 +44,19 @@ def _daemon_status_payload() -> dict:
     }
 
 
+def _ocr_failure_payload(*, code: str, message: str, screenshot: str | None = None, debug: dict | None = None) -> dict:
+    return {
+        "ok": False,
+        "data": {},
+        "screenshot": screenshot,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": debug,
+        "error": {"code": code, "message": message},
+    }
+
+
 @pytest.fixture(autouse=True)
 def reset_output_options():
     set_output_options(output_format="text", verbose=False)
@@ -108,6 +121,18 @@ def test_readme_mentions_text_output_protocol() -> None:
     assert "trail daemon request-status --request-id <id>" in readme
     assert "默认输出结构化 envelope" not in readme
     assert "ok/data/screenshot/debug" not in readme
+
+
+def test_readme_documents_ocr_provider_and_lang_contract() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "trail ocr read --provider auto|cpu|dml" in readme
+    assert "trail ocr read --lang ch" in readme
+    assert "首版仅支持 `ch`" in readme
+    assert "TRAIL_OCR_PROVIDER`、`TRAIL_OCR_LANG`、`TRAIL_OCR_USE_CLS`、`TRAIL_OCR_TEXT_SCORE" in readme
+    assert "provider=auto` 会优先尝试 DirectML；如果当前环境不可用或本次 DML 推理失败，会自动回退 CPU" in readme
+    assert "provider=dml` 会把 DirectML 视为硬约束；环境不可用或推理期 DML 失败都会返回 `OCR_PROVIDER_UNAVAILABLE`" in readme
+    assert "lang` 首版仅支持 `ch`；其他值返回 `OCR_LANG_UNSUPPORTED`" in readme
 
 
 def test_render_output_renders_canonical_stage_wait_text():
@@ -270,6 +295,72 @@ def test_render_output_preserves_must_keep_facts(command: str, payload: dict, ex
 
     for token in expected_tokens:
         assert token in rendered
+
+
+def test_render_output_ocr_read_OCR_PROVIDER_UNAVAILABLE_is_hard_failure():
+    payload = _ocr_failure_payload(
+        code="OCR_PROVIDER_UNAVAILABLE",
+        message="requested dml provider unavailable",
+        screenshot=".trail/shots/req-ocr-dml.png",
+        debug={"request_id": "req-ocr-dml"},
+    )
+
+    assert render_output("ocr.read", payload).splitlines() == [
+        "fail ocr.read code=OCR_PROVIDER_UNAVAILABLE",
+        "request id=req-ocr-dml",
+        "shot path=.trail/shots/req-ocr-dml.png",
+        'why msg="requested dml provider unavailable"',
+    ]
+
+
+def test_render_output_ocr_read_OCR_LANG_UNSUPPORTED_omits_recover():
+    payload = _ocr_failure_payload(
+        code="OCR_LANG_UNSUPPORTED",
+        message="unsupported ocr lang: en",
+        debug={"request_id": "req-ocr-lang"},
+    )
+
+    assert render_output("ocr.read", payload).splitlines() == [
+        "fail ocr.read code=OCR_LANG_UNSUPPORTED",
+        "request id=req-ocr-lang",
+        'why msg="unsupported ocr lang: en"',
+    ]
+
+
+def test_render_output_ocr_read_success_does_not_expand_provider_or_lang_fields():
+    payload = {
+        "ok": True,
+        "data": {
+            "result": [
+                {
+                    "text": "点击进入",
+                    "score": 0.98,
+                    "box": {"left": 122, "top": 88, "width": 74, "height": 20},
+                }
+            ]
+        },
+        "screenshot": ".trail/shots/req-ocr-provider-hidden.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "trace": [
+                {
+                    "step": "ocr_provider",
+                    "requested_provider": "auto",
+                    "effective_provider": "cpu",
+                    "lang": "ch",
+                }
+            ]
+        },
+        "error": None,
+    }
+
+    assert render_output("ocr.read", payload).splitlines() == [
+        "ok ocr.read hits=1",
+        "shot path=.trail/shots/req-ocr-provider-hidden.png",
+        "text rank=1 value=点击进入 score=0.98 box=122,88,74,20",
+    ]
 
 
 def test_render_output_renders_guide_list_with_paging_and_frozen_fields():

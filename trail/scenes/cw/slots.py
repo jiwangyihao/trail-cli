@@ -125,7 +125,7 @@ def _read_ocr_piece(item: Any) -> str:
 def _read_slot_name(runtime, *, point: tuple[int, int]) -> str | None:
     runtime.click_point(*point)
     try:
-        pieces = runtime.ocr(**SLOT_NAME_REGION) or []
+        pieces = runtime.ocr(capture=SLOT_NAME_REGION) or []
     finally:
         runtime.click_point(*INFO_DISMISS_POINT)
     name = "".join(_read_ocr_piece(piece).strip() for piece in pieces).strip()

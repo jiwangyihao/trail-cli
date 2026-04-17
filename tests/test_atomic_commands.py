@@ -2,14 +2,38 @@ from __future__ import annotations
 
 import importlib
 import json
+from pathlib import Path
 import sys
 
 import numpy as np
 import pytest
 
 from trail.cli import app
+from trail.daemon.client import TrailDaemonClient
+from trail.runtime.ocr_config import OCR_LANG_UNSUPPORTED
 from trail.runtime.model import Box
-from tests.support.fake_daemon import build_success_response
+from tests.support.fake_daemon import build_success_response, write_ready_manifest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _install_real_daemon_client(monkeypatch, tmp_path, transport) -> TrailDaemonClient:
+    write_ready_manifest(
+        tmp_path / "daemon-home",
+        endpoint="127.0.0.1:8765",
+        token_value="token-1",
+    )
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=tmp_path / "daemon-home",
+        transport=transport,
+    )
+
+    import trail.commands.helpers as helpers
+
+    monkeypatch.setattr(helpers, "build_default_daemon_client", lambda: client)
+    return client
 
 
 def test_window_attach_renders_text_output(cli_runner, fake_daemon_client, tmp_path):
@@ -178,10 +202,462 @@ def test_ocr_read_returns_runtime_payload(cli_runner, fake_daemon_client, tmp_pa
     assert client.calls == [
         {
             "method": "ocr.read",
-            "payload": {},
+            "payload": {
+                "provider": "auto",
+                "lang": "ch",
+                "use_cls": False,
+                "text_score": 0.5,
+            },
             "workspace_root": str(tmp_path),
             "session_id": None,
             "verbose": False,
+        }
+    ]
+
+
+def test_ocr_read_includes_provider_lang_and_use_cls(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-provider",
+                data={"result": [{"text": "银狼"}]},
+                screenshot=".trail/shots/req-ocr-read-provider.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "ocr",
+            "read",
+            "--provider",
+            "dml",
+            "--lang",
+            "ch",
+            "--use-cls",
+            "--text-score",
+            "0.8",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert client.calls == [
+        {
+            "method": "ocr.read",
+            "payload": {
+                "provider": "dml",
+                "lang": "ch",
+                "use_cls": True,
+                "text_score": 0.8,
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_ocr_read_uses_env_defaults_in_payload(cli_runner, fake_daemon_client, monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_OCR_PROVIDER", "cpu")
+    monkeypatch.setenv("TRAIL_OCR_LANG", "ch")
+    monkeypatch.setenv("TRAIL_OCR_USE_CLS", "1")
+    monkeypatch.setenv("TRAIL_OCR_TEXT_SCORE", "0.7")
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-env",
+                data={"result": [{"text": "银狼"}]},
+                screenshot=".trail/shots/req-ocr-read-env.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read"])
+
+    assert result.exit_code == 0
+    assert client.calls == [
+        {
+            "method": "ocr.read",
+            "payload": {
+                "provider": "cpu",
+                "lang": "ch",
+                "use_cls": True,
+                "text_score": 0.7,
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_ocr_read_explicit_provider_lang_and_text_score_override_conflicting_env(
+    cli_runner, fake_daemon_client, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("TRAIL_OCR_PROVIDER", "gpu")
+    monkeypatch.setenv("TRAIL_OCR_LANG", "en")
+    monkeypatch.setenv("TRAIL_OCR_USE_CLS", "0")
+    monkeypatch.setenv("TRAIL_OCR_TEXT_SCORE", "not-a-float")
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-explicit-overrides-env",
+                data={"result": [{"text": "银狼"}]},
+                screenshot=".trail/shots/req-ocr-read-explicit-overrides-env.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "ocr",
+            "read",
+            "--provider",
+            "dml",
+            "--lang",
+            "ch",
+            "--use-cls",
+            "--text-score",
+            "0.8",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert client.calls == [
+        {
+            "method": "ocr.read",
+            "payload": {
+                "provider": "dml",
+                "lang": "ch",
+                "use_cls": True,
+                "text_score": 0.8,
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_ocr_read_explicit_no_use_cls_overrides_env_true(cli_runner, fake_daemon_client, monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_OCR_PROVIDER", "auto")
+    monkeypatch.setenv("TRAIL_OCR_LANG", "ch")
+    monkeypatch.setenv("TRAIL_OCR_USE_CLS", "1")
+    monkeypatch.setenv("TRAIL_OCR_TEXT_SCORE", "0.6")
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-no-cls",
+                data={"result": [{"text": "银狼"}]},
+                screenshot=".trail/shots/req-ocr-read-no-cls.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read", "--no-use-cls"])
+
+    assert result.exit_code == 0
+    assert client.calls == [
+        {
+            "method": "ocr.read",
+            "payload": {
+                "provider": "auto",
+                "lang": "ch",
+                "use_cls": False,
+                "text_score": 0.6,
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_ocr_read_rejects_invalid_provider_before_daemon_call(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-invalid-provider",
+                data={"result": [{"text": "银狼"}]},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read", "--provider", "gpu"])
+
+    assert result.exit_code == 2
+    assert "--provider" in result.output
+    assert client.calls == []
+
+
+def test_ocr_read_rejects_invalid_lang_before_daemon_call(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-invalid-lang",
+                data={"result": [{"text": "银狼"}]},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read", "--lang", "en"])
+
+    assert result.exit_code == 2
+    assert "--lang" in result.output
+    assert OCR_LANG_UNSUPPORTED in result.output
+    assert client.calls == []
+
+
+def test_ocr_read_help_describes_lang_as_ch_only(cli_runner):
+    result = cli_runner.invoke(app, ["ocr", "read", "--help"])
+
+    assert result.exit_code == 0
+    assert "--lang" in result.output
+    assert "首版仅支持 ch" in result.output
+
+
+def test_ocr_read_rejects_invalid_text_score_env_before_daemon_call(cli_runner, fake_daemon_client, monkeypatch):
+    monkeypatch.setenv("TRAIL_OCR_TEXT_SCORE", "not-a-float")
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-invalid-text-score-env",
+                data={"result": [{"text": "银狼"}]},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read"])
+
+    assert result.exit_code == 2
+    assert "TRAIL_OCR_TEXT_SCORE" in result.output
+    assert client.calls == []
+
+
+def test_ocr_read_rejects_invalid_use_cls_env_before_daemon_call(cli_runner, fake_daemon_client, monkeypatch):
+    monkeypatch.setenv("TRAIL_OCR_USE_CLS", "maybe")
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-invalid-use-cls-env",
+                data={"result": [{"text": "银狼"}]},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for TRAIL_OCR_USE_CLS" in result.output
+    assert "invalid ocr use_cls from" in result.output
+    assert "TRAIL_OCR_USE_CLS: maybe" in result.output
+    assert "Invalid value for '--provider'" not in result.output
+    assert client.calls == []
+
+
+def test_readme_documents_windows_directml_profile_contract() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "DirectML 目前只作为 Windows 定向的可选加速 profile" in readme
+    assert "需要使用项目明确支持的 DirectML 环境 profile" in readme
+    assert "默认安装仍以 CPU 基线依赖为准" in readme
+    assert "不要在同一环境里模糊共存 `onnxruntime` 与 `onnxruntime-directml`" in readme
+    assert "确认当前环境最终只保留预期的 ONNX Runtime 变体" in readme
+
+
+def test_ocr_read_renders_OCR_PROVIDER_UNAVAILABLE_failure(cli_runner, monkeypatch, tmp_path):
+    requests = []
+
+    _install_real_daemon_client(
+        monkeypatch,
+        tmp_path,
+        lambda request, token, *, endpoint: requests.append(request)
+        or {
+            "request_id": "req-ocr-dml-unavailable",
+            "ok": False,
+            "data": {},
+            "screenshot": ".trail/shots/req-ocr-dml-unavailable.png",
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": {
+                "trace": [
+                    {
+                        "step": "ocr_provider",
+                        "requested_provider": "dml",
+                        "effective_provider": "dml",
+                        "lang": "ch",
+                    }
+                ]
+            },
+            "error": {
+                "code": "OCR_PROVIDER_UNAVAILABLE",
+                "message": "requested dml provider unavailable",
+            },
+        },
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read", "--provider", "dml"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail ocr.read code=OCR_PROVIDER_UNAVAILABLE",
+        "request id=req-ocr-dml-unavailable",
+        "shot path=.trail/shots/req-ocr-dml-unavailable.png",
+        'why msg="requested dml provider unavailable"',
+    ]
+    assert len(requests) == 1
+    assert requests[0].method == "ocr.read"
+    assert requests[0].payload == {
+        "provider": "dml",
+        "lang": "ch",
+        "use_cls": False,
+        "text_score": 0.5,
+    }
+    assert requests[0].workspace_root == str(tmp_path)
+    assert requests[0].session_id is None
+    assert requests[0].verbose is False
+
+
+def test_ocr_read_renders_OCR_LANG_UNSUPPORTED_failure_without_recover(cli_runner, monkeypatch, tmp_path):
+    requests = []
+
+    _install_real_daemon_client(
+        monkeypatch,
+        tmp_path,
+        lambda request, token, *, endpoint: requests.append(request)
+        or {
+            "request_id": "req-ocr-lang-unsupported",
+            "ok": False,
+            "data": {},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": None,
+            "error": {
+                "code": "OCR_LANG_UNSUPPORTED",
+                "message": "unsupported ocr lang: en",
+            },
+        },
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail ocr.read code=OCR_LANG_UNSUPPORTED",
+        "request id=req-ocr-lang-unsupported",
+        'why msg="unsupported ocr lang: en"',
+    ]
+    assert len(requests) == 1
+    assert requests[0].method == "ocr.read"
+    assert requests[0].payload == {
+        "provider": "auto",
+        "lang": "ch",
+        "use_cls": False,
+        "text_score": 0.5,
+    }
+    assert requests[0].workspace_root == str(tmp_path)
+    assert requests[0].session_id is None
+    assert requests[0].verbose is False
+
+
+def test_daemon_client_preserves_request_id_for_non_control_plane_failures(tmp_path):
+    request_ids: list[str] = []
+
+    write_ready_manifest(
+        tmp_path / "daemon-home",
+        endpoint="127.0.0.1:8765",
+        token_value="token-1",
+    )
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=tmp_path / "daemon-home",
+        transport=lambda request, token, *, endpoint: request_ids.append(request.request_id)
+        or {
+            "request_id": request.request_id,
+            "ok": False,
+            "data": {},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": {"source": "runtime"},
+            "error": {
+                "code": "OCR_PROVIDER_UNAVAILABLE",
+                "message": "requested dml provider unavailable",
+            },
+        },
+    )
+
+    payload = client.call("ocr.read", {"provider": "dml"})
+
+    assert payload["ok"] is False
+    assert request_ids == [payload["debug"]["request_id"]]
+    assert payload["debug"] == {
+        "source": "runtime",
+        "request_id": request_ids[0],
+    }
+    assert "request_id" not in payload
+
+
+def test_ocr_read_verbose_preserves_provider_trace_debug_pipeline(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "ocr.read": {
+                "request_id": "req-ocr-dml-verbose",
+                "ok": False,
+                "data": {},
+                "screenshot": ".trail/shots/req-ocr-dml-verbose.png",
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": {
+                    "trace": [
+                        {
+                            "step": "ocr_provider",
+                            "requested_provider": "dml",
+                            "effective_provider": "dml",
+                            "lang": "ch",
+                            "available_providers": ["DmlExecutionProvider", "CPUExecutionProvider"],
+                            "reason": "RuntimeError: explicit dml run failed",
+                        }
+                    ]
+                },
+                "error": {
+                    "code": "OCR_PROVIDER_UNAVAILABLE",
+                    "message": "requested dml provider unavailable",
+                },
+            }
+        }
+    )
+
+    result = cli_runner.invoke(app, ["--verbose", "ocr", "read"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail ocr.read code=OCR_PROVIDER_UNAVAILABLE",
+        "request id=req-ocr-dml-verbose",
+        "shot path=.trail/shots/req-ocr-dml-verbose.png",
+        'why msg="requested dml provider unavailable"',
+        "debug kind=request msg=req-ocr-dml-verbose",
+        'debug kind=trace step=ocr_provider requested_provider=dml effective_provider=dml lang=ch available_providers="[\'DmlExecutionProvider\', \'CPUExecutionProvider\']" reason="RuntimeError: explicit dml run failed"',
+    ]
+    assert client.calls == [
+        {
+            "method": "ocr.read",
+            "payload": {
+                "provider": "auto",
+                "lang": "ch",
+                "use_cls": False,
+                "text_score": 0.5,
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": True,
         }
     ]
 

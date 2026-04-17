@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 import sys
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -17,6 +18,7 @@ class _CommandRuntimeStub:
     def __init__(self):
         self._shot = Path(".trail/shots/daemon-command.png")
         self.ocr_result = [{"text": "银狼"}]
+        self.ocr_calls: list[dict[str, object | None]] = []
         self.locate_result = {"left": 1, "top": 2, "width": 3, "height": 4}
         self.wait_result = {"left": 5, "top": 6, "width": 7, "height": 8}
         self.warnings: list[dict] = []
@@ -43,8 +45,14 @@ class _CommandRuntimeStub:
         self.trace.clear()
         return trace
 
-    def ocr(self, **kwargs):
-        del kwargs
+    def ocr(self, *, capture=None, ocr=None, **kwargs):
+        self.ocr_calls.append(
+            {
+                "capture": None if capture is None else dict(capture),
+                "ocr": ocr,
+                "kwargs": dict(kwargs),
+            }
+        )
         return self.ocr_result
 
     def locate(self, template: str, **kwargs):
@@ -216,6 +224,141 @@ def test_command_service_handles_screen_ocr_and_image_methods(tmp_path: Path):
         {"workspace_root": str(tmp_path), "window_binding": None},
         {"workspace_root": str(tmp_path), "window_binding": None},
     ]
+
+
+def test_command_service_splits_ocr_payload_into_capture_and_ocr_options(tmp_path: Path):
+    from trail.daemon.command_service import CommandService
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    runtime = _CommandRuntimeStub()
+    runtime_service = _CommandRuntimeServiceStub(runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="ocr.read",
+            payload={
+                "from_x": 1,
+                "from_y": 2,
+                "to_x": 3,
+                "to_y": 4,
+                "provider": "dml",
+                "lang": "ch",
+                "use_cls": "false",
+                "text_score": "0.6",
+            },
+        )
+    )
+
+    assert payload["ok"] is True
+    assert runtime.ocr_calls == [
+        {
+            "capture": {"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4},
+            "ocr": OcrRequestConfig(provider="dml", lang="ch", use_cls=False, text_score=0.6),
+            "kwargs": {},
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("invalid_payload", "expected_code", "expected_message"),
+    [
+        ({"provider": "gpu"}, "OCR_INPUT_INVALID", "unsupported ocr provider: gpu"),
+        ({"lang": "en"}, "OCR_LANG_UNSUPPORTED", "unsupported ocr lang: en"),
+        ({"text_score": "not-a-float"}, "OCR_INPUT_INVALID", "invalid ocr text score: not-a-float"),
+        ({"provider": "dml", "use_clss": True}, "OCR_INPUT_INVALID", "unknown ocr payload fields: use_clss"),
+    ],
+)
+def test_command_service_rejects_invalid_ocr_payload_values(
+    tmp_path: Path,
+    invalid_payload: dict[str, object],
+    expected_code: str,
+    expected_message: str,
+):
+    from trail.daemon.command_service import CommandService
+
+    runtime = _CommandRuntimeStub()
+    runtime_service = _CommandRuntimeServiceStub(runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="ocr.read",
+            payload=invalid_payload,
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == {"code": expected_code, "message": expected_message}
+    assert runtime.ocr_calls == []
+
+
+def test_runtime_operator_ocr_passes_explicit_ocr_options_to_engine_without_forwarding_them_to_screenshot(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    capture_calls: list[dict[str, object | None]] = []
+    engine_calls: list[dict[str, object]] = []
+    ocr_config = OcrRequestConfig(provider="auto", lang="ch", use_cls=True, text_score=0.6)
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            capture_calls.append(dict(kwargs))
+            return b"demo-bytes"
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return tmp_path / ".trail" / "shots" / "req-ocr-read-provider.png"
+
+    class EngineStub:
+        def run(self, image, **kwargs):
+            engine_calls.append({"image": image, "kwargs": dict(kwargs)})
+            return operator_module.OcrRunResult(pieces=[{"text": "银狼"}], warnings=[], trace=[])
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    result = runtime.ocr(
+        capture={"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4},
+        ocr=ocr_config,
+    )
+
+    assert capture_calls == [{"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4}]
+    assert engine_calls == [{"image": b"demo-bytes", "kwargs": {"ocr": ocr_config}}]
+    assert result == [{"text": "银狼"}]
+
+
+def test_runtime_operator_ocr_requires_capture_dict_for_region_arguments(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: b"demo-bytes",
+            capture_to_workspace=lambda request_id=None: tmp_path / ".trail" / "shots" / "req-ocr-read-provider.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, **kwargs: [{"text": "银狼"}]),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    with pytest.raises(TypeError):
+        runtime.ocr(from_x=1)
 
 
 def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Path):
@@ -816,17 +959,846 @@ def test_pyscreeze_matcher_returns_none_when_backend_reports_not_found(monkeypat
 def test_rapidocr_adapter_runs_backend(monkeypatch):
     import trail.runtime.operator as operator_module
 
+    session = SimpleNamespace(get_providers=lambda: ["CPUExecutionProvider"])
+
     class FakeRapidOCR:
-        def __call__(self, image, use_det=True, use_cls=False, use_rec=True):
+        def __init__(self, **kwargs):
+            del kwargs
+            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session))
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image, use_det, use_cls, use_rec, kwargs
             return (["ok"], None)
 
-    fake_module = SimpleNamespace(RapidOCR=lambda config_path=None: FakeRapidOCR())
+    fake_module = SimpleNamespace(RapidOCR=FakeRapidOCR)
     monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", fake_module)
 
     adapter = operator_module.RapidOcrAdapter()
     result = adapter.run(Image.new("RGB", (20, 20), color="white"))
 
-    assert result == ["ok"]
+    assert result.pieces == ["ok"]
+
+
+def test_rapidocr_adapter_runs_backend_with_explicit_ocr_options(monkeypatch):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    calls: list[dict[str, bool]] = []
+    session = SimpleNamespace(get_providers=lambda: ["CPUExecutionProvider"])
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            del kwargs
+            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session))
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image
+            calls.append({"use_det": use_det, "use_cls": use_cls, "use_rec": use_rec, "kwargs": dict(kwargs)})
+            return (["ok"], None)
+
+    fake_module = SimpleNamespace(RapidOCR=FakeRapidOCR)
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", fake_module)
+
+    adapter = operator_module.RapidOcrAdapter()
+    result = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(use_cls=True))
+
+    assert result.pieces == ["ok"]
+    assert calls == [{"use_det": True, "use_cls": True, "use_rec": True, "kwargs": {"text_score": 0.5}}]
+
+
+def test_rapidocr_adapter_passes_text_score_to_backend_call(monkeypatch):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    calls: list[dict[str, object]] = []
+    session = SimpleNamespace(get_providers=lambda: ["CPUExecutionProvider"])
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            del kwargs
+            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session))
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image
+            calls.append({"use_det": use_det, "use_cls": use_cls, "use_rec": use_rec, "kwargs": dict(kwargs)})
+            return (["ok"], None)
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+
+    adapter = operator_module.RapidOcrAdapter()
+    result = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(text_score=0.77))
+
+    assert result.pieces == ["ok"]
+    assert calls == [{"use_det": True, "use_cls": False, "use_rec": True, "kwargs": {"text_score": 0.77}}]
+
+
+@pytest.mark.parametrize(
+    ("ocr_config", "expected_code", "expected_message"),
+    [
+        ("provider", "OCR_INPUT_INVALID", "unsupported ocr provider: gpu"),
+        ("lang", "OCR_LANG_UNSUPPORTED", "unsupported ocr lang: en"),
+    ],
+)
+def test_runtime_operator_ocr_rejects_invalid_ocr_request_config_before_engine_run(tmp_path: Path, ocr_config: str, expected_code: str, expected_message: str):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    engine_calls: list[dict[str, object]] = []
+
+    config = OcrRequestConfig(provider="gpu") if ocr_config == "provider" else OcrRequestConfig(lang="en")
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            del kwargs
+            buffer = BytesIO()
+            Image.new("RGB", (20, 20), color="white").save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return tmp_path / "runtime-invalid.png"
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image
+            engine_calls.append({"ocr": ocr})
+            return operator_module.OcrRunResult(pieces=[{"text": "unexpected"}], warnings=[], trace=[])
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(click=lambda *args, **kwargs: None, drag=lambda *args, **kwargs: None, press=lambda *args, **kwargs: None),
+        reference_root=tmp_path,
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        runtime.ocr(capture={}, ocr=config)
+
+    assert exc_info.value.code == expected_code
+    assert str(exc_info.value) == expected_message
+    assert engine_calls == []
+
+
+@pytest.mark.parametrize(
+    ("ocr_config", "expected_code", "expected_message"),
+    [
+        ("provider", "OCR_INPUT_INVALID", "unsupported ocr provider: gpu"),
+        ("lang", "OCR_LANG_UNSUPPORTED", "unsupported ocr lang: en"),
+    ],
+)
+def test_rapidocr_adapter_rejects_invalid_ocr_request_config_without_backend_init(
+    monkeypatch,
+    ocr_config: str,
+    expected_code: str,
+    expected_message: str,
+):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            raise AssertionError(f"unexpected RapidOCR init: {kwargs}")
+
+    config = OcrRequestConfig(provider="gpu") if ocr_config == "provider" else OcrRequestConfig(lang="en")
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"]),
+    )
+
+    adapter = operator_module.RapidOcrAdapter()
+
+    with pytest.raises(TrailError) as exc_info:
+        adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=config)
+
+    assert exc_info.value.code == expected_code
+    assert str(exc_info.value) == expected_message
+
+
+def test_runtime_operator_ocr_uses_explicit_ocr_run_result_without_side_channel(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.output.capture import with_auto_capture
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            del kwargs
+            buffer = BytesIO()
+            Image.new("RGB", (20, 20), color="white").save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return tmp_path / "ocr-run-result.png"
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image
+            assert ocr is not None
+            return operator_module.OcrRunResult(
+                pieces=[{"text": "银狼"}],
+                warnings=[{"code": "OCR_CPU", "message": "provider cpu"}],
+                trace=[{"step": "ocr_provider", "requested_provider": ocr.provider, "effective_provider": "cpu", "lang": ocr.lang}],
+            )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(click=lambda *args, **kwargs: None, drag=lambda *args, **kwargs: None, press=lambda *args, **kwargs: None),
+        reference_root=tmp_path,
+    )
+
+    payload = with_auto_capture(
+        runtime,
+        lambda: {"result": runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu"))},
+        verbose=True,
+    )
+
+    assert payload["ok"] is True
+    assert payload["data"] == {"result": [{"text": "银狼"}]}
+    assert payload["warnings"] == [{"code": "OCR_CPU", "message": "provider cpu"}]
+    assert any(item.get("step") == "ocr_provider" for item in payload["debug"]["trace"])
+
+
+@pytest.mark.parametrize(
+    ("provider", "available_providers", "expected_kwargs"),
+    [
+        (
+            "auto",
+            ["DmlExecutionProvider", "CPUExecutionProvider"],
+            {"det_use_dml": True, "cls_use_dml": False, "rec_use_dml": True},
+        ),
+        (
+            "auto",
+            ["CPUExecutionProvider"],
+            {"det_use_dml": False, "cls_use_dml": False, "rec_use_dml": False},
+        ),
+        (
+            "cpu",
+            ["DmlExecutionProvider", "CPUExecutionProvider"],
+            {"det_use_dml": False, "cls_use_dml": False, "rec_use_dml": False},
+        ),
+    ],
+)
+def test_rapidocr_adapter_resolves_requested_provider_into_rapidocr_engine_flags(
+    monkeypatch,
+    provider: str,
+    available_providers: list[str],
+    expected_kwargs: dict[str, bool],
+):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    ctor_calls: list[dict[str, bool]] = []
+
+    def _providers():
+        provider_name = "DmlExecutionProvider" if expected_kwargs["det_use_dml"] else "CPUExecutionProvider"
+        session = SimpleNamespace(get_providers=lambda: [provider_name])
+        return SimpleNamespace(
+            text_det=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_cls=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_rec=SimpleNamespace(session=SimpleNamespace(session=session)),
+        )
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            ctor_calls.append(dict(kwargs))
+            provider_tree = _providers()
+            self.text_det = provider_tree.text_det
+            self.text_cls = provider_tree.text_cls
+            self.text_rec = provider_tree.text_rec
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image, use_det, use_cls, use_rec, kwargs
+            return (["ok"], None)
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: list(available_providers)),
+    )
+
+    adapter = operator_module.RapidOcrAdapter()
+    result = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider=provider))
+
+    assert result.pieces == ["ok"]
+    assert ctor_calls == [expected_kwargs]
+
+
+def test_rapidocr_adapter_dml_provider_hard_fails_when_unavailable(monkeypatch):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OCR_PROVIDER_UNAVAILABLE, OcrRequestConfig
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            raise AssertionError(f"unexpected RapidOCR init: {kwargs}")
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"]),
+    )
+
+    adapter = operator_module.RapidOcrAdapter()
+
+    with pytest.raises(TrailError) as exc_info:
+        adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="dml"))
+
+    assert exc_info.value.code == OCR_PROVIDER_UNAVAILABLE
+
+
+def test_rapidocr_adapter_singleflights_engine_init_for_same_cache_key(monkeypatch):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    build_started = threading.Event()
+    release_build = threading.Event()
+    start_barrier = threading.Barrier(3)
+    ctor_calls: list[dict[str, bool]] = []
+    results: list[list[str]] = []
+    errors: list[Exception] = []
+
+    def _providers():
+        session = SimpleNamespace(get_providers=lambda: ["CPUExecutionProvider"])
+        return SimpleNamespace(
+            text_det=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_cls=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_rec=SimpleNamespace(session=SimpleNamespace(session=session)),
+        )
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            ctor_calls.append(dict(kwargs))
+            build_started.set()
+            release_build.wait(timeout=2)
+            provider_tree = _providers()
+            self.text_det = provider_tree.text_det
+            self.text_cls = provider_tree.text_cls
+            self.text_rec = provider_tree.text_rec
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image, use_det, use_cls, use_rec, kwargs
+            return (["ok"], None)
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"]),
+    )
+
+    adapter = operator_module.RapidOcrAdapter()
+
+    def worker(text_score: float):
+        start_barrier.wait()
+        try:
+            results.append(
+                adapter.run(
+                    Image.new("RGB", (20, 20), color="white"),
+                    ocr=OcrRequestConfig(provider="cpu", text_score=text_score),
+                )
+            )
+        except Exception as exc:  # pragma: no cover - failure path asserted below
+            errors.append(exc)
+
+    left = threading.Thread(target=worker, args=(0.5,))
+    right = threading.Thread(target=worker, args=(0.9,))
+    left.start()
+    right.start()
+    start_barrier.wait()
+    assert build_started.wait(timeout=2)
+    threading.Event().wait(0.1)
+    release_build.set()
+    left.join(timeout=2)
+    right.join(timeout=2)
+
+    assert errors == []
+    assert [result.pieces for result in results] == [["ok"], ["ok"]]
+    assert ctor_calls == [{"det_use_dml": False, "cls_use_dml": False, "rec_use_dml": False}]
+
+
+def test_rapidocr_adapter_auto_falls_back_to_cached_cpu_wrapper_when_dml_build_fails(monkeypatch):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    ctor_calls: list[dict[str, bool]] = []
+
+    def _providers():
+        session = SimpleNamespace(get_providers=lambda: ["CPUExecutionProvider"])
+        return SimpleNamespace(
+            text_det=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_cls=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_rec=SimpleNamespace(session=SimpleNamespace(session=session)),
+        )
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            ctor_calls.append(dict(kwargs))
+            if kwargs["det_use_dml"]:
+                raise RuntimeError("dml build failed")
+            provider_tree = _providers()
+            self.text_det = provider_tree.text_det
+            self.text_cls = provider_tree.text_cls
+            self.text_rec = provider_tree.text_rec
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image, use_det, use_cls, use_rec, kwargs
+            return (["ok"], None)
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"]),
+    )
+
+    adapter = operator_module.RapidOcrAdapter()
+
+    first = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="auto"))
+    second = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="cpu"))
+
+    assert first.pieces == ["ok"]
+    assert second.pieces == ["ok"]
+    assert ctor_calls == [
+        {"det_use_dml": True, "cls_use_dml": False, "rec_use_dml": True},
+        {"det_use_dml": False, "cls_use_dml": False, "rec_use_dml": False},
+    ]
+
+
+def test_rapidocr_adapter_auto_negative_caches_dml_build_failure_for_future_requests(monkeypatch):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    ctor_calls: list[dict[str, bool]] = []
+    run_calls: list[dict[str, object]] = []
+
+    def _providers():
+        session = SimpleNamespace(get_providers=lambda: ["CPUExecutionProvider"])
+        return SimpleNamespace(
+            text_det=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_cls=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_rec=SimpleNamespace(session=SimpleNamespace(session=session)),
+        )
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            ctor_calls.append(dict(kwargs))
+            if kwargs["det_use_dml"]:
+                raise RuntimeError("dml build failed")
+            provider_tree = _providers()
+            self.text_det = provider_tree.text_det
+            self.text_cls = provider_tree.text_cls
+            self.text_rec = provider_tree.text_rec
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image, use_det, use_cls, use_rec
+            run_calls.append(dict(kwargs))
+            return (["cpu"], None)
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"]),
+    )
+
+    adapter = operator_module.RapidOcrAdapter()
+
+    first = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="auto"))
+    second = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="auto"))
+
+    assert first.pieces == ["cpu"]
+    assert second.pieces == ["cpu"]
+    assert ctor_calls == [
+        {"det_use_dml": True, "cls_use_dml": False, "rec_use_dml": True},
+        {"det_use_dml": False, "cls_use_dml": False, "rec_use_dml": False},
+    ]
+    assert run_calls == [{"text_score": 0.5}, {"text_score": 0.5}]
+
+
+def test_rapidocr_adapter_auto_negative_cache_does_not_change_explicit_dml_semantics(monkeypatch):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OCR_PROVIDER_UNAVAILABLE, OcrRequestConfig
+
+    ctor_calls: list[dict[str, bool]] = []
+
+    def _providers():
+        session = SimpleNamespace(get_providers=lambda: ["CPUExecutionProvider"])
+        return SimpleNamespace(
+            text_det=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_cls=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_rec=SimpleNamespace(session=SimpleNamespace(session=session)),
+        )
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            ctor_calls.append(dict(kwargs))
+            if kwargs["det_use_dml"]:
+                raise RuntimeError("dml build failed")
+            provider_tree = _providers()
+            self.text_det = provider_tree.text_det
+            self.text_cls = provider_tree.text_cls
+            self.text_rec = provider_tree.text_rec
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image, use_det, use_cls, use_rec, kwargs
+            return (["cpu"], None)
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"]),
+    )
+
+    adapter = operator_module.RapidOcrAdapter()
+
+    warm = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="auto"))
+
+    with pytest.raises(TrailError) as exc_info:
+        adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="dml"))
+
+    assert warm.pieces == ["cpu"]
+    assert exc_info.value.code == OCR_PROVIDER_UNAVAILABLE
+    assert ctor_calls == [
+        {"det_use_dml": True, "cls_use_dml": False, "rec_use_dml": True},
+        {"det_use_dml": False, "cls_use_dml": False, "rec_use_dml": False},
+        {"det_use_dml": True, "cls_use_dml": False, "rec_use_dml": True},
+    ]
+
+
+def test_rapidocr_adapter_auto_evicts_cached_dml_wrapper_and_falls_back_to_cpu_when_run_fails(monkeypatch):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    ctor_calls: list[dict[str, bool]] = []
+    run_calls: list[dict[str, object]] = []
+
+    def _providers(provider_name: str):
+        session = SimpleNamespace(get_providers=lambda: [provider_name])
+        return SimpleNamespace(
+            text_det=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_cls=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_rec=SimpleNamespace(session=SimpleNamespace(session=session)),
+        )
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            ctor_calls.append(dict(kwargs))
+            self.is_dml = bool(kwargs["det_use_dml"])
+            self.calls = 0
+            provider_tree = _providers("DmlExecutionProvider" if self.is_dml else "CPUExecutionProvider")
+            self.text_det = provider_tree.text_det
+            self.text_cls = provider_tree.text_cls
+            self.text_rec = provider_tree.text_rec
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image, use_det, use_cls, use_rec
+            self.calls += 1
+            run_calls.append({"dml": self.is_dml, "call": self.calls, "kwargs": dict(kwargs)})
+            if self.is_dml and self.calls >= 2:
+                raise RuntimeError("cached dml run failed")
+            return (["dml" if self.is_dml else "cpu"], None)
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"]),
+    )
+
+    adapter = operator_module.RapidOcrAdapter()
+    dml_key = operator_module.OcrEngineKey(effective_provider="dml", model_identity="rapidocr:ppocrv4-mobile:ch", use_cls=False)
+    cpu_key = operator_module.OcrEngineKey(effective_provider="cpu", model_identity="rapidocr:ppocrv4-mobile:ch", use_cls=False)
+
+    warm = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="auto"))
+    fallback = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="auto"))
+
+    assert warm.pieces == ["dml"]
+    assert fallback.pieces == ["cpu"]
+    assert any(item.get("fallback_from") == "dml" and "cached dml run failed" in item.get("reason", "") for item in fallback.trace)
+    assert run_calls == [
+        {"dml": True, "call": 1, "kwargs": {"text_score": 0.5}},
+        {"dml": True, "call": 2, "kwargs": {"text_score": 0.5}},
+        {"dml": False, "call": 1, "kwargs": {"text_score": 0.5}},
+    ]
+    assert ctor_calls == [
+        {"det_use_dml": True, "cls_use_dml": False, "rec_use_dml": True},
+        {"det_use_dml": False, "cls_use_dml": False, "rec_use_dml": False},
+    ]
+    assert dml_key not in adapter._engine_cache
+    assert cpu_key in adapter._engine_cache
+
+
+def test_rapidocr_adapter_explicit_dml_run_failure_does_not_fallback_to_cpu(monkeypatch):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OCR_PROVIDER_UNAVAILABLE, OcrRequestConfig
+
+    ctor_calls: list[dict[str, bool]] = []
+    run_calls: list[dict[str, object]] = []
+
+    def _providers(provider_name: str):
+        session = SimpleNamespace(get_providers=lambda: [provider_name])
+        return SimpleNamespace(
+            text_det=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_cls=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_rec=SimpleNamespace(session=SimpleNamespace(session=session)),
+        )
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            ctor_calls.append(dict(kwargs))
+            self.is_dml = bool(kwargs["det_use_dml"])
+            provider_tree = _providers("DmlExecutionProvider" if self.is_dml else "CPUExecutionProvider")
+            self.text_det = provider_tree.text_det
+            self.text_cls = provider_tree.text_cls
+            self.text_rec = provider_tree.text_rec
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image, use_det, use_cls, use_rec
+            run_calls.append({"dml": self.is_dml, "kwargs": dict(kwargs)})
+            if self.is_dml:
+                raise RuntimeError("explicit dml run failed")
+            return (["cpu"], None)
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"]),
+    )
+
+    adapter = operator_module.RapidOcrAdapter()
+    dml_key = operator_module.OcrEngineKey(effective_provider="dml", model_identity="rapidocr:ppocrv4-mobile:ch", use_cls=False)
+    cpu_key = operator_module.OcrEngineKey(effective_provider="cpu", model_identity="rapidocr:ppocrv4-mobile:ch", use_cls=False)
+
+    with pytest.raises(TrailError) as exc_info:
+        adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="dml"))
+
+    assert exc_info.value.code == OCR_PROVIDER_UNAVAILABLE
+    assert run_calls == [{"dml": True, "kwargs": {"text_score": 0.5}}]
+    assert ctor_calls == [{"det_use_dml": True, "cls_use_dml": False, "rec_use_dml": True}]
+    assert dml_key not in adapter._engine_cache
+    assert cpu_key not in adapter._engine_cache
+
+
+def test_rapidocr_adapter_dml_provider_validation_failure_is_not_cached(monkeypatch):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OCR_PROVIDER_UNAVAILABLE, OcrRequestConfig
+
+    ctor_calls: list[dict[str, bool]] = []
+
+    def _providers():
+        session = SimpleNamespace(get_providers=lambda: ["CPUExecutionProvider"])
+        return SimpleNamespace(
+            text_det=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_cls=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_rec=SimpleNamespace(session=SimpleNamespace(session=session)),
+        )
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            ctor_calls.append(dict(kwargs))
+            provider_tree = _providers()
+            self.text_det = provider_tree.text_det
+            self.text_cls = provider_tree.text_cls
+            self.text_rec = provider_tree.text_rec
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image, use_det, use_cls, use_rec, kwargs
+            return (["ok"], None)
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"]),
+    )
+
+    adapter = operator_module.RapidOcrAdapter()
+
+    with pytest.raises(TrailError) as first_error:
+        adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="dml"))
+
+    with pytest.raises(TrailError) as second_error:
+        adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(provider="dml"))
+
+    assert first_error.value.code == OCR_PROVIDER_UNAVAILABLE
+    assert second_error.value.code == OCR_PROVIDER_UNAVAILABLE
+    assert ctor_calls == [
+        {"det_use_dml": True, "cls_use_dml": False, "rec_use_dml": True},
+        {"det_use_dml": True, "cls_use_dml": False, "rec_use_dml": True},
+    ]
+
+
+def test_runtime_operator_keeps_ocr_debug_and_warnings_request_local_under_concurrency(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.output.capture import with_auto_capture
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    barrier = threading.Barrier(2)
+    payloads: dict[str, dict] = {}
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            del kwargs
+            buffer = BytesIO()
+            Image.new("RGB", (20, 20), color="white").save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return tmp_path / f"{threading.current_thread().name}.png"
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image
+            assert ocr is not None
+            barrier.wait()
+            return operator_module.OcrRunResult(
+                pieces=[{"text": ocr.provider}],
+                warnings=[{"code": f"OCR_{ocr.provider.upper()}", "message": f"provider {ocr.provider}"}],
+                trace=[
+                    {
+                        "step": "ocr_provider",
+                        "requested_provider": ocr.provider,
+                        "effective_provider": ocr.provider,
+                        "lang": ocr.lang,
+                    }
+                ],
+            )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    def worker(name: str, provider: str):
+        payloads[name] = with_auto_capture(
+            runtime,
+            lambda: {"result": runtime.ocr(capture={}, ocr=OcrRequestConfig(provider=provider))},
+            verbose=True,
+        )
+
+    left = threading.Thread(target=worker, name="left", args=("left", "cpu"))
+    right = threading.Thread(target=worker, name="right", args=("right", "auto"))
+    left.start()
+    right.start()
+    left.join(timeout=2)
+    right.join(timeout=2)
+
+    left_provider_trace = [item for item in payloads["left"]["debug"]["trace"] if item.get("step") == "ocr_provider"]
+    right_provider_trace = [item for item in payloads["right"]["debug"]["trace"] if item.get("step") == "ocr_provider"]
+
+    assert payloads["left"]["warnings"] == [{"code": "OCR_CPU", "message": "provider cpu"}]
+    assert payloads["right"]["warnings"] == [{"code": "OCR_AUTO", "message": "provider auto"}]
+    assert left_provider_trace == [
+        {
+            "step": "ocr_provider",
+            "requested_provider": "cpu",
+            "effective_provider": "cpu",
+            "lang": "ch",
+        }
+    ]
+    assert right_provider_trace == [
+        {
+            "step": "ocr_provider",
+            "requested_provider": "auto",
+            "effective_provider": "auto",
+            "lang": "ch",
+        }
+    ]
+
+
+def test_with_auto_capture_preserves_provider_trace_for_dml_failure(tmp_path: Path, monkeypatch):
+    import trail.runtime.operator as operator_module
+    from trail.output.capture import with_auto_capture
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    def _providers(provider_name: str):
+        session = SimpleNamespace(get_providers=lambda: [provider_name])
+        return SimpleNamespace(
+            text_det=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_cls=SimpleNamespace(infer=SimpleNamespace(session=session)),
+            text_rec=SimpleNamespace(session=SimpleNamespace(session=session)),
+        )
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            provider_tree = _providers("DmlExecutionProvider")
+            self.text_det = provider_tree.text_det
+            self.text_cls = provider_tree.text_cls
+            self.text_rec = provider_tree.text_rec
+
+        def __call__(self, image, use_det=True, use_cls=False, use_rec=True, **kwargs):
+            del image, use_det, use_cls, use_rec, kwargs
+            raise RuntimeError("explicit dml run failed")
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            del kwargs
+            buffer = BytesIO()
+            Image.new("RGB", (20, 20), color="white").save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return tmp_path / "ocr-dml-fail.png"
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"]),
+    )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=operator_module.RapidOcrAdapter(),
+        input_driver=SimpleNamespace(click=lambda *args, **kwargs: None, drag=lambda *args, **kwargs: None, press=lambda *args, **kwargs: None),
+        reference_root=tmp_path,
+    )
+
+    payload = with_auto_capture(
+        runtime,
+        lambda: {"result": runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="dml"))},
+        verbose=True,
+    )
+
+    provider_trace = [item for item in (payload.get("debug") or {}).get("trace", []) if item.get("step") == "ocr_provider"]
+
+    assert payload["ok"] is False
+    assert payload["error"] == {"code": "OCR_PROVIDER_UNAVAILABLE", "message": "requested dml provider unavailable"}
+    assert provider_trace == [
+        {
+            "step": "ocr_provider",
+            "requested_provider": "dml",
+            "effective_provider": "dml",
+            "lang": "ch",
+            "available_providers": ["DmlExecutionProvider", "CPUExecutionProvider"],
+            "reason": "RuntimeError: explicit dml run failed",
+        }
+    ]
 
 
 def test_attach_window_returns_window_binding(monkeypatch):
