@@ -272,8 +272,14 @@ def _render_cw_portal_cards(command: str, payload: dict[str, Any]) -> list[str]:
             + _format_fact_sequence(
                 ("idx", card.get("card_idx")),
                 ("title", card.get("portal_title")),
-                ("description", card.get("portal_description")),
                 ("score", card.get("score")),
+            )
+        )
+        lines.append(
+            "opt "
+            + _format_fact_sequence(
+                ("idx", card.get("card_idx")),
+                ("desc", card.get("portal_description")),
             )
         )
     _append_warnings(lines, payload)

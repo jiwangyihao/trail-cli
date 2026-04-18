@@ -149,8 +149,10 @@ def test_cw_start_renders_portal_cards_and_shot(cli_runner, fake_daemon_client, 
         "ok cw.start cards=2",
         screenshot=".trail/shots/req-cw-start.png",
         body=[
-            'opt idx=1 title="Alpha Portal" description="Alpha Desc" score=0.99',
-            'opt idx=2 title="Beta Portal" description="Beta Desc" score=0.88',
+            'opt idx=1 title="Alpha Portal" score=0.99',
+            'opt idx=1 desc="Alpha Desc"',
+            'opt idx=2 title="Beta Portal" score=0.88',
+            'opt idx=2 desc="Beta Desc"',
         ],
     )
     _assert_single_call(
@@ -216,8 +218,10 @@ def test_cw_portal_refresh_and_restart_render_portal_cards(cli_runner, fake_daem
         f"ok {method} cards=2",
         screenshot=screenshot,
         body=[
-            'opt idx=1 title="Alpha Portal" description="Alpha Desc" score=0.99',
-            'opt idx=2 title="Beta Portal" description="Beta Desc" score=0.88',
+            'opt idx=1 title="Alpha Portal" score=0.99',
+            'opt idx=1 desc="Alpha Desc"',
+            'opt idx=2 title="Beta Portal" score=0.88',
+            'opt idx=2 desc="Beta Desc"',
         ],
     )
     _assert_single_call(client, method=method, payload={}, tmp_path=tmp_path)
