@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from time import sleep
 
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
@@ -13,6 +14,10 @@ CW_HEIGHT = 1080
 ENTRY_UI_WAIT_TIMEOUT = 10
 LOWEST_DIFFICULTY_MAX_CLICKS = 10
 ENTRY_GUIDE_HOTKEY = "f4"
+ENTRY_GUIDE_OPEN_SETTLE_SECONDS = 2.0
+ENTRY_COSMIC_STRIFE_SETTLE_SECONDS = 1.0
+ENTRY_CURRENCY_WARS_SETTLE_SECONDS = 0.8
+ENTRY_PARTICIPATE_SETTLE_SECONDS = 1.0
 CURRENCY_WARS_ENTRY_POINT = (int(CW_WIDTH * 0.242), int(CW_HEIGHT * 0.30))
 CURRENCY_WARS_PARTICIPATE_POINT = (int(CW_WIDTH * 0.7786), int(CW_HEIGHT * 0.8194))
 STANDARD_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.2315))
@@ -44,6 +49,10 @@ def _box_center(box: object) -> tuple[int, int]:
 
 def _click_box_center(runtime, box: object) -> None:
     runtime.click_point(*_box_center(box))
+
+
+def _transition_sleep(seconds: float) -> None:
+    sleep(seconds)
 
 
 def _locate(runtime, alias: str):
@@ -124,10 +133,14 @@ def _enter_from_start_page(runtime, *, mode: str, difficulty: str, battle_mode: 
 
 def _enter_from_world(runtime, *, mode: str, difficulty: str, battle_mode: str) -> None:
     runtime.press_key(ENTRY_GUIDE_HOTKEY)
+    _transition_sleep(ENTRY_GUIDE_OPEN_SETTLE_SECONDS)
     _wait(runtime, "entry.menu")
     _click_box_center(runtime, _wait(runtime, "entry.cosmic_strife"))
+    _transition_sleep(ENTRY_COSMIC_STRIFE_SETTLE_SECONDS)
     runtime.click_point(*CURRENCY_WARS_ENTRY_POINT)
+    _transition_sleep(ENTRY_CURRENCY_WARS_SETTLE_SECONDS)
     runtime.click_point(*CURRENCY_WARS_PARTICIPATE_POINT)
+    _transition_sleep(ENTRY_PARTICIPATE_SETTLE_SECONDS)
     start_box = _wait(runtime, "entry.start")
     _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode, start_box=start_box)
 

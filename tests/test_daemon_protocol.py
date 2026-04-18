@@ -1133,6 +1133,12 @@ def test_client_does_not_bootstrap_on_socket_timeout(tmp_path: Path):
     assert started == []
 
 
+def test_daemon_socket_timeout_budget_covers_long_running_scene_commands():
+    import trail.daemon.client as client_module
+
+    assert client_module.SOCKET_RESPONSE_TIMEOUT_SECONDS >= 120.0
+
+
 def test_client_returns_daemon_unavailable_when_transport_returns_non_object_json(tmp_path: Path):
     server = socket.create_server(("127.0.0.1", 0))
     server.settimeout(5)
@@ -1444,5 +1450,5 @@ def test_send_daemon_request_uses_extended_read_timeout(monkeypatch, tmp_path: P
     )
 
     assert payload["ok"] is True
-    assert settimeouts == [15.0]
+    assert settimeouts == [120.0]
     assert sent

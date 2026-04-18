@@ -48,9 +48,43 @@ WINDOWS_RESERVED_CAPTURE_STEMS = {
 CANONICAL_CLIENT_WIDTH = 1920
 CANONICAL_CLIENT_HEIGHT = 1080
 CANONICAL_ASPECT_RATIO = CANONICAL_CLIENT_WIDTH / CANONICAL_CLIENT_HEIGHT
+VK_MENU = 0x12
+KEYEVENTF_KEYUP = 0x0002
 
 _WINDOWS_CAPTURE_SESSIONS: dict[int, "_WindowsCaptureSession"] = {}
 _WINDOWS_CAPTURE_SESSIONS_LOCK = Lock()
+
+
+def _force_window_foreground(hwnd: int) -> None:
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    foreground_hwnd = user32.GetForegroundWindow()
+    current_thread_id = kernel32.GetCurrentThreadId()
+    foreground_thread_id = user32.GetWindowThreadProcessId(foreground_hwnd, None) if foreground_hwnd else 0
+    target_thread_id = user32.GetWindowThreadProcessId(hwnd, None)
+
+    attached_foreground = False
+    attached_target = False
+    try:
+        if foreground_thread_id and foreground_thread_id != current_thread_id:
+            user32.AttachThreadInput(foreground_thread_id, current_thread_id, True)
+            attached_foreground = True
+        if target_thread_id and target_thread_id != current_thread_id:
+            user32.AttachThreadInput(target_thread_id, current_thread_id, True)
+            attached_target = True
+
+        user32.BringWindowToTop(hwnd)
+        user32.keybd_event(VK_MENU, 0, 0, 0)
+        user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+        user32.SetForegroundWindow(hwnd)
+        user32.SetFocus(hwnd)
+        user32.SetActiveWindow(hwnd)
+    finally:
+        if attached_target:
+            user32.AttachThreadInput(target_thread_id, current_thread_id, False)
+        if attached_foreground:
+            user32.AttachThreadInput(foreground_thread_id, current_thread_id, False)
 
 
 def _safe_capture_request_id(request_id: str | None) -> str:
@@ -503,12 +537,10 @@ class WindowsWindowController:
         window = self._resolve_window()
         hwnd = getattr(window, "_hWnd", None)
         if sys.platform == "win32" and hwnd is not None:
-            user32 = ctypes.windll.user32
             if getattr(window, "isMinimized", False):
-                user32.ShowWindow(int(hwnd), 9)
+                ctypes.windll.user32.ShowWindow(int(hwnd), 9)
                 sleep(0.1)
-            user32.BringWindowToTop(int(hwnd))
-            user32.SetForegroundWindow(int(hwnd))
+            _force_window_foreground(int(hwnd))
             sleep(0.1)
             return
         if getattr(window, "isMinimized", False):

@@ -1019,6 +1019,23 @@ def test_render_output_omits_recover_for_local_control_plane_failure():
     ]
 
 
+def test_render_output_renders_daemon_restart_summary():
+    payload = {
+        "ok": True,
+        "data": {"stopped": True, "started": True, "already_running": False},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("daemon.restart", payload).splitlines() == [
+        "ok daemon.restart stopped=1 started=1 already_running=0"
+    ]
+
+
 def test_render_output_keeps_recover_for_unknown_result_failure():
     payload = {
         "ok": False,

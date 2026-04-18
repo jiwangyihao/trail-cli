@@ -20,7 +20,7 @@ RETRIABLE_TRANSPORT_ERRORS = (
     ConnectionAbortedError,
     BrokenPipeError,
 )
-SOCKET_RESPONSE_TIMEOUT_SECONDS = 15.0
+SOCKET_RESPONSE_TIMEOUT_SECONDS = 120.0
 
 
 class DaemonTransport(Protocol):

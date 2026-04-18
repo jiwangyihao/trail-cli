@@ -191,6 +191,19 @@ class RuntimeOperator:
             }
         )
 
+    def _ensure_foreground_before_input(self) -> None:
+        is_foreground = getattr(self.window, "is_foreground", None)
+        if not callable(is_foreground):
+            return
+        try:
+            foreground = bool(is_foreground())
+        except Exception:
+            return
+        self._record_trace("foreground_prepare_check", foreground=foreground)
+        if foreground:
+            return
+        raise TrailError("WINDOW_NOT_FOREGROUND", "窗口不在前台，无法执行输入")
+
     def _mark_input_action(self) -> None:
         self._last_input_at = monotonic()
 
@@ -504,6 +517,7 @@ class RuntimeOperator:
             ensure_available()
         self.window.prepare_input()
         self._record_trace("prepare_input")
+        self._ensure_foreground_before_input()
 
     def _to_screen_point(self, x: int | float, y: int | float) -> tuple[int | float, int | float]:
         if hasattr(self.window, "to_screen_point"):
@@ -1038,6 +1052,10 @@ class PyAutoGuiInputDriver:
         normalized = key.lower()
         if normalized in cls.VIRTUAL_KEY_OVERRIDES:
             return cls.VIRTUAL_KEY_OVERRIDES[normalized]
+        if normalized.startswith("f") and normalized[1:].isdigit():
+            function_index = int(normalized[1:])
+            if 1 <= function_index <= 24:
+                return 0x6F + function_index
         if len(normalized) == 1:
             return ord(normalized.upper())
         raise TrailError("INPUT_BACKEND_UNAVAILABLE", f"unsupported windows key: {key}")

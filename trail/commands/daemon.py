@@ -232,6 +232,70 @@ def daemon_stop() -> None:
     print_output("daemon.stop", command_success(data={"stopped": True}, screenshot=None))
 
 
+@daemon_app.command("restart")
+def daemon_restart() -> None:
+    daemon_home = resolve_daemon_home()
+    manifest_path = manifest_path_for_user(daemon_home)
+    manifest, failure = _load_manifest_for_command(daemon_home=daemon_home, request_id="local-restart")
+    if failure is not None:
+        print_output("daemon.restart", failure)
+        return
+
+    stopped = False
+    runtime_is_live = runtime_manifest_is_live(manifest)
+    if not runtime_is_live and (manifest.runtime.endpoint or manifest.runtime.pid):
+        clear_runtime_manifest_state(manifest_path=manifest_path, manifest=manifest)
+        stopped = True
+    elif manifest.runtime.pid is not None:
+        try:
+            stopped = stop_bootstrap(manifest.runtime.pid)
+        except Exception as error:
+            print_output(
+                "daemon.restart",
+                daemon_transport_failure(
+                    request_id="local-restart",
+                    code="DAEMON_STOP_FAILED",
+                    message="daemon stop failed",
+                    debug={
+                        "detail": format_exception_detail(error),
+                        "pid": manifest.runtime.pid,
+                    },
+                ),
+            )
+            return
+        if not stopped:
+            print_output(
+                "daemon.restart",
+                daemon_transport_failure(
+                    request_id="local-restart",
+                    code="DAEMON_STOP_FAILED",
+                    message="daemon stop failed",
+                    debug={
+                        "detail": "failed to launch elevated stop",
+                        "pid": manifest.runtime.pid,
+                    },
+                ),
+            )
+            return
+        clear_runtime_manifest_state(manifest_path=manifest_path, manifest=manifest)
+
+    if not start_bootstrap(daemon_home):
+        print_output(
+            "daemon.restart",
+            daemon_transport_failure(
+                request_id="local-restart",
+                code="DAEMON_START_FAILED",
+                message="daemon start failed",
+            ),
+        )
+        return
+
+    print_output(
+        "daemon.restart",
+        command_success(data={"stopped": stopped, "started": True, "already_running": False}, screenshot=None),
+    )
+
+
 @daemon_app.command("logs")
 def daemon_logs() -> None:
     daemon_home = resolve_daemon_home()

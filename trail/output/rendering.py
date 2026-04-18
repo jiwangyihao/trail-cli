@@ -673,6 +673,15 @@ def _render_daemon_stop(command: str, payload: dict[str, Any]) -> list[str]:
     return [f"ok {command} stopped={_encode_value(bool(data.get('stopped')))}"]
 
 
+def _render_daemon_restart(command: str, payload: dict[str, Any]) -> list[str]:
+    data = payload.get("data") or {}
+    return [
+        f"ok {command} stopped={_encode_value(bool(data.get('stopped')))} "
+        f"started={_encode_value(bool(data.get('started')))} "
+        f"already_running={_encode_value(bool(data.get('already_running')))}"
+    ]
+
+
 def _render_daemon_logs(command: str, payload: dict[str, Any]) -> list[str]:
     data = payload.get("data") or {}
     return [f"ok {command} log_dir={_encode_value(data.get('log_dir'))}"]
@@ -794,6 +803,7 @@ TEXT_RENDERERS = {
     "daemon.start": _render_daemon_start,
     "daemon.status": _render_daemon_status,
     "daemon.stop": _render_daemon_stop,
+    "daemon.restart": _render_daemon_restart,
     "daemon.logs": _render_daemon_logs,
     "daemon.request_status": _render_daemon_request_status,
     "daemon.reconcile_session": _render_daemon_reconcile_session,

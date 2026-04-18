@@ -386,6 +386,37 @@ def test_daemon_stop_clears_stale_runtime_without_killing_unverified_pid(cli_run
         listener.close()
 
 
+def test_daemon_restart_stops_then_starts_sequentially(cli_runner, monkeypatch, tmp_path: Path):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    stopped: list[int] = []
+    started: list[Path] = []
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_traild", lambda **kwargs: True)
+    monkeypatch.setattr("trail.commands.daemon.stop_bootstrap", lambda pid: stopped.append(pid) or True)
+    monkeypatch.setattr("trail.commands.daemon.start_bootstrap", lambda home: started.append(home) or True)
+
+    result = cli_runner.invoke(app, ["daemon", "restart"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok daemon.restart stopped=1 started=1 already_running=0"]
+    assert stopped == [1234]
+    assert started == [daemon_home]
+
+
+def test_daemon_restart_returns_bootstrap_required_when_not_installed(cli_runner, monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: tmp_path / "daemon-home")
+
+    result = cli_runner.invoke(app, ["daemon", "restart"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail daemon.restart code=DAEMON_BOOTSTRAP_REQUIRED",
+        "request id=local-restart",
+        'why msg="daemon bootstrap not installed"',
+    ]
+
+
 def test_start_bootstrap_marks_runtime_starting_and_launches_elevated_pythonw(monkeypatch, tmp_path: Path):
     from trail.daemon.bootstrap import start_bootstrap
     import trail.daemon.bootstrap as bootstrap_module

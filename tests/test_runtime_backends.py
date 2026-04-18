@@ -3234,23 +3234,52 @@ def test_windows_window_controller_prepare_input_restores_and_activates_window(m
 def test_windows_window_controller_prepare_input_uses_win32_foreground_apis_when_hwnd_present(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
 
-    calls: list[tuple[str, int, int | None]] = []
+    calls: list[tuple[str, tuple[int, ...] | tuple[()]]] = []
 
     class User32:
         def ShowWindow(self, hwnd: int, command: int):
-            calls.append(("ShowWindow", hwnd, command))
+            calls.append(("ShowWindow", (hwnd, command)))
+            return 1
+
+        def GetForegroundWindow(self):
+            calls.append(("GetForegroundWindow", ()))
+            return 123
+
+        def GetWindowThreadProcessId(self, hwnd: int, process_id):
+            del process_id
+            calls.append(("GetWindowThreadProcessId", (hwnd,)))
+            return {123: 11, 321: 22}[hwnd]
+
+        def AttachThreadInput(self, source: int, target: int, attach: bool):
+            calls.append(("AttachThreadInput", (source, target, int(attach))))
             return 1
 
         def BringWindowToTop(self, hwnd: int):
-            calls.append(("BringWindowToTop", hwnd, None))
+            calls.append(("BringWindowToTop", (hwnd,)))
             return 1
 
         def SetForegroundWindow(self, hwnd: int):
-            calls.append(("SetForegroundWindow", hwnd, None))
+            calls.append(("SetForegroundWindow", (hwnd,)))
+            return 1
+
+        def keybd_event(self, key_code: int, scan_code: int, flags: int, extra: int):
+            calls.append(("keybd_event", (key_code, scan_code, flags, extra)))
+            return 1
+
+        def SetFocus(self, hwnd: int):
+            calls.append(("SetFocus", (hwnd,)))
+            return 1
+
+        def SetActiveWindow(self, hwnd: int):
+            calls.append(("SetActiveWindow", (hwnd,)))
             return 1
 
     monkeypatch.setattr(window_module.sys, "platform", "win32")
-    monkeypatch.setattr(window_module.ctypes, "windll", SimpleNamespace(user32=User32()))
+    monkeypatch.setattr(
+        window_module.ctypes,
+        "windll",
+        SimpleNamespace(user32=User32(), kernel32=SimpleNamespace(GetCurrentThreadId=lambda: 99)),
+    )
     fake_window = SimpleNamespace(title="Demo", _hWnd=321, isMinimized=True, isActive=False)
     controller = window_module.WindowsWindowController(
         workspace=tmp_path,
@@ -3261,9 +3290,20 @@ def test_windows_window_controller_prepare_input_uses_win32_foreground_apis_when
     controller.prepare_input()
 
     assert calls == [
-        ("ShowWindow", 321, 9),
-        ("BringWindowToTop", 321, None),
-        ("SetForegroundWindow", 321, None),
+        ("ShowWindow", (321, 9)),
+        ("GetForegroundWindow", ()),
+        ("GetWindowThreadProcessId", (123,)),
+        ("GetWindowThreadProcessId", (321,)),
+        ("AttachThreadInput", (11, 99, 1)),
+        ("AttachThreadInput", (22, 99, 1)),
+        ("BringWindowToTop", (321,)),
+        ("keybd_event", (0x12, 0, 0, 0)),
+        ("keybd_event", (0x12, 0, 0x0002, 0)),
+        ("SetForegroundWindow", (321,)),
+        ("SetFocus", (321,)),
+        ("SetActiveWindow", (321,)),
+        ("AttachThreadInput", (22, 99, 0)),
+        ("AttachThreadInput", (11, 99, 0)),
     ]
 
 
@@ -3389,7 +3429,7 @@ def test_launch_game_uses_cmd_start_when_requested(tmp_path, monkeypatch):
     }
 
 
-def test_runtime_operator_warns_when_window_not_foreground_after_input():
+def test_runtime_operator_rejects_input_when_window_not_foreground_before_input():
     import trail.runtime.operator as operator_module
 
     class WindowStub:
@@ -3408,6 +3448,55 @@ def test_runtime_operator_warns_when_window_not_foreground_after_input():
 
         def is_foreground(self):
             return False
+
+        def to_screen_point(self, x, y):
+            return x, y
+
+    clicks: list[tuple[int, int]] = []
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda x, y, **kwargs: clicks.append((x, y)),
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        runtime.click_point(10, 20)
+
+    assert exc_info.value.code == "WINDOW_NOT_FOREGROUND"
+    assert str(exc_info.value) == "窗口不在前台，无法执行输入"
+    assert clicks == []
+    assert runtime.collect_warnings() == []
+
+
+def test_runtime_operator_warns_when_window_leaves_foreground_after_input():
+    import trail.runtime.operator as operator_module
+
+    class WindowStub:
+        def __init__(self):
+            self.prepare_calls = 0
+            self.foreground_checks = 0
+
+        def capture(self, **kwargs):
+            del kwargs
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+        def prepare_input(self):
+            self.prepare_calls += 1
+
+        def is_foreground(self):
+            self.foreground_checks += 1
+            return self.foreground_checks == 1
 
         def to_screen_point(self, x, y):
             return x, y
@@ -3990,4 +4079,28 @@ def test_pyautogui_input_driver_press_uses_win32_key_events_on_windows(monkeypat
     assert user32.calls == [
         ("keybd_event", (0x1B, 0, 0, 0)),
         ("keybd_event", (0x1B, 0, 0x0002, 0)),
+    ]
+
+
+def test_pyautogui_input_driver_press_supports_function_keys_on_windows(monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    class User32:
+        def __init__(self):
+            self.calls: list[tuple[str, tuple[int, int, int, int]]] = []
+
+        def keybd_event(self, key_code: int, scan_code: int, flags: int, extra: int):
+            self.calls.append(("keybd_event", (key_code, scan_code, flags, extra)))
+            return 1
+
+    user32 = User32()
+    monkeypatch.setattr(operator_module.sys, "platform", "win32")
+    monkeypatch.setattr(operator_module.ctypes, "windll", SimpleNamespace(user32=user32))
+
+    driver = operator_module.PyAutoGuiInputDriver()
+    driver.press("f4")
+
+    assert user32.calls == [
+        ("keybd_event", (0x73, 0, 0, 0)),
+        ("keybd_event", (0x73, 0, 0x0002, 0)),
     ]

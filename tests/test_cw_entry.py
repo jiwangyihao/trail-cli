@@ -205,6 +205,62 @@ def test_enter_cw_runs_world_to_currency_wars_entry_chain_before_continue_flow(t
     ]
 
 
+def test_enter_cw_world_entry_flow_waits_between_guide_transitions(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+
+    menu_box = _box("entry.menu", left=12, top=24)
+    cosmic_box = _box("entry.cosmic_strife", left=36, top=48)
+    start_box = _box("entry.start", left=84, top=96)
+    continue_box = _box("entry.continue", left=120, top=132)
+    blank_box = _box("stage.boss_preview", left=168, top=180)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.keys: list[tuple[str, int, float]] = []
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            self.keys.append((key, presses, interval))
+
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={
+            _asset("stage.preparation"): None,
+            _asset("entry.start"): None,
+            _asset("entry.new"): None,
+            _asset("entry.continue"): None,
+            _asset("stage.settle"): None,
+            _asset("stage.invest"): None,
+        },
+        wait_results={
+            _asset("entry.menu"): menu_box,
+            _asset("entry.cosmic_strife"): cosmic_box,
+            _asset("entry.start"): start_box,
+            _asset("entry.continue"): continue_box,
+            _asset("stage.boss_preview"): blank_box,
+        },
+    )
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(entry_module, "sleep", lambda seconds: sleep_calls.append(seconds), raising=False)
+
+    entry_module.enter_cw(session, mode="continue", runtime=runtime)
+
+    assert sleep_calls == [2.0, 1.0, 0.8, 1.0]
+
+
 def test_enter_cw_does_not_treat_generic_settle_template_as_top_level_entry_recovery(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
 
