@@ -27,8 +27,17 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 确认或预热常驻服务：`trail daemon status`，必要时 `trail daemon start`
 - 如果游戏还没开：`trail window launch --game-path <StarRail.exe>`
 - `trail session create`
-- `trail guide fetch cw <lineup_url|lineup_id>`
-- `trail cw enter --session <id> --mode new`
+- `trail cw enter --session <id>`
+- 到首页后先确认本局偏好：
+  - `攻略优先` / `环境优先`
+  - `standard` / `overclock`
+  - 是否接受刷开局（后续是否允许 `trail cw portal.refresh` / `trail cw portal.restart`）
+- 如果先按环境选攻略，可先用：`trail guide list cw --portal <title>` 或 `trail guide list cw --portal-id <id>`
+- 进入投资环境页：`trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest --battle-mode standard|overclock`
+- 查看返回的三卡摘要后，根据需要执行：
+  - `trail cw portal.select --session <id> --card-idx <n>`
+  - `trail cw portal.refresh --session <id>`
+  - `trail cw portal.restart --session <id>`
 - 在进入游戏并完成投资环境选择后，再执行：`trail cw guide apply --session <id> --lineup-id <lineup_id>`
 - 如需回顾当前已应用攻略：`trail cw guide current --session <id>`
 
@@ -44,7 +53,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `image`：模板识别与等待
 - `input`：点击、拖拽、按键
 - `state`：读取 session 与 scene state
-- `cw`：货币战争固定流程命令，包含 `enter`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
+- `cw`：货币战争固定流程命令，包含 `enter`、`start`、`portal`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
 ## OCR 选项
 
@@ -141,6 +150,9 @@ recover action=daemon.request_status request=req-42
 - skill 负责整局编排、阶段切换、策略判断与失败恢复
 - 本项目不追求“内建识别穷尽所有状态”，而是优先把真实动作链和最小可靠检测做出来，把复杂画面判断留给 agent 的多模态能力
 - 货币战争里，攻略应用应放在“进入游戏并完成投资环境选择之后”执行，不建议在更早的入口阶段导入攻略
+- `trail cw enter` 只负责把页面带到货币战争首页；真正进入投资环境页要用 `trail cw start`
+- `trail cw portal.select|refresh|restart` 只用于首页之后的投资环境选择页
+- `trail cw invest.read|choose` 继续表示局内 invest 事件，不是开局投资环境页命令
 - `skills/trail-hsr` 负责 session、窗口检查与场景切换
 - `skills/trail-cw` 负责整局货币战争循环
 - `skills/trail-cw-*` 负责攻略、商店、补给、编队、事件等子流程

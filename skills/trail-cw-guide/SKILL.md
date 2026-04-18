@@ -21,16 +21,19 @@ description: Use when an agent needs to fetch or apply a Currency Wars guide art
 
 1. 首次使用先确认当前用户已执行 `trail daemon install`
 2. 开始前查看常驻服务状态：`trail daemon status`
-3. 拉取攻略内容：`trail guide fetch cw <lineup_url|lineup_id>`
-4. 由 Agent 读取返回内容，确认这是要执行的攻略
-5. 在游戏内应用：`trail cw guide apply --session <id> --lineup-id <lineup_id>`
-6. 如需回顾当前攻略：`trail cw guide current --session <id>`
-7. 确认返回的 `data` 已写入攻略引用、购买限制和约束快照
+3. 如需先按环境筛攻略，可使用：`trail guide list cw --portal <title>` 或 `trail guide list cw --portal-id <id>`
+4. 拉取攻略内容：`trail guide fetch cw <lineup_url|lineup_id>`
+5. 由 Agent 读取返回内容，确认这是要执行的攻略
+6. `trail cw guide apply --session <id> --lineup-id <lineup_id>` 只应在 `trail cw portal.select` 已完成、真正进入游戏后执行
+7. 如需回顾当前攻略：`trail cw guide current --session <id>`
+8. 确认返回的 `data` 已写入攻略引用、购买限制和约束快照
 
 ## 执行规则
 
 - `trail guide fetch cw` 直接返回攻略内容，不自动修改 session，也不把 artifact 当主要产出
+- `trail guide list cw --portal ...` / `--portal-id ...` 适合在“环境优先”流程里，根据投资环境页三卡摘要反查更合适的攻略
 - `trail cw guide apply` 必须显式传入 `--lineup-id`（兼容旧 `--guide` 别名时，也应优先把它理解成 lineup_id）
+- 不要把 `trail cw enter` 视为可以立刻 apply 攻略的时机；`cw enter` 现在只到首页，真正进入游戏前还需要 `trail cw start` 和 `trail cw portal.select`
 - artifact 记录发生在 apply 成功后，便于后续通过 `trail cw guide current` 回顾当前实际应用的攻略
 - `support_hard`、`has_change_equip`、`has_expert` 这类字段主要用于“选攻略”阶段，不能替代实际截图判断
 - 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补一条 `trail screen shot`
