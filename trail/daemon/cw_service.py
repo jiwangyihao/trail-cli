@@ -194,17 +194,27 @@ class CwService:
             battle_mode = payload.get("battle_mode")
             if not isinstance(mode, str) or not isinstance(difficulty, str) or not isinstance(battle_mode, str):
                 raise TrailError("CW_START_ARGS_REQUIRED", "cw start requires mode/difficulty/battle_mode")
+            if mode not in {"new", "continue"}:
+                raise TrailError("CW_START_MODE_INVALID", f"unsupported cw start mode: {mode}")
+            if difficulty not in {"lowest", "current", "highest"}:
+                raise TrailError("CW_START_DIFFICULTY_INVALID", f"unsupported cw start difficulty: {difficulty}")
+            if battle_mode not in {"standard", "overclock"}:
+                raise TrailError("CW_START_BATTLE_MODE_INVALID", f"unsupported cw start battle_mode: {battle_mode}")
             return mode, difficulty, battle_mode
+
+        def run_start() -> dict:
+            mode, difficulty, battle_mode = validated_start_payload()
+            return _start_cw(
+                session,
+                runtime=runtime(),
+                mode=mode,
+                difficulty=difficulty,
+                battle_mode=battle_mode,
+            )
 
         handlers = {
             "cw.enter": lambda: validated_enter_payload() and enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
-            "cw.start": lambda: _start_cw(
-                session,
-                runtime=runtime(),
-                mode=validated_start_payload()[0],
-                difficulty=validated_start_payload()[1],
-                battle_mode=validated_start_payload()[2],
-            ),
+            "cw.start": run_start,
             "cw.portal.select": lambda: select_cw_portal(
                 session,
                 card_idx=payload["card_idx"],

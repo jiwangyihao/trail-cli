@@ -708,6 +708,69 @@ def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path:
     assert service.request_status("req-cw-start")["final_state"] == "completed"
 
 
+@pytest.mark.parametrize(
+    ("payload_override", "expected_code", "expected_message"),
+    [
+        ({"mode": "warp"}, "CW_START_MODE_INVALID", "unsupported cw start mode: warp"),
+        ({"difficulty": "nightmare"}, "CW_START_DIFFICULTY_INVALID", "unsupported cw start difficulty: nightmare"),
+        ({"battle_mode": "turbo"}, "CW_START_BATTLE_MODE_INVALID", "unsupported cw start battle_mode: turbo"),
+    ],
+)
+def test_command_service_handles_cw_start_rejects_invalid_enums(
+    tmp_path: Path,
+    monkeypatch,
+    payload_override: dict[str, str],
+    expected_code: str,
+    expected_message: str,
+):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = SimpleNamespace(ocr=lambda **kwargs: [{"text": "alpha"}])
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    start_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.start_cw",
+        lambda session, *, mode, difficulty, battle_mode, runtime: start_calls.append(
+            {
+                "mode": mode,
+                "difficulty": difficulty,
+                "battle_mode": battle_mode,
+            }
+        ) or session,
+    )
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id=f"req-cw-start-{expected_code.lower()}",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "continue",
+            "difficulty": "current",
+            "battle_mode": "standard",
+            **payload_override,
+        },
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {}
+    assert payload["error"] == {
+        "code": expected_code,
+        "message": expected_message,
+    }
+    assert start_calls == []
+    assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
+
+
 def test_command_service_handles_cw_portal_select_and_marks_snapshot_stale(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 
