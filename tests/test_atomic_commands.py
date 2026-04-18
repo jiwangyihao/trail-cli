@@ -18,6 +18,19 @@ from tests.support.fake_daemon import build_success_response, write_ready_manife
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _clear_ocr_env(monkeypatch):
+    for name in (
+        "TRAIL_OCR_PROVIDER",
+        "TRAIL_OCR_LANG",
+        "TRAIL_OCR_USE_CLS",
+        "TRAIL_OCR_TEXT_SCORE",
+        "TRAIL_OCR_MODE",
+        "TRAIL_OCR_RETRY_HIGH",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 def _install_real_daemon_client(monkeypatch, tmp_path, transport) -> TrailDaemonClient:
     write_ready_manifest(
         tmp_path / "daemon-home",
@@ -180,7 +193,7 @@ def test_screen_shot_returns_envelope_and_screenshot(cli_runner, fake_daemon_cli
     ]
 
 
-def test_ocr_read_returns_runtime_payload(cli_runner, fake_daemon_client, tmp_path):
+def test_ocr_read_returns_runtime_payload_with_ocr_mode_and_retry_high_defaults(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "ocr.read": build_success_response(
@@ -207,6 +220,8 @@ def test_ocr_read_returns_runtime_payload(cli_runner, fake_daemon_client, tmp_pa
                 "lang": "ch",
                 "use_cls": False,
                 "text_score": 0.5,
+                "ocr_mode": "fast",
+                "retry_high": "auto",
             },
             "workspace_root": str(tmp_path),
             "session_id": None,
@@ -215,7 +230,7 @@ def test_ocr_read_returns_runtime_payload(cli_runner, fake_daemon_client, tmp_pa
     ]
 
 
-def test_ocr_read_includes_provider_lang_and_use_cls(cli_runner, fake_daemon_client, tmp_path):
+def test_ocr_read_includes_provider_lang_use_cls_ocr_mode_and_retry_high(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "ocr.read": build_success_response(
@@ -238,6 +253,10 @@ def test_ocr_read_includes_provider_lang_and_use_cls(cli_runner, fake_daemon_cli
             "--use-cls",
             "--text-score",
             "0.8",
+            "--ocr-mode",
+            "high",
+            "--retry-high",
+            "never",
         ],
     )
 
@@ -250,6 +269,8 @@ def test_ocr_read_includes_provider_lang_and_use_cls(cli_runner, fake_daemon_cli
                 "lang": "ch",
                 "use_cls": True,
                 "text_score": 0.8,
+                "ocr_mode": "high",
+                "retry_high": "never",
             },
             "workspace_root": str(tmp_path),
             "session_id": None,
@@ -258,11 +279,15 @@ def test_ocr_read_includes_provider_lang_and_use_cls(cli_runner, fake_daemon_cli
     ]
 
 
-def test_ocr_read_uses_env_defaults_in_payload(cli_runner, fake_daemon_client, monkeypatch, tmp_path):
+def test_ocr_read_uses_env_defaults_in_payload_for_ocr_mode_and_retry_high(
+    cli_runner, fake_daemon_client, monkeypatch, tmp_path
+):
     monkeypatch.setenv("TRAIL_OCR_PROVIDER", "cpu")
     monkeypatch.setenv("TRAIL_OCR_LANG", "ch")
     monkeypatch.setenv("TRAIL_OCR_USE_CLS", "1")
     monkeypatch.setenv("TRAIL_OCR_TEXT_SCORE", "0.7")
+    monkeypatch.setenv("TRAIL_OCR_MODE", "high")
+    monkeypatch.setenv("TRAIL_OCR_RETRY_HIGH", "always")
     client = fake_daemon_client(
         {
             "ocr.read": build_success_response(
@@ -284,6 +309,8 @@ def test_ocr_read_uses_env_defaults_in_payload(cli_runner, fake_daemon_client, m
                 "lang": "ch",
                 "use_cls": True,
                 "text_score": 0.7,
+                "ocr_mode": "high",
+                "retry_high": "always",
             },
             "workspace_root": str(tmp_path),
             "session_id": None,
@@ -292,13 +319,15 @@ def test_ocr_read_uses_env_defaults_in_payload(cli_runner, fake_daemon_client, m
     ]
 
 
-def test_ocr_read_explicit_provider_lang_and_text_score_override_conflicting_env(
+def test_ocr_read_explicit_ocr_mode_and_retry_high_override_conflicting_env(
     cli_runner, fake_daemon_client, monkeypatch, tmp_path
 ):
     monkeypatch.setenv("TRAIL_OCR_PROVIDER", "gpu")
     monkeypatch.setenv("TRAIL_OCR_LANG", "en")
     monkeypatch.setenv("TRAIL_OCR_USE_CLS", "0")
     monkeypatch.setenv("TRAIL_OCR_TEXT_SCORE", "not-a-float")
+    monkeypatch.setenv("TRAIL_OCR_MODE", "warp")
+    monkeypatch.setenv("TRAIL_OCR_RETRY_HIGH", "sometimes")
     client = fake_daemon_client(
         {
             "ocr.read": build_success_response(
@@ -321,6 +350,10 @@ def test_ocr_read_explicit_provider_lang_and_text_score_override_conflicting_env
             "--use-cls",
             "--text-score",
             "0.8",
+            "--ocr-mode",
+            "high",
+            "--retry-high",
+            "never",
         ],
     )
 
@@ -333,6 +366,8 @@ def test_ocr_read_explicit_provider_lang_and_text_score_override_conflicting_env
                 "lang": "ch",
                 "use_cls": True,
                 "text_score": 0.8,
+                "ocr_mode": "high",
+                "retry_high": "never",
             },
             "workspace_root": str(tmp_path),
             "session_id": None,
@@ -367,6 +402,8 @@ def test_ocr_read_explicit_no_use_cls_overrides_env_true(cli_runner, fake_daemon
                 "lang": "ch",
                 "use_cls": False,
                 "text_score": 0.6,
+                "ocr_mode": "fast",
+                "retry_high": "auto",
             },
             "workspace_root": str(tmp_path),
             "session_id": None,
@@ -410,12 +447,55 @@ def test_ocr_read_rejects_invalid_lang_before_daemon_call(cli_runner, fake_daemo
     assert client.calls == []
 
 
-def test_ocr_read_help_describes_lang_as_ch_only(cli_runner):
+def test_ocr_read_rejects_invalid_ocr_mode_before_daemon_call(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-invalid-ocr-mode",
+                data={"result": [{"text": "银狼"}]},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read", "--ocr-mode", "warp"])
+
+    assert result.exit_code == 2
+    assert "--ocr-mode" in result.output
+    assert "unsupported ocr mode: warp" in result.output
+    assert client.calls == []
+
+
+def test_ocr_read_rejects_invalid_retry_high_before_daemon_call(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-invalid-retry-high",
+                data={"result": [{"text": "银狼"}]},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read", "--retry-high", "sometimes"])
+
+    assert result.exit_code == 2
+    assert "--retry-high" in result.output
+    assert "unsupported ocr retry_high: sometimes" in result.output
+    assert client.calls == []
+
+
+def test_ocr_read_help_describes_lang_and_ocr_mode_retry_high(cli_runner):
     result = cli_runner.invoke(app, ["ocr", "read", "--help"])
 
     assert result.exit_code == 0
     assert "--lang" in result.output
     assert "首版仅支持 ch" in result.output
+    assert "--ocr-mode" in result.output
+    assert "OCR 模式：fast=1280x720，high=native" in result.output
+    assert "fast=1280x720" in result.output
+    assert "high=native" in result.output
+    assert "--retry-high" in result.output
+    assert "高精度重试策略：auto|never|always" in result.output
+    assert "auto|never|always" in result.output
 
 
 def test_ocr_read_rejects_invalid_text_score_env_before_daemon_call(cli_runner, fake_daemon_client, monkeypatch):
@@ -454,6 +534,53 @@ def test_ocr_read_rejects_invalid_use_cls_env_before_daemon_call(cli_runner, fak
     assert "invalid ocr use_cls from" in result.output
     assert "TRAIL_OCR_USE_CLS: maybe" in result.output
     assert "Invalid value for '--provider'" not in result.output
+    assert client.calls == []
+
+
+def test_ocr_read_rejects_invalid_ocr_mode_env_before_daemon_call(cli_runner, fake_daemon_client, monkeypatch):
+    monkeypatch.setenv("TRAIL_OCR_MODE", "warp")
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-invalid-ocr-mode-env",
+                data={"result": [{"text": "银狼"}]},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for TRAIL_OCR_MODE" in result.output
+    assert "invalid ocr mode from" in result.output
+    assert "TRAIL_OCR_MODE:" in result.output
+    assert "warp" in result.output
+    assert "Invalid value for '--provider'" not in result.output
+    assert "Invalid value for TRAIL_OCR_PROVIDER" not in result.output
+    assert "Invalid value for '--ocr-mode'" not in result.output
+    assert client.calls == []
+
+
+def test_ocr_read_rejects_invalid_retry_high_env_before_daemon_call(cli_runner, fake_daemon_client, monkeypatch):
+    monkeypatch.setenv("TRAIL_OCR_RETRY_HIGH", "sometimes")
+    client = fake_daemon_client(
+        {
+            "ocr.read": build_success_response(
+                request_id="req-ocr-read-invalid-retry-high-env",
+                data={"result": [{"text": "银狼"}]},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["ocr", "read"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for TRAIL_OCR_RETRY_HIGH" in result.output
+    assert "invalid ocr retry_high from" in result.output
+    assert "TRAIL_OCR_RETRY_HIGH: sometimes" in result.output
+    assert "Invalid value for '--provider'" not in result.output
+    assert "Invalid value for TRAIL_OCR_PROVIDER" not in result.output
+    assert "Invalid value for '--retry-high'" not in result.output
     assert client.calls == []
 
 
@@ -515,6 +642,8 @@ def test_ocr_read_renders_OCR_PROVIDER_UNAVAILABLE_failure(cli_runner, monkeypat
         "lang": "ch",
         "use_cls": False,
         "text_score": 0.5,
+        "ocr_mode": "fast",
+        "retry_high": "auto",
     }
     assert requests[0].workspace_root == str(tmp_path)
     assert requests[0].session_id is None
@@ -559,6 +688,8 @@ def test_ocr_read_renders_OCR_LANG_UNSUPPORTED_failure_without_recover(cli_runne
         "lang": "ch",
         "use_cls": False,
         "text_score": 0.5,
+        "ocr_mode": "fast",
+        "retry_high": "auto",
     }
     assert requests[0].workspace_root == str(tmp_path)
     assert requests[0].session_id is None
@@ -654,6 +785,8 @@ def test_ocr_read_verbose_preserves_provider_trace_debug_pipeline(cli_runner, fa
                 "lang": "ch",
                 "use_cls": False,
                 "text_score": 0.5,
+                "ocr_mode": "fast",
+                "retry_high": "auto",
             },
             "workspace_root": str(tmp_path),
             "session_id": None,

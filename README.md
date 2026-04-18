@@ -54,7 +54,10 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `trail ocr read --lang ch`
 - `trail ocr read --use-cls/--no-use-cls`
 - `trail ocr read --text-score <float>`
+- `trail ocr read --ocr-mode fast|high`
+- `trail ocr read --retry-high auto|never|always`
 - `TRAIL_OCR_PROVIDER`、`TRAIL_OCR_LANG`、`TRAIL_OCR_USE_CLS`、`TRAIL_OCR_TEXT_SCORE` 用于设置低优先级默认值
+- `TRAIL_OCR_MODE`、`TRAIL_OCR_RETRY_HIGH` 用于设置低优先级默认值
 
 OCR 首版语义：
 
@@ -62,6 +65,14 @@ OCR 首版语义：
 - `provider=auto` 会优先尝试 DirectML；如果当前环境不可用或本次 DML 推理失败，会自动回退 CPU
 - `provider=cpu` 强制走 CPU
 - `provider=dml` 会把 DirectML 视为硬约束；环境不可用或推理期 DML 失败都会返回 `OCR_PROVIDER_UNAVAILABLE`
+- 默认 `ocr_mode=fast`
+- 默认 `retry_high=auto`
+- `fast = 1280x720`
+- `high = native`
+- `retry_high=auto` 只在 `hits==0`、平均分过低、或出现 `OCR_LOW_CONFIDENCE` 时触发
+- `retry_high=always` 在 `ocr_mode=fast` 下会先跑 `fast`，再无条件补跑一次 `high`
+- `ocr_mode=high` 下 `retry_high` 为 no-op
+- 模式与重试事实只在 `--verbose` 下出现
 - 默认成功输出协议保持不变：仍然是 `ok ocr.read hits=<n>`，有截图时先输出 `shot`，再输出 `text`
 
 DirectML 安装与环境 profile 说明：

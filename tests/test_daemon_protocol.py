@@ -482,7 +482,7 @@ def test_server_handle_payload_preserves_captured_mutation_failure_envelope(tmp_
     assert registry.for_workspace(str(tmp_path)).request_status("req-server-fail")["final_state"] == "failed_before_side_effect"
 
 
-def test_server_handle_payload_routes_ocr_options_to_runtime(tmp_path: Path, monkeypatch):
+def test_server_handle_ocr_protocol_request_routes_ocr_mode_and_retry_high_options_to_runtime(tmp_path: Path, monkeypatch):
     from trail.runtime.ocr_config import OcrRequestConfig
 
     daemon_home = tmp_path / "daemon-home"
@@ -511,6 +511,8 @@ def test_server_handle_payload_routes_ocr_options_to_runtime(tmp_path: Path, mon
                 "lang": "ch",
                 "use_cls": "false",
                 "text_score": "0.6",
+                "ocr_mode": "high",
+                "retry_high": "always",
             },
         )
     )
@@ -521,10 +523,57 @@ def test_server_handle_payload_routes_ocr_options_to_runtime(tmp_path: Path, mon
     assert runtime.ocr_calls == [
         {
             "capture": {"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4},
-            "ocr": OcrRequestConfig(provider="dml", lang="ch", use_cls=False, text_score=0.6),
+            "ocr": OcrRequestConfig(
+                provider="dml",
+                lang="ch",
+                use_cls=False,
+                text_score=0.6,
+                ocr_mode="high",
+                retry_high="always",
+            ),
             "kwargs": {},
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("invalid_payload", "expected_code", "expected_message"),
+    [
+        ({"ocr_mode": "warp"}, "OCR_INPUT_INVALID", "unsupported ocr mode: warp"),
+        ({"retry_high": "sometimes"}, "OCR_INPUT_INVALID", "unsupported ocr retry_high: sometimes"),
+    ],
+)
+def test_server_handle_payload_rejects_invalid_ocr_mode_or_retry_high_payload_values(
+    tmp_path: Path,
+    monkeypatch,
+    invalid_payload: dict[str, object],
+    expected_code: str,
+    expected_message: str,
+):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    runtime = ProtocolRuntime(tmp_path / "ocr-invalid-mode.png")
+    command_service = CommandService(
+        runtime_service=ProtocolRuntimeService(runtime),
+        session_service=registry,
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-server-ocr-invalid-mode",
+            method="ocr.read",
+            payload=invalid_payload,
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == {"code": expected_code, "message": expected_message}
+    assert runtime.ocr_calls == []
 
 
 @pytest.mark.parametrize(
@@ -567,6 +616,42 @@ def test_server_handle_payload_rejects_invalid_ocr_payload_values(
     assert response["ok"] is False
     assert response["error"] == {"code": expected_code, "message": expected_message}
     assert runtime.ocr_calls == []
+
+
+def test_server_handle_ocr_read_returns_ocr_no_result_when_fast_has_no_hits(tmp_path: Path, monkeypatch):
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    runtime = ProtocolRuntime(tmp_path / "ocr-no-result.png")
+    runtime.ocr_result = []
+    command_service = CommandService(
+        runtime_service=ProtocolRuntimeService(runtime),
+        session_service=registry,
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-server-ocr-no-result",
+            method="ocr.read",
+            payload={"ocr_mode": "fast", "retry_high": "auto", "provider": "cpu"},
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == {"code": "OCR_NO_RESULT", "message": "OCR 无结果"}
+    assert runtime.ocr_calls == [
+        {
+            "capture": {},
+            "ocr": OcrRequestConfig(provider="cpu", lang="ch", use_cls=False, text_score=0.5, ocr_mode="fast", retry_high="auto"),
+            "kwargs": {},
+        }
+    ]
 
 
 def test_server_handle_payload_records_runtime_prefight_failure_in_journal(tmp_path: Path, monkeypatch):

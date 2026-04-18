@@ -17,6 +17,11 @@ from trail.runtime.ocr_config import OCR_PROVIDER_UNAVAILABLE, OcrRequestConfig,
 from trail.runtime.window import WindowsWindowController
 
 
+OCR_LOW_CONFIDENCE = "OCR_LOW_CONFIDENCE"
+OCR_LOW_CONFIDENCE_MESSAGE = "ocr average score below 0.92; result may be incomplete"
+OCR_LOW_CONFIDENCE_THRESHOLD = 0.92
+
+
 class WindowController(Protocol):
     def capture(self, *, from_x=None, from_y=None, to_x=None, to_y=None): ...
     def capture_to_workspace(self, request_id: str | None = None) -> Path: ...
@@ -44,6 +49,17 @@ class OcrRunFailure(TrailError):
         self.trace = [dict(item) for item in (trace or [])]
 
 
+@dataclass(frozen=True)
+class _OcrAttemptResult:
+    mode: str
+    scale_applied: str
+    pieces: list[Any]
+    warnings: list[dict[str, Any]]
+    trace: list[dict[str, Any]]
+    hits: int
+    average_score: float | None
+
+
 class OcrEngine(Protocol):
     def run(self, image, *, ocr: OcrRequestConfig | None = None) -> OcrRunResult: ...
 
@@ -58,6 +74,8 @@ class InputDriver(Protocol):
 
 
 class RuntimeOperator:
+    FAST_OCR_MAX_SIZE = (1280, 720)
+
     def __init__(
         self,
         window: WindowController,
@@ -74,6 +92,7 @@ class RuntimeOperator:
         self.reference_root = Path.cwd() if reference_root is None else Path(reference_root)
         self._warnings: list[dict[str, Any]] = []
         self._trace: list[dict[str, Any]] = []
+        self._debug_context: dict[str, Any] = {}
         self._request_local = threading.local()
         self._last_input_at: float | None = None
 
@@ -86,6 +105,7 @@ class RuntimeOperator:
         if depth == 1:
             self._request_local.warnings = []
             self._request_local.trace = []
+            self._request_local.debug_context = {}
 
     def end_capture_scope(self) -> None:
         depth = int(getattr(self._request_local, "capture_scope_depth", 0))
@@ -113,6 +133,13 @@ class RuntimeOperator:
             self._request_local.trace = trace
         return trace
 
+    def _request_debug_context_buffer(self) -> dict[str, Any]:
+        debug_context = getattr(self._request_local, "debug_context", None)
+        if debug_context is None:
+            debug_context = {}
+            self._request_local.debug_context = debug_context
+        return debug_context
+
     def _active_warnings_buffer(self) -> list[dict[str, Any]]:
         if self._capture_scope_active():
             return self._request_warnings_buffer()
@@ -123,8 +150,16 @@ class RuntimeOperator:
             return self._request_trace_buffer()
         return self._trace
 
+    def _active_debug_context_buffer(self) -> dict[str, Any]:
+        if self._capture_scope_active():
+            return self._request_debug_context_buffer()
+        return self._debug_context
+
     def _append_warning(self, warning: dict[str, Any]) -> None:
         self._active_warnings_buffer().append(dict(warning))
+
+    def _set_debug_context(self, **payload: Any) -> None:
+        self._active_debug_context_buffer().update(payload)
 
     @staticmethod
     def _serialize_box(box: Box | None) -> dict[str, Any] | None:
@@ -190,11 +225,178 @@ class RuntimeOperator:
         self._trace.clear()
         return trace
 
+    def consume_debug_context(self) -> dict[str, Any]:
+        if self._capture_scope_active():
+            debug_context = dict(self._request_debug_context_buffer())
+            self._request_local.debug_context = {}
+            return debug_context
+        debug_context = dict(self._debug_context)
+        self._debug_context.clear()
+        return debug_context
+
     def match_references(self, screenshot_path: Path | str, limit: int = 3) -> list[dict[str, Any]]:
         return _match_reference_images(Path(screenshot_path), limit=limit, reference_root=self.reference_root)
 
     def screenshot(self, *, from_x=None, from_y=None, to_x=None, to_y=None):
         return self.window.capture(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y)
+
+    @staticmethod
+    def _decode_ocr_image(image):
+        if isinstance(image, Image.Image):
+            return image
+        if isinstance(image, (bytes, bytearray)):
+            with Image.open(BytesIO(image)) as decoded:
+                return decoded.copy()
+        return image
+
+    def _prepare_ocr_image(self, image, *, ocr: OcrRequestConfig):
+        if ocr.ocr_mode != "fast":
+            return image, 1.0, 1.0
+        if isinstance(image, (bytes, bytearray)):
+            with Image.open(BytesIO(image)) as decoded:
+                if decoded.width <= self.FAST_OCR_MAX_SIZE[0] and decoded.height <= self.FAST_OCR_MAX_SIZE[1]:
+                    return image, 1.0, 1.0
+                source = decoded.copy()
+        else:
+            decoded = self._decode_ocr_image(image)
+            if not isinstance(decoded, Image.Image):
+                return decoded, 1.0, 1.0
+            if decoded.width <= self.FAST_OCR_MAX_SIZE[0] and decoded.height <= self.FAST_OCR_MAX_SIZE[1]:
+                return decoded, 1.0, 1.0
+            source = decoded.copy()
+        source_width = source.width
+        source_height = source.height
+        scaled = source
+        scaled.thumbnail(self.FAST_OCR_MAX_SIZE)
+        return scaled, source_width / scaled.width, source_height / scaled.height
+
+    @staticmethod
+    def _scale_ocr_box(box: dict[str, Any], *, scale_x: float, scale_y: float) -> dict[str, Any]:
+        scaled = dict(box)
+        for key, factor in (("left", scale_x), ("top", scale_y), ("width", scale_x), ("height", scale_y)):
+            value = scaled.get(key)
+            if isinstance(value, (int, float)):
+                scaled[key] = int(round(value * factor))
+        return scaled
+
+    @staticmethod
+    def _scale_ocr_polygon(polygon, *, scale_x: float, scale_y: float):
+        if not isinstance(polygon, (list, tuple)):
+            return polygon
+        scaled_points = []
+        for point in polygon:
+            if not isinstance(point, (list, tuple)) or len(point) < 2:
+                return polygon
+            x = point[0]
+            y = point[1]
+            if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+                return polygon
+            scaled_point = [x * scale_x, y * scale_y]
+            scaled_points.append(tuple(scaled_point) if isinstance(point, tuple) else scaled_point)
+        return tuple(scaled_points) if isinstance(polygon, tuple) else scaled_points
+
+    def _map_ocr_piece_to_capture_space(self, piece, *, scale_x: float, scale_y: float):
+        if isinstance(piece, dict):
+            box = piece.get("box")
+            if not isinstance(box, dict):
+                return piece
+            mapped_piece = dict(piece)
+            mapped_piece["box"] = self._scale_ocr_box(box, scale_x=scale_x, scale_y=scale_y)
+            return mapped_piece
+        if scale_x == 1.0 and scale_y == 1.0:
+            return piece
+        if not isinstance(piece, (list, tuple)) or not piece:
+            return piece
+        mapped_piece = list(piece)
+        mapped_piece[0] = self._scale_ocr_polygon(mapped_piece[0], scale_x=scale_x, scale_y=scale_y)
+        return tuple(mapped_piece) if isinstance(piece, tuple) else mapped_piece
+
+    def _map_ocr_pieces_to_capture_space(self, pieces: list[Any], *, scale_x: float, scale_y: float) -> list[Any]:
+        if scale_x == 1.0 and scale_y == 1.0:
+            return list(pieces)
+        return [self._map_ocr_piece_to_capture_space(piece, scale_x=scale_x, scale_y=scale_y) for piece in pieces]
+
+    @staticmethod
+    def _extract_ocr_score(piece: Any) -> float | None:
+        if isinstance(piece, dict):
+            score = piece.get("score")
+            if isinstance(score, (int, float)):
+                return float(score)
+            return None
+        if isinstance(piece, (list, tuple)) and len(piece) >= 3:
+            score = piece[2]
+            if isinstance(score, (int, float)):
+                return float(score)
+        return None
+
+    def _average_ocr_score(self, pieces: list[Any]) -> float | None:
+        scores = [score for piece in pieces if (score := self._extract_ocr_score(piece)) is not None]
+        if not scores:
+            return None
+        return sum(scores) / len(scores)
+
+    @staticmethod
+    def _has_warning_code(warnings: list[dict[str, Any]], code: str) -> bool:
+        return any(item.get("code") == code for item in warnings)
+
+    def _build_ocr_warnings(self, *, pieces: list[Any], warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        collected = [dict(item) for item in warnings]
+        average_score = self._average_ocr_score(pieces)
+        if average_score is not None and average_score < OCR_LOW_CONFIDENCE_THRESHOLD and not self._has_warning_code(collected, OCR_LOW_CONFIDENCE):
+            collected.append({"code": OCR_LOW_CONFIDENCE, "message": OCR_LOW_CONFIDENCE_MESSAGE})
+        return collected
+
+    def _run_ocr_attempt(self, image, *, ocr_config: OcrRequestConfig) -> _OcrAttemptResult:
+        prepared_image, scale_x, scale_y = self._prepare_ocr_image(image, ocr=ocr_config)
+        scale_applied = "native"
+        if ocr_config.ocr_mode == "fast" and (scale_x != 1.0 or scale_y != 1.0):
+            scale_applied = f"{self.FAST_OCR_MAX_SIZE[0]}x{self.FAST_OCR_MAX_SIZE[1]}"
+        self._set_debug_context(
+            ocr_mode_effective=ocr_config.ocr_mode,
+            ocr_scale_applied=scale_applied,
+        )
+        result = self.ocr_engine.run(prepared_image, ocr=ocr_config)
+        if not isinstance(result, OcrRunResult):
+            raise TypeError("ocr engine must return OcrRunResult")
+        pieces = self._map_ocr_pieces_to_capture_space(result.pieces, scale_x=scale_x, scale_y=scale_y)
+        warnings = self._build_ocr_warnings(pieces=pieces, warnings=result.warnings)
+        return _OcrAttemptResult(
+            mode=ocr_config.ocr_mode,
+            scale_applied=scale_applied,
+            pieces=pieces,
+            warnings=warnings,
+            trace=[dict(item) for item in result.trace],
+            hits=len(pieces),
+            average_score=self._average_ocr_score(pieces),
+        )
+
+    def _ocr_retry_reason(self, attempt: _OcrAttemptResult) -> str:
+        if attempt.hits == 0:
+            return "no_hits"
+        if attempt.average_score is not None and attempt.average_score < OCR_LOW_CONFIDENCE_THRESHOLD:
+            return "low_confidence"
+        if self._has_warning_code(attempt.warnings, OCR_LOW_CONFIDENCE):
+            return "warning"
+        return "none"
+
+    def _should_retry_high(self, *, ocr_config: OcrRequestConfig, attempt: _OcrAttemptResult) -> tuple[bool, str]:
+        if ocr_config.ocr_mode != "fast" or ocr_config.retry_high == "never":
+            return False, "none"
+        if ocr_config.retry_high == "always":
+            return True, "none"
+        reason = self._ocr_retry_reason(attempt)
+        return reason != "none", reason
+
+    @staticmethod
+    def _to_high_ocr_config(ocr_config: OcrRequestConfig) -> OcrRequestConfig:
+        return OcrRequestConfig(
+            provider=ocr_config.provider,
+            lang=ocr_config.lang,
+            use_cls=ocr_config.use_cls,
+            text_score=ocr_config.text_score,
+            ocr_mode="high",
+            retry_high=ocr_config.retry_high,
+        )
 
     def locate(self, template: str, **kwargs):
         image = self.screenshot(**kwargs)
@@ -234,22 +436,67 @@ class RuntimeOperator:
         capture_payload = dict(capture or {})
         ocr_config = normalize_runtime_ocr_request_config(ocr)
         image = self.screenshot(**capture_payload)
+        self._set_debug_context(
+            ocr_mode_requested=ocr_config.ocr_mode,
+            ocr_mode_effective=ocr_config.ocr_mode,
+            ocr_scale_applied="native",
+            ocr_retry_high=0,
+            ocr_retry_reason="none",
+        )
         try:
-            result = self.ocr_engine.run(image, ocr=ocr_config)
+            fast_attempt = self._run_ocr_attempt(image, ocr_config=ocr_config)
         except OcrRunFailure as exc:
             for warning in exc.warnings:
                 self._append_warning(warning)
             for trace in exc.trace:
                 self._append_trace(trace)
             raise
-        if not isinstance(result, OcrRunResult):
-            raise TypeError("ocr engine must return OcrRunResult")
-        for warning in result.warnings:
+        retry_high, retry_reason = self._should_retry_high(ocr_config=ocr_config, attempt=fast_attempt)
+        final_attempt = fast_attempt
+        final_warnings = list(fast_attempt.warnings)
+        effective_mode = fast_attempt.mode
+        scale_applied = fast_attempt.scale_applied
+        trace_payloads = list(fast_attempt.trace)
+
+        if retry_high:
+            try:
+                high_attempt = self._run_ocr_attempt(image, ocr_config=self._to_high_ocr_config(ocr_config))
+            except TrailError as exc:
+                trace_payloads.extend([dict(item) for item in getattr(exc, "trace", [])])
+                if fast_attempt.hits == 0:
+                    final_attempt = None
+                    final_warnings = []
+                    effective_mode = "high"
+                    scale_applied = "native"
+            else:
+                trace_payloads.extend(high_attempt.trace)
+                if high_attempt.hits > 0 or fast_attempt.hits == 0:
+                    final_attempt = high_attempt
+                    final_warnings = list(high_attempt.warnings)
+                    effective_mode = high_attempt.mode
+                    scale_applied = high_attempt.scale_applied
+
+        if final_attempt is None:
+            pieces: list[Any] = []
+        else:
+            pieces = list(final_attempt.pieces)
+            final_warnings = list(final_attempt.warnings)
+            effective_mode = final_attempt.mode
+            scale_applied = final_attempt.scale_applied
+
+        for warning in final_warnings:
             self._append_warning(warning)
-        for trace in result.trace:
+        for trace in trace_payloads:
             self._append_trace(trace)
-        self._record_trace("ocr", kwargs=dict(capture_payload), pieces=len(result.pieces))
-        return result.pieces
+        self._set_debug_context(
+            ocr_mode_requested=ocr_config.ocr_mode,
+            ocr_mode_effective=effective_mode,
+            ocr_scale_applied=scale_applied,
+            ocr_retry_high=1 if retry_high else 0,
+            ocr_retry_reason=retry_reason,
+        )
+        self._record_trace("ocr", kwargs=dict(capture_payload), pieces=len(pieces))
+        return pieces
 
     def _prepare_input_target(self) -> None:
         ensure_available = getattr(self.input, "ensure_available", None)

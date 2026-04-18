@@ -1,4 +1,8 @@
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
+
+from PIL import Image
 
 from trail.output.debug import collect_debug_events
 from trail.output.rendering import render_output
@@ -128,6 +132,94 @@ def test_verbose_output_ocr_provider_trace_uses_existing_debug_pipeline():
         'why msg="requested dml provider unavailable"',
         "debug kind=request msg=req-ocr-dml",
         'debug kind=trace step=ocr_provider requested_provider=dml effective_provider=dml lang=ch available_providers="[\'DmlExecutionProvider\', \'CPUExecutionProvider\']" reason="RuntimeError: explicit dml run failed"',
+    ]
+
+
+def test_verbose_output_ocr_mode_retry_context_uses_existing_debug_pipeline():
+    payload = {
+        "ok": True,
+        "data": {"result": [{"text": "点击进入"}]},
+        "screenshot": ".trail/shots/req-ocr-fast-retry.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "request_id": "req-ocr-fast-retry",
+            "ocr_mode_requested": "fast",
+            "ocr_mode_effective": "high",
+            "ocr_scale_applied": "native",
+            "ocr_retry_high": 1,
+            "ocr_retry_reason": "low_confidence",
+        },
+        "error": None,
+    }
+
+    assert render_output("ocr.read", payload, verbose=True).splitlines() == [
+        "ok ocr.read hits=1",
+        "shot path=.trail/shots/req-ocr-fast-retry.png",
+        "text value=点击进入",
+        "debug kind=request msg=req-ocr-fast-retry",
+        "debug kind=context key=ocr_mode_requested value=fast",
+        "debug kind=context key=ocr_mode_effective value=high",
+        "debug kind=context key=ocr_scale_applied value=native",
+        "debug kind=context key=ocr_retry_high value=1",
+        "debug kind=context key=ocr_retry_reason value=low_confidence",
+    ]
+
+
+def test_verbose_output_ocr_failure_keeps_ocr_context_from_runtime(tmp_path):
+    import trail.runtime.operator as operator_module
+    from trail.output.capture import with_auto_capture
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            del kwargs
+            return buffer.getvalue()
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return Path(".trail/shots/req-ocr-failure-context.png")
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image, ocr
+            raise operator_module.OcrRunFailure("OCR_BACKEND_UNAVAILABLE", "ocr backend unavailable")
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    payload = with_auto_capture(
+        runtime,
+        lambda: {"result": runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="always"))},
+        verbose=True,
+    )
+    encoded_screenshot = payload["screenshot"].replace("\\", "\\\\")
+
+    assert render_output("ocr.read", payload, verbose=True).splitlines() == [
+        "fail ocr.read code=OCR_BACKEND_UNAVAILABLE",
+        f'shot path="{encoded_screenshot}"',
+        'why msg="ocr backend unavailable"',
+        f'debug kind=trace step=capture_after_action optional=1 screenshot="{encoded_screenshot}"',
+        "debug kind=context key=ocr_mode_requested value=fast",
+        "debug kind=context key=ocr_mode_effective value=fast",
+        "debug kind=context key=ocr_scale_applied value=1280x720",
+        "debug kind=context key=ocr_retry_high value=0",
+        "debug kind=context key=ocr_retry_reason value=none",
     ]
 
 
