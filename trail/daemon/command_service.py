@@ -530,9 +530,10 @@ class CommandService:
         else:
             code = type(error).__name__
             message = str(error) or type(error).__name__
+        data = getattr(error, "data", None)
         return {
             "ok": False,
-            "data": {},
+            "data": deepcopy(data) if isinstance(data, dict) else {},
             "screenshot": None,
             "timing": {},
             "warnings": [],

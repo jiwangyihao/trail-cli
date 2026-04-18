@@ -118,6 +118,10 @@ def _set_shop(session, shop: dict):
     return session
 
 
+def _box(alias: str, *, left: int, top: int, width: int = 40, height: int = 20) -> dict[str, object]:
+    return {"left": left, "top": top, "width": width, "height": height, "source": alias}
+
+
 def test_protocol_version_is_fixed():
     assert PROTOCOL_VERSION == 1
 
@@ -375,6 +379,128 @@ def test_command_service_handles_cw_stage_detect(tmp_path: Path, monkeypatch):
 
     assert payload["ok"] is True
     assert registry.for_workspace(str(tmp_path)).load_session(session.session_id).scene_state["cw"]["stage"]["value"] == "preparation"
+
+
+def test_command_service_handles_cw_enter_world_to_home(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.keys: list[tuple[str, int, float]] = []
+            self._locate_results = {
+                asset("entry.start"): None,
+                asset("entry.new"): None,
+                asset("entry.continue"): None,
+                asset("entry.invest_environment"): None,
+                asset("stage.preparation"): None,
+                asset("stage.shop"): None,
+                asset("stage.replenish"): None,
+                asset("stage.encounter"): None,
+                asset("stage.invest"): None,
+                asset("stage.boss_preview"): None,
+                asset("stage.fortune"): None,
+                asset("stage.event"): None,
+                asset("stage.settle"): None,
+                asset("stage.game_over"): None,
+            }
+            self._wait_results = {
+                asset("entry.menu"): _box("entry.menu", left=12, top=24),
+                asset("entry.cosmic_strife"): _box("entry.cosmic_strife", left=36, top=48),
+                asset("entry.start"): _box("entry.start", left=84, top=96),
+            }
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            return self._locate_results.get(template)
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            return self._wait_results.get(template)
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            self.keys.append((key, presses, interval))
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-enter-home",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.enter",
+        payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"] == {"page": "home"}
+    assert registry.for_workspace(str(tmp_path)).load_session(session.session_id).scene_state["cw"]["entry"] == {"page": "home"}
+    assert runtime.keys == [("f4", 1, 0.2)]
+    assert runtime.clicks == [(56, 58), (464, 324), (1494, 884)]
+    assert runtime.wait_calls == [asset("entry.menu"), asset("entry.cosmic_strife"), asset("entry.start")]
+
+
+def test_command_service_handles_cw_enter_rejects_pages_past_home(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == asset("entry.new"):
+                return _box("entry.new", left=20, top=40)
+            return None
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-enter-entry-new",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.enter",
+        payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"page": "entry.new"}
+    assert payload["error"] == {
+        "code": "CW_ENTER_ALREADY_PAST_HOME",
+        "message": "cw enter only supports world or home, current page: entry.new",
+    }
+    assert registry.for_workspace(str(tmp_path)).request_status("req-cw-enter-entry-new")["final_state"] == "failed_before_side_effect"
 
 
 def test_command_service_routes_cw_shop_buy_slot_through_mutation_journal(tmp_path: Path, monkeypatch):
@@ -892,8 +1018,8 @@ def test_server_handle_payload_keeps_cw_unknown_result_envelope_for_late_ui_fail
     cw_service = CwService(runtime_service=runtime_service)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
 
-    def late_failure(session, mode, difficulty, battle_mode, runtime):
-        del session, mode, difficulty, battle_mode
+    def late_failure(session, runtime):
+        del session
         runtime.click_point(640, 360)
         raise TrailError("CW_ENTRY_UI_NOT_FOUND", "late failure after ui action")
 

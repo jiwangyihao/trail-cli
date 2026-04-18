@@ -6,6 +6,7 @@ from time import sleep
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.stage import STAGE_RESOURCE_ALIASES
 from trail.session.models import SessionModel
 
 
@@ -22,6 +23,17 @@ CURRENCY_WARS_ENTRY_POINT = (int(CW_WIDTH * 0.242), int(CW_HEIGHT * 0.30))
 CURRENCY_WARS_PARTICIPATE_POINT = (int(CW_WIDTH * 0.7786), int(CW_HEIGHT * 0.8194))
 STANDARD_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.2315))
 OVERCLOCK_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.4167))
+
+
+class CwEnterStateError(TrailError):
+    def __init__(self, *, page: str, stage: str | None = None):
+        message = f"cw enter only supports world or home, current page: {page}"
+        if stage is not None:
+            message += f", stage: {stage}"
+        super().__init__("CW_ENTER_ALREADY_PAST_HOME", message)
+        self.data = {"page": page}
+        if stage is not None:
+            self.data["stage"] = stage
 
 
 def _asset(alias: str) -> str:
@@ -132,6 +144,7 @@ def _enter_from_start_page(runtime, *, mode: str, difficulty: str, battle_mode: 
 
 
 def _enter_from_world(runtime, *, mode: str, difficulty: str, battle_mode: str) -> None:
+    del mode, difficulty, battle_mode
     runtime.press_key(ENTRY_GUIDE_HOTKEY)
     _transition_sleep(ENTRY_GUIDE_OPEN_SETTLE_SECONDS)
     _wait(runtime, "entry.menu")
@@ -141,8 +154,30 @@ def _enter_from_world(runtime, *, mode: str, difficulty: str, battle_mode: str) 
     _transition_sleep(ENTRY_CURRENCY_WARS_SETTLE_SECONDS)
     runtime.click_point(*CURRENCY_WARS_PARTICIPATE_POINT)
     _transition_sleep(ENTRY_PARTICIPATE_SETTLE_SECONDS)
-    start_box = _wait(runtime, "entry.start")
-    _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode, start_box=start_box)
+    _wait(runtime, "entry.start")
+
+
+def _detect_current_enter_page(runtime) -> dict[str, str]:
+    if _locate(runtime, "entry.start") is not None:
+        return {"page": "home", "already_home": "1"}
+
+    if _locate(runtime, "entry.new") is not None:
+        return {"page": "entry.new"}
+
+    if _locate(runtime, "entry.continue") is not None:
+        return {"page": "entry.continue"}
+
+    if _locate(runtime, "entry.invest_environment") is not None:
+        return {"page": "invest"}
+
+    for alias, stage in STAGE_RESOURCE_ALIASES:
+        if _locate(runtime, alias) is None:
+            continue
+        if stage == "boss_preview":
+            return {"page": "stage.boss_preview", "stage": stage}
+        return {"page": "in_game", "stage": stage}
+
+    return {"page": "world"}
 
 
 def _enter_new_game(runtime, *, difficulty: str) -> None:
@@ -160,50 +195,32 @@ def _enter_continue_game(runtime) -> None:
 
 
 def _run_entry_chain(runtime, *, mode: str, difficulty: str, battle_mode: str) -> None:
-    if _locate(runtime, "stage.preparation") is not None:
-        return
-
-    start_box = _locate(runtime, "entry.start")
-    if start_box is not None:
-        _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode, start_box=start_box)
-        return
-
-    if _locate(runtime, "entry.new") is not None or _locate(runtime, "entry.continue") is not None:
-        if mode == "new":
-            _enter_new_game(runtime, difficulty=difficulty)
-        else:
-            _enter_continue_game(runtime)
-        return
-
-    if _locate(runtime, "stage.invest") is not None:
-        return
-
-    if _locate(runtime, "entry.invest_environment") is not None:
-        return
-
-    _enter_from_world(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode)
+    current = _detect_current_enter_page(runtime)
+    if current["page"] == "home":
+        return {"page": "home", "already_home": True}
+    if current["page"] == "world":
+        _enter_from_world(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode)
+        return {"page": "home"}
+    raise CwEnterStateError(page=current["page"], stage=current.get("stage"))
 
 
 def enter_cw(
     session: SessionModel,
     *,
-    mode: str,
+    mode: str | None = None,
     difficulty: str | None = None,
     battle_mode: str | None = None,
     runtime=None,
 ) -> SessionModel:
-    entry = {
-        "mode": mode,
-        "difficulty": difficulty or "current",
-        "battle_mode": battle_mode or "standard",
-    }
+    del mode, difficulty, battle_mode
+    entry: dict[str, object] = {"page": "home"}
 
     if runtime is not None:
-        _run_entry_chain(
+        entry = _run_entry_chain(
             runtime,
-            mode=entry["mode"],
-            difficulty=entry["difficulty"],
-            battle_mode=entry["battle_mode"],
+            mode="ignored",
+            difficulty="current",
+            battle_mode="standard",
         )
 
     cw_state = ensure_cw_state(session)

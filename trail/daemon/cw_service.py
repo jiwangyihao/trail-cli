@@ -172,13 +172,7 @@ class CwService:
             return runtime_holder["runtime"]
 
         handlers = {
-            "cw.enter": lambda: enter_cw(
-                session,
-                mode=payload["mode"],
-                difficulty=payload.get("difficulty", "current"),
-                battle_mode=payload.get("battle_mode", "standard"),
-                runtime=runtime(),
-            ).scene_state["cw"]["entry"],
+            "cw.enter": lambda: enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
             "cw.stage.detect": lambda: detect_cw_stage(
                 session,
                 detector=stage_detector_factory(runtime()),
