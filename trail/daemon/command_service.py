@@ -379,26 +379,48 @@ class CommandService:
 
     def _handle_guide_list(self, request):
         self._guide_scene(request.method, "guide.list.")
-        from trail.scenes.cw.guide import fetch_cw_guide_list
+        from trail.scenes.cw.guide import GuidePortalLookupError, fetch_cw_guide_list
+
+        kwargs = {
+            "page": request.payload["page"],
+            "limit": request.payload["limit"],
+            "trait_id": request.payload.get("trait_id"),
+            "order": request.payload.get("order"),
+            "next_page_token": request.payload.get("next_page_token"),
+            "match_change_job": _parse_optional_bool(
+                request.payload.get("match_change_job"),
+                option_name="match-change-job",
+            ),
+            "match_hard": _parse_optional_bool(
+                request.payload.get("match_hard"),
+                option_name="match-hard",
+            ),
+        }
+        if request.payload.get("portal") is not None:
+            kwargs["portal"] = request.payload.get("portal")
+        if request.payload.get("portal_id") is not None:
+            kwargs["portal_id"] = request.payload.get("portal_id")
+
+        try:
+            payload = fetch_cw_guide_list(**kwargs)
+        except GuidePortalLookupError as error:
+            return {
+                "request_id": request.request_id,
+                "ok": False,
+                "data": {},
+                "screenshot": None,
+                "timing": {},
+                "warnings": [
+                    {"portal": candidate["title"], "score": candidate["score"]}
+                    for candidate in error.candidates
+                ],
+                "references": [],
+                "debug": None,
+                "error": {"code": error.code, "message": str(error)},
+            }
 
         return success(
-            to_jsonable(
-                fetch_cw_guide_list(
-                    page=request.payload["page"],
-                    limit=request.payload["limit"],
-                    trait_id=request.payload.get("trait_id"),
-                    order=request.payload.get("order"),
-                    next_page_token=request.payload.get("next_page_token"),
-                    match_change_job=_parse_optional_bool(
-                        request.payload.get("match_change_job"),
-                        option_name="match-change-job",
-                    ),
-                    match_hard=_parse_optional_bool(
-                        request.payload.get("match_hard"),
-                        option_name="match-hard",
-                    ),
-                )
-            ),
+            to_jsonable(payload),
             request_id=request.request_id,
         )
 

@@ -996,7 +996,33 @@ def test_render_output_guide_config_tolerates_non_mapping_data():
 
     assert render_output("guide.config.cw", payload).splitlines() == [
         "ok guide.config.cw",
-        "info lineup_levels=0 traits=0 roles=0 role_tags=0",
+        "info lineup_levels=0 traits=0 roles=0 role_tags=0 portal_list=0",
+    ]
+
+
+def test_render_output_guide_list_failure_renders_portal_candidates_as_warn_lines():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [
+            {"portal": "购物区", "score": 0.98},
+            {"portal": "事件区", "score": 0.81},
+            {"portal": "补给区", "score": 0.74},
+        ],
+        "references": [],
+        "debug": {"request_id": "req-portal-invalid"},
+        "error": {"code": "GUIDE_PORTAL_INVALID", "message": "guide portal invalid: 购物曲"},
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "fail guide.list.cw code=GUIDE_PORTAL_INVALID",
+        "request id=req-portal-invalid",
+        'why msg="guide portal invalid: 购物曲"',
+        "warn portal=购物区 score=0.98",
+        "warn portal=事件区 score=0.81",
+        "warn portal=补给区 score=0.74",
     ]
 
 

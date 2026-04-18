@@ -60,6 +60,11 @@ def _append_warnings(lines: list[str], payload: dict[str, Any]) -> None:
     for warning in warnings:
         if not isinstance(warning, dict):
             continue
+        if warning.get("portal") is not None:
+            lines.append(
+                f"warn portal={_encode_value(warning.get('portal'))} score={_encode_value(warning.get('score'))}"
+            )
+            continue
         lines.append(
             f"warn code={_encode_value(warning.get('code'))} msg={_encode_value(warning.get('message'))}"
         )
@@ -750,6 +755,7 @@ def _render_guide_config(command: str, payload: dict[str, Any]) -> list[str]:
             ("traits", len(data.get("traits") or [])),
             ("roles", len(data.get("roles") or [])),
             ("role_tags", len(data.get("role_tags") or [])),
+            ("portal_list", len(data.get("portal_list") or [])),
         )
     )
     return _append_common_success_lines(lines, payload)

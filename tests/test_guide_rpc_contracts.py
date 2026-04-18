@@ -102,6 +102,10 @@ def test_guide_config_renders_summary_and_yaml(cli_runner, fake_daemon_client, t
                     "traits": [{"id": 1001}, {"id": 1002}],
                     "roles": [{"id": 1}, {"id": 2}, {"id": 3}],
                     "role_tags": [{"id": 11}],
+                    "portal_list": [
+                        {"portal_id": "shop", "title": "购物区", "description": "花金币买角色和升级"},
+                        {"portal_id": "event", "title": "事件区", "description": "处理事件、补给与遭遇"},
+                    ],
                 },
             )
         }
@@ -114,13 +118,14 @@ def test_guide_config_renders_summary_and_yaml(cli_runner, fake_daemon_client, t
     assert yaml_result.exit_code == 0
     assert text_result.stdout.splitlines() == [
         "ok guide.config.cw season=12 sub_season=3 big_version=3.2",
-        "info lineup_levels=1 traits=2 roles=3 role_tags=1",
+        "info lineup_levels=1 traits=2 roles=3 role_tags=1 portal_list=2",
     ]
     assert yaml_result.stdout.splitlines()[0:2] == [
         "ok guide.config.cw season=12 sub_season=3 big_version=3.2",
-        "info lineup_levels=1 traits=2 roles=3 role_tags=1",
+        "info lineup_levels=1 traits=2 roles=3 role_tags=1 portal_list=2",
     ]
     assert "meta:" in yaml_result.stdout
+    assert "portal_list:" in yaml_result.stdout
     assert client.calls == [
         {
             "method": "guide.config.cw",
@@ -215,6 +220,112 @@ def test_guide_list_renders_paging_and_facts(cli_runner, fake_daemon_client, tmp
             "session_id": None,
             "verbose": False,
         }
+    ]
+
+
+def test_guide_list_portal_payload_mapping_and_filtered_rendering(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "trail.commands.guide.fetch_cw_guide_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide list path used")),
+        raising=False,
+    )
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": build_success_response(
+                request_id="req-guide-list-portal",
+                data={
+                    "list": [
+                        {
+                            "lineup_id": "portal-guide",
+                            "carry_roles": ["希儿"],
+                            "final_role_cards": [
+                                {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
+                            ],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": True,
+                        }
+                    ],
+                    "next_page_token": None,
+                },
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--portal", "购物区", "--limit", "5"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "ok guide.list.cw count=1 more=0",
+        "guide id=portal-guide idx=1 carry=希儿 hard=1 change_equip=0 expert=1",
+        "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3",
+    ]
+    assert client.calls == [
+        {
+            "method": "guide.list.cw",
+            "payload": {
+                "page": 1,
+                "limit": 5,
+                "trait_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+                "portal": "购物区",
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_guide_list_portal_id_payload_mapping(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "trail.commands.guide.fetch_cw_guide_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide list path used")),
+        raising=False,
+    )
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": build_success_response(
+                request_id="req-guide-list-portal-id",
+                data={"list": [], "next_page_token": None},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--portal-id", "shop", "--limit", "3"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok guide.list.cw count=0 more=0"]
+    assert client.calls == [
+        {
+            "method": "guide.list.cw",
+            "payload": {
+                "page": 1,
+                "limit": 3,
+                "trait_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+                "portal_id": "shop",
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_guide_list_rejects_portal_and_portal_id_together(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--portal", "购物区", "--portal-id", "shop"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail guide.list.cw code=GUIDE_INPUT_INVALID",
+        'why msg="guide options \'--portal\' and \'--portal-id\' are mutually exclusive"',
     ]
 
 
@@ -325,6 +436,104 @@ def test_command_service_handles_guide_list_cw_accepts_boolean_filters(tmp_path:
             "match_hard": False,
         }
     ]
+
+
+def test_command_service_handles_guide_config_cw_with_portal_list(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+
+    monkeypatch.setattr(
+        "trail.scenes.cw.guide.fetch_cw_guide_config",
+        lambda: {
+            "meta": {"season_id": 12},
+            "lineup_levels": [],
+            "traits": [],
+            "roles": [],
+            "role_tags": [],
+            "portal_list": [{"portal_id": "shop", "title": "购物区", "description": "花金币买角色和升级"}],
+        },
+    )
+
+    service = CommandService(runtime_service=SimpleNamespace())
+    payload = service.handle(
+        _guide_request(
+            workspace_root=tmp_path,
+            method="guide.config.cw",
+            payload={},
+        )
+    )
+
+    assert payload == {
+        "request_id": "req-guide.config.cw",
+        "ok": True,
+        "data": {
+            "meta": {"season_id": 12},
+            "lineup_levels": [],
+            "traits": [],
+            "roles": [],
+            "role_tags": [],
+            "portal_list": [{"portal_id": "shop", "title": "购物区", "description": "花金币买角色和升级"}],
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+
+def test_command_service_handles_guide_list_cw_with_portal_filters(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+
+    observed: list[dict[str, object]] = []
+
+    def fake_fetch_guide_list(**kwargs):
+        observed.append(kwargs)
+        return {"list": [], "next_page_token": None}
+
+    monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide_list", fake_fetch_guide_list)
+
+    service = CommandService(runtime_service=SimpleNamespace())
+    payload = service.handle(
+        _guide_request(
+            workspace_root=tmp_path,
+            method="guide.list.cw",
+            payload={
+                "page": 1,
+                "limit": 20,
+                "trait_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+                "portal": "购物区",
+            },
+        )
+    )
+
+    assert payload == {
+        "request_id": "req-guide.list.cw",
+        "ok": True,
+        "data": {"list": [], "next_page_token": None},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    assert observed == [
+        {
+            "page": 1,
+            "limit": 20,
+            "trait_id": None,
+            "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+                "portal": "购物区",
+            }
+        ]
 
 
 def test_command_service_rejects_unsupported_guide_scene(tmp_path: Path):
