@@ -154,6 +154,8 @@ def _resolve_lane_index(center_x: float) -> int:
 
 def _summarize_lane(card_idx: int, pieces: list[dict[str, float | str]], portals: list[dict[str, str]]) -> dict[str, object]:
     card_text = _build_lane_text(pieces)
+    if not _normalize_text(card_text):
+        return _empty_card_summary(card_idx)
     best_portal, score = _match_best_portal(card_text, portals)
     return {
         "card_idx": card_idx,

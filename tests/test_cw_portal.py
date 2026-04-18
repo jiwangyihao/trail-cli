@@ -107,31 +107,42 @@ def test_summarize_portal_cards_uses_higher_of_title_and_title_plus_description_
     assert cards[0]["score"] == pytest.approx(expected_combined_score)
 
 
-def test_summarize_portal_cards_breaks_ties_by_title_score_then_portal_id_and_keeps_stable_empty_lane_behavior():
+def test_summarize_portal_cards_breaks_ties_by_portal_id_when_scores_are_equal():
     portal_list = [
-        {"portal_id": "zzz", "title": "Alpha", "description": "Bonus"},
-        {"portal_id": "aaa", "title": "Alpha Bonus", "description": ""},
+        {"portal_id": "zzz", "title": "Alpha", "description": "Portal Z"},
+        {"portal_id": "aaa", "title": "Alpha", "description": "Portal A"},
         {"portal_id": "bbb", "title": "Beta", "description": "Extra"},
     ]
-    pieces = [_dict_piece("Alpha Bonus", left=60, top=20, width=160)]
+    pieces = [_dict_piece("Alpha", left=60, top=20, width=160)]
 
     cards = summarize_portal_cards(pieces, portal_list)
 
     assert cards[0] == {
         "card_idx": 1,
-        "portal_title": "Alpha Bonus",
-        "portal_description": "",
+        "portal_title": "Alpha",
+        "portal_description": "Portal A",
         "score": pytest.approx(1.0),
     }
+
+
+def test_summarize_portal_cards_returns_empty_summary_for_lane_without_text():
+    portal_list = [
+        {"portal_id": "aaa", "title": "Alpha Bonus", "description": "Portal A"},
+        {"portal_id": "bbb", "title": "Beta Bonus", "description": "Portal B"},
+    ]
+    pieces = [_dict_piece("Alpha Bonus", left=60, top=20, width=160)]
+
+    cards = summarize_portal_cards(pieces, portal_list)
+
     assert cards[1] == {
         "card_idx": 2,
-        "portal_title": "Alpha Bonus",
+        "portal_title": "",
         "portal_description": "",
         "score": pytest.approx(0.0),
     }
     assert cards[2] == {
         "card_idx": 3,
-        "portal_title": "Alpha Bonus",
+        "portal_title": "",
         "portal_description": "",
         "score": pytest.approx(0.0),
     }
