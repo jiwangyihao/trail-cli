@@ -70,6 +70,20 @@
 
 `cw start` 是后续 `cw portal.restart` 的 canonical 参数来源，必须把 `mode / difficulty / battle_mode` 持久化到当前 session，作为“重开一局同模式同难度”的真相源。
 
+`cw start` / `cw portal.refresh` / `cw portal.restart` 成功后，还必须把最近一次投资环境识别摘要写入当前 session 的 `scene_state["cw"]["portal"]`。第一版固定 shape 至少包含：
+
+- `cards`
+- `mode`
+- `difficulty`
+- `battle_mode`
+- `stale`
+
+约束：
+
+- `cw portal.select` / `cw portal.restart` 只读取这份缓存，不在命令内部补跑 OCR。
+- `cw start` 在“已在投资环境页”的 no-op 分支仍要刷新/补写这份缓存。
+- `cw portal.select` 成功确认后，以及任何已明确离开投资环境页的后续流程，都必须把这份缓存标记为 `stale=1`。
+
 若 `cw start` 在“已在投资环境页”的 no-op 分支被调用：
 
 - 如果当前 session 尚未记录 `mode / difficulty / battle_mode`，则本次调用仍要写入这些值；
@@ -175,6 +189,17 @@
 - 当前 session 中没有已知 `mode / difficulty / battle_mode`：稳定报错
 - 不在投资环境页：稳定报错
 
+## 与现有 `cw.invest.*` 的关系
+
+现有 `cw.invest.read` / `cw.invest.choose` 继续保留，但它们只代表**局内 invest 事件**。
+
+- 开局后的投资环境选择页，一律使用：
+  - `cw start`
+  - `cw portal.select`
+  - `cw portal.refresh`
+  - `cw portal.restart`
+- 现有 `cw.invest.*` 不再承担开局投资环境页的读取/选择语义。
+
 ## 攻略过滤语义
 
 `guide list cw` 需要新增本地投资环境过滤能力。
@@ -193,8 +218,8 @@
    - 其中 `portal_id` 在当前赛季内唯一，`title` 是用户可见 canonical 名称
 2. 使用 `guide config cw` 的 `portal_list` 做 canonical 校验。
 3. 若用户/Agent 传入的 portal 不存在：
-   - 返回稳定错误
-   - 同时给出最接近的 3 个候选
+    - 返回稳定错误
+    - 同时给出最接近的 3 个候选
 4. 若存在：
    - 第一版 portal 过滤只允许无分页模式：若同时传 `page > 1` 或 `next_page_token`，直接稳定报错
    - 在本地做**有界**过滤：固定抓取首页前 60 条原始 list 结果
@@ -298,3 +323,8 @@
 
 - `fail <command> code=...`
 - 之后按顺序输出 `request` / `shot` / `why` / `warn` / `ref` / `recover`
+
+其中 `guide list cw --portal...` 在 portal 不存在时，默认文本失败路径固定为：
+
+- `why msg=...`
+- 然后最多追加 3 条：`warn portal=<title> score=<score>`
