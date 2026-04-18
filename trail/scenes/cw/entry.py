@@ -175,11 +175,23 @@ def _enter_from_world(runtime, *, mode: str, difficulty: str, battle_mode: str) 
     _wait(runtime, "entry.start")
 
 
-def _detect_current_enter_page(runtime, *, session: SessionModel | None = None) -> dict[str, str]:
-    if _locate(runtime, "entry.new") is not None:
+def _detect_current_enter_page(
+    runtime,
+    *,
+    session: SessionModel | None = None,
+    preferred_mode: str | None = None,
+) -> dict[str, str]:
+    new_box = _locate(runtime, "entry.new")
+    continue_box = _locate(runtime, "entry.continue")
+    if new_box is not None and continue_box is not None:
+        if preferred_mode == "continue":
+            return {"page": "entry.continue"}
         return {"page": "entry.new"}
 
-    if _locate(runtime, "entry.continue") is not None:
+    if new_box is not None:
+        return {"page": "entry.new"}
+
+    if continue_box is not None:
         return {"page": "entry.continue"}
 
     if _locate(runtime, "entry.invest_environment") is not None:
@@ -247,13 +259,13 @@ def _persist_start_entry(session: SessionModel, *, mode: str, difficulty: str, b
             recorded = existing.get(field_name)
             if recorded is not None and recorded != requested:
                 raise CwStartEntryConflictError(field_name=field_name, recorded=str(recorded), requested=requested)
+    _invalidate_entry_snapshots(session)
     cw_state["entry"] = {
         "page": "invest",
         "mode": mode,
         "difficulty": difficulty,
         "battle_mode": battle_mode,
     }
-    _invalidate_stage(session)
 
 
 def _run_start_chain(runtime, *, current: dict[str, str], mode: str, difficulty: str, battle_mode: str) -> None:
@@ -263,9 +275,11 @@ def _run_start_chain(runtime, *, current: dict[str, str], mode: str, difficulty:
         _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode, start_box=start_box)
         return
     if page == "entry.new":
+        _select_battle_mode(runtime, battle_mode=battle_mode)
         _enter_new_game(runtime, difficulty=difficulty)
         return
     if page == "entry.continue":
+        _select_battle_mode(runtime, battle_mode=battle_mode)
         _enter_continue_game(runtime)
         _handle_invest_environment_flow(runtime)
         return
@@ -286,7 +300,7 @@ def start_cw(
     battle_mode: str,
     runtime,
 ) -> SessionModel:
-    current = _detect_current_enter_page(runtime, session=session)
+    current = _detect_current_enter_page(runtime, session=session, preferred_mode=mode)
     if current["page"] == "invest":
         _persist_start_entry(
             session,

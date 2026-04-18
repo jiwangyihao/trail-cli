@@ -282,12 +282,22 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
         ocr_result=[{"text": "alpha"}],
     )
     cards = _portal_cards()
+    observed_summary_inputs: list[dict[str, object]] = []
     monkeypatch.setattr(
         "trail.daemon.cw_service.fetch_cw_guide_config",
         lambda timeout=10: {"portal_list": [{"portal_id": "alpha", "title": "Alpha Portal", "description": "Alpha Desc"}]},
     )
-    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list: cards)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.summarize_portal_cards",
+        lambda pieces, portal_list: observed_summary_inputs.append({"pieces": pieces, "portal_list": portal_list}) or cards,
+    )
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "slots": {"stale": False, "hand": ["希儿"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"stale": False, "steps": [1]},
+    }
+    service.save_session(session)
 
     envelope = _run_cw_start(
         command_service=command_service,
@@ -316,7 +326,17 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
         "difficulty": "current",
         "battle_mode": "standard",
     }
+    assert persisted.scene_state["cw"]["slots"] == {"stale": True, "hand": ["希儿"]}
+    assert persisted.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
+    assert persisted.scene_state["cw"]["sell_plan"] == {"stale": True}
     assert status["final_state"] == "completed"
+    assert runtime.ocr_calls == [{}]
+    assert observed_summary_inputs == [
+        {
+            "pieces": [{"text": "alpha"}],
+            "portal_list": [{"portal_id": "alpha", "title": "Alpha Portal", "description": "Alpha Desc"}],
+        }
+    ]
     assert runtime.clicks == [
         start_box.center,
         (300, 250),
@@ -344,7 +364,7 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
                 _asset("stage.boss_preview"): _box("stage.boss_preview", left=420, top=520),
                 _asset("entry.invest_environment"): _box("entry.invest_environment", left=520, top=620),
             },
-            [(140, 230), (240, 330), (340, 430), (440, 530)],
+            [(300, 250), (140, 230), (240, 330), (340, 430), (440, 530)],
             [
                 _asset("entry.new"),
                 _asset("entry.start_game"),
@@ -356,13 +376,16 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
         (
             "entry.continue",
             "continue",
-            {_asset("entry.continue"): _box("entry.continue", left=200, top=300)},
+            {
+                _asset("entry.new"): _box("entry.new", left=120, top=220),
+                _asset("entry.continue"): _box("entry.continue", left=200, top=300),
+            },
             {
                 _asset("entry.continue"): _box("entry.continue", left=200, top=300),
                 _asset("stage.boss_preview"): _box("stage.boss_preview", left=300, top=400),
                 _asset("entry.invest_environment"): _box("entry.invest_environment", left=400, top=500),
             },
-            [(220, 310), (320, 410)],
+            [(300, 250), (220, 310), (320, 410)],
             [
                 _asset("entry.continue"),
                 _asset("stage.boss_preview"),
@@ -401,6 +424,12 @@ def test_cw_start_continues_pages_between_home_and_invest(
     monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list: cards)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "slots": {"stale": False, "hand": ["希儿"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"stale": False, "steps": [1]},
+    }
+    service.save_session(session)
 
     envelope = _run_cw_start(
         command_service=command_service,
@@ -421,6 +450,9 @@ def test_cw_start_continues_pages_between_home_and_invest(
         "difficulty": "current",
         "battle_mode": "standard",
     }
+    assert persisted.scene_state["cw"]["slots"] == {"stale": True, "hand": ["希儿"]}
+    assert persisted.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
+    assert persisted.scene_state["cw"]["sell_plan"] == {"stale": True}
     assert runtime.clicks == expected_clicks
     assert runtime.wait_calls == expected_waits
 
@@ -437,7 +469,12 @@ def test_cw_start_noops_on_invest_and_backfills_entry_params(tmp_path: Path, mon
     monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list: cards)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
-    session.scene_state["cw"] = {"entry": {"page": "invest"}}
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest"},
+        "slots": {"stale": False, "hand": ["银狼"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"stale": False, "steps": [2]},
+    }
     service.save_session(session)
 
     envelope = _run_cw_start(
@@ -465,6 +502,9 @@ def test_cw_start_noops_on_invest_and_backfills_entry_params(tmp_path: Path, mon
         "difficulty": "highest",
         "battle_mode": "overclock",
     }
+    assert persisted.scene_state["cw"]["slots"] == {"stale": True, "hand": ["银狼"]}
+    assert persisted.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
+    assert persisted.scene_state["cw"]["sell_plan"] == {"stale": True}
     assert runtime.clicks == []
     assert runtime.wait_calls == []
 
