@@ -36,6 +36,7 @@ description: Use when an agent needs to read or choose replenish, invest, encoun
 
 - 优先看截图，再决定是否调用 `read`；不要把 `read` 的返回当成唯一事实来源
 - 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补一条 `trail screen shot`
+- `trail ocr read` 默认走 `ocr_mode=fast`（`1280x720`）；当补给/投资/遭遇页的文字或编号读得不稳时，再显式加 `--ocr-mode high`。如需固定做高精度补跑对照，可加 `--retry-high always`；平时保持默认 `--retry-high auto`
 - `read` 返回的编号只是辅助输入，真正该选哪个仍应结合截图、攻略细节和当前局内目标判断
 - `--option` 必须显式给出
 - `choose` 之后把 `stage` 视为失效，回到 `trail-cw` 重新 `stage detect`

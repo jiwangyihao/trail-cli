@@ -33,6 +33,7 @@ description: Use when an agent needs to handle boss preview, special events, bat
 - 这个 skill 负责固定事件处理，不负责决定何时购物、何时补给、何时换阵容，也不负责决定何时退出整局
 - 如果事件截图和 `event_type` / `handled_action` 不一致，以截图为准，并由主 skill 决定下一步是否重试或改走别的命令
 - 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补一条 `trail screen shot`
+- `trail ocr read` 默认走 `ocr_mode=fast`（`1280x720`）；如果事件页文字密、快档结果可疑，或你要对照高精度结果，再显式加 `--ocr-mode high`。如需固定做快档后高精度补跑，可加 `--retry-high always`；平时保持默认 `--retry-high auto`
 - 即使 CLI 提供了 `event_type`，也不要假设它已经穷尽所有事件分支；必要时直接根据截图做多模态判断
 - 如果事件、战斗或结算命令返回未知结果，先读默认文本里的 `request id=<id>`；只有 transport/control-plane 失败或显式 `--verbose` 调试时，再看 `debug.request_id`，随后查询 `trail daemon request-status --request-id <id>`
 - 如果对应 session 被标记为 `tainted`，先执行 `trail daemon reconcile-session --session <id>`，再交回主 skill 处理下一步

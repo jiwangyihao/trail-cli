@@ -33,6 +33,7 @@ description: Use when an agent needs to inspect or mutate Currency Wars field, r
 - `sell-plan` 只提供建议，不会直接出售
 - `sell-plan` 和 `slots read` 都是辅助快照，Agent 应优先看截图确认当前站位和手牌，再决定显式动作
 - 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补一条 `trail screen shot`
+- `trail ocr read` 默认走 `ocr_mode=fast`（`1280x720`）；如果编队/手牌页文字密、快档结果不稳，或你需要更稳的 box，再显式加 `--ocr-mode high`。如需固定做高精度补跑对照，可加 `--retry-high always`；平时保持默认 `--retry-high auto`
 - 任何修改槽位的动作后，如果主 skill 还需要最新布局，应重新执行 `trail cw slots read --session <id>`
 - 这个 skill 只执行局部操作，不负责决定整局阵容路线
 - 如果 `slots read` 的结构化结果与截图观感冲突，以截图为准，再决定是否重读或直接发显式动作
