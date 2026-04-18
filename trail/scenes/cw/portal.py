@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from difflib import SequenceMatcher
 import re
+from time import sleep
 from typing import Any
 
 from trail.core.errors import TrailError
@@ -20,6 +21,8 @@ PORTAL_CONFIRM_POINT = (960, 920)
 PORTAL_REFRESH_POINT = (1760, 140)
 PORTAL_RESTART_HOME_MAX_ESC_PRESSES = 3
 PORTAL_RESTART_HOME_INTERVAL = 0.2
+PORTAL_SETTLE_MAX_POLLS = 3
+PORTAL_SETTLE_INTERVAL = 0.2
 
 
 def summarize_portal_cards(ocr_pieces: object, portal_list: object) -> list[dict[str, object]]:
@@ -63,6 +66,14 @@ def refresh_cw_portal(session, *, runtime, portal_list: object) -> dict[str, obj
     except Exception as error:
         raise TrailError("CW_PORTAL_REFRESH_UNAVAILABLE", "cw portal.refresh unavailable") from error
 
+    _wait_for_portal_page(
+        runtime,
+        session=session,
+        expected_page="invest",
+        error_code="CW_PORTAL_REFRESH_UNAVAILABLE",
+        error_message="cw portal.refresh did not settle back to invest",
+    )
+
     cards = summarize_portal_cards(runtime.ocr(), portal_list)
     snapshot = {
         "cards": cards,
@@ -104,6 +115,16 @@ def restart_cw_portal_to_homepage(session, *, runtime) -> None:
     raise TrailError("CW_PORTAL_RESTART_HOME_FAILED", "cw portal restart helper failed to return home")
 
 
+def wait_cw_portal_in_game(session, *, runtime) -> None:
+    _wait_for_portal_page(
+        runtime,
+        session=session,
+        expected_page="in_game",
+        error_code="CW_PORTAL_RESTART_ENTER_GAME_TIMEOUT",
+        error_message="cw portal.restart did not reach in_game after select",
+    )
+
+
 def _empty_card_summary(card_idx: int) -> dict[str, object]:
     return {
         "card_idx": card_idx,
@@ -117,10 +138,11 @@ def _require_portal_page(runtime, *, session, expected_page: str) -> None:
     current = _detect_current_enter_page(runtime, session=session)
     if current.get("page") == "world":
         entry = ensure_cw_state(session).get("entry") if isinstance(ensure_cw_state(session).get("entry"), Mapping) else {}
-        if isinstance(entry.get("page"), str) and entry.get("page"):
-            current = {"page": entry.get("page")}
+        cached_page = entry.get("page") if isinstance(entry.get("page"), str) else None
+        if cached_page and cached_page != expected_page:
+            current = {"page": cached_page}
             stage = ensure_cw_state(session).get("stage") if isinstance(ensure_cw_state(session).get("stage"), Mapping) else {}
-            if current["page"] == "in_game" and isinstance(stage.get("value"), str) and stage.get("value"):
+            if cached_page == "in_game" and isinstance(stage.get("value"), str) and stage.get("value"):
                 current["stage"] = stage.get("value")
     if current.get("page") == expected_page:
         return
@@ -138,8 +160,10 @@ def _require_portal_snapshot(session, *, command_name: str) -> dict[str, object]
     cw_state = ensure_cw_state(session)
     portal = cw_state.get("portal") if isinstance(cw_state.get("portal"), Mapping) else None
     cards = portal.get("cards") if isinstance(portal, Mapping) else None
-    if isinstance(cards, list) and cards:
+    if isinstance(cards, list) and cards and portal.get("stale") is not True:
         return dict(portal)
+    if isinstance(portal, Mapping) and portal.get("stale") is True and isinstance(cards, list) and cards:
+        raise TrailError("CW_PORTAL_SNAPSHOT_REQUIRED", f"{command_name} requires fresh portal snapshot")
     raise TrailError("CW_PORTAL_SNAPSHOT_REQUIRED", f"{command_name} requires cached portal snapshot")
 
 
@@ -171,6 +195,25 @@ def _mark_portal_stale_after_selection(session) -> None:
 def _card_center(card_idx: int) -> tuple[int, int]:
     lane_width = PORTAL_SCREEN_WIDTH // PORTAL_LANE_COUNT
     return (lane_width * (card_idx - 1) + lane_width // 2, PORTAL_CARD_CENTER_Y)
+
+
+def _wait_for_portal_page(
+    runtime,
+    *,
+    session,
+    expected_page: str,
+    error_code: str,
+    error_message: str,
+    max_polls: int = PORTAL_SETTLE_MAX_POLLS,
+    interval: float = PORTAL_SETTLE_INTERVAL,
+) -> dict[str, str]:
+    for attempt in range(max_polls):
+        current = _detect_current_enter_page(runtime, session=session)
+        if current.get("page") == expected_page:
+            return current
+        if attempt < max_polls - 1:
+            sleep(interval)
+    raise TrailError(error_code, error_message)
 
 
 def _normalize_portal_list(portal_list: object) -> list[dict[str, str]]:
@@ -348,4 +391,10 @@ def _normalize_text(text: str) -> str:
     return collapsed.strip()
 
 
-__all__ = ["refresh_cw_portal", "restart_cw_portal_to_homepage", "select_cw_portal", "summarize_portal_cards"]
+__all__ = [
+    "refresh_cw_portal",
+    "restart_cw_portal_to_homepage",
+    "select_cw_portal",
+    "summarize_portal_cards",
+    "wait_cw_portal_in_game",
+]

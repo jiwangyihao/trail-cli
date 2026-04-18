@@ -33,7 +33,13 @@ from trail.scenes.cw.events import (
 from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, fetch_cw_guide, fetch_cw_guide_payload
 from trail.scenes.cw.guide import fetch_cw_guide_config
 from trail.scenes.cw.models import ensure_cw_state
-from trail.scenes.cw.portal import refresh_cw_portal, restart_cw_portal_to_homepage, select_cw_portal, summarize_portal_cards
+from trail.scenes.cw.portal import (
+    refresh_cw_portal,
+    restart_cw_portal_to_homepage,
+    select_cw_portal,
+    summarize_portal_cards,
+    wait_cw_portal_in_game,
+)
 from trail.scenes.cw.shop import (
     build_cw_shop_buyer,
     build_cw_shop_closer,
@@ -359,6 +365,7 @@ def _restart_cw(session, *, runtime) -> dict:
         raise TrailError("CW_PORTAL_ENTRY_TRUTH_REQUIRED", "cw portal.restart requires recorded mode/difficulty/battle_mode")
 
     select_cw_portal(session, card_idx=1, runtime=runtime)
+    wait_cw_portal_in_game(session, runtime=runtime)
     restart_cw_portal_to_homepage(session, runtime=runtime)
     return _start_cw(session, runtime=runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode)
 
