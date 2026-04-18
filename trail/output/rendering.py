@@ -250,13 +250,52 @@ def _render_cw_stage(command: str, payload: dict[str, Any]) -> list[str]:
 
 def _render_cw_entry(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
-    return _render_success_summary(
-        command,
-        payload,
-        ("mode", data.get("mode")),
-        ("difficulty", data.get("difficulty")),
-        ("battle", data.get("battle_mode") or data.get("battle")),
-    )
+    lines = [f"ok {command} page=home"]
+    _append_shot(lines, payload)
+    if data.get("already_home") is True:
+        lines.append("info already_home=1")
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
+
+
+def _render_cw_portal_cards(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    cards = _as_list(data.get("cards"))
+    lines = [f"ok {command} cards={_encode_value(len(cards))}"]
+    _append_shot(lines, payload)
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        lines.append(
+            "opt "
+            + _format_fact_sequence(
+                ("idx", card.get("card_idx")),
+                ("title", card.get("portal_title")),
+                ("description", card.get("portal_description")),
+                ("score", card.get("score")),
+            )
+        )
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
+
+
+def _render_cw_portal_select(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    lines = [
+        "ok "
+        + command
+        + " "
+        + _format_fact_sequence(
+            ("idx", data.get("card_idx")),
+            ("title", data.get("portal_title")),
+        )
+    ]
+    _append_shot(lines, payload)
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
 
 
 def _render_cw_guide_summary(command: str, payload: dict[str, Any]) -> list[str]:
@@ -767,6 +806,10 @@ def _render_generic_success(command: str, payload: dict[str, Any]) -> list[str]:
 
 TEXT_RENDERERS = {
     "cw.enter": _render_cw_entry,
+    "cw.start": _render_cw_portal_cards,
+    "cw.portal.select": _render_cw_portal_select,
+    "cw.portal.refresh": _render_cw_portal_cards,
+    "cw.portal.restart": _render_cw_portal_cards,
     "cw.guide.apply": _render_cw_guide_summary,
     "cw.guide.current": _render_cw_guide_summary,
     "cw.stage.detect": _render_cw_stage,

@@ -446,7 +446,7 @@ def test_command_service_handles_cw_enter_world_to_home(tmp_path: Path):
         session_id=session.session_id,
         verbose=False,
         method="cw.enter",
-        payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={"session_id": session.session_id},
     )
 
     payload = command_service.handle(request)
@@ -489,7 +489,7 @@ def test_command_service_handles_cw_enter_rejects_pages_past_home(tmp_path: Path
         session_id=session.session_id,
         verbose=False,
         method="cw.enter",
-        payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={"session_id": session.session_id},
     )
 
     payload = command_service.handle(request)
@@ -537,7 +537,7 @@ def test_command_service_handles_cw_enter_rejects_settle_screen_before_home(tmp_
         session_id=session.session_id,
         verbose=False,
         method="cw.enter",
-        payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={"session_id": session.session_id},
     )
 
     payload = command_service.handle(request)
@@ -588,7 +588,7 @@ def test_command_service_handles_cw_enter_rejects_recorded_game_over_before_home
         session_id=session.session_id,
         verbose=False,
         method="cw.enter",
-        payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={"session_id": session.session_id},
     )
 
     payload = command_service.handle(request)
@@ -599,6 +599,35 @@ def test_command_service_handles_cw_enter_rejects_recorded_game_over_before_home
         "code": "CW_ENTER_ALREADY_PAST_HOME",
         "message": "cw enter only supports world or home, current page: in_game, stage: game_over",
     }
+
+
+def test_command_service_handles_cw_enter_rejects_legacy_start_payload_fields(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-enter-legacy-fields",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.enter",
+        payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {}
+    assert payload["error"] == {
+        "code": "CW_ENTER_ARGS_NOT_SUPPORTED",
+        "message": "cw enter no longer accepts mode/difficulty/battle_mode; use cw start",
+    }
+    assert registry.for_workspace(str(tmp_path)).request_status("req-cw-enter-legacy-fields")["final_state"] == "failed_before_side_effect"
 
 
 def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path: Path, monkeypatch):
@@ -1324,7 +1353,7 @@ def test_server_handle_payload_keeps_cw_unknown_result_envelope_for_late_ui_fail
             token="token-1",
             request_id="req-server-cw-enter-late-fail",
             method="cw.enter",
-            payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+            payload={"session_id": session.session_id},
             session_id=session.session_id,
         )
     )

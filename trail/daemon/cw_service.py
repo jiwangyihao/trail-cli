@@ -180,14 +180,30 @@ class CwService:
                 runtime_holder["runtime"] = resolved_runtime
             return runtime_holder["runtime"]
 
+        def validated_enter_payload() -> dict:
+            if any(key in payload for key in ("mode", "difficulty", "battle_mode")):
+                raise TrailError(
+                    "CW_ENTER_ARGS_NOT_SUPPORTED",
+                    "cw enter no longer accepts mode/difficulty/battle_mode; use cw start",
+                )
+            return payload
+
+        def validated_start_payload() -> tuple[str, str, str]:
+            mode = payload.get("mode")
+            difficulty = payload.get("difficulty")
+            battle_mode = payload.get("battle_mode")
+            if not isinstance(mode, str) or not isinstance(difficulty, str) or not isinstance(battle_mode, str):
+                raise TrailError("CW_START_ARGS_REQUIRED", "cw start requires mode/difficulty/battle_mode")
+            return mode, difficulty, battle_mode
+
         handlers = {
-            "cw.enter": lambda: enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
+            "cw.enter": lambda: validated_enter_payload() and enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
             "cw.start": lambda: _start_cw(
                 session,
                 runtime=runtime(),
-                mode=payload["mode"],
-                difficulty=payload["difficulty"],
-                battle_mode=payload["battle_mode"],
+                mode=validated_start_payload()[0],
+                difficulty=validated_start_payload()[1],
+                battle_mode=validated_start_payload()[2],
             ),
             "cw.portal.select": lambda: select_cw_portal(
                 session,

@@ -568,10 +568,10 @@ def test_render_output_renders_guide_fetch_summary_text():
     ]
 
 
-def test_render_output_renders_cw_enter_summary_text():
+def test_render_output_renders_cw_enter_home_text():
     payload = {
         "ok": True,
-        "data": {"mode": "new", "difficulty": "current", "battle_mode": "standard"},
+        "data": {"page": "home"},
         "screenshot": ".trail/shots/req-enter.png",
         "timing": {},
         "warnings": [],
@@ -581,8 +581,101 @@ def test_render_output_renders_cw_enter_summary_text():
     }
 
     assert render_output("cw.enter", payload).splitlines() == [
-        "ok cw.enter mode=new difficulty=current battle=standard",
+        "ok cw.enter page=home",
         "shot path=.trail/shots/req-enter.png",
+    ]
+
+
+def test_render_output_renders_cw_enter_already_home_info():
+    payload = {
+        "ok": True,
+        "data": {"page": "home", "already_home": True},
+        "screenshot": ".trail/shots/req-enter-home.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.enter", payload).splitlines() == [
+        "ok cw.enter page=home",
+        "shot path=.trail/shots/req-enter-home.png",
+        "info already_home=1",
+    ]
+
+
+def test_render_output_renders_cw_start_portal_cards_family():
+    payload = {
+        "ok": True,
+        "data": {
+            "cards": [
+                {"card_idx": 1, "portal_title": "Alpha Portal", "portal_description": "Alpha Desc", "score": 0.99},
+                {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
+            ],
+            "mode": "continue",
+            "difficulty": "current",
+            "battle_mode": "standard",
+            "stale": False,
+        },
+        "screenshot": ".trail/shots/req-start.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.start", payload).splitlines() == [
+        "ok cw.start cards=2",
+        "shot path=.trail/shots/req-start.png",
+        'opt idx=1 title="Alpha Portal" description="Alpha Desc" score=0.99',
+        'opt idx=2 title="Beta Portal" description="Beta Desc" score=0.88',
+    ]
+
+
+@pytest.mark.parametrize("command", ["cw.portal.refresh", "cw.portal.restart"])
+def test_render_output_renders_cw_portal_refresh_family(command: str):
+    payload = {
+        "ok": True,
+        "data": {
+            "cards": [
+                {"card_idx": 1, "portal_title": "Alpha Portal", "portal_description": "Alpha Desc", "score": 0.99},
+            ],
+            "mode": "continue",
+            "difficulty": "current",
+            "battle_mode": "standard",
+            "stale": False,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output(command, payload).splitlines() == [
+        f"ok {command} cards=1",
+        'opt idx=1 title="Alpha Portal" description="Alpha Desc" score=0.99',
+    ]
+
+
+def test_render_output_renders_cw_portal_select_summary_text():
+    payload = {
+        "ok": True,
+        "data": {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
+        "screenshot": ".trail/shots/req-portal-select.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.portal.select", payload).splitlines() == [
+        'ok cw.portal.select idx=2 title="Beta Portal"',
+        "shot path=.trail/shots/req-portal-select.png",
     ]
 
 
