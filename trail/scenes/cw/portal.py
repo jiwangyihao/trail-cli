@@ -66,6 +66,7 @@ def refresh_cw_portal(session, *, runtime, portal_list: object) -> dict[str, obj
     except Exception as error:
         raise TrailError("CW_PORTAL_REFRESH_UNAVAILABLE", "cw portal.refresh unavailable") from error
 
+    sleep(PORTAL_SETTLE_INTERVAL)
     _wait_for_portal_page(
         runtime,
         session=session,

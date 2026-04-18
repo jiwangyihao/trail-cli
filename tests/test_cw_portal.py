@@ -584,6 +584,42 @@ def test_refresh_cw_portal_waits_for_invest_to_stabilize_before_ocr(tmp_path: Pa
     assert runtime.ocr_calls == [{}]
 
 
+def test_refresh_cw_portal_waits_one_settle_cycle_even_if_page_stays_invest(tmp_path: Path, monkeypatch):
+    import trail.scenes.cw.portal as portal_module
+
+    refresh_cw_portal = getattr(portal_module, "refresh_cw_portal", None)
+    assert refresh_cw_portal is not None
+
+    cards = _portal_cards()
+    session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": [{"card_idx": 1, "portal_title": "old", "portal_description": "old", "score": 0.1}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    runtime = PortalRuntime(ocr_result=[{"text": "beta"}])
+    states = iter([
+        {"page": "invest"},
+        {"page": "invest"},
+    ])
+    detect_calls: list[str] = []
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(
+        portal_module,
+        "_detect_current_enter_page",
+        lambda runtime, session=None, preferred_mode=None: detect_calls.append("detect") or next(states),
+        raising=False,
+    )
+    monkeypatch.setattr(portal_module, "summarize_portal_cards", lambda pieces, portal_list: cards, raising=False)
+    monkeypatch.setattr(portal_module, "sleep", lambda seconds: sleep_calls.append(seconds), raising=False)
+
+    snapshot = refresh_cw_portal(session, runtime=runtime, portal_list=[])
+
+    assert snapshot["cards"] == cards
+    assert detect_calls == ["detect", "detect"]
+    assert sleep_calls == [portal_module.PORTAL_SETTLE_INTERVAL]
+    assert runtime.ocr_calls == [{}]
+
+
 def test_refresh_cw_portal_rejects_when_page_does_not_settle_back_to_invest(tmp_path: Path, monkeypatch):
     import trail.scenes.cw.portal as portal_module
 
