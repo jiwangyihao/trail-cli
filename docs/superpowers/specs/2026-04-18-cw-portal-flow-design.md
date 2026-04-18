@@ -22,6 +22,7 @@
 
 - 从任意外部状态推进到“货币战争首页 / 开局首页”
 - 若已经在首页，则直接成功返回，不再重复走大世界入口链
+- 不再接收 `mode / difficulty / battle_mode`
 
 它不再负责：
 
@@ -34,7 +35,12 @@
 1. 若当前在大世界，则执行外层入口链：
    - `F4 -> 旷宇纷争 -> 货币战争 -> 前往参与`
 2. 若当前已在货币战争首页，则 no-op 成功返回。
-3. 若当前已经在更深层页面（例如投资环境页、补给/备战/商店等游戏内阶段），不负责继续推进到新局后阶段。
+3. 若当前已经在更深层页面（例如投资环境页、补给/备战/商店等游戏内阶段），直接稳定报错，并带当前阶段信息；不负责继续推进到新局后阶段。
+
+`cw enter` 的成功结果必须冻结成“已到首页”语义，不再保留旧的 `mode / difficulty / battle` 事实。第一版默认文本协议固定为：
+
+- 首行：`ok cw.enter page=home`
+- 若本次是 no-op，因为原本已在首页，可追加：`info already_home=1`
 
 ### `cw start`
 
@@ -43,14 +49,22 @@
 - 从“货币战争首页”推进到“投资环境选择页”
 - 自动 OCR 当前三张投资环境卡
 - 返回结构化的环境摘要结果
+- 接收并持久化本局的 `mode / difficulty / battle_mode`
 
 具体行为：
 
-1. 若当前在货币战争首页，则执行开局流程，推进到投资环境页。
+1. 若当前在货币战争首页，则根据传入的 `mode / difficulty / battle_mode` 执行开局流程，推进到投资环境页。
 2. 若当前已经在投资环境页，则 no-op 成功返回当前识别结果。
 3. 若当前已经进入游戏内阶段（补给/备战/商店等），直接报错，不做回推。
 
 `cw start` 的返回不再是“开局成功”，而是“当前投资环境页的三张卡摘要”。
+
+`cw start` 是后续 `cw portal.restart` 的 canonical 参数来源，必须把 `mode / difficulty / battle_mode` 持久化到当前 session，作为“重开一局同模式同难度”的真相源。
+
+若 `cw start` 在“已在投资环境页”的 no-op 分支被调用：
+
+- 如果当前 session 尚未记录 `mode / difficulty / battle_mode`，则本次调用仍要写入这些值；
+- 如果当前 session 已记录且与本次传参冲突，则直接稳定报错，不允许静默覆盖。
 
 ## 投资环境识别语义
 
@@ -73,9 +87,10 @@
 识别步骤：
 
 1. 对投资环境页做 OCR。
-2. 按 box 的相邻关系，把同一卡片上的碎片文本合并成 card text。
-3. 用 `guide config cw` 返回的 `portal_list` 作为 canonical 数据源。
-4. 以标题和描述为基准，为每张卡挑出最可能的 1 个 portal。
+2. 按三张卡固定的左右布局，把 OCR 片段按 `center.x` 分配到 3 个 card lane。
+3. 对每个 lane 内的 OCR 片段，按 `top -> left` 排序，并把 y 距离足够近的片段合并成同一行，再拼成 card text。
+4. 用 `guide config cw` 返回的 `portal_list` 作为 canonical 数据源。
+5. 对每张卡，把合并后的 card text 与每个 portal 的 `title + description` 做归一化相似度计算，取分数最高的 1 个 portal 作为结果。
 
 返回给 Agent 的结果是：
 
@@ -131,7 +146,7 @@
 - 按当前 session 里记住的 `mode / difficulty / battle_mode` 重开一局
 - 再次停在投资环境页，并返回新的一组三卡摘要
 
-实现上允许组合前面的场景命令，不要求单独写一套底层逻辑。
+实现上允许组合前面的场景命令，但必须显式引入一个“从局内退出回首页”的内部 helper；不能把这一步留给实现者临场发挥。
 
 错误语义：
 
@@ -149,12 +164,19 @@
 
 处理流程：
 
-1. 使用 `guide config cw` 的 `portal_list` 做 canonical 校验。
-2. 若用户/Agent 传入的 portal 不存在：
+1. `guide config cw` 需要新增 `portal_list`，并冻结每项至少包含：
+   - `portal_id`
+   - `title`
+   - `description`
+2. 使用 `guide config cw` 的 `portal_list` 做 canonical 校验。
+3. 若用户/Agent 传入的 portal 不存在：
    - 返回稳定错误
    - 同时给出最接近的 3 个候选
-3. 若存在：
-   - 在本地对更大一批攻略结果做 portal 过滤
+4. 若存在：
+   - 在本地做**有界**过滤：第一版最多过取 60 条原始 list 结果，再按 portal 过滤，返回最多 `limit` 条
+   - 第一版 portal 过滤模式下，不承诺复用官方 `next_page_token` 继续翻页；`more=0`、`next` 省略，统一视为单次有界本地过滤结果
+5. 若同时传入 `--portal` 和 `--portal-id`：
+   - 第一版直接稳定报错，不允许双重指定
 
 因为官方接口本身不支持按投资环境筛攻略，所以这里的 portal 过滤属于命令层补充能力。
 
@@ -223,3 +245,29 @@
 - `cw enter` 到首页
 - 在首页先问用户偏好
 - 再走 `cw start` / `cw portal.*` / `guide list --portal ...` 的后续流程
+
+## 默认文本协议约束
+
+新命令需要进入现有 renderer 家族，并冻结稳定文本输出：
+
+- `cw.start`
+  - 首行：`ok cw.start cards=<n> matched=<n>`
+  - 正文：每张卡使用 `opt` 行输出 `idx / title / score`，再用第二条 `opt` 行输出 `idx / desc`
+- `cw.enter`
+  - 首行：`ok cw.enter page=home`
+  - 若是 no-op，可追加 `info already_home=1`
+- `cw.portal.refresh`
+  - 与 `cw.start` 同一家族，输出同样的三卡摘要
+- `cw.portal.restart`
+  - 与 `cw.start` 同一家族，输出同样的三卡摘要
+- `cw.portal.select`
+  - 首行：`ok cw.portal.select idx=<card_idx> title=<portal_title>`
+  - 若后续立即进入其他稳定阶段，可继续附 `info` 行说明结果
+- `guide.list.cw --portal...`
+  - 继续沿用 `guide.list.cw` renderer 家族，但结果集已是 portal 过滤后的本地结果
+  - 第一版 portal 过滤模式下固定 `more=0`，不输出 `next`
+
+所有失败仍然遵守现有统一失败协议：
+
+- `fail <command> code=...`
+- 之后按顺序输出 `request` / `shot` / `why` / `warn` / `ref` / `recover`
