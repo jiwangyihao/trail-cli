@@ -8,6 +8,13 @@ from tests.support.fake_daemon import build_success_response
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+OCR_VERBOSE_ONLY_KEYS = (
+    "ocr_mode_requested",
+    "ocr_mode_effective",
+    "ocr_scale_applied",
+    "ocr_retry_high",
+    "ocr_retry_reason",
+)
 
 
 def _stage_payload() -> dict:
@@ -133,6 +140,22 @@ def test_readme_documents_ocr_provider_and_lang_contract() -> None:
     assert "provider=auto` 会优先尝试 DirectML；如果当前环境不可用或本次 DML 推理失败，会自动回退 CPU" in readme
     assert "provider=dml` 会把 DirectML 视为硬约束；环境不可用或推理期 DML 失败都会返回 `OCR_PROVIDER_UNAVAILABLE`" in readme
     assert "lang` 首版仅支持 `ch`；其他值返回 `OCR_LANG_UNSUPPORTED`" in readme
+
+
+def test_readme_documents_ocr_mode_and_retry_high_contract() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "trail ocr read --ocr-mode fast|high" in readme
+    assert "trail ocr read --retry-high auto|never|always" in readme
+    assert "TRAIL_OCR_MODE`、`TRAIL_OCR_RETRY_HIGH` 用于设置低优先级默认值" in readme
+    assert "默认 `ocr_mode=fast`" in readme
+    assert "默认 `retry_high=auto`" in readme
+    assert "`fast = 1280x720`" in readme
+    assert "`high = native`" in readme
+    assert "`retry_high=auto` 只在 `hits==0`、平均分过低、或出现 `OCR_LOW_CONFIDENCE` 时触发" in readme
+    assert "`retry_high=always` 在 `ocr_mode=fast` 下会先跑 `fast`，再无条件补跑一次 `high`" in readme
+    assert "`ocr_mode=high` 下 `retry_high` 为 no-op" in readme
+    assert "模式与重试事实只在 `--verbose` 下出现" in readme
 
 
 def test_render_output_renders_canonical_stage_wait_text():
@@ -361,6 +384,75 @@ def test_render_output_ocr_read_success_does_not_expand_provider_or_lang_fields(
         "shot path=.trail/shots/req-ocr-provider-hidden.png",
         "text value=点击进入 box=122,88,74,20 center=159,98",
     ]
+
+
+def test_render_output_ocr_read_success_keeps_ocr_mode_retry_context_verbose_only():
+    payload = {
+        "ok": True,
+        "data": {
+            "result": [
+                {
+                    "text": "点击进入",
+                    "score": 0.98,
+                    "box": {"left": 122, "top": 88, "width": 74, "height": 20},
+                }
+            ]
+        },
+        "screenshot": ".trail/shots/req-ocr-verbose-only-success.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "request_id": "req-ocr-success",
+            "ocr_mode_requested": "fast",
+            "ocr_mode_effective": "high",
+            "ocr_scale_applied": "native",
+            "ocr_retry_high": 1,
+            "ocr_retry_reason": "low_confidence",
+        },
+        "error": None,
+    }
+
+    rendered = render_output("ocr.read", payload)
+
+    assert rendered.splitlines() == [
+        "ok ocr.read hits=1",
+        "shot path=.trail/shots/req-ocr-verbose-only-success.png",
+        "text value=点击进入 box=122,88,74,20 center=159,98",
+    ]
+    assert all(key not in rendered for key in OCR_VERBOSE_ONLY_KEYS)
+
+
+def test_render_output_ocr_read_failure_keeps_ocr_mode_retry_context_verbose_only():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": ".trail/shots/req-ocr-verbose-only-fail.png",
+        "timing": {},
+        "warnings": [{"code": "OCR_LOW_CONFIDENCE", "message": "text may be incomplete"}],
+        "references": [{"path": "refs/ocr.png", "similarity": 0.75}],
+        "debug": {
+            "request_id": "req-ocr-fail",
+            "ocr_mode_requested": "fast",
+            "ocr_mode_effective": "fast",
+            "ocr_scale_applied": "1280x720",
+            "ocr_retry_high": 0,
+            "ocr_retry_reason": "none",
+        },
+        "error": {"code": "OCR_BACKEND_UNAVAILABLE", "message": "ocr backend unavailable"},
+    }
+
+    rendered = render_output("ocr.read", payload)
+
+    assert rendered.splitlines() == [
+        "fail ocr.read code=OCR_BACKEND_UNAVAILABLE",
+        "request id=req-ocr-fail",
+        "shot path=.trail/shots/req-ocr-verbose-only-fail.png",
+        'why msg="ocr backend unavailable"',
+        'warn code=OCR_LOW_CONFIDENCE msg="text may be incomplete"',
+        "ref path=refs/ocr.png sim=0.75",
+    ]
+    assert all(key not in rendered for key in OCR_VERBOSE_ONLY_KEYS)
 
 
 def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
@@ -786,6 +878,90 @@ def test_render_output_preserves_original_failure_for_non_allowlist_yaml():
         'why msg="ocr backend unavailable"',
         'warn code=OCR_LOW_CONFIDENCE msg="text may be incomplete"',
         "ref path=refs/ocr.png sim=0.75",
+    ]
+
+
+def test_render_output_verbose_includes_ocr_mode_effective_ocr_scale_applied_and_ocr_retry_reason_from_capture_context(tmp_path):
+    from trail.output.capture import with_auto_capture
+
+    class RuntimeStub:
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return tmp_path / "ocr-context.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+        def consume_debug_trace(self):
+            return []
+
+        def consume_debug_context(self):
+            return {
+                "ocr_mode_requested": "fast",
+                "ocr_mode_effective": "high",
+                "ocr_scale_applied": "native",
+                "ocr_retry_high": 1,
+                "ocr_retry_reason": "low_confidence",
+            }
+
+    payload = with_auto_capture(RuntimeStub(), lambda: {"result": [{"text": "点击进入"}]}, verbose=True)
+    encoded_screenshot = payload["screenshot"].replace("\\", "\\\\")
+
+    assert render_output("ocr.read", payload, verbose=True).splitlines() == [
+        "ok ocr.read hits=1",
+        f'shot path="{encoded_screenshot}"',
+        "text value=点击进入",
+        "debug kind=context key=ocr_mode_requested value=fast",
+        "debug kind=context key=ocr_mode_effective value=high",
+        "debug kind=context key=ocr_scale_applied value=native",
+        "debug kind=context key=ocr_retry_high value=1",
+        "debug kind=context key=ocr_retry_reason value=low_confidence",
+    ]
+
+
+def test_render_output_verbose_includes_ocr_retry_high_zero_and_retry_reason_none_from_capture_context(tmp_path):
+    from trail.output.capture import with_auto_capture
+
+    class RuntimeStub:
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return tmp_path / "ocr-context-none.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+        def consume_debug_trace(self):
+            return []
+
+        def consume_debug_context(self):
+            return {
+                "ocr_mode_requested": "fast",
+                "ocr_mode_effective": "fast",
+                "ocr_scale_applied": "1280x720",
+                "ocr_retry_high": 0,
+                "ocr_retry_reason": "none",
+            }
+
+    payload = with_auto_capture(RuntimeStub(), lambda: {"result": [{"text": "点击进入"}]}, verbose=True)
+    encoded_screenshot = payload["screenshot"].replace("\\", "\\\\")
+
+    assert render_output("ocr.read", payload, verbose=True).splitlines() == [
+        "ok ocr.read hits=1",
+        f'shot path="{encoded_screenshot}"',
+        "text value=点击进入",
+        "debug kind=context key=ocr_mode_requested value=fast",
+        "debug kind=context key=ocr_mode_effective value=fast",
+        "debug kind=context key=ocr_scale_applied value=1280x720",
+        "debug kind=context key=ocr_retry_high value=0",
+        "debug kind=context key=ocr_retry_reason value=none",
     ]
 
 

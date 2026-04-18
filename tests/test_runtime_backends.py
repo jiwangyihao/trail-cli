@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+from statistics import median
 import sys
 import threading
 from types import SimpleNamespace
@@ -122,6 +124,226 @@ def _command_request(
         method=method,
         payload=payload or {},
     )
+
+
+FAST_OCR_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "ocr"
+FAST_DENSE_NOTICE_FIXTURE = FAST_OCR_FIXTURE_DIR / "fast-dense-notice.jpg"
+FAST_SPARSE_LOGIN_FIXTURE = FAST_OCR_FIXTURE_DIR / "fast-sparse-login.jpg"
+FAST_DENSE_NOTICE_ANCHORS = (
+    "资讯",
+    "公告",
+    "4.1版本游戏优化及已知问题说明",
+    "问题说明",
+    "亲爱的开拓者：",
+    "已知问题",
+    "2026/04/10",
+    "2026/03/30",
+    "「无名勋礼」更新说明",
+    "42版本新增关卡",
+)
+FAST_DENSE_NOTICE_ABSOLUTE_ANCHORS = (
+    "资讯",
+    "公告",
+    "4.1版本游戏优化及已知问题说明",
+    "问题说明",
+    "亲爱的开拓者：",
+    "已知问题",
+    "2026/04/10",
+    "2026/03/30",
+    "「无名勋礼」更新说明",
+    "42版本新增关卡",
+)
+FAST_SPARSE_LOGIN_ANCHORS = (
+    "设置",
+    "mi",
+    "登出",
+    "退出",
+    "点击进入",
+)
+FAST_SPARSE_LOGIN_ABSOLUTE_ANCHORS = (
+    "mi",
+    "登出",
+    "退出",
+    "点击进入",
+)
+FAST_SPARSE_LOGIN_BOX_ANCHORS = ("登出", "退出")
+
+
+@dataclass(frozen=True)
+class FixtureOcrRun:
+    capture_size: tuple[int, int]
+    processed_size: tuple[int, int]
+    pieces: list[object]
+
+
+@dataclass(frozen=True)
+class OcrQualityMetrics:
+    anchor_delta: int
+    median_center_shift_px: float
+    median_iou: float
+    variant_processed_size: tuple[int, int]
+
+
+def benchmark_ocr_mode_against_native(
+    fixture: Path,
+    *,
+    ocr_mode: str,
+    anchors: tuple[str, ...],
+    box_anchors: tuple[str, ...] | None = None,
+) -> OcrQualityMetrics:
+    native = run_fixture_ocr(fixture, ocr_mode="high")
+    variant = run_fixture_ocr(fixture, ocr_mode=ocr_mode)
+    return compute_anchor_box_metrics(native, variant, anchors=anchors, box_anchors=box_anchors)
+
+
+def fixture_anchor_hits(fixture: Path, *, ocr_mode: str) -> set[str]:
+    run = run_fixture_ocr(fixture, ocr_mode=ocr_mode)
+    return set(
+        _piece_text_box_map(
+            run.pieces,
+            capture_size=run.capture_size,
+            processed_size=run.processed_size,
+        )
+    )
+
+
+def run_fixture_ocr(fixture: Path, *, ocr_mode: str) -> FixtureOcrRun:
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    with Image.open(fixture) as image:
+        capture_size = image.size
+        buffer = BytesIO()
+        image.convert("RGB").save(buffer, format="PNG")
+    capture_bytes = buffer.getvalue()
+
+    class RecordingEngine:
+        def __init__(self):
+            self.adapter = operator_module.RapidOcrAdapter()
+            self.processed_sizes: list[tuple[int, int]] = []
+
+        def run(self, image, *, ocr=None):
+            if isinstance(image, (bytes, bytearray)):
+                with Image.open(BytesIO(image)) as decoded:
+                    self.processed_sizes.append(decoded.size)
+            else:
+                self.processed_sizes.append(image.size)
+            return self.adapter.run(image, ocr=ocr)
+
+    engine = RecordingEngine()
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: capture_bytes,
+            capture_to_workspace=lambda request_id=None: fixture,
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=engine,
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+    )
+
+    pieces = runtime.ocr(
+        capture={},
+        ocr=OcrRequestConfig(provider="cpu", ocr_mode=ocr_mode, retry_high="never"),
+    )
+    return FixtureOcrRun(capture_size=capture_size, processed_size=engine.processed_sizes[-1], pieces=pieces)
+
+
+def compute_anchor_box_metrics(
+    native: FixtureOcrRun,
+    variant: FixtureOcrRun,
+    *,
+    anchors: tuple[str, ...],
+    box_anchors: tuple[str, ...] | None = None,
+) -> OcrQualityMetrics:
+    native_map = _piece_text_box_map(native.pieces, capture_size=native.capture_size, processed_size=native.processed_size)
+    variant_map = _piece_text_box_map(variant.pieces, capture_size=variant.capture_size, processed_size=variant.processed_size)
+    native_hits = sum(1 for text in anchors if text in native_map)
+    variant_hits = sum(1 for text in anchors if text in variant_map)
+    shared_box_anchors = [text for text in (box_anchors or anchors) if text in native_map and text in variant_map]
+    center_shifts = [_compute_box_center_shift(native_map[text], variant_map[text]) for text in shared_box_anchors]
+    ious = [_compute_box_iou(native_map[text], variant_map[text]) for text in shared_box_anchors]
+    return OcrQualityMetrics(
+        anchor_delta=variant_hits - native_hits,
+        median_center_shift_px=median(center_shifts) if center_shifts else 999.0,
+        median_iou=median(ious) if ious else 0.0,
+        variant_processed_size=variant.processed_size,
+    )
+
+
+def _piece_text_box_map(
+    pieces: list[object],
+    *,
+    capture_size: tuple[int, int],
+    processed_size: tuple[int, int],
+) -> dict[str, dict[str, float]]:
+    del capture_size, processed_size
+    mapping: dict[str, dict[str, float]] = {}
+    for piece in pieces:
+        resolved = _piece_text_and_box(piece)
+        if resolved is None:
+            continue
+        text, box = resolved
+        if not text or text in mapping:
+            continue
+        mapping[text] = dict(box)
+    return mapping
+
+
+def _piece_text_and_box(piece: object) -> tuple[str, dict[str, float]] | None:
+    if isinstance(piece, dict):
+        text = str(piece.get("text") or "").strip()
+        box = piece.get("box")
+        if not text or not isinstance(box, dict):
+            return None
+        return text, {
+            "left": float(box["left"]),
+            "top": float(box["top"]),
+            "width": float(box["width"]),
+            "height": float(box["height"]),
+        }
+    if not isinstance(piece, (list, tuple)) or len(piece) < 2:
+        return None
+    polygon, text = piece[0], str(piece[1]).strip()
+    if not text or not isinstance(polygon, (list, tuple)):
+        return None
+    try:
+        xs = [float(point[0]) for point in polygon]
+        ys = [float(point[1]) for point in polygon]
+    except (IndexError, TypeError, ValueError):
+        return None
+    if not xs or not ys:
+        return None
+    return text, {
+        "left": min(xs),
+        "top": min(ys),
+        "width": max(xs) - min(xs),
+        "height": max(ys) - min(ys),
+    }
+
+
+def _compute_box_center_shift(left: dict[str, float], right: dict[str, float]) -> float:
+    left_center = (left["left"] + left["width"] / 2.0, left["top"] + left["height"] / 2.0)
+    right_center = (right["left"] + right["width"] / 2.0, right["top"] + right["height"] / 2.0)
+    return ((left_center[0] - right_center[0]) ** 2 + (left_center[1] - right_center[1]) ** 2) ** 0.5
+
+
+def _compute_box_iou(left: dict[str, float], right: dict[str, float]) -> float:
+    inter_left = max(left["left"], right["left"])
+    inter_top = max(left["top"], right["top"])
+    inter_right = min(left["left"] + left["width"], right["left"] + right["width"])
+    inter_bottom = min(left["top"] + left["height"], right["top"] + right["height"])
+    if inter_right <= inter_left or inter_bottom <= inter_top:
+        return 0.0
+    inter_area = (inter_right - inter_left) * (inter_bottom - inter_top)
+    left_area = left["width"] * left["height"]
+    right_area = right["width"] * right["height"]
+    return inter_area / (left_area + right_area - inter_area)
 
 
 def test_command_service_handles_window_methods(tmp_path: Path):
@@ -301,7 +523,7 @@ def test_runtime_operator_ocr_passes_explicit_ocr_options_to_engine_without_forw
 
     capture_calls: list[dict[str, object | None]] = []
     engine_calls: list[dict[str, object]] = []
-    ocr_config = OcrRequestConfig(provider="auto", lang="ch", use_cls=True, text_score=0.6)
+    ocr_config = OcrRequestConfig(provider="auto", lang="ch", use_cls=True, text_score=0.6, ocr_mode="high", retry_high="never")
 
     class WindowStub:
         def capture(self, **kwargs):
@@ -359,6 +581,773 @@ def test_runtime_operator_ocr_requires_capture_dict_for_region_arguments(tmp_pat
 
     with pytest.raises(TypeError):
         runtime.ocr(from_x=1)
+
+
+def test_runtime_operator_fast_mode_downscales_fullscreen_to_1280x720(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+    seen_sizes: list[tuple[int, int]] = []
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del ocr
+            assert not isinstance(image, (bytes, bytearray))
+            seen_sizes.append(image.size)
+            return operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: buffer.getvalue(),
+            capture_to_workspace=lambda request_id=None: tmp_path / "fast-fullscreen.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    runtime.ocr(capture={}, ocr=OcrRequestConfig(ocr_mode="fast", retry_high="never"))
+
+    assert seen_sizes == [(1280, 720)]
+
+
+def test_runtime_operator_fast_mode_keeps_bytes_contract_when_no_resize_needed(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (400, 120), color="white").save(buffer, format="PNG")
+    image_bytes = buffer.getvalue()
+    capture_calls: list[dict[str, int]] = []
+    engine_calls: list[dict[str, object]] = []
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            capture_calls.append(dict(kwargs))
+            return image_bytes
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return tmp_path / "fast-region.png"
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            engine_calls.append({"image": image, "kwargs": {"ocr": ocr}})
+            return operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    runtime.ocr(
+        capture={"from_x": 10, "from_y": 20, "to_x": 410, "to_y": 140},
+        ocr=OcrRequestConfig(ocr_mode="fast", retry_high="never"),
+    )
+
+    assert capture_calls == [{"from_x": 10, "from_y": 20, "to_x": 410, "to_y": 140}]
+    assert engine_calls == [{"image": image_bytes, "kwargs": {"ocr": OcrRequestConfig(ocr_mode="fast", retry_high="never")}}]
+
+
+def test_runtime_operator_fast_mode_maps_boxes_back_to_original_capture_space(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image, ocr
+            return operator_module.OcrRunResult(
+                pieces=[
+                    [[[100.0, 50.0], [200.0, 50.0], [200.0, 100.0], [100.0, 100.0]], "按钮", 0.99],
+                    {"text": "确认", "score": 0.88, "box": {"left": 300.0, "top": 120.0, "width": 80.0, "height": 40.0}},
+                ],
+                warnings=[],
+                trace=[],
+            )
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: buffer.getvalue(),
+            capture_to_workspace=lambda request_id=None: tmp_path / "fast-map.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    result = runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="never"))
+
+    assert result == [
+        [[[150.0, 75.0], [300.0, 75.0], [300.0, 150.0], [150.0, 150.0]], "按钮", 0.99],
+        {"text": "确认", "score": 0.88, "box": {"left": 450, "top": 180, "width": 120, "height": 60}},
+    ]
+
+
+def test_command_service_ocr_read_fast_mode_maps_boxes_back_to_original_capture_space(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.daemon.command_service import CommandService
+    from trail.output.rendering import render_output
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            del kwargs
+            return buffer.getvalue()
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return tmp_path / ".trail" / "shots" / "req-ocr-fast-map.jpg"
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image, ocr
+            return operator_module.OcrRunResult(
+                pieces=[[[[100.0, 50.0], [200.0, 50.0], [200.0, 100.0], [100.0, 100.0]], "按钮", 0.99]],
+                warnings=[],
+                trace=[],
+            )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+    runtime_service = _CommandRuntimeServiceStub(runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="ocr.read",
+            payload={"ocr_mode": "fast", "retry_high": "never", "provider": "cpu"},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["data"]["result"] == [
+        [[[150.0, 75.0], [300.0, 75.0], [300.0, 150.0], [150.0, 150.0]], "按钮", 0.99]
+    ]
+    assert render_output("ocr.read", payload).splitlines() == [
+        "ok ocr.read hits=1",
+        f"shot path={payload['screenshot']}",
+        "text value=按钮 box=150,75,150,75 center=225,112",
+    ]
+
+
+def test_command_service_ocr_read_fast_mode_dict_box_renders_without_crashing(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.daemon.command_service import CommandService
+    from trail.output.rendering import render_output
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            del kwargs
+            return buffer.getvalue()
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return tmp_path / ".trail" / "shots" / "req-ocr-fast-dict-box.png"
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image, ocr
+            return operator_module.OcrRunResult(
+                pieces=[
+                    {"text": "按钮", "score": 0.93, "box": {"left": 81.0, "top": 58.0, "width": 49.0, "height": 24.0}}
+                ],
+                warnings=[],
+                trace=[],
+            )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+    runtime_service = _CommandRuntimeServiceStub(runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="ocr.read",
+            payload={"ocr_mode": "fast", "retry_high": "never", "provider": "cpu"},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["data"]["result"] == [
+        {"text": "按钮", "score": 0.93, "box": {"left": 122, "top": 87, "width": 74, "height": 36}}
+    ]
+    assert render_output("ocr.read", payload).splitlines() == [
+        "ok ocr.read hits=1",
+        f"shot path={payload['screenshot']}",
+        "text value=按钮 box=122,87,74,36 center=159,105",
+    ]
+
+
+def test_runtime_operator_high_mode_keeps_existing_bytes_contract(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (640, 360), color="white").save(buffer, format="PNG")
+    image_bytes = buffer.getvalue()
+    engine_calls: list[dict[str, object]] = []
+    ocr_config = OcrRequestConfig(provider="auto", lang="ch", use_cls=True, text_score=0.6, ocr_mode="high", retry_high="never")
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            return image_bytes
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return tmp_path / "high-bytes.png"
+
+    class EngineStub:
+        def run(self, image, **kwargs):
+            engine_calls.append({"image": image, "kwargs": dict(kwargs)})
+            return operator_module.OcrRunResult(pieces=[{"text": "银狼"}], warnings=[], trace=[])
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    result = runtime.ocr(capture={"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4}, ocr=ocr_config)
+
+    assert engine_calls == [{"image": image_bytes, "kwargs": {"ocr": ocr_config}}]
+    assert result == [{"text": "银狼"}]
+
+
+def test_runtime_operator_produces_OCR_LOW_CONFIDENCE_warning_from_scores(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image, ocr
+            return operator_module.OcrRunResult(
+                pieces=[{"text": "银狼", "score": 0.91}],
+                warnings=[],
+                trace=[],
+            )
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: buffer.getvalue(),
+            capture_to_workspace=lambda request_id=None: tmp_path / "ocr-low-confidence.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    result = runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="never"))
+
+    assert result == [{"text": "银狼", "score": 0.91}]
+    assert runtime.collect_warnings() == [
+        {
+            "code": "OCR_LOW_CONFIDENCE",
+            "message": "ocr average score below 0.92; result may be incomplete",
+        }
+    ]
+
+
+def test_runtime_operator_retry_high_always_returns_high_result(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+    calls: list[dict[str, object]] = []
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            assert ocr is not None
+            if isinstance(image, (bytes, bytearray)):
+                with Image.open(BytesIO(image)) as decoded:
+                    size = decoded.size
+            else:
+                size = image.size
+            calls.append({"mode": ocr.ocr_mode, "size": size})
+            if len(calls) == 1:
+                return operator_module.OcrRunResult(
+                    pieces=[{"text": "快档", "score": 0.99}],
+                    warnings=[],
+                    trace=[{"step": "ocr_provider", "attempt": "fast"}],
+                )
+            return operator_module.OcrRunResult(
+                pieces=[{"text": "高精度", "score": 0.99}],
+                warnings=[],
+                trace=[{"step": "ocr_provider", "attempt": "high"}],
+            )
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: buffer.getvalue(),
+            capture_to_workspace=lambda request_id=None: tmp_path / "ocr-retry-always.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    result = runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="always"))
+    context = runtime.consume_debug_context()
+
+    assert calls == [
+        {"mode": "fast", "size": (1280, 720)},
+        {"mode": "high", "size": (1920, 1080)},
+    ]
+    assert result == [{"text": "高精度", "score": 0.99}]
+    assert context == {
+        "ocr_mode_requested": "fast",
+        "ocr_mode_effective": "high",
+        "ocr_scale_applied": "native",
+        "ocr_retry_high": 1,
+        "ocr_retry_reason": "none",
+    }
+
+
+def test_runtime_operator_retry_high_auto_keeps_fast_result_when_high_fails(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+    calls: list[str] = []
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image
+            assert ocr is not None
+            calls.append(ocr.ocr_mode)
+            if len(calls) == 1:
+                return operator_module.OcrRunResult(
+                    pieces=[{"text": "快档", "score": 0.91}],
+                    warnings=[],
+                    trace=[],
+                )
+            raise operator_module.OcrRunFailure(
+                "OCR_BACKEND_UNAVAILABLE",
+                "high retry failed",
+                warnings=[{"code": "OCR_HIGH_FAILED", "message": "high retry failed"}],
+            )
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: buffer.getvalue(),
+            capture_to_workspace=lambda request_id=None: tmp_path / "ocr-retry-auto-fallback.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    result = runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="auto"))
+    context = runtime.consume_debug_context()
+
+    assert calls == ["fast", "high"]
+    assert result == [{"text": "快档", "score": 0.91}]
+    assert runtime.collect_warnings() == [
+        {
+            "code": "OCR_LOW_CONFIDENCE",
+            "message": "ocr average score below 0.92; result may be incomplete",
+        }
+    ]
+    assert context["ocr_mode_effective"] == "fast"
+    assert context["ocr_scale_applied"] == "1280x720"
+    assert context["ocr_retry_high"] == 1
+    assert context["ocr_retry_reason"] == "low_confidence"
+
+
+def test_runtime_operator_returns_empty_result_when_fast_has_no_hits_and_high_fails(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+    calls: list[str] = []
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image
+            assert ocr is not None
+            calls.append(ocr.ocr_mode)
+            if len(calls) == 1:
+                return operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])
+            raise operator_module.OcrRunFailure("OCR_BACKEND_UNAVAILABLE", "high retry failed")
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: buffer.getvalue(),
+            capture_to_workspace=lambda request_id=None: tmp_path / "ocr-retry-empty.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    result = runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="auto"))
+    context = runtime.consume_debug_context()
+
+    assert calls == ["fast", "high"]
+    assert result == []
+    assert runtime.collect_warnings() == []
+    assert context["ocr_retry_high"] == 1
+    assert context["ocr_retry_reason"] == "no_hits"
+
+
+def test_runtime_operator_high_mode_retry_high_is_noop(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (640, 360), color="white").save(buffer, format="PNG")
+    calls: list[str] = []
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image
+            assert ocr is not None
+            calls.append(ocr.ocr_mode)
+            return operator_module.OcrRunResult(pieces=[{"text": "原图"}], warnings=[], trace=[])
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: buffer.getvalue(),
+            capture_to_workspace=lambda request_id=None: tmp_path / "ocr-high-noop.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    result = runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="high", retry_high="always"))
+    context = runtime.consume_debug_context()
+
+    assert calls == ["high"]
+    assert result == [{"text": "原图"}]
+    assert context == {
+        "ocr_mode_requested": "high",
+        "ocr_mode_effective": "high",
+        "ocr_scale_applied": "native",
+        "ocr_retry_high": 0,
+        "ocr_retry_reason": "none",
+    }
+
+
+@pytest.mark.parametrize(
+    ("pieces", "warnings", "expected_reason"),
+    [
+        ([], [{"code": "OCR_LOW_CONFIDENCE", "message": "engine warned"}], "no_hits"),
+        ([{"text": "快档", "score": 0.91}], [{"code": "OCR_LOW_CONFIDENCE", "message": "engine warned"}], "low_confidence"),
+        ([{"text": "快档"}], [{"code": "OCR_LOW_CONFIDENCE", "message": "engine warned"}], "warning"),
+    ],
+)
+def test_runtime_operator_retry_reason_priority_prefers_no_hits_over_low_confidence_and_warning(
+    tmp_path: Path,
+    pieces: list[dict[str, object]],
+    warnings: list[dict[str, str]],
+    expected_reason: str,
+):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+
+    class EngineStub:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, image, *, ocr=None):
+            del image, ocr
+            self.calls += 1
+            if self.calls == 1:
+                return operator_module.OcrRunResult(pieces=list(pieces), warnings=list(warnings), trace=[])
+            return operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: buffer.getvalue(),
+            capture_to_workspace=lambda request_id=None: tmp_path / f"retry-reason-{expected_reason}.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="auto"))
+    context = runtime.consume_debug_context()
+
+    assert context["ocr_retry_high"] == 1
+    assert context["ocr_retry_reason"] == expected_reason
+
+
+def test_command_service_ocr_read_retry_high_success_suppresses_fast_warning_from_default_output(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.daemon.command_service import CommandService
+    from trail.output.rendering import render_output
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            del kwargs
+            return buffer.getvalue()
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return tmp_path / ".trail" / "shots" / "req-ocr-retry-success.png"
+
+    class EngineStub:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, image, *, ocr=None):
+            del image
+            assert ocr is not None
+            self.calls += 1
+            if self.calls == 1:
+                return operator_module.OcrRunResult(
+                    pieces=[{"text": "快档", "score": 0.91}],
+                    warnings=[],
+                    trace=[],
+                )
+            return operator_module.OcrRunResult(
+                pieces=[{"text": "高精度", "score": 0.99}],
+                warnings=[],
+                trace=[],
+            )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+    runtime_service = _CommandRuntimeServiceStub(runtime)
+    service = CommandService(runtime_service=runtime_service)
+
+    payload = service.handle(
+        _command_request(
+            workspace_root=tmp_path,
+            method="ocr.read",
+            payload={"ocr_mode": "fast", "retry_high": "always", "provider": "cpu"},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["warnings"] == []
+    assert payload["data"]["result"] == [{"text": "高精度", "score": 0.99}]
+    assert render_output("ocr.read", payload).splitlines() == [
+        "ok ocr.read hits=1",
+        f"shot path={payload['screenshot']}",
+        "text value=高精度",
+    ]
+
+
+def test_with_auto_capture_ocr_failure_keeps_ocr_context_on_real_runtime_failure(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.output.capture import with_auto_capture
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            del kwargs
+            return buffer.getvalue()
+
+        def capture_to_workspace(self, request_id: str | None = None):
+            del request_id
+            return Path(".trail/shots/req-ocr-failure-context.png")
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image, ocr
+            raise operator_module.OcrRunFailure("OCR_BACKEND_UNAVAILABLE", "ocr backend unavailable")
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    payload = with_auto_capture(
+        runtime,
+        lambda: {"result": runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="always"))},
+        verbose=True,
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == {"code": "OCR_BACKEND_UNAVAILABLE", "message": "ocr backend unavailable"}
+    assert payload["debug"]["ocr_mode_requested"] == "fast"
+    assert payload["debug"]["ocr_mode_effective"] == "fast"
+    assert payload["debug"]["ocr_scale_applied"] == "1280x720"
+    assert payload["debug"]["ocr_retry_high"] == 0
+    assert payload["debug"]["ocr_retry_reason"] == "none"
+
+
+def test_runtime_operator_fast_mode_quality_gate_on_dense_notice_fixture():
+    metrics = benchmark_ocr_mode_against_native(
+        FAST_DENSE_NOTICE_FIXTURE,
+        ocr_mode="fast",
+        anchors=FAST_DENSE_NOTICE_ANCHORS,
+    )
+
+    assert metrics.variant_processed_size == (1280, 720)
+    assert metrics.anchor_delta >= -1
+    assert metrics.median_center_shift_px <= 2.0
+    assert metrics.median_iou >= 0.85
+
+
+def test_runtime_operator_fast_mode_dense_notice_absolute_anchor_hits():
+    hits = fixture_anchor_hits(FAST_DENSE_NOTICE_FIXTURE, ocr_mode="fast")
+
+    assert set(FAST_DENSE_NOTICE_ABSOLUTE_ANCHORS).issubset(hits)
+
+
+def test_runtime_operator_fast_mode_quality_gate_on_sparse_login_fixture():
+    metrics = benchmark_ocr_mode_against_native(
+        FAST_SPARSE_LOGIN_FIXTURE,
+        ocr_mode="fast",
+        anchors=FAST_SPARSE_LOGIN_ANCHORS,
+        box_anchors=FAST_SPARSE_LOGIN_BOX_ANCHORS,
+    )
+
+    assert metrics.variant_processed_size == (1280, 720)
+    assert metrics.anchor_delta >= -1
+    assert metrics.median_center_shift_px <= 2.0
+    assert metrics.median_iou >= 0.85
+
+
+def test_runtime_operator_fast_mode_sparse_login_absolute_anchor_hits():
+    hits = fixture_anchor_hits(FAST_SPARSE_LOGIN_FIXTURE, ocr_mode="fast")
+
+    assert set(FAST_SPARSE_LOGIN_ABSOLUTE_ANCHORS).issubset(hits)
 
 
 def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Path):

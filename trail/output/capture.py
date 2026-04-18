@@ -7,6 +7,13 @@ from trail.core.errors import TrailError
 from trail.output.envelope import command_failure, command_success
 
 _CAPTURE_OPTIONS = {"verbose": False}
+_OCR_DEBUG_CONTEXT_ALLOWLIST = (
+    "ocr_mode_requested",
+    "ocr_mode_effective",
+    "ocr_scale_applied",
+    "ocr_retry_high",
+    "ocr_retry_reason",
+)
 
 
 def _resolve_runtime(runtime):
@@ -77,10 +84,23 @@ def _collect_capture_metadata(runtime, *, screenshot, verbose: bool) -> dict:
         if screenshot is not None and callable(match_references):
             references = match_references(screenshot) or []
 
-        consume_debug_trace = getattr(runtime, "consume_debug_trace", None)
-        if verbose and callable(consume_debug_trace):
-            trace = consume_debug_trace() or []
-            debug = {"trace": trace}
+        if verbose:
+            consume_debug_trace = getattr(runtime, "consume_debug_trace", None)
+            consume_debug_context = getattr(runtime, "consume_debug_context", None)
+            trace = []
+            if callable(consume_debug_trace):
+                trace = consume_debug_trace() or []
+            debug_context = {}
+            if callable(consume_debug_context):
+                debug_context = consume_debug_context() or {}
+            if trace or debug_context:
+                debug = {}
+                if trace:
+                    debug["trace"] = trace
+                if isinstance(debug_context, dict):
+                    for key in _OCR_DEBUG_CONTEXT_ALLOWLIST:
+                        if key in debug_context:
+                            debug[key] = debug_context[key]
 
     return {
         "warnings": warnings,

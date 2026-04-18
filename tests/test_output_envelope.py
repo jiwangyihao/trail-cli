@@ -96,6 +96,23 @@ class MetadataRuntime(FakeRuntime):
         self.trace = [{"step": "click", "point": [10, 20]}]
 
 
+class OcrDebugRuntime(MetadataRuntime):
+    def __init__(self, screenshot_path: Path):
+        super().__init__(screenshot_path)
+        self.debug_context = {
+            "ocr_mode_requested": "fast",
+            "ocr_mode_effective": "high",
+            "ocr_scale_applied": "native",
+            "ocr_retry_high": 1,
+            "ocr_retry_reason": "low_confidence",
+        }
+
+    def consume_debug_context(self):
+        debug_context = dict(self.debug_context)
+        self.debug_context.clear()
+        return debug_context
+
+
 def test_with_auto_capture_wraps_trail_error_as_failure(tmp_path):
     runtime = FakeRuntime(tmp_path / "failed.png")
 
@@ -193,6 +210,44 @@ def test_with_auto_capture_keeps_capture_trace_request_local_under_concurrency(t
 
     assert payloads["left"]["debug"] == {"trace": [{"step": "capture_after_action", "thread": "left"}]}
     assert payloads["right"]["debug"] == {"trace": [{"step": "capture_after_action", "thread": "right"}]}
+
+
+def test_with_auto_capture_promotes_ocr_context_keys_to_top_level_debug(tmp_path):
+    runtime = OcrDebugRuntime(tmp_path / "ocr-debug.png")
+
+    result = with_auto_capture(runtime, lambda: {"done": True}, verbose=True)
+
+    assert result["debug"] == {
+        "trace": [{"step": "click", "point": [10, 20]}],
+        "ocr_mode_requested": "fast",
+        "ocr_mode_effective": "high",
+        "ocr_scale_applied": "native",
+        "ocr_retry_high": 1,
+        "ocr_retry_reason": "low_confidence",
+    }
+
+
+def test_with_auto_capture_ocr_context_allowlist_ignores_reserved_and_non_ocr_keys(tmp_path):
+    runtime = OcrDebugRuntime(tmp_path / "ocr-debug-allowlist.png")
+    runtime.debug_context.update(
+        {
+            "trace": [{"step": "override"}],
+            "request_id": "req-from-context",
+            "detail": "context detail",
+            "unexpected": "ignored",
+        }
+    )
+
+    result = with_auto_capture(runtime, lambda: {"done": True}, verbose=True)
+
+    assert result["debug"] == {
+        "trace": [{"step": "click", "point": [10, 20]}],
+        "ocr_mode_requested": "fast",
+        "ocr_mode_effective": "high",
+        "ocr_scale_applied": "native",
+        "ocr_retry_high": 1,
+        "ocr_retry_reason": "low_confidence",
+    }
 
 
 def test_session_store_persists_relative_last_screenshot(tmp_path):
