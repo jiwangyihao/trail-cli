@@ -157,7 +157,7 @@ def _enter_from_world(runtime, *, mode: str, difficulty: str, battle_mode: str) 
     _wait(runtime, "entry.start")
 
 
-def _detect_current_enter_page(runtime) -> dict[str, str]:
+def _detect_current_enter_page(runtime, *, session: SessionModel | None = None) -> dict[str, str]:
     if _locate(runtime, "entry.new") is not None:
         return {"page": "entry.new"}
 
@@ -167,9 +167,17 @@ def _detect_current_enter_page(runtime) -> dict[str, str]:
     if _locate(runtime, "entry.invest_environment") is not None:
         return {"page": "invest"}
 
-    ocr_stage = _detect_cw_stage_from_ocr(runtime)
+    try:
+        ocr_stage = _detect_cw_stage_from_ocr(runtime)
+    except Exception:
+        ocr_stage = None
     if ocr_stage is not None:
         return {"page": "in_game", "stage": ocr_stage}
+
+    if session is not None:
+        recorded_stage = ensure_cw_state(session).get("stage", {})
+        if recorded_stage.get("stale") is False and recorded_stage.get("value") == "game_over":
+            return {"page": "in_game", "stage": "game_over"}
 
     for alias, stage in STAGE_RESOURCE_ALIASES:
         if stage in {"settle", "game_over"}:
@@ -222,12 +230,18 @@ def enter_cw(
     entry: dict[str, object] = {"page": "home"}
 
     if runtime is not None:
-        entry = _run_entry_chain(
-            runtime,
-            mode="ignored",
-            difficulty="current",
-            battle_mode="standard",
-        )
+        current = _detect_current_enter_page(runtime, session=session)
+        if current["page"] == "home":
+            entry = {"page": "home", "already_home": True}
+        elif current["page"] == "world":
+            entry = _run_entry_chain(
+                runtime,
+                mode="ignored",
+                difficulty="current",
+                battle_mode="standard",
+            )
+        else:
+            raise CwEnterStateError(page=current["page"], stage=current.get("stage"))
 
     cw_state = ensure_cw_state(session)
     cw_state["entry"] = entry

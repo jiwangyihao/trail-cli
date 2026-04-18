@@ -104,6 +104,54 @@ def test_enter_cw_returns_home_noop_when_already_on_start_page(tmp_path):
     assert runtime.wait_calls == []
 
 
+def test_enter_cw_returns_home_when_start_page_visible_and_ocr_backend_errors(tmp_path):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+
+    start_box = _box("entry.start", left=10, top=20)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+    runtime = Runtime()
+    _install_template_runtime(runtime, locate_results={_asset("entry.start"): start_box})
+    runtime.ocr = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("ocr backend missing"))
+
+    refreshed = enter_cw(session, mode="new", runtime=runtime)
+
+    assert refreshed.scene_state["cw"]["entry"] == {"page": "home", "already_home": True}
+
+
+def test_enter_cw_rejects_game_over_state_recorded_in_session(tmp_path):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
+
+    start_box = _box("entry.start", left=10, top=20)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+    runtime = Runtime()
+    _install_template_runtime(runtime, locate_results={_asset("entry.start"): start_box})
+
+    with pytest.raises(Exception) as exc_info:
+        enter_cw(session, mode="continue", runtime=runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_ENTER_ALREADY_PAST_HOME"
+    assert getattr(exc_info.value, "data", None) == {"page": "in_game", "stage": "game_over"}
+
+
 def test_enter_cw_runs_world_to_currency_wars_entry_chain_until_home(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
 
