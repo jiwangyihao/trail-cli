@@ -5,7 +5,7 @@ from pathlib import Path
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
 from trail.daemon.command_service import SideEffectAppliedButStateNotPersisted
-from trail.scenes.cw.entry import enter_cw
+from trail.scenes.cw.entry import enter_cw, start_cw
 from trail.scenes.cw.events import (
     build_cw_battle_continuer,
     build_cw_battle_starter,
@@ -31,6 +31,9 @@ from trail.scenes.cw.events import (
     start_cw_battle,
 )
 from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, fetch_cw_guide, fetch_cw_guide_payload
+from trail.scenes.cw.guide import fetch_cw_guide_config
+from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.portal import summarize_portal_cards
 from trail.scenes.cw.shop import (
     build_cw_shop_buyer,
     build_cw_shop_closer,
@@ -173,6 +176,13 @@ class CwService:
 
         handlers = {
             "cw.enter": lambda: enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
+            "cw.start": lambda: _start_cw(
+                session,
+                runtime=runtime(),
+                mode=payload["mode"],
+                difficulty=payload["difficulty"],
+                battle_mode=payload["battle_mode"],
+            ),
             "cw.stage.detect": lambda: detect_cw_stage(
                 session,
                 detector=stage_detector_factory(runtime()),
@@ -305,6 +315,26 @@ def _apply_guide(session, *, runtime, artifact_store: ArtifactStore, lineup_id: 
     except Exception as error:
         raise CwSideEffectAppliedError("cw.guide.apply side effect already ran") from error
     return refreshed.scene_state["cw"]["guide"]
+
+
+def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str) -> dict:
+    refreshed = start_cw(
+        session,
+        mode=mode,
+        difficulty=difficulty,
+        battle_mode=battle_mode,
+        runtime=runtime,
+    )
+    cards = summarize_portal_cards(runtime.ocr(), fetch_cw_guide_config().get("portal_list", []))
+    portal_snapshot = {
+        "cards": cards,
+        "mode": mode,
+        "difficulty": difficulty,
+        "battle_mode": battle_mode,
+        "stale": False,
+    }
+    ensure_cw_state(refreshed)["portal"] = portal_snapshot
+    return portal_snapshot
 
 
 def _unknown_result_envelope(error: Exception) -> dict:

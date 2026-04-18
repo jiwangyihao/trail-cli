@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from trail.daemon.command_service import CommandService
+from trail.daemon.cw_service import CwService
+from trail.daemon.models import DaemonRequest
+from trail.daemon.protocol import PROTOCOL_VERSION
+from trail.daemon.session_service import SessionServiceRegistry
+from trail.runtime.model import Box
+from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.portal import summarize_portal_cards
 
 
@@ -27,6 +36,112 @@ def _tuple_piece(text: str, left: int, top: int, width: int = 80, height: int = 
         [left, top + height],
     ]
     return [polygon, text, 0.99]
+
+
+def _asset(alias: str) -> str:
+    return str(resolve_scene_asset("cw", alias))
+
+
+def _box(alias: str, *, left: int, top: int, width: int = 40, height: int = 20) -> Box:
+    return Box(left=left, top=top, width=width, height=height, source=_asset(alias))
+
+
+class StartRuntime:
+    def __init__(
+        self,
+        *,
+        locate_results: dict[str, object] | None = None,
+        wait_results: dict[str, object] | None = None,
+        ocr_result: object | None = None,
+    ):
+        self._locate_results = locate_results or {}
+        self._wait_results = wait_results or {}
+        self._ocr_result = [] if ocr_result is None else ocr_result
+        self.locate_calls: list[str] = []
+        self.wait_calls: list[str] = []
+        self.clicks: list[tuple[int, int]] = []
+        self.ocr_calls: list[dict[str, object]] = []
+
+    def locate(self, template: str, **kwargs):
+        del kwargs
+        self.locate_calls.append(template)
+        return self._locate_results.get(template)
+
+    def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+        del timeout, interval
+        self.wait_calls.append(template)
+        return self._wait_results.get(template)
+
+    def click_point(self, x: int, y: int, **kwargs):
+        del kwargs
+        self.clicks.append((x, y))
+
+    def ocr(self, **kwargs):
+        self.ocr_calls.append(dict(kwargs))
+        if isinstance(self._ocr_result, list):
+            return list(self._ocr_result)
+        return self._ocr_result
+
+
+def _build_cw_harness(tmp_path: Path, *, runtime):
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    return registry, service, session, command_service
+
+
+def _run_cw_start(
+    *,
+    command_service,
+    session,
+    workspace_root: Path,
+    request_id: str,
+    mode: str,
+    difficulty: str,
+    battle_mode: str,
+):
+    return command_service.handle(
+        DaemonRequest(
+            request_id=request_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(workspace_root),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.start",
+            payload={
+                "session_id": session.session_id,
+                "mode": mode,
+                "difficulty": difficulty,
+                "battle_mode": battle_mode,
+            },
+        )
+    )
+
+
+def _portal_cards() -> list[dict[str, object]]:
+    return [
+        {
+            "card_idx": 1,
+            "portal_title": "Alpha Portal",
+            "portal_description": "Alpha Desc",
+            "score": 0.99,
+        },
+        {
+            "card_idx": 2,
+            "portal_title": "Beta Portal",
+            "portal_description": "Beta Desc",
+            "score": 0.88,
+        },
+        {
+            "card_idx": 3,
+            "portal_title": "Gamma Portal",
+            "portal_description": "Gamma Desc",
+            "score": 0.77,
+        },
+    ]
 
 
 def test_summarize_portal_cards_groups_three_lanes_and_merges_rows():
@@ -147,3 +262,282 @@ def test_summarize_portal_cards_returns_empty_summary_for_lane_without_text():
         "score": pytest.approx(0.0),
     }
     assert all(set(card) == {"card_idx", "portal_title", "portal_description", "score"} for card in cards)
+
+
+def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    start_box = _box("entry.start", left=100, top=200)
+    continue_box = _box("entry.continue", left=200, top=300)
+    boss_preview_box = _box("stage.boss_preview", left=300, top=400)
+    invest_box = _box("entry.invest_environment", left=400, top=500)
+    runtime = StartRuntime(
+        locate_results={
+            _asset("entry.start"): start_box,
+        },
+        wait_results={
+            _asset("entry.continue"): continue_box,
+            _asset("stage.boss_preview"): boss_preview_box,
+            _asset("entry.invest_environment"): invest_box,
+        },
+        ocr_result=[{"text": "alpha"}],
+    )
+    cards = _portal_cards()
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.fetch_cw_guide_config",
+        lambda timeout=10: {"portal_list": [{"portal_id": "alpha", "title": "Alpha Portal", "description": "Alpha Desc"}]},
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list: cards)
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-start-home",
+        mode="continue",
+        difficulty="current",
+        battle_mode="standard",
+    )
+    status = registry.for_workspace(str(tmp_path)).request_status("req-cw-start-home")
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"] == {
+        "cards": cards,
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+        "stale": False,
+    }
+    assert persisted.scene_state["cw"]["portal"] == envelope["data"]
+    assert persisted.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+    assert status["final_state"] == "completed"
+    assert runtime.clicks == [
+        start_box.center,
+        (300, 250),
+        continue_box.center,
+        boss_preview_box.center,
+    ]
+    assert runtime.wait_calls == [
+        _asset("entry.continue"),
+        _asset("stage.boss_preview"),
+        _asset("entry.invest_environment"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("page", "mode", "locate_results", "wait_results", "expected_clicks", "expected_waits"),
+    [
+        (
+            "entry.new",
+            "new",
+            {_asset("entry.new"): _box("entry.new", left=120, top=220)},
+            {
+                _asset("entry.new"): _box("entry.new", left=120, top=220),
+                _asset("entry.start_game"): _box("entry.start_game", left=220, top=320),
+                _asset("stage.settle"): _box("stage.settle", left=320, top=420),
+                _asset("stage.boss_preview"): _box("stage.boss_preview", left=420, top=520),
+                _asset("entry.invest_environment"): _box("entry.invest_environment", left=520, top=620),
+            },
+            [(140, 230), (240, 330), (340, 430), (440, 530)],
+            [
+                _asset("entry.new"),
+                _asset("entry.start_game"),
+                _asset("stage.settle"),
+                _asset("stage.boss_preview"),
+                _asset("entry.invest_environment"),
+            ],
+        ),
+        (
+            "entry.continue",
+            "continue",
+            {_asset("entry.continue"): _box("entry.continue", left=200, top=300)},
+            {
+                _asset("entry.continue"): _box("entry.continue", left=200, top=300),
+                _asset("stage.boss_preview"): _box("stage.boss_preview", left=300, top=400),
+                _asset("entry.invest_environment"): _box("entry.invest_environment", left=400, top=500),
+            },
+            [(220, 310), (320, 410)],
+            [
+                _asset("entry.continue"),
+                _asset("stage.boss_preview"),
+                _asset("entry.invest_environment"),
+            ],
+        ),
+        (
+            "stage.boss_preview",
+            "continue",
+            {_asset("stage.boss_preview"): _box("stage.boss_preview", left=300, top=400)},
+            {
+                _asset("stage.boss_preview"): _box("stage.boss_preview", left=300, top=400),
+                _asset("entry.invest_environment"): _box("entry.invest_environment", left=400, top=500),
+            },
+            [(320, 410)],
+            [
+                _asset("stage.boss_preview"),
+                _asset("entry.invest_environment"),
+            ],
+        ),
+    ],
+)
+def test_cw_start_continues_pages_between_home_and_invest(
+    tmp_path: Path,
+    monkeypatch,
+    page: str,
+    mode: str,
+    locate_results: dict[str, object],
+    wait_results: dict[str, object],
+    expected_clicks: list[tuple[int, int]],
+    expected_waits: list[str],
+):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    cards = _portal_cards()
+    runtime = StartRuntime(locate_results=locate_results, wait_results=wait_results, ocr_result=[{"text": page}])
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list: cards)
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id=f"req-cw-start-{page.replace('.', '-')}",
+        mode=mode,
+        difficulty="current",
+        battle_mode="standard",
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"]["cards"] == cards
+    assert persisted.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": mode,
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+    assert runtime.clicks == expected_clicks
+    assert runtime.wait_calls == expected_waits
+
+
+def test_cw_start_noops_on_invest_and_backfills_entry_params(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    runtime = StartRuntime(
+        locate_results={
+            _asset("entry.invest_environment"): _box("entry.invest_environment", left=400, top=500),
+        },
+        ocr_result=[{"text": "invest"}],
+    )
+    cards = _portal_cards()
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list: cards)
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {"entry": {"page": "invest"}}
+    service.save_session(session)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-start-invest",
+        mode="new",
+        difficulty="highest",
+        battle_mode="overclock",
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"] == {
+        "cards": cards,
+        "mode": "new",
+        "difficulty": "highest",
+        "battle_mode": "overclock",
+        "stale": False,
+    }
+    assert persisted.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": "new",
+        "difficulty": "highest",
+        "battle_mode": "overclock",
+    }
+    assert runtime.clicks == []
+    assert runtime.wait_calls == []
+
+
+def test_cw_start_noop_rejects_conflicting_entry_params(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    runtime = StartRuntime(
+        locate_results={
+            _asset("entry.invest_environment"): _box("entry.invest_environment", left=400, top=500),
+        },
+    )
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {
+            "page": "invest",
+            "mode": "continue",
+            "difficulty": "current",
+            "battle_mode": "standard",
+        }
+    }
+    service.save_session(session)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-start-invest-conflict",
+        mode="new",
+        difficulty="current",
+        battle_mode="standard",
+    )
+    status = registry.for_workspace(str(tmp_path)).request_status("req-cw-start-invest-conflict")
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is False
+    assert envelope["error"] == {
+        "code": "CW_START_ENTRY_CONFLICT",
+        "message": "cw start conflicts with recorded mode: continue != new",
+    }
+    assert status["final_state"] == "failed_before_side_effect"
+    assert persisted.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+    assert runtime.clicks == []
+
+
+def test_cw_start_rejects_in_game_page(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    runtime = StartRuntime(
+        locate_results={
+            _asset("stage.shop"): _box("stage.shop", left=500, top=600),
+        }
+    )
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-start-in-game",
+        mode="continue",
+        difficulty="current",
+        battle_mode="standard",
+    )
+    status = registry.for_workspace(str(tmp_path)).request_status("req-cw-start-in-game")
+
+    assert envelope["ok"] is False
+    assert envelope["data"] == {"page": "in_game", "stage": "shop"}
+    assert envelope["error"] == {
+        "code": "CW_START_PAGE_INVALID",
+        "message": "cw start only supports home, pre-invest pages, or invest, current page: in_game, stage: shop",
+    }
+    assert status["final_state"] == "failed_before_side_effect"

@@ -14,6 +14,7 @@ from trail.runtime.ocr_config import OCR_LANG_UNSUPPORTED, split_ocr_call
 
 CW_MUTATING_METHODS = {
     "cw.enter",
+    "cw.start",
     "cw.guide.apply",
     "cw.slots.swap",
     "cw.slots.place_one",

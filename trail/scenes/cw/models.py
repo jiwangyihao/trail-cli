@@ -20,6 +20,15 @@ class CwSceneState:
     )
     slots: dict = field(default_factory=lambda: {"stale": True})
     sell_plan: dict = field(default_factory=dict)
+    portal: dict = field(
+        default_factory=lambda: {
+            "cards": [],
+            "mode": None,
+            "difficulty": None,
+            "battle_mode": None,
+            "stale": True,
+        }
+    )
     shop: dict = field(default_factory=lambda: {"stale": True, "max_team_size": None})
     stage: dict = field(default_factory=lambda: {"stale": True})
     metrics: dict = field(default_factory=dict)
@@ -30,6 +39,7 @@ class CwSceneState:
             "constraints": deepcopy(self.constraints),
             "slots": deepcopy(self.slots),
             "sell_plan": deepcopy(self.sell_plan),
+            "portal": deepcopy(self.portal),
             "shop": deepcopy(self.shop),
             "stage": deepcopy(self.stage),
             "metrics": deepcopy(self.metrics),

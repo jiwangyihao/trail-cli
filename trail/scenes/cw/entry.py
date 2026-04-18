@@ -36,6 +36,22 @@ class CwEnterStateError(TrailError):
             self.data["stage"] = stage
 
 
+class CwStartStateError(TrailError):
+    def __init__(self, *, page: str, stage: str | None = None):
+        message = f"cw start only supports home, pre-invest pages, or invest, current page: {page}"
+        if stage is not None:
+            message += f", stage: {stage}"
+        super().__init__("CW_START_PAGE_INVALID", message)
+        self.data = {"page": page}
+        if stage is not None:
+            self.data["stage"] = stage
+
+
+class CwStartEntryConflictError(TrailError):
+    def __init__(self, *, field_name: str, recorded: str, requested: str):
+        super().__init__("CW_START_ENTRY_CONFLICT", f"cw start conflicts with recorded {field_name}: {recorded} != {requested}")
+
+
 def _asset(alias: str) -> str:
     return str(resolve_scene_asset("cw", alias))
 
@@ -88,6 +104,7 @@ def _invalidate_entry_snapshots(session: SessionModel) -> None:
     cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
     cw_state["shop"] = {**cw_state.get("shop", {}), "stale": True}
     cw_state["sell_plan"] = {"stale": True}
+    cw_state["portal"] = {**cw_state.get("portal", {}), "stale": True}
     _invalidate_stage(session)
 
 
@@ -141,6 +158,7 @@ def _enter_from_start_page(runtime, *, mode: str, difficulty: str, battle_mode: 
         _enter_new_game(runtime, difficulty=difficulty)
         return
     _enter_continue_game(runtime)
+    _handle_invest_environment_flow(runtime)
 
 
 def _enter_from_world(runtime, *, mode: str, difficulty: str, battle_mode: str) -> None:
@@ -219,6 +237,75 @@ def _run_entry_chain(runtime, *, mode: str, difficulty: str, battle_mode: str) -
         _enter_from_world(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode)
         return {"page": "home"}
     raise CwEnterStateError(page=current["page"], stage=current.get("stage"))
+
+
+def _persist_start_entry(session: SessionModel, *, mode: str, difficulty: str, battle_mode: str, guard_conflicts: bool) -> None:
+    cw_state = ensure_cw_state(session)
+    existing = cw_state.get("entry") if isinstance(cw_state.get("entry"), Mapping) else {}
+    if guard_conflicts:
+        for field_name, requested in (("mode", mode), ("difficulty", difficulty), ("battle_mode", battle_mode)):
+            recorded = existing.get(field_name)
+            if recorded is not None and recorded != requested:
+                raise CwStartEntryConflictError(field_name=field_name, recorded=str(recorded), requested=requested)
+    cw_state["entry"] = {
+        "page": "invest",
+        "mode": mode,
+        "difficulty": difficulty,
+        "battle_mode": battle_mode,
+    }
+    _invalidate_stage(session)
+
+
+def _run_start_chain(runtime, *, current: dict[str, str], mode: str, difficulty: str, battle_mode: str) -> None:
+    page = current["page"]
+    if page == "home":
+        start_box = _locate(runtime, "entry.start")
+        _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode, start_box=start_box)
+        return
+    if page == "entry.new":
+        _enter_new_game(runtime, difficulty=difficulty)
+        return
+    if page == "entry.continue":
+        _enter_continue_game(runtime)
+        _handle_invest_environment_flow(runtime)
+        return
+    if page == "stage.boss_preview":
+        _consume_click_blank_prompt(runtime)
+        _handle_invest_environment_flow(runtime)
+        return
+    if page == "invest":
+        return
+    raise CwStartStateError(page=page, stage=current.get("stage"))
+
+
+def start_cw(
+    session: SessionModel,
+    *,
+    mode: str,
+    difficulty: str,
+    battle_mode: str,
+    runtime,
+) -> SessionModel:
+    current = _detect_current_enter_page(runtime, session=session)
+    if current["page"] == "invest":
+        _persist_start_entry(
+            session,
+            mode=mode,
+            difficulty=difficulty,
+            battle_mode=battle_mode,
+            guard_conflicts=True,
+        )
+        return session
+
+    _run_start_chain(runtime, current=current, mode=mode, difficulty=difficulty, battle_mode=battle_mode)
+    _persist_start_entry(
+        session,
+        mode=mode,
+        difficulty=difficulty,
+        battle_mode=battle_mode,
+        guard_conflicts=False,
+    )
+    return session
 
 
 def enter_cw(
