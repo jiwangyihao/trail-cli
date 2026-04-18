@@ -32,8 +32,8 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
   - `攻略优先` / `环境优先`
   - `standard` / `overclock`
   - 是否接受刷开局（后续是否允许 `trail cw portal.refresh` / `trail cw portal.restart`）
-- 如果先按环境选攻略，可先用：`trail guide list cw --portal <title>` 或 `trail guide list cw --portal-id <id>`
 - 进入投资环境页：`trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest --battle-mode standard|overclock`
+- 如果先按环境选攻略，再用：`trail guide list cw --portal <title>` 或 `trail guide list cw --portal-id <id>`
 - 查看返回的三卡摘要后，根据需要执行：
   - `trail cw portal.select --session <id> --card-idx <n>`
   - `trail cw portal.refresh --session <id>`
