@@ -185,7 +185,11 @@ def _detect_current_enter_page(runtime, *, session: SessionModel | None = None) 
 
     if _locate(runtime, "entry.start") is not None:
         if session is not None:
-            recorded_stage = ensure_cw_state(session).get("stage", {})
+            cw_state = ensure_cw_state(session)
+            recorded_entry = cw_state.get("entry", {})
+            if recorded_entry.get("page") == "home":
+                return {"page": "home", "already_home": "1"}
+            recorded_stage = cw_state.get("stage", {})
             if recorded_stage.get("stale") is False and recorded_stage.get("value") == "game_over":
                 return {"page": "in_game", "stage": "game_over"}
         return {"page": "home", "already_home": "1"}

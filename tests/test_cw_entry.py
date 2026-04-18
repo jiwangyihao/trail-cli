@@ -152,6 +152,32 @@ def test_enter_cw_rejects_game_over_state_recorded_in_session(tmp_path):
     assert getattr(exc_info.value, "data", None) == {"page": "in_game", "stage": "game_over"}
 
 
+def test_enter_cw_prefers_recorded_home_over_game_over_on_shared_start_resource(tmp_path):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {
+        "entry": {"page": "home"},
+        "stage": {"value": "game_over", "stale": False},
+    }
+
+    start_box = _box("entry.start", left=10, top=20)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+    runtime = Runtime()
+    _install_template_runtime(runtime, locate_results={_asset("entry.start"): start_box})
+
+    refreshed = enter_cw(session, mode="continue", runtime=runtime)
+
+    assert refreshed.scene_state["cw"]["entry"] == {"page": "home", "already_home": True}
+
+
 def test_enter_cw_ignores_recorded_game_over_when_runtime_is_still_world(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
     session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
