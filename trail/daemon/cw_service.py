@@ -33,7 +33,7 @@ from trail.scenes.cw.events import (
 from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, fetch_cw_guide, fetch_cw_guide_payload
 from trail.scenes.cw.guide import fetch_cw_guide_config
 from trail.scenes.cw.models import ensure_cw_state
-from trail.scenes.cw.portal import summarize_portal_cards
+from trail.scenes.cw.portal import refresh_cw_portal, restart_cw_portal_to_homepage, select_cw_portal, summarize_portal_cards
 from trail.scenes.cw.shop import (
     build_cw_shop_buyer,
     build_cw_shop_closer,
@@ -183,6 +183,17 @@ class CwService:
                 difficulty=payload["difficulty"],
                 battle_mode=payload["battle_mode"],
             ),
+            "cw.portal.select": lambda: select_cw_portal(
+                session,
+                card_idx=payload["card_idx"],
+                runtime=runtime(),
+            ),
+            "cw.portal.refresh": lambda: refresh_cw_portal(
+                session,
+                runtime=runtime(),
+                portal_list=fetch_cw_guide_config().get("portal_list", []),
+            ),
+            "cw.portal.restart": lambda: _restart_cw(session, runtime=runtime()),
             "cw.stage.detect": lambda: detect_cw_stage(
                 session,
                 detector=stage_detector_factory(runtime()),
@@ -336,6 +347,20 @@ def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str)
     }
     ensure_cw_state(refreshed)["portal"] = portal_snapshot
     return portal_snapshot
+
+
+def _restart_cw(session, *, runtime) -> dict:
+    entry_state = ensure_cw_state(session).get("entry") if isinstance(ensure_cw_state(session).get("entry"), dict) else {}
+    portal_state = ensure_cw_state(session).get("portal") if isinstance(ensure_cw_state(session).get("portal"), dict) else {}
+    mode = entry_state.get("mode") if entry_state.get("mode") is not None else portal_state.get("mode")
+    difficulty = entry_state.get("difficulty") if entry_state.get("difficulty") is not None else portal_state.get("difficulty")
+    battle_mode = entry_state.get("battle_mode") if entry_state.get("battle_mode") is not None else portal_state.get("battle_mode")
+    if not isinstance(mode, str) or not isinstance(difficulty, str) or not isinstance(battle_mode, str):
+        raise TrailError("CW_PORTAL_ENTRY_TRUTH_REQUIRED", "cw portal.restart requires recorded mode/difficulty/battle_mode")
+
+    select_cw_portal(session, card_idx=1, runtime=runtime)
+    restart_cw_portal_to_homepage(session, runtime=runtime)
+    return _start_cw(session, runtime=runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode)
 
 
 def _unknown_result_envelope(error: Exception) -> dict:

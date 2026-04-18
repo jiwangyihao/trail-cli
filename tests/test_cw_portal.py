@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from trail.core.errors import TrailError
 from trail.daemon.command_service import CommandService
 from trail.daemon.cw_service import CwService
 from trail.daemon.models import DaemonRequest
@@ -83,6 +84,22 @@ class StartRuntime:
         return self._ocr_result
 
 
+class PortalRuntime(StartRuntime):
+    def __init__(self, *args, click_error: Exception | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.keys: list[tuple[str, int, float]] = []
+        self.click_error = click_error
+
+    def click_point(self, x: int, y: int, **kwargs):
+        del kwargs
+        if self.click_error is not None:
+            raise self.click_error
+        self.clicks.append((x, y))
+
+    def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+        self.keys.append((key, presses, interval))
+
+
 def _build_cw_harness(tmp_path: Path, *, runtime):
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))
@@ -142,6 +159,20 @@ def _portal_cards() -> list[dict[str, object]]:
             "score": 0.77,
         },
     ]
+
+
+def _run_cw_portal_mutation(*, command_service, session, workspace_root: Path, request_id: str, method: str, payload: dict):
+    return command_service.handle(
+        DaemonRequest(
+            request_id=request_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(workspace_root),
+            session_id=session.session_id,
+            verbose=False,
+            method=method,
+            payload={"session_id": session.session_id, **payload},
+        )
+    )
 
 
 def test_summarize_portal_cards_groups_three_lanes_and_merges_rows():
@@ -262,6 +293,332 @@ def test_summarize_portal_cards_returns_empty_summary_for_lane_without_text():
         "score": pytest.approx(0.0),
     }
     assert all(set(card) == {"card_idx", "portal_title", "portal_description", "score"} for card in cards)
+
+
+def test_restart_cw_portal_to_homepage_requires_in_game_page(tmp_path: Path, monkeypatch):
+    import trail.scenes.cw.portal as portal_module
+
+    restart_to_homepage = getattr(portal_module, "restart_cw_portal_to_homepage", None)
+    assert restart_to_homepage is not None
+
+    session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = PortalRuntime()
+    monkeypatch.setattr(portal_module, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: {"page": "invest"}, raising=False)
+
+    with pytest.raises(TrailError) as exc_info:
+        restart_to_homepage(session, runtime=runtime)
+
+    assert exc_info.value.code == "CW_PORTAL_RESTART_HOME_INVALID"
+    assert str(exc_info.value) == "cw portal restart helper only supports in_game, current page: invest"
+    assert runtime.keys == []
+
+
+def test_restart_cw_portal_to_homepage_presses_esc_until_home(tmp_path: Path, monkeypatch):
+    import trail.scenes.cw.portal as portal_module
+
+    restart_to_homepage = getattr(portal_module, "restart_cw_portal_to_homepage", None)
+    assert restart_to_homepage is not None
+
+    session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"}}
+    runtime = PortalRuntime()
+    states = iter([
+        {"page": "in_game", "stage": "shop"},
+        {"page": "home", "already_home": "1"},
+    ])
+    monkeypatch.setattr(portal_module, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: next(states), raising=False)
+
+    restart_to_homepage(session, runtime=runtime)
+
+    assert runtime.keys == [("esc", 1, 0.2)]
+    assert session.scene_state["cw"]["entry"] == {
+        "page": "home",
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+
+
+def test_select_cw_portal_rejects_non_invest_page(tmp_path: Path, monkeypatch):
+    import trail.scenes.cw.portal as portal_module
+
+    select_cw_portal = getattr(portal_module, "select_cw_portal", None)
+    assert select_cw_portal is not None
+
+    session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"portal": {"cards": _portal_cards(), "stale": False}}
+    runtime = PortalRuntime()
+    monkeypatch.setattr(portal_module, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: {"page": "home"}, raising=False)
+
+    with pytest.raises(TrailError) as exc_info:
+        select_cw_portal(session, card_idx=1, runtime=runtime)
+
+    assert exc_info.value.code == "CW_PORTAL_PAGE_INVALID"
+    assert str(exc_info.value) == "cw portal action only supports invest, current page: home"
+    assert runtime.clicks == []
+
+
+def test_select_cw_portal_rejects_invalid_card_idx(tmp_path: Path, monkeypatch):
+    import trail.scenes.cw.portal as portal_module
+
+    select_cw_portal = getattr(portal_module, "select_cw_portal", None)
+    assert select_cw_portal is not None
+
+    session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"portal": {"cards": _portal_cards(), "stale": False}}
+    runtime = PortalRuntime()
+    monkeypatch.setattr(portal_module, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: {"page": "invest"}, raising=False)
+
+    with pytest.raises(TrailError) as exc_info:
+        select_cw_portal(session, card_idx=4, runtime=runtime)
+
+    assert exc_info.value.code == "CW_PORTAL_CARD_IDX_INVALID"
+    assert str(exc_info.value) == "cw portal.select only supports card_idx 1|2|3, got: 4"
+    assert runtime.clicks == []
+
+
+def test_select_cw_portal_requires_cached_portal_snapshot(tmp_path: Path, monkeypatch):
+    import trail.scenes.cw.portal as portal_module
+
+    select_cw_portal = getattr(portal_module, "select_cw_portal", None)
+    assert select_cw_portal is not None
+
+    session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = PortalRuntime()
+    monkeypatch.setattr(portal_module, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: {"page": "invest"}, raising=False)
+
+    with pytest.raises(TrailError) as exc_info:
+        select_cw_portal(session, card_idx=2, runtime=runtime)
+
+    assert exc_info.value.code == "CW_PORTAL_SNAPSHOT_REQUIRED"
+    assert str(exc_info.value) == "cw portal.select requires cached portal snapshot"
+    assert runtime.clicks == []
+
+
+def test_select_cw_portal_marks_snapshot_stale_after_confirm(tmp_path: Path, monkeypatch):
+    import trail.scenes.cw.portal as portal_module
+
+    select_cw_portal = getattr(portal_module, "select_cw_portal", None)
+    assert select_cw_portal is not None
+
+    session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    runtime = PortalRuntime()
+    monkeypatch.setattr(portal_module, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: {"page": "invest"}, raising=False)
+
+    selected = select_cw_portal(session, card_idx=2, runtime=runtime)
+
+    assert selected == _portal_cards()[1]
+    assert runtime.clicks == [(960, 540), (960, 920)]
+    assert session.scene_state["cw"]["portal"]["stale"] is True
+    assert session.scene_state["cw"]["entry"] == {
+        "page": "in_game",
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+
+
+def test_refresh_cw_portal_rejects_non_invest_page(tmp_path: Path, monkeypatch):
+    import trail.scenes.cw.portal as portal_module
+
+    refresh_cw_portal = getattr(portal_module, "refresh_cw_portal", None)
+    assert refresh_cw_portal is not None
+
+    session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = PortalRuntime()
+    monkeypatch.setattr(portal_module, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: {"page": "home"}, raising=False)
+
+    with pytest.raises(TrailError) as exc_info:
+        refresh_cw_portal(session, runtime=runtime, portal_list=[])
+
+    assert exc_info.value.code == "CW_PORTAL_PAGE_INVALID"
+    assert str(exc_info.value) == "cw portal action only supports invest, current page: home"
+
+
+def test_refresh_cw_portal_rejects_when_refresh_unavailable(tmp_path: Path, monkeypatch):
+    import trail.scenes.cw.portal as portal_module
+
+    refresh_cw_portal = getattr(portal_module, "refresh_cw_portal", None)
+    assert refresh_cw_portal is not None
+
+    session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    runtime = PortalRuntime(click_error=TrailError("BUTTON_MISSING", "button missing"))
+    monkeypatch.setattr(portal_module, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: {"page": "invest"}, raising=False)
+
+    with pytest.raises(TrailError) as exc_info:
+        refresh_cw_portal(session, runtime=runtime, portal_list=[])
+
+    assert exc_info.value.code == "CW_PORTAL_REFRESH_UNAVAILABLE"
+    assert str(exc_info.value) == "cw portal.refresh unavailable"
+
+
+def test_refresh_cw_portal_clicks_refresh_and_updates_snapshot(tmp_path: Path, monkeypatch):
+    import trail.scenes.cw.portal as portal_module
+
+    refresh_cw_portal = getattr(portal_module, "refresh_cw_portal", None)
+    assert refresh_cw_portal is not None
+
+    cards = _portal_cards()
+    session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": [{"card_idx": 1, "portal_title": "old", "portal_description": "old", "score": 0.1}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    runtime = PortalRuntime(ocr_result=[{"text": "beta"}])
+    observed_summary_inputs: list[dict[str, object]] = []
+    monkeypatch.setattr(portal_module, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: {"page": "invest"}, raising=False)
+    monkeypatch.setattr(
+        portal_module,
+        "summarize_portal_cards",
+        lambda pieces, portal_list: observed_summary_inputs.append({"pieces": pieces, "portal_list": portal_list}) or cards,
+        raising=False,
+    )
+
+    snapshot = refresh_cw_portal(
+        session,
+        runtime=runtime,
+        portal_list=[{"portal_id": "beta", "title": "Beta Portal", "description": "Beta Desc"}],
+    )
+
+    assert runtime.clicks == [(1760, 140)]
+    assert runtime.ocr_calls == [{}]
+    assert observed_summary_inputs == [{"pieces": [{"text": "beta"}], "portal_list": [{"portal_id": "beta", "title": "Beta Portal", "description": "Beta Desc"}]}]
+    assert snapshot == {
+        "cards": cards,
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+        "stale": False,
+    }
+    assert session.scene_state["cw"]["portal"] == snapshot
+    assert session.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+
+
+def test_restart_cw_portal_requires_recorded_entry_truth(tmp_path: Path, monkeypatch):
+    import trail.daemon.cw_service as cw_service_module
+
+    runtime = PortalRuntime()
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest"},
+        "portal": {"cards": _portal_cards(), "stale": False},
+    }
+    service.save_session(session)
+
+    envelope = _run_cw_portal_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-portal-restart-missing-entry",
+        method="cw.portal.restart",
+        payload={},
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["error"] == {
+        "code": "CW_PORTAL_ENTRY_TRUTH_REQUIRED",
+        "message": "cw portal.restart requires recorded mode/difficulty/battle_mode",
+    }
+
+
+def test_restart_cw_portal_rejects_non_invest_page(tmp_path: Path, monkeypatch):
+    import trail.daemon.cw_service as cw_service_module
+
+    runtime = PortalRuntime()
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "home", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+
+    envelope = _run_cw_portal_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-portal-restart-home",
+        method="cw.portal.restart",
+        payload={},
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["error"] == {
+        "code": "CW_PORTAL_PAGE_INVALID",
+        "message": "cw portal action only supports invest, current page: home",
+    }
+
+
+def test_restart_cw_portal_selects_first_card_returns_home_and_restarts_into_invest(tmp_path: Path, monkeypatch):
+    import trail.daemon.cw_service as cw_service_module
+
+    cards = _portal_cards()
+    restarted_cards = [
+        {"card_idx": 1, "portal_title": "New Alpha", "portal_description": "New Desc", "score": 0.91},
+        {"card_idx": 2, "portal_title": "New Beta", "portal_description": "New Desc", "score": 0.82},
+        {"card_idx": 3, "portal_title": "New Gamma", "portal_description": "New Desc", "score": 0.73},
+    ]
+    runtime = PortalRuntime(ocr_result=[{"text": "restart"}])
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": cards, "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    select_calls: list[int] = []
+    restart_calls: list[str] = []
+    start_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(cw_service_module, "select_cw_portal", lambda session, card_idx, runtime: select_calls.append(card_idx) or cards[0], raising=False)
+    monkeypatch.setattr(cw_service_module, "restart_cw_portal_to_homepage", lambda session, runtime: restart_calls.append("home") or session, raising=False)
+
+    def fake_start_cw(session, *, mode: str, difficulty: str, battle_mode: str, runtime):
+        start_calls.append({"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode})
+        session.scene_state.setdefault("cw", {})["entry"] = {
+            "page": "invest",
+            "mode": mode,
+            "difficulty": difficulty,
+            "battle_mode": battle_mode,
+        }
+        return session
+
+    monkeypatch.setattr(cw_service_module, "start_cw", fake_start_cw, raising=False)
+    monkeypatch.setattr(cw_service_module, "fetch_cw_guide_config", lambda timeout=10: {"portal_list": []}, raising=False)
+    monkeypatch.setattr(cw_service_module, "summarize_portal_cards", lambda pieces, portal_list: restarted_cards, raising=False)
+
+    envelope = _run_cw_portal_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-portal-restart-happy",
+        method="cw.portal.restart",
+        payload={},
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"] == {
+        "cards": restarted_cards,
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+        "stale": False,
+    }
+    assert select_calls == [1]
+    assert restart_calls == ["home"]
+    assert start_calls == [{"mode": "continue", "difficulty": "current", "battle_mode": "standard"}]
+    assert persisted.scene_state["cw"]["portal"] == envelope["data"]
 
 
 def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_path: Path, monkeypatch):

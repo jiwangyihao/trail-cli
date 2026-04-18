@@ -5,12 +5,21 @@ from difflib import SequenceMatcher
 import re
 from typing import Any
 
+from trail.core.errors import TrailError
+from trail.scenes.cw.entry import _detect_current_enter_page
+from trail.scenes.cw.models import ensure_cw_state
+
 
 PORTAL_SCREEN_WIDTH = 1920
 PORTAL_LANE_COUNT = 3
 PORTAL_ROW_MERGE_Y_DELTA = 32
 PORTAL_NOISE_PATTERN = re.compile(r"[，。！？：；、“”‘’（）《》〈〉【】『』「」—…·,.;:!?\'\"()\[\]{}<>/\\|@#$%^&*_+=~-]+")
 PORTAL_WHITESPACE_PATTERN = re.compile(r"\s+")
+PORTAL_CARD_CENTER_Y = 540
+PORTAL_CONFIRM_POINT = (960, 920)
+PORTAL_REFRESH_POINT = (1760, 140)
+PORTAL_RESTART_HOME_MAX_ESC_PRESSES = 3
+PORTAL_RESTART_HOME_INTERVAL = 0.2
 
 
 def summarize_portal_cards(ocr_pieces: object, portal_list: object) -> list[dict[str, object]]:
@@ -29,6 +38,72 @@ def summarize_portal_cards(ocr_pieces: object, portal_list: object) -> list[dict
     return summaries
 
 
+def select_cw_portal(session, *, card_idx: int, runtime) -> dict[str, object]:
+    _require_portal_page(runtime, session=session, expected_page="invest")
+    if card_idx not in {1, 2, 3}:
+        raise TrailError("CW_PORTAL_CARD_IDX_INVALID", f"cw portal.select only supports card_idx 1|2|3, got: {card_idx}")
+
+    snapshot = _require_portal_snapshot(session, command_name="cw portal.select")
+    cards = snapshot["cards"]
+    if len(cards) < card_idx:
+        raise TrailError("CW_PORTAL_SNAPSHOT_REQUIRED", "cw portal.select requires cached portal snapshot")
+
+    runtime.click_point(*_card_center(card_idx))
+    runtime.click_point(*PORTAL_CONFIRM_POINT)
+
+    selected = dict(cards[card_idx - 1])
+    _mark_portal_stale_after_selection(session)
+    return selected
+
+
+def refresh_cw_portal(session, *, runtime, portal_list: object) -> dict[str, object]:
+    _require_portal_page(runtime, session=session, expected_page="invest")
+    try:
+        runtime.click_point(*PORTAL_REFRESH_POINT)
+    except Exception as error:
+        raise TrailError("CW_PORTAL_REFRESH_UNAVAILABLE", "cw portal.refresh unavailable") from error
+
+    cards = summarize_portal_cards(runtime.ocr(), portal_list)
+    snapshot = {
+        "cards": cards,
+        **_portal_entry_truth(session),
+        "stale": False,
+    }
+    cw_state = ensure_cw_state(session)
+    cw_state["portal"] = snapshot
+    cw_state["entry"] = {
+        "page": "invest",
+        "mode": snapshot.get("mode"),
+        "difficulty": snapshot.get("difficulty"),
+        "battle_mode": snapshot.get("battle_mode"),
+    }
+    return snapshot
+
+
+def restart_cw_portal_to_homepage(session, *, runtime) -> None:
+    current = _detect_current_enter_page(runtime, session=session)
+    if current.get("page") != "in_game":
+        raise TrailError(
+            "CW_PORTAL_RESTART_HOME_INVALID",
+            f"cw portal restart helper only supports in_game, current page: {current.get('page')}",
+        )
+
+    for _ in range(PORTAL_RESTART_HOME_MAX_ESC_PRESSES):
+        runtime.press_key("esc", presses=1, interval=PORTAL_RESTART_HOME_INTERVAL)
+        current = _detect_current_enter_page(runtime, session=session)
+        if current.get("page") == "home":
+            truth = _portal_entry_truth(session)
+            ensure_cw_state(session)["entry"] = {
+                "page": "home",
+                "mode": truth.get("mode"),
+                "difficulty": truth.get("difficulty"),
+                "battle_mode": truth.get("battle_mode"),
+            }
+            return
+
+    raise TrailError("CW_PORTAL_RESTART_HOME_FAILED", "cw portal restart helper failed to return home")
+
+
 def _empty_card_summary(card_idx: int) -> dict[str, object]:
     return {
         "card_idx": card_idx,
@@ -36,6 +111,66 @@ def _empty_card_summary(card_idx: int) -> dict[str, object]:
         "portal_description": "",
         "score": 0.0,
     }
+
+
+def _require_portal_page(runtime, *, session, expected_page: str) -> None:
+    current = _detect_current_enter_page(runtime, session=session)
+    if current.get("page") == "world":
+        entry = ensure_cw_state(session).get("entry") if isinstance(ensure_cw_state(session).get("entry"), Mapping) else {}
+        if isinstance(entry.get("page"), str) and entry.get("page"):
+            current = {"page": entry.get("page")}
+            stage = ensure_cw_state(session).get("stage") if isinstance(ensure_cw_state(session).get("stage"), Mapping) else {}
+            if current["page"] == "in_game" and isinstance(stage.get("value"), str) and stage.get("value"):
+                current["stage"] = stage.get("value")
+    if current.get("page") == expected_page:
+        return
+    message = f"cw portal action only supports {expected_page}, current page: {current.get('page')}"
+    if current.get("stage") is not None:
+        message += f", stage: {current.get('stage')}"
+    error = TrailError("CW_PORTAL_PAGE_INVALID", message)
+    error.data = {"page": current.get("page")}
+    if current.get("stage") is not None:
+        error.data["stage"] = current.get("stage")
+    raise error
+
+
+def _require_portal_snapshot(session, *, command_name: str) -> dict[str, object]:
+    cw_state = ensure_cw_state(session)
+    portal = cw_state.get("portal") if isinstance(cw_state.get("portal"), Mapping) else None
+    cards = portal.get("cards") if isinstance(portal, Mapping) else None
+    if isinstance(cards, list) and cards:
+        return dict(portal)
+    raise TrailError("CW_PORTAL_SNAPSHOT_REQUIRED", f"{command_name} requires cached portal snapshot")
+
+
+def _portal_entry_truth(session) -> dict[str, object]:
+    cw_state = ensure_cw_state(session)
+    portal = cw_state.get("portal") if isinstance(cw_state.get("portal"), Mapping) else {}
+    entry = cw_state.get("entry") if isinstance(cw_state.get("entry"), Mapping) else {}
+    return {
+        "mode": entry.get("mode") if entry.get("mode") is not None else portal.get("mode"),
+        "difficulty": entry.get("difficulty") if entry.get("difficulty") is not None else portal.get("difficulty"),
+        "battle_mode": entry.get("battle_mode") if entry.get("battle_mode") is not None else portal.get("battle_mode"),
+    }
+
+
+def _mark_portal_stale_after_selection(session) -> None:
+    cw_state = ensure_cw_state(session)
+    portal = cw_state.get("portal") if isinstance(cw_state.get("portal"), Mapping) else {}
+    cw_state["portal"] = {**portal, "stale": True}
+    truth = _portal_entry_truth(session)
+    cw_state["entry"] = {
+        "page": "in_game",
+        "mode": truth.get("mode"),
+        "difficulty": truth.get("difficulty"),
+        "battle_mode": truth.get("battle_mode"),
+    }
+    cw_state["stage"] = {"stale": True}
+
+
+def _card_center(card_idx: int) -> tuple[int, int]:
+    lane_width = PORTAL_SCREEN_WIDTH // PORTAL_LANE_COUNT
+    return (lane_width * (card_idx - 1) + lane_width // 2, PORTAL_CARD_CENTER_Y)
 
 
 def _normalize_portal_list(portal_list: object) -> list[dict[str, str]]:
@@ -213,4 +348,4 @@ def _normalize_text(text: str) -> str:
     return collapsed.strip()
 
 
-__all__ = ["summarize_portal_cards"]
+__all__ = ["refresh_cw_portal", "restart_cw_portal_to_homepage", "select_cw_portal", "summarize_portal_cards"]
