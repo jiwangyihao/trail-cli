@@ -152,7 +152,7 @@ def test_enter_cw_rejects_game_over_state_recorded_in_session(tmp_path):
     assert getattr(exc_info.value, "data", None) == {"page": "in_game", "stage": "game_over"}
 
 
-def test_enter_cw_prefers_recorded_home_over_game_over_on_shared_start_resource(tmp_path):
+def test_enter_cw_prefers_recorded_game_over_over_home_on_shared_start_resource(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
     session.scene_state["cw"] = {
         "entry": {"page": "home"},
@@ -173,9 +173,11 @@ def test_enter_cw_prefers_recorded_home_over_game_over_on_shared_start_resource(
     runtime = Runtime()
     _install_template_runtime(runtime, locate_results={_asset("entry.start"): start_box})
 
-    refreshed = enter_cw(session, mode="continue", runtime=runtime)
+    with pytest.raises(Exception) as exc_info:
+        enter_cw(session, mode="continue", runtime=runtime)
 
-    assert refreshed.scene_state["cw"]["entry"] == {"page": "home", "already_home": True}
+    assert getattr(exc_info.value, "code", None) == "CW_ENTER_ALREADY_PAST_HOME"
+    assert getattr(exc_info.value, "data", None) == {"page": "in_game", "stage": "game_over"}
 
 
 def test_enter_cw_ignores_recorded_game_over_when_runtime_is_still_world(tmp_path):
