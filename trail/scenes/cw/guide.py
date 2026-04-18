@@ -365,7 +365,7 @@ def _normalize_role_tags(data: Mapping) -> list[object]:
     return tags
 
 
-def _normalize_portal_list(portal_list: object) -> list[dict[str, str]]:
+def _normalize_portal_list(portal_list: object, *, require_id: bool = True) -> list[dict[str, str]]:
     result: list[dict[str, str]] = []
     if not isinstance(portal_list, list):
         return result
@@ -375,7 +375,9 @@ def _normalize_portal_list(portal_list: object) -> list[dict[str, str]]:
         portal_id = str(item.get("portal_id") or item.get("id") or "")
         title = str(item.get("title") or item.get("name") or "")
         description = str(item.get("description") or item.get("desc") or "")
-        if not portal_id or not title:
+        if not title:
+            continue
+        if require_id and not portal_id:
             continue
         result.append(
             {
@@ -436,7 +438,7 @@ def _matches_lineup_portal(lineup: Mapping[str, object], *, portal: Mapping[str,
     tourn_detail = lineup.get("tourn_detail")
     if not isinstance(tourn_detail, Mapping):
         return False
-    detail_portals = _normalize_portal_list(tourn_detail.get("portals"))
+    detail_portals = _normalize_portal_list(tourn_detail.get("portals"), require_id=False)
     for item in detail_portals:
         if item["portal_id"] == portal["portal_id"] or item["title"] == portal["title"]:
             return True

@@ -148,3 +148,48 @@ def test_fetch_cw_guide_list_portal_filter_uses_first_page_60_and_detail_fanout(
     assert detail_calls == ["lineup-shop", "lineup-event", "lineup-shop-2"]
     assert [item["id"] for item in payload["list"]] == ["lineup-shop"]
     assert payload["next_page_token"] is None
+
+
+def test_fetch_cw_guide_list_portal_filter_matches_detail_portal_without_id(monkeypatch):
+    guide_module = load_guide_module()
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: {"list": [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容")], "next_page_token": None},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_lineup_detail",
+        lambda lineup_id, *, timeout=10: (
+            lineup_id,
+            f"https://example.invalid/{lineup_id}",
+            {
+                "id": lineup_id,
+                "tourn_detail": {
+                    "portals": [
+                        {
+                            "name": "购物区",
+                            "description": "购物区描述",
+                        }
+                    ]
+                },
+            },
+        ),
+        raising=False,
+    )
+
+    payload = guide_module.fetch_cw_guide_list(
+        page=1,
+        limit=20,
+        trait_id=None,
+        order=None,
+        next_page_token=None,
+        match_change_job=None,
+        match_hard=None,
+        portal_id="shop",
+    )
+
+    assert [item["id"] for item in payload["list"]] == ["lineup-shop"]
