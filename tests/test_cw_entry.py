@@ -152,6 +152,62 @@ def test_enter_cw_rejects_game_over_state_recorded_in_session(tmp_path):
     assert getattr(exc_info.value, "data", None) == {"page": "in_game", "stage": "game_over"}
 
 
+def test_enter_cw_ignores_recorded_game_over_when_runtime_is_still_world(tmp_path):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
+
+    menu_box = _box("entry.menu", left=12, top=24)
+    cosmic_box = _box("entry.cosmic_strife", left=36, top=48)
+    start_box = _box("entry.start", left=84, top=96)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.keys: list[tuple[str, int, float]] = []
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            self.keys.append((key, presses, interval))
+
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={
+            _asset("entry.new"): None,
+            _asset("entry.continue"): None,
+            _asset("entry.invest_environment"): None,
+            _asset("stage.preparation"): None,
+            _asset("stage.shop"): None,
+            _asset("stage.replenish"): None,
+            _asset("stage.encounter"): None,
+            _asset("stage.fortune"): None,
+            _asset("stage.event"): None,
+            _asset("stage.boss_preview"): None,
+            _asset("entry.start"): None,
+        },
+        wait_results={
+            _asset("entry.menu"): menu_box,
+            _asset("entry.cosmic_strife"): cosmic_box,
+            _asset("entry.start"): start_box,
+        },
+        ocr_results=[],
+    )
+
+    refreshed = enter_cw(session, mode="continue", runtime=runtime)
+
+    assert refreshed.scene_state["cw"]["entry"] == {"page": "home"}
+    assert runtime.keys == [("f4", 1, 0.2)]
+
+
 def test_enter_cw_runs_world_to_currency_wars_entry_chain_until_home(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
 

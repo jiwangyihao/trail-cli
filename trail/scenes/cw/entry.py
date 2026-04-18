@@ -174,11 +174,6 @@ def _detect_current_enter_page(runtime, *, session: SessionModel | None = None) 
     if ocr_stage is not None:
         return {"page": "in_game", "stage": ocr_stage}
 
-    if session is not None:
-        recorded_stage = ensure_cw_state(session).get("stage", {})
-        if recorded_stage.get("stale") is False and recorded_stage.get("value") == "game_over":
-            return {"page": "in_game", "stage": "game_over"}
-
     for alias, stage in STAGE_RESOURCE_ALIASES:
         if stage in {"settle", "game_over"}:
             continue
@@ -189,6 +184,10 @@ def _detect_current_enter_page(runtime, *, session: SessionModel | None = None) 
         return {"page": "in_game", "stage": stage}
 
     if _locate(runtime, "entry.start") is not None:
+        if session is not None:
+            recorded_stage = ensure_cw_state(session).get("stage", {})
+            if recorded_stage.get("stale") is False and recorded_stage.get("value") == "game_over":
+                return {"page": "in_game", "stage": "game_over"}
         return {"page": "home", "already_home": "1"}
 
     return {"page": "world"}
