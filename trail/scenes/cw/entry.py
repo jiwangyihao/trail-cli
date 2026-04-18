@@ -6,7 +6,7 @@ from time import sleep
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.models import ensure_cw_state
-from trail.scenes.cw.stage import STAGE_RESOURCE_ALIASES
+from trail.scenes.cw.stage import STAGE_RESOURCE_ALIASES, _detect_cw_stage_from_ocr
 from trail.session.models import SessionModel
 
 
@@ -158,9 +158,6 @@ def _enter_from_world(runtime, *, mode: str, difficulty: str, battle_mode: str) 
 
 
 def _detect_current_enter_page(runtime) -> dict[str, str]:
-    if _locate(runtime, "entry.start") is not None:
-        return {"page": "home", "already_home": "1"}
-
     if _locate(runtime, "entry.new") is not None:
         return {"page": "entry.new"}
 
@@ -170,12 +167,21 @@ def _detect_current_enter_page(runtime) -> dict[str, str]:
     if _locate(runtime, "entry.invest_environment") is not None:
         return {"page": "invest"}
 
+    ocr_stage = _detect_cw_stage_from_ocr(runtime)
+    if ocr_stage is not None:
+        return {"page": "in_game", "stage": ocr_stage}
+
     for alias, stage in STAGE_RESOURCE_ALIASES:
+        if stage in {"settle", "game_over"}:
+            continue
         if _locate(runtime, alias) is None:
             continue
         if stage == "boss_preview":
             return {"page": "stage.boss_preview", "stage": stage}
         return {"page": "in_game", "stage": stage}
+
+    if _locate(runtime, "entry.start") is not None:
+        return {"page": "home", "already_home": "1"}
 
     return {"page": "world"}
 

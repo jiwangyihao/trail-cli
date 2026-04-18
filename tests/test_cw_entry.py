@@ -20,7 +20,13 @@ def _box(alias: str, *, left: int, top: int, width: int = 40, height: int = 20) 
     return Box(left=left, top=top, width=width, height=height, source=_asset(alias))
 
 
-def _install_template_runtime(runtime, *, locate_results: dict[str, object] | None = None, wait_results: dict[str, object] | None = None) -> None:
+def _install_template_runtime(
+    runtime,
+    *,
+    locate_results: dict[str, object] | None = None,
+    wait_results: dict[str, object] | None = None,
+    ocr_results: object | None = None,
+) -> None:
     locate_results = locate_results or {}
     wait_results = wait_results or {}
 
@@ -34,8 +40,13 @@ def _install_template_runtime(runtime, *, locate_results: dict[str, object] | No
         runtime.wait_calls.append(template)
         return wait_results.get(template)
 
+    def ocr(**kwargs):
+        del kwargs
+        return ocr_results or []
+
     runtime.locate = locate
     runtime.wait_img = wait_img
+    runtime.ocr = ocr
 
 
 def test_enter_cw_records_entry_snapshot_and_invalidates_stage(tmp_path):
@@ -221,16 +232,17 @@ def test_enter_cw_world_entry_flow_waits_between_guide_transitions(tmp_path, mon
 
 
 @pytest.mark.parametrize(
-    ("locate_results", "expected_data", "expected_message"),
+    ("locate_results", "ocr_results", "expected_data", "expected_message"),
     [
-        ({_asset("entry.new"): _box("entry.new", left=10, top=20)}, {"page": "entry.new"}, "cw enter only supports world or home, current page: entry.new"),
-        ({_asset("entry.continue"): _box("entry.continue", left=10, top=20)}, {"page": "entry.continue"}, "cw enter only supports world or home, current page: entry.continue"),
-        ({_asset("stage.boss_preview"): _box("stage.boss_preview", left=10, top=20)}, {"page": "stage.boss_preview", "stage": "boss_preview"}, "cw enter only supports world or home, current page: stage.boss_preview, stage: boss_preview"),
-        ({_asset("entry.invest_environment"): _box("entry.invest_environment", left=10, top=20)}, {"page": "invest"}, "cw enter only supports world or home, current page: invest"),
-        ({_asset("stage.preparation"): _box("stage.preparation", left=10, top=20)}, {"page": "in_game", "stage": "preparation"}, "cw enter only supports world or home, current page: in_game, stage: preparation"),
+        ({_asset("entry.new"): _box("entry.new", left=10, top=20)}, None, {"page": "entry.new"}, "cw enter only supports world or home, current page: entry.new"),
+        ({_asset("entry.continue"): _box("entry.continue", left=10, top=20)}, None, {"page": "entry.continue"}, "cw enter only supports world or home, current page: entry.continue"),
+        ({_asset("stage.boss_preview"): _box("stage.boss_preview", left=10, top=20)}, None, {"page": "stage.boss_preview", "stage": "boss_preview"}, "cw enter only supports world or home, current page: stage.boss_preview, stage: boss_preview"),
+        ({_asset("entry.invest_environment"): _box("entry.invest_environment", left=10, top=20)}, None, {"page": "invest"}, "cw enter only supports world or home, current page: invest"),
+        ({_asset("stage.preparation"): _box("stage.preparation", left=10, top=20)}, None, {"page": "in_game", "stage": "preparation"}, "cw enter only supports world or home, current page: in_game, stage: preparation"),
+        ({_asset("entry.start"): _box("entry.start", left=10, top=20)}, [([0, 0], "挑战失败", 0.99), ([0, 0], "继续挑战", 0.99)], {"page": "in_game", "stage": "settle"}, "cw enter only supports world or home, current page: in_game, stage: settle"),
     ],
 )
-def test_enter_cw_rejects_pages_beyond_home(tmp_path, locate_results, expected_data, expected_message):
+def test_enter_cw_rejects_pages_beyond_home(tmp_path, locate_results, ocr_results, expected_data, expected_message):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
 
     class Runtime:
@@ -252,7 +264,7 @@ def test_enter_cw_rejects_pages_beyond_home(tmp_path, locate_results, expected_d
             self.keys.append((key, presses, interval))
 
     runtime = Runtime()
-    _install_template_runtime(runtime, locate_results=locate_results)
+    _install_template_runtime(runtime, locate_results=locate_results, ocr_results=ocr_results)
 
     with pytest.raises(Exception) as exc_info:
         enter_cw(session, mode="continue", runtime=runtime)

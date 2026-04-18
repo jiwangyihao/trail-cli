@@ -503,6 +503,54 @@ def test_command_service_handles_cw_enter_rejects_pages_past_home(tmp_path: Path
     assert registry.for_workspace(str(tmp_path)).request_status("req-cw-enter-entry-new")["final_state"] == "failed_before_side_effect"
 
 
+def test_command_service_handles_cw_enter_rejects_settle_screen_before_home(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == asset("entry.start"):
+                return _box("entry.start", left=20, top=40)
+            return None
+
+        def ocr(self, **kwargs):
+            del kwargs
+            return [([0, 0], "挑战失败", 0.99), ([0, 0], "继续挑战", 0.99)]
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-enter-settle",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.enter",
+        payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"page": "in_game", "stage": "settle"}
+    assert payload["error"] == {
+        "code": "CW_ENTER_ALREADY_PAST_HOME",
+        "message": "cw enter only supports world or home, current page: in_game, stage: settle",
+    }
+    assert registry.for_workspace(str(tmp_path)).request_status("req-cw-enter-settle")["final_state"] == "failed_before_side_effect"
+
+
 def test_command_service_routes_cw_shop_buy_slot_through_mutation_journal(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 
