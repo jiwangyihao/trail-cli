@@ -52,6 +52,12 @@ class CwStartEntryConflictError(TrailError):
         super().__init__("CW_START_ENTRY_CONFLICT", f"cw start conflicts with recorded {field_name}: {recorded} != {requested}")
 
 
+class CwStartEntryTruthRequiredError(TrailError):
+    def __init__(self, *, page: str, fields: tuple[str, ...]):
+        joined = "/".join(fields)
+        super().__init__("CW_START_ENTRY_TRUTH_REQUIRED", f"cw start requires recorded {joined} before continuing from {page}")
+
+
 def _asset(alias: str) -> str:
     return str(resolve_scene_asset("cw", alias))
 
@@ -259,6 +265,13 @@ def _persist_start_entry(
     battle_mode: str | None,
     guard_conflicts: bool,
 ) -> None:
+    if mode is None or difficulty is None or battle_mode is None:
+        missing_fields = tuple(
+            field_name
+            for field_name, value in (("mode", mode), ("difficulty", difficulty), ("battle_mode", battle_mode))
+            if value is None
+        )
+        raise CwStartEntryTruthRequiredError(page="cw.start.persist", fields=missing_fields)
     cw_state = ensure_cw_state(session)
     existing = cw_state.get("entry") if isinstance(cw_state.get("entry"), Mapping) else {}
     if guard_conflicts:
@@ -294,17 +307,28 @@ def _run_start_chain(
         _enter_new_game(runtime, difficulty=difficulty)
         return {"mode": "new", "difficulty": difficulty, "battle_mode": battle_mode}
     if page == "entry.continue":
+        recorded_difficulty = existing_entry.get("difficulty") if isinstance(existing_entry.get("difficulty"), str) else None
+        if recorded_difficulty is None:
+            raise CwStartEntryTruthRequiredError(page="entry.continue", fields=("difficulty",))
         _select_battle_mode(runtime, battle_mode=battle_mode)
         _enter_continue_game(runtime)
         _handle_invest_environment_flow(runtime)
-        return {"mode": "continue", "difficulty": difficulty, "battle_mode": battle_mode}
+        return {"mode": "continue", "difficulty": recorded_difficulty, "battle_mode": battle_mode}
     if page == "stage.boss_preview":
+        recorded_mode = existing_entry.get("mode") if isinstance(existing_entry.get("mode"), str) else None
+        recorded_difficulty = existing_entry.get("difficulty") if isinstance(existing_entry.get("difficulty"), str) else None
+        recorded_battle_mode = existing_entry.get("battle_mode") if isinstance(existing_entry.get("battle_mode"), str) else None
+        if recorded_mode is None or recorded_difficulty is None or recorded_battle_mode is None:
+            raise CwStartEntryTruthRequiredError(
+                page="stage.boss_preview",
+                fields=("mode", "difficulty", "battle_mode"),
+            )
         _consume_click_blank_prompt(runtime)
         _handle_invest_environment_flow(runtime)
         return {
-            "mode": existing_entry.get("mode") if isinstance(existing_entry.get("mode"), str) else None,
-            "difficulty": existing_entry.get("difficulty") if isinstance(existing_entry.get("difficulty"), str) else None,
-            "battle_mode": existing_entry.get("battle_mode") if isinstance(existing_entry.get("battle_mode"), str) else None,
+            "mode": recorded_mode,
+            "difficulty": recorded_difficulty,
+            "battle_mode": recorded_battle_mode,
         }
     if page == "invest":
         return {"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode}
