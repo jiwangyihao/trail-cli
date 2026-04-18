@@ -351,11 +351,21 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
 
 
 @pytest.mark.parametrize(
-    ("page", "mode", "locate_results", "wait_results", "expected_clicks", "expected_waits"),
+    (
+        "page",
+        "requested_mode",
+        "battle_mode",
+        "locate_results",
+        "wait_results",
+        "expected_clicks",
+        "expected_waits",
+        "expected_entry",
+    ),
     [
         (
             "entry.new",
-            "new",
+            "continue",
+            "overclock",
             {_asset("entry.new"): _box("entry.new", left=120, top=220)},
             {
                 _asset("entry.new"): _box("entry.new", left=120, top=220),
@@ -364,7 +374,7 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
                 _asset("stage.boss_preview"): _box("stage.boss_preview", left=420, top=520),
                 _asset("entry.invest_environment"): _box("entry.invest_environment", left=520, top=620),
             },
-            [(300, 250), (140, 230), (240, 330), (340, 430), (440, 530)],
+            [(300, 450), (140, 230), (240, 330), (340, 430), (440, 530)],
             [
                 _asset("entry.new"),
                 _asset("entry.start_game"),
@@ -372,12 +382,18 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
                 _asset("stage.boss_preview"),
                 _asset("entry.invest_environment"),
             ],
+            {
+                "page": "invest",
+                "mode": "new",
+                "difficulty": "current",
+                "battle_mode": "overclock",
+            },
         ),
         (
             "entry.continue",
-            "continue",
+            "new",
+            "overclock",
             {
-                _asset("entry.new"): _box("entry.new", left=120, top=220),
                 _asset("entry.continue"): _box("entry.continue", left=200, top=300),
             },
             {
@@ -385,26 +401,18 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
                 _asset("stage.boss_preview"): _box("stage.boss_preview", left=300, top=400),
                 _asset("entry.invest_environment"): _box("entry.invest_environment", left=400, top=500),
             },
-            [(300, 250), (220, 310), (320, 410)],
+            [(300, 450), (220, 310), (320, 410)],
             [
                 _asset("entry.continue"),
                 _asset("stage.boss_preview"),
                 _asset("entry.invest_environment"),
             ],
-        ),
-        (
-            "stage.boss_preview",
-            "continue",
-            {_asset("stage.boss_preview"): _box("stage.boss_preview", left=300, top=400)},
             {
-                _asset("stage.boss_preview"): _box("stage.boss_preview", left=300, top=400),
-                _asset("entry.invest_environment"): _box("entry.invest_environment", left=400, top=500),
+                "page": "invest",
+                "mode": "continue",
+                "difficulty": "current",
+                "battle_mode": "overclock",
             },
-            [(320, 410)],
-            [
-                _asset("stage.boss_preview"),
-                _asset("entry.invest_environment"),
-            ],
         ),
     ],
 )
@@ -412,11 +420,13 @@ def test_cw_start_continues_pages_between_home_and_invest(
     tmp_path: Path,
     monkeypatch,
     page: str,
-    mode: str,
+    requested_mode: str,
+    battle_mode: str,
     locate_results: dict[str, object],
     wait_results: dict[str, object],
     expected_clicks: list[tuple[int, int]],
     expected_waits: list[str],
+    expected_entry: dict[str, object],
 ):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
     cards = _portal_cards()
@@ -436,25 +446,87 @@ def test_cw_start_continues_pages_between_home_and_invest(
         session=session,
         workspace_root=tmp_path,
         request_id=f"req-cw-start-{page.replace('.', '-')}",
-        mode=mode,
+        mode=requested_mode,
+        difficulty="current",
+        battle_mode=battle_mode,
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"]["cards"] == cards
+    assert envelope["data"]["mode"] == expected_entry["mode"]
+    assert envelope["data"]["difficulty"] == expected_entry["difficulty"]
+    assert envelope["data"]["battle_mode"] == expected_entry["battle_mode"]
+    assert persisted.scene_state["cw"]["entry"] == expected_entry
+    assert persisted.scene_state["cw"]["slots"] == {"stale": True, "hand": ["希儿"]}
+    assert persisted.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
+    assert persisted.scene_state["cw"]["sell_plan"] == {"stale": True}
+    assert runtime.clicks == expected_clicks
+    assert runtime.wait_calls == expected_waits
+
+
+def test_cw_start_boss_preview_preserves_known_entry_truth_source(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    cards = _portal_cards()
+    runtime = StartRuntime(
+        locate_results={
+            _asset("stage.boss_preview"): _box("stage.boss_preview", left=300, top=400),
+        },
+        wait_results={
+            _asset("stage.boss_preview"): _box("stage.boss_preview", left=300, top=400),
+            _asset("entry.invest_environment"): _box("entry.invest_environment", left=400, top=500),
+        },
+        ocr_result=[{"text": "boss preview"}],
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list: cards)
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {
+            "page": "home",
+            "mode": "continue",
+            "difficulty": "lowest",
+            "battle_mode": "overclock",
+        },
+        "slots": {"stale": False, "hand": ["阮梅"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"stale": False, "steps": [3]},
+    }
+    service.save_session(session)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-start-boss-preview",
+        mode="new",
         difficulty="current",
         battle_mode="standard",
     )
     persisted = service.load_session(session.session_id)
 
     assert envelope["ok"] is True
-    assert envelope["data"]["cards"] == cards
+    assert envelope["data"] == {
+        "cards": cards,
+        "mode": "continue",
+        "difficulty": "lowest",
+        "battle_mode": "overclock",
+        "stale": False,
+    }
     assert persisted.scene_state["cw"]["entry"] == {
         "page": "invest",
-        "mode": mode,
-        "difficulty": "current",
-        "battle_mode": "standard",
+        "mode": "continue",
+        "difficulty": "lowest",
+        "battle_mode": "overclock",
     }
-    assert persisted.scene_state["cw"]["slots"] == {"stale": True, "hand": ["希儿"]}
+    assert persisted.scene_state["cw"]["slots"] == {"stale": True, "hand": ["阮梅"]}
     assert persisted.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
     assert persisted.scene_state["cw"]["sell_plan"] == {"stale": True}
-    assert runtime.clicks == expected_clicks
-    assert runtime.wait_calls == expected_waits
+    assert runtime.clicks == [(320, 410)]
+    assert runtime.wait_calls == [
+        _asset("stage.boss_preview"),
+        _asset("entry.invest_environment"),
+    ]
 
 
 def test_cw_start_noops_on_invest_and_backfills_entry_params(tmp_path: Path, monkeypatch):

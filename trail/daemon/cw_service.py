@@ -325,12 +325,13 @@ def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str)
         battle_mode=battle_mode,
         runtime=runtime,
     )
+    entry_state = ensure_cw_state(refreshed).get("entry")
     cards = summarize_portal_cards(runtime.ocr(), fetch_cw_guide_config().get("portal_list", []))
     portal_snapshot = {
         "cards": cards,
-        "mode": mode,
-        "difficulty": difficulty,
-        "battle_mode": battle_mode,
+        "mode": entry_state.get("mode") if isinstance(entry_state, dict) else None,
+        "difficulty": entry_state.get("difficulty") if isinstance(entry_state, dict) else None,
+        "battle_mode": entry_state.get("battle_mode") if isinstance(entry_state, dict) else None,
         "stale": False,
     }
     ensure_cw_state(refreshed)["portal"] = portal_snapshot

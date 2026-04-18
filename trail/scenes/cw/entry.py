@@ -251,7 +251,14 @@ def _run_entry_chain(runtime, *, mode: str, difficulty: str, battle_mode: str) -
     raise CwEnterStateError(page=current["page"], stage=current.get("stage"))
 
 
-def _persist_start_entry(session: SessionModel, *, mode: str, difficulty: str, battle_mode: str, guard_conflicts: bool) -> None:
+def _persist_start_entry(
+    session: SessionModel,
+    *,
+    mode: str | None,
+    difficulty: str | None,
+    battle_mode: str | None,
+    guard_conflicts: bool,
+) -> None:
     cw_state = ensure_cw_state(session)
     existing = cw_state.get("entry") if isinstance(cw_state.get("entry"), Mapping) else {}
     if guard_conflicts:
@@ -268,27 +275,39 @@ def _persist_start_entry(session: SessionModel, *, mode: str, difficulty: str, b
     }
 
 
-def _run_start_chain(runtime, *, current: dict[str, str], mode: str, difficulty: str, battle_mode: str) -> None:
+def _run_start_chain(
+    runtime,
+    *,
+    current: dict[str, str],
+    mode: str,
+    difficulty: str,
+    battle_mode: str,
+    existing_entry: Mapping[str, object],
+) -> dict[str, str | None]:
     page = current["page"]
     if page == "home":
         start_box = _locate(runtime, "entry.start")
         _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode, start_box=start_box)
-        return
+        return {"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode}
     if page == "entry.new":
         _select_battle_mode(runtime, battle_mode=battle_mode)
         _enter_new_game(runtime, difficulty=difficulty)
-        return
+        return {"mode": "new", "difficulty": difficulty, "battle_mode": battle_mode}
     if page == "entry.continue":
         _select_battle_mode(runtime, battle_mode=battle_mode)
         _enter_continue_game(runtime)
         _handle_invest_environment_flow(runtime)
-        return
+        return {"mode": "continue", "difficulty": difficulty, "battle_mode": battle_mode}
     if page == "stage.boss_preview":
         _consume_click_blank_prompt(runtime)
         _handle_invest_environment_flow(runtime)
-        return
+        return {
+            "mode": existing_entry.get("mode") if isinstance(existing_entry.get("mode"), str) else None,
+            "difficulty": existing_entry.get("difficulty") if isinstance(existing_entry.get("difficulty"), str) else None,
+            "battle_mode": existing_entry.get("battle_mode") if isinstance(existing_entry.get("battle_mode"), str) else None,
+        }
     if page == "invest":
-        return
+        return {"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode}
     raise CwStartStateError(page=page, stage=current.get("stage"))
 
 
@@ -300,6 +319,8 @@ def start_cw(
     battle_mode: str,
     runtime,
 ) -> SessionModel:
+    cw_state = ensure_cw_state(session)
+    existing_entry = cw_state.get("entry") if isinstance(cw_state.get("entry"), Mapping) else {}
     current = _detect_current_enter_page(runtime, session=session, preferred_mode=mode)
     if current["page"] == "invest":
         _persist_start_entry(
@@ -311,12 +332,19 @@ def start_cw(
         )
         return session
 
-    _run_start_chain(runtime, current=current, mode=mode, difficulty=difficulty, battle_mode=battle_mode)
-    _persist_start_entry(
-        session,
+    resolved_entry = _run_start_chain(
+        runtime,
+        current=current,
         mode=mode,
         difficulty=difficulty,
         battle_mode=battle_mode,
+        existing_entry=existing_entry,
+    )
+    _persist_start_entry(
+        session,
+        mode=resolved_entry["mode"],
+        difficulty=resolved_entry["difficulty"],
+        battle_mode=resolved_entry["battle_mode"],
         guard_conflicts=False,
     )
     return session

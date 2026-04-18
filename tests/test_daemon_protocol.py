@@ -622,9 +622,9 @@ def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path:
         )
         session.scene_state.setdefault("cw", {})["entry"] = {
             "page": "invest",
-            "mode": mode,
-            "difficulty": difficulty,
-            "battle_mode": battle_mode,
+            "mode": "new",
+            "difficulty": "highest",
+            "battle_mode": "overclock",
         }
         return session
 
@@ -659,9 +659,9 @@ def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path:
     assert payload["ok"] is True
     assert payload["data"] == {
         "cards": cards,
-        "mode": "continue",
-        "difficulty": "current",
-        "battle_mode": "standard",
+        "mode": "new",
+        "difficulty": "highest",
+        "battle_mode": "overclock",
         "stale": False,
     }
     assert len(calls) == 1
@@ -671,9 +671,9 @@ def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path:
     assert calls[0]["runtime"].ocr() == runtime.ocr()
     assert persisted.scene_state["cw"]["entry"] == {
         "page": "invest",
-        "mode": "continue",
-        "difficulty": "current",
-        "battle_mode": "standard",
+        "mode": "new",
+        "difficulty": "highest",
+        "battle_mode": "overclock",
     }
     assert persisted.scene_state["cw"]["portal"] == payload["data"]
     assert service.request_status("req-cw-start")["final_state"] == "completed"
