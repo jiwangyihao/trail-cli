@@ -801,6 +801,67 @@ def test_command_service_handles_cw_start_rejects_home_with_unfinished_progress(
     assert runtime.ocr_calls == [{}]
 
 
+@pytest.mark.parametrize("requested_mode", ["new", "continue"])
+def test_command_service_handles_cw_start_consumes_unfinished_progress_flag_before_run_start_chain(
+    tmp_path: Path,
+    requested_mode: str,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    monkeypatch.setattr(
+        "trail.scenes.cw.entry._detect_current_enter_page",
+        lambda runtime, session=None, preferred_mode=None: {"page": "home", "unfinished_progress": "1"},
+    )
+    monkeypatch.setattr(
+        "trail.scenes.cw.entry._run_start_chain",
+        lambda *args, **kwargs: pytest.fail("unfinished_progress should short-circuit before _run_start_chain"),
+    )
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"entry": {"page": "home"}}
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id=f"req-cw-start-short-circuit-{requested_mode}",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": requested_mode,
+            "difficulty": "current",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"page": "home"}
+    assert payload["error"] == {
+        "code": "CW_START_PROGRESS_PENDING",
+        "message": "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run",
+    }
+    assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
+    assert runtime.clicks == []
+
+
 @pytest.mark.parametrize(
     ("payload_override", "expected_code", "expected_message"),
     [

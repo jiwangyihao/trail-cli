@@ -958,6 +958,49 @@ def test_cw_start_rejects_home_with_unfinished_progress_before_side_effects(
     assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["希儿"]}
 
 
+@pytest.mark.parametrize("requested_mode", ["new", "continue"])
+def test_start_cw_consumes_unfinished_progress_flag_before_run_start_chain(
+    tmp_path: Path,
+    monkeypatch,
+    requested_mode: str,
+):
+    import trail.scenes.cw.entry as entry_module
+
+    session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "home"},
+        "slots": {"stale": False, "hand": ["希儿"]},
+    }
+    runtime = StartRuntime()
+
+    monkeypatch.setattr(
+        entry_module,
+        "_detect_current_enter_page",
+        lambda runtime, session=None, preferred_mode=None: {"page": "home", "unfinished_progress": "1"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        entry_module,
+        "_run_start_chain",
+        lambda *args, **kwargs: pytest.fail("unfinished_progress should short-circuit before _run_start_chain"),
+        raising=False,
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        entry_module.start_cw(
+            session,
+            mode=requested_mode,
+            difficulty="current",
+            battle_mode="standard",
+            runtime=runtime,
+        )
+
+    assert exc_info.value.code == "CW_START_PROGRESS_PENDING"
+    assert str(exc_info.value) == "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run"
+    assert runtime.clicks == []
+    assert session.scene_state["cw"]["entry"] == {"page": "home"}
+
+
 def test_cw_start_entry_continue_still_advances_when_only_continue_progress_text_present(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
     cards = _portal_cards()

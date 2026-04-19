@@ -390,6 +390,8 @@ def start_cw(
     cw_state = ensure_cw_state(session)
     existing_entry = cw_state.get("entry") if isinstance(cw_state.get("entry"), Mapping) else {}
     current = _detect_current_enter_page(runtime, session=session, preferred_mode=mode)
+    if current["page"] == "home" and current.get("unfinished_progress") == "1":
+        raise CwStartProgressPendingError()
     if current["page"] == "invest":
         _persist_start_entry(
             session,
