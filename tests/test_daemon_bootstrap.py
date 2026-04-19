@@ -18,6 +18,32 @@ from trail.daemon.protocol import PROTOCOL_VERSION
 from tests.support.fake_daemon import write_installed_manifest, write_ready_manifest
 
 
+def test_game_paths_path_for_user_is_under_daemon_home(tmp_path: Path):
+    from trail.daemon.paths import game_paths_path_for_user
+
+    path = game_paths_path_for_user(tmp_path)
+
+    assert path == tmp_path / "game-paths.json"
+
+
+def test_bootstrap_resolve_daemon_home_reuses_shared_helper():
+    import trail.daemon.bootstrap as bootstrap_module
+    from trail.daemon.paths import resolve_daemon_home as shared_resolve_daemon_home
+
+    assert bootstrap_module.resolve_daemon_home is shared_resolve_daemon_home
+
+
+def test_build_default_daemon_client_uses_shared_daemon_home(monkeypatch, tmp_path: Path):
+    from trail.commands.helpers import build_default_daemon_client
+
+    daemon_home = tmp_path / "daemon-home"
+    monkeypatch.setattr("trail.daemon.paths.resolve_daemon_home", lambda: daemon_home)
+
+    client = build_default_daemon_client()
+
+    assert client.daemon_home == daemon_home
+
+
 def test_daemon_status_renders_summary_and_yaml(cli_runner, monkeypatch, tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
     write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-live")

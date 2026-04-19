@@ -10,7 +10,6 @@ from typing import Any
 from uuid import uuid4
 
 from trail.core.errors import TrailError
-from trail.daemon.bootstrap import resolve_daemon_home
 from trail.daemon.command_service import (
     CommandService,
     PersistedButResponseUnknown,
@@ -19,6 +18,7 @@ from trail.daemon.command_service import (
 from trail.daemon.cw_service import CwService
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
 from trail.daemon.models import DaemonRequest
+from trail.daemon.paths import resolve_daemon_home
 from trail.daemon.runtime_service import RuntimeService
 from trail.daemon.session_service import SessionServiceRegistry
 from trail.output.envelope import command_failure

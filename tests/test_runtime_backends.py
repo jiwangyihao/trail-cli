@@ -16,6 +16,203 @@ from trail.runtime.model import Box, WindowBinding
 from tests.support.fake_daemon import FakeDaemonClient, build_success_response
 
 
+@pytest.fixture
+def isolated_user_launch_paths(monkeypatch, tmp_path) -> Path:
+    import trail.runtime.launch_paths as launch_paths
+
+    state_file = tmp_path / "isolated-game-paths.json"
+    monkeypatch.setattr(launch_paths, "game_paths_path_for_user", lambda: state_file)
+    return state_file
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_launch_paths(isolated_user_launch_paths: Path) -> Path:
+    return isolated_user_launch_paths
+
+
+def test_read_launch_paths_returns_empty_when_file_missing(tmp_path):
+    from trail.runtime.launch_paths import read_launch_paths
+
+    paths = read_launch_paths(tmp_path / "game-paths.json")
+
+    assert paths == {}
+
+
+def test_read_launch_paths_treats_invalid_json_as_empty(tmp_path):
+    from trail.runtime.launch_paths import read_launch_paths
+
+    state_file = tmp_path / "game-paths.json"
+    state_file.write_text("{broken", encoding="utf-8")
+
+    paths = read_launch_paths(state_file)
+
+    assert paths == {}
+
+
+def test_read_launch_paths_treats_non_mapping_payload_as_empty(tmp_path):
+    from trail.runtime.launch_paths import read_launch_paths
+
+    state_file = tmp_path / "game-paths.json"
+    state_file.write_text('[]', encoding="utf-8")
+
+    paths = read_launch_paths(state_file)
+
+    assert paths == {}
+
+
+@pytest.mark.parametrize(
+    ("payload"),
+    [
+        ('{"official": []}'),
+        ('{"official": {"last_success_game_path": 123}}'),
+    ],
+)
+def test_read_launch_paths_treats_invalid_channel_bucket_as_empty(tmp_path, payload: str):
+    from trail.runtime.launch_paths import read_launch_paths
+
+    state_file = tmp_path / "game-paths.json"
+    state_file.write_text(payload, encoding="utf-8")
+
+    paths = read_launch_paths(state_file)
+
+    assert paths == {}
+
+
+def test_write_launch_path_persists_last_success_game_path_by_channel(tmp_path):
+    from trail.runtime.launch_paths import read_launch_paths, write_launch_path
+
+    state_file = tmp_path / "game-paths.json"
+
+    write_launch_path("official", r"C:\Games\StarRail.exe", state_file)
+    write_launch_path("bilibili", r"D:\Games\StarRail.exe", state_file)
+
+    assert read_launch_paths(state_file) == {
+        "official": {"last_success_game_path": r"C:\Games\StarRail.exe"},
+        "bilibili": {"last_success_game_path": r"D:\Games\StarRail.exe"},
+    }
+
+
+def test_write_launch_path_keeps_sibling_channels_under_concurrent_writes(monkeypatch, tmp_path):
+    import trail.runtime.launch_paths as launch_paths
+
+    state_file = tmp_path / "game-paths.json"
+    state_file.write_text("{}", encoding="utf-8")
+    original_read_text = Path.read_text
+    release_reads = threading.Event()
+    read_count_lock = threading.Lock()
+    read_count = 0
+    start_barrier = threading.Barrier(3)
+
+    def slow_read_text(self, *args, **kwargs):
+        nonlocal read_count
+
+        result = original_read_text(self, *args, **kwargs)
+        if Path(self) == state_file:
+            with read_count_lock:
+                read_count += 1
+                if read_count >= 2:
+                    release_reads.set()
+            release_reads.wait(timeout=1.0)
+        return result
+
+    def worker(channel: str, game_path: str):
+        start_barrier.wait()
+        launch_paths.write_launch_path(channel, game_path, state_file)
+
+    monkeypatch.setattr(Path, "read_text", slow_read_text)
+    first = threading.Thread(target=worker, args=("official", r"C:\Games\StarRail.exe"))
+    second = threading.Thread(target=worker, args=("bilibili", r"D:\Games\StarRail.exe"))
+
+    first.start()
+    second.start()
+    start_barrier.wait()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert launch_paths.read_launch_paths(state_file) == {
+        "official": {"last_success_game_path": r"C:\Games\StarRail.exe"},
+        "bilibili": {"last_success_game_path": r"D:\Games\StarRail.exe"},
+    }
+
+
+def test_write_launch_path_uses_atomic_replace(monkeypatch, tmp_path):
+    import trail.runtime.launch_paths as launch_paths
+
+    state_file = tmp_path / "game-paths.json"
+    replace_calls: list[tuple[Path, Path]] = []
+    original_replace = Path.replace
+
+    def record_replace(self, target):
+        replace_calls.append((Path(self), Path(target)))
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", record_replace)
+
+    launch_paths.write_launch_path("official", r"C:\Games\StarRail.exe", state_file)
+
+    assert len(replace_calls) == 1
+    temp_path, target = replace_calls[0]
+    assert target == state_file
+    assert temp_path != state_file
+    assert temp_path.parent == state_file.parent
+
+
+def test_read_launch_paths_does_not_observe_partial_write_during_atomic_update(monkeypatch, tmp_path):
+    import trail.runtime.launch_paths as launch_paths
+
+    state_file = tmp_path / "game-paths.json"
+    state_file.write_text(
+        '{"official": {"last_success_game_path": "C:/Games/old.exe"}}',
+        encoding="utf-8",
+    )
+    original_write_text = Path.write_text
+    partial_written = threading.Event()
+    allow_write_finish = threading.Event()
+
+    def slow_write_text(self, data, *args, **kwargs):
+        path = Path(self)
+        if path.parent == state_file.parent and path.name.startswith(state_file.name):
+            original_write_text(path, '{"official": {', *args, **kwargs)
+            partial_written.set()
+            allow_write_finish.wait(timeout=1.0)
+        return original_write_text(path, data, *args, **kwargs)
+
+    def worker():
+        launch_paths.write_launch_path("official", r"C:\Games\new.exe", state_file)
+
+    monkeypatch.setattr(Path, "write_text", slow_write_text)
+    thread = threading.Thread(target=worker)
+    thread.start()
+
+    assert partial_written.wait(timeout=1.0)
+    assert launch_paths.read_launch_paths(state_file) == {
+        "official": {"last_success_game_path": "C:/Games/old.exe"},
+    }
+
+    allow_write_finish.set()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert launch_paths.read_launch_paths(state_file) == {
+        "official": {"last_success_game_path": r"C:\Games\new.exe"},
+    }
+
+
+def test_launch_paths_use_user_state_file_when_path_omitted(monkeypatch, tmp_path):
+    import trail.runtime.launch_paths as launch_paths
+
+    state_file = tmp_path / "game-paths.json"
+    monkeypatch.setattr(launch_paths, "game_paths_path_for_user", lambda: state_file)
+
+    launch_paths.write_launch_path("official", r"C:\Games\StarRail.exe")
+
+    assert launch_paths.read_launch_paths() == {
+        "official": {"last_success_game_path": r"C:\Games\StarRail.exe"},
+    }
+
+
 class _CommandRuntimeStub:
     def __init__(self):
         self._shot = Path(".trail/shots/daemon-command.png")
@@ -3337,6 +3534,264 @@ def test_change_game_config_updates_channel_values(tmp_path):
     assert config.read_text(encoding="utf-8") == "channel=14\nsub_channel=0\n"
 
 
+def test_launch_game_uses_history_path_before_default_for_official(tmp_path, monkeypatch):
+    import trail.runtime.launch_paths as launch_paths
+    import trail.runtime.window as window_module
+
+    history = tmp_path / "history.exe"
+    history.write_text("demo", encoding="utf-8")
+    default = tmp_path / "default.exe"
+    default.write_text("demo", encoding="utf-8")
+    state_file = tmp_path / "game-paths.json"
+    config = tmp_path / "config.ini"
+    config.write_text("channel=0\nsub_channel=0\n", encoding="utf-8")
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(launch_paths, "game_paths_path_for_user", lambda: state_file)
+    launch_paths.write_launch_path("official", str(history), state_file)
+    monkeypatch.setattr(window_module, "DEFAULT_GAME_PATHS", {"official": default})
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: False)
+    monkeypatch.setattr(
+        window_module.subprocess,
+        "Popen",
+        lambda args, **kwargs: calls.update({"args": args, "kwargs": kwargs}) or SimpleNamespace(),
+    )
+
+    result = window_module.launch_game(game_path=None, channel="official")
+
+    assert result["path"] == str(history)
+    assert calls == {
+        "args": [str(history)],
+        "kwargs": {"cwd": str(tmp_path)},
+    }
+
+
+def test_launch_game_falls_back_to_default_when_history_path_missing(tmp_path, monkeypatch):
+    import trail.runtime.launch_paths as launch_paths
+    import trail.runtime.window as window_module
+
+    default = tmp_path / "default.exe"
+    default.write_text("demo", encoding="utf-8")
+    state_file = tmp_path / "game-paths.json"
+    config = tmp_path / "config.ini"
+    config.write_text("channel=0\nsub_channel=0\n", encoding="utf-8")
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(launch_paths, "game_paths_path_for_user", lambda: state_file)
+    launch_paths.write_launch_path("official", str(tmp_path / "missing.exe"), state_file)
+    monkeypatch.setattr(window_module, "DEFAULT_GAME_PATHS", {"official": default})
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: False)
+    monkeypatch.setattr(
+        window_module.subprocess,
+        "Popen",
+        lambda args, **kwargs: calls.update({"args": args, "kwargs": kwargs}) or SimpleNamespace(),
+    )
+
+    result = window_module.launch_game(game_path=None, channel="official")
+
+    assert result["path"] == str(default)
+    assert calls == {
+        "args": [str(default)],
+        "kwargs": {"cwd": str(tmp_path)},
+    }
+
+
+def test_launch_game_falls_back_to_default_when_history_launch_fails(tmp_path, monkeypatch):
+    import trail.runtime.launch_paths as launch_paths
+    import trail.runtime.window as window_module
+
+    history = tmp_path / "history.exe"
+    history.write_text("demo", encoding="utf-8")
+    default = tmp_path / "default.exe"
+    default.write_text("demo", encoding="utf-8")
+    state_file = tmp_path / "game-paths.json"
+    attempts: list[Path] = []
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(launch_paths, "game_paths_path_for_user", lambda: state_file)
+    launch_paths.write_launch_path("official", str(history), state_file)
+    monkeypatch.setattr(window_module, "DEFAULT_GAME_PATHS", {"official": default})
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: False)
+
+    def fake_change_game_config(path: Path, *, channel: int, sub_channel: int) -> None:
+        del channel, sub_channel
+        attempts.append(Path(path))
+        if Path(path) == history:
+            raise TrailError("GAME_CONFIG_NOT_FOUND", "history launch failed")
+
+    monkeypatch.setattr(window_module, "change_game_config", fake_change_game_config)
+    monkeypatch.setattr(
+        window_module.subprocess,
+        "Popen",
+        lambda args, **kwargs: calls.update({"args": args, "kwargs": kwargs}) or SimpleNamespace(),
+    )
+
+    result = window_module.launch_game(game_path=None, channel="official")
+
+    assert attempts == [history, default]
+    assert result["path"] == str(default)
+    assert calls == {
+        "args": [str(default)],
+        "kwargs": {"cwd": str(tmp_path)},
+    }
+
+
+def test_launch_game_global_without_history_requires_user_path(monkeypatch):
+    import trail.runtime.window as window_module
+
+    monkeypatch.setattr(window_module, "read_launch_paths", lambda path=None: {})
+
+    with pytest.raises(TrailError) as exc_info:
+        window_module.launch_game(game_path=None, channel="global")
+
+    assert exc_info.value.code == "GAME_PATH_REQUIRED"
+    assert "请提供游戏路径" in str(exc_info.value)
+
+
+def test_launch_game_bilibili_without_history_requires_user_path(monkeypatch):
+    import trail.runtime.window as window_module
+
+    monkeypatch.setattr(window_module, "read_launch_paths", lambda path=None: {})
+
+    with pytest.raises(TrailError) as exc_info:
+        window_module.launch_game(game_path=None, channel="bilibili")
+
+    assert exc_info.value.code == "GAME_PATH_REQUIRED"
+    assert "请提供游戏路径" in str(exc_info.value)
+
+
+def test_launch_game_explicit_missing_path_is_hard_error_without_fallback(tmp_path, monkeypatch):
+    import trail.runtime.launch_paths as launch_paths
+    import trail.runtime.window as window_module
+
+    history = tmp_path / "history.exe"
+    history.write_text("demo", encoding="utf-8")
+    default = tmp_path / "default.exe"
+    default.write_text("demo", encoding="utf-8")
+    state_file = tmp_path / "game-paths.json"
+
+    monkeypatch.setattr(launch_paths, "game_paths_path_for_user", lambda: state_file)
+    launch_paths.write_launch_path("official", str(history), state_file)
+    monkeypatch.setattr(window_module, "DEFAULT_GAME_PATHS", {"official": default})
+    monkeypatch.setattr(window_module, "change_game_config", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fallback used")))
+    monkeypatch.setattr(
+        window_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fallback used")),
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        window_module.launch_game(game_path=tmp_path / "missing.exe", channel="official")
+
+    assert exc_info.value.code == "GAME_PATH_NOT_FOUND"
+    assert "未找到游戏启动路径" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(("failure_stage"), ["config", "popen"])
+def test_launch_game_explicit_existing_path_launch_failure_raises_stable_error_without_fallback(
+    tmp_path, monkeypatch, failure_stage: str
+):
+    import trail.runtime.launch_paths as launch_paths
+    import trail.runtime.window as window_module
+
+    executable = tmp_path / "StarRail.exe"
+    executable.write_text("demo", encoding="utf-8")
+    history = tmp_path / "history.exe"
+    history.write_text("demo", encoding="utf-8")
+    default = tmp_path / "default.exe"
+    default.write_text("demo", encoding="utf-8")
+    state_file = tmp_path / "game-paths.json"
+    config_attempts: list[Path] = []
+    popen_calls: list[tuple[list[str], dict[str, object]]] = []
+
+    monkeypatch.setattr(launch_paths, "game_paths_path_for_user", lambda: state_file)
+    launch_paths.write_launch_path("official", str(history), state_file)
+    monkeypatch.setattr(window_module, "DEFAULT_GAME_PATHS", {"official": default})
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: False)
+
+    def fake_change_game_config(path: Path, *, channel: int, sub_channel: int) -> None:
+        del channel, sub_channel
+        config_attempts.append(Path(path))
+        if Path(path) != executable:
+            raise AssertionError("fallback used")
+        if failure_stage == "config":
+            raise TrailError("GAME_CONFIG_NOT_FOUND", "config explode")
+
+    def fake_popen(args, **kwargs):
+        popen_calls.append((list(args), dict(kwargs)))
+        if failure_stage == "popen" and list(args) == [str(executable)]:
+            raise OSError("launch explode")
+        raise AssertionError("fallback used")
+
+    monkeypatch.setattr(window_module, "change_game_config", fake_change_game_config)
+    monkeypatch.setattr(window_module.subprocess, "Popen", fake_popen)
+
+    with pytest.raises(TrailError) as exc_info:
+        window_module.launch_game(game_path=executable, channel="official")
+
+    assert exc_info.value.code == "GAME_LAUNCH_FAILED"
+    assert str(executable) in str(exc_info.value)
+    if failure_stage == "config":
+        assert "config explode" in str(exc_info.value)
+        assert config_attempts == [executable]
+        assert popen_calls == []
+    else:
+        assert "launch explode" in str(exc_info.value)
+        assert config_attempts == [executable]
+        assert popen_calls == [([str(executable)], {"cwd": str(tmp_path)})]
+
+
+@pytest.mark.parametrize(("failure_stage"), ["config", "popen"])
+def test_launch_game_explicit_existing_path_launch_failure_does_not_write_history(tmp_path, monkeypatch, failure_stage: str):
+    import trail.runtime.launch_paths as launch_paths
+    import trail.runtime.window as window_module
+
+    executable = tmp_path / "StarRail.exe"
+    executable.write_text("demo", encoding="utf-8")
+    history = tmp_path / "history.exe"
+    history.write_text("demo", encoding="utf-8")
+    state_file = tmp_path / "game-paths.json"
+    write_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    monkeypatch.setattr(launch_paths, "game_paths_path_for_user", lambda: state_file)
+    launch_paths.write_launch_path("official", str(history), state_file)
+    original_history_text = state_file.read_text(encoding="utf-8")
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: False)
+
+    def fake_change_game_config(path: Path, *, channel: int, sub_channel: int) -> None:
+        del channel, sub_channel
+        if Path(path) != executable:
+            raise AssertionError("unexpected fallback path")
+        if failure_stage == "config":
+            raise TrailError("GAME_CONFIG_NOT_FOUND", "config explode")
+
+    def fake_popen(args, **kwargs):
+        if list(args) != [str(executable)]:
+            raise AssertionError("unexpected fallback path")
+        if failure_stage == "popen":
+            raise OSError("launch explode")
+        raise AssertionError("popen should not be called when config fails")
+
+    monkeypatch.setattr(window_module, "change_game_config", fake_change_game_config)
+    monkeypatch.setattr(window_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(window_module, "write_launch_path", lambda *args, **kwargs: write_calls.append((args, kwargs)))
+
+    with pytest.raises(TrailError) as exc_info:
+        window_module.launch_game(game_path=executable, channel="official")
+
+    assert exc_info.value.code == "GAME_LAUNCH_FAILED"
+    if failure_stage == "config":
+        assert "config explode" in str(exc_info.value)
+    else:
+        assert "launch explode" in str(exc_info.value)
+
+    assert write_calls == []
+    assert state_file.read_text(encoding="utf-8") == original_history_text
+    assert launch_paths.read_launch_paths(state_file) == {
+        "official": {"last_success_game_path": str(history)}
+    }
+
+
 def test_launch_game_skips_when_process_already_running(tmp_path, monkeypatch):
     import trail.runtime.window as window_module
 
@@ -3353,6 +3808,124 @@ def test_launch_game_skips_when_process_already_running(tmp_path, monkeypatch):
         "path": str(executable),
         "channel": "official",
         "args": [],
+    }
+
+
+def test_launch_game_writes_history_only_after_real_start(tmp_path, monkeypatch):
+    import trail.runtime.window as window_module
+
+    executable = tmp_path / "StarRail.exe"
+    executable.write_text("demo", encoding="utf-8")
+    state_file = tmp_path / "game-paths.json"
+    events: list[tuple[object, ...]] = []
+
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: False)
+    monkeypatch.setattr(
+        window_module,
+        "change_game_config",
+        lambda path, *, channel, sub_channel: events.append(("config", Path(path), channel, sub_channel)),
+    )
+    monkeypatch.setattr(
+        window_module.subprocess,
+        "Popen",
+        lambda args, cwd=None: events.append(("popen", list(args), cwd)) or SimpleNamespace(),
+    )
+
+    def fake_write_launch_path(channel: str, game_path: str, path=None) -> None:
+        del path
+        events.append(("write", channel, game_path))
+        state_file.write_text(game_path, encoding="utf-8")
+
+    monkeypatch.setattr(window_module, "write_launch_path", fake_write_launch_path, raising=False)
+
+    payload = window_module.launch_game(game_path=executable, channel="official")
+
+    assert payload["started"] is True
+    assert state_file.read_text(encoding="utf-8") == str(executable)
+    assert events == [
+        ("config", executable, 1, 1),
+        ("popen", [str(executable)], str(tmp_path)),
+        ("write", "official", str(executable)),
+    ]
+
+
+def test_launch_game_does_not_write_history_when_already_running(tmp_path, monkeypatch):
+    import trail.runtime.window as window_module
+
+    executable = tmp_path / "StarRail.exe"
+    executable.write_text("demo", encoding="utf-8")
+    writes: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: True)
+    monkeypatch.setattr(
+        window_module,
+        "change_game_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("config should not change")),
+    )
+    monkeypatch.setattr(
+        window_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("process should not start")),
+    )
+    monkeypatch.setattr(window_module, "write_launch_path", lambda *args, **kwargs: writes.append((args, kwargs)), raising=False)
+
+    payload = window_module.launch_game(game_path=executable, channel="official")
+
+    assert payload["started"] is False
+    assert payload["already_running"] is True
+    assert writes == []
+
+
+def test_launch_game_returns_warning_when_history_persist_fails_after_start(tmp_path, monkeypatch):
+    import trail.runtime.window as window_module
+
+    executable = tmp_path / "StarRail.exe"
+    executable.write_text("demo", encoding="utf-8")
+
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: False)
+    monkeypatch.setattr(window_module, "change_game_config", lambda *args, **kwargs: None)
+    monkeypatch.setattr(window_module.subprocess, "Popen", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(
+        window_module,
+        "write_launch_path",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")),
+        raising=False,
+    )
+
+    payload = window_module.launch_game(game_path=executable, channel="official")
+
+    assert payload["started"] is True
+    assert payload["already_running"] is False
+    assert payload["path"] == str(executable)
+    assert payload["warnings"] == [
+        {
+            "code": "GAME_PATH_PERSIST_FAILED",
+            "message": "游戏已成功启动，但历史路径持久化失败: disk full",
+        }
+    ]
+
+
+def test_launch_game_explicit_success_writes_only_to_isolated_user_state_file(
+    tmp_path,
+    monkeypatch,
+    isolated_user_launch_paths,
+):
+    import trail.runtime.launch_paths as launch_paths
+    import trail.runtime.window as window_module
+
+    executable = tmp_path / "StarRail.exe"
+    executable.write_text("demo", encoding="utf-8")
+
+    monkeypatch.setattr(window_module, "is_process_running", lambda process_name: False)
+    monkeypatch.setattr(window_module, "change_game_config", lambda *args, **kwargs: None)
+    monkeypatch.setattr(window_module.subprocess, "Popen", lambda *args, **kwargs: SimpleNamespace())
+
+    payload = window_module.launch_game(game_path=executable, channel="bilibili")
+
+    assert payload["started"] is True
+    assert isolated_user_launch_paths.exists()
+    assert launch_paths.read_launch_paths(isolated_user_launch_paths) == {
+        "bilibili": {"last_success_game_path": str(executable)}
     }
 
 

@@ -257,11 +257,7 @@ class CommandService:
             return self._capture_response(request, lambda: runtime_holder["runtime"], action)
 
         if request.method == "window.launch":
-            return self._capture_response(
-                request,
-                None,
-                lambda: to_jsonable(self.runtime_service.launch_game(**request.payload)),
-            )
+            return self._capture_window_launch(request)
 
         if request.method == "screen.shot":
             runtime = self._runtime(request)
@@ -407,6 +403,29 @@ class CommandService:
         response = with_auto_capture(capture_runtime, action, verbose=request.verbose)
         response = _normalize_capture_payload(response, workspace_root=Path(request.workspace_root))
         return self._response_with_request_id(request.request_id, response)
+
+    def _capture_window_launch(self, request):
+        promoted_warnings: list[dict[str, Any]] = []
+
+        def action():
+            result = to_jsonable(self.runtime_service.launch_game(**request.payload))
+            if not isinstance(result, dict):
+                return result
+            raw_warnings = result.pop("warnings", None)
+            if isinstance(raw_warnings, list):
+                promoted_warnings.extend(deepcopy(raw_warnings))
+            return result
+
+        response = self._capture_response(request, None, action)
+        if not response.get("ok") or not promoted_warnings:
+            return response
+
+        payload = deepcopy(response)
+        payload["warnings"] = [
+            *deepcopy(payload.get("warnings") or []),
+            *promoted_warnings,
+        ]
+        return payload
 
     def _mutating_capture(self, request, runtime, action):
         response = self._capture_response(request, runtime, action)

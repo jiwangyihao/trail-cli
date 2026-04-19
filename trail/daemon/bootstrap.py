@@ -11,17 +11,12 @@ from uuid import uuid4
 
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
 from trail.daemon.models import InstallRecord, RuntimeRecord, TrailDaemonManifest
+from trail.daemon.paths import resolve_daemon_home
 from trail.daemon.protocol import PROTOCOL_VERSION
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def resolve_daemon_home() -> Path:
-    return Path.home() / ".trail-daemon"
-
-
 def launcher_script_path(daemon_home: Path) -> Path:
     return Path(daemon_home) / "traild-launch.pyw"
 

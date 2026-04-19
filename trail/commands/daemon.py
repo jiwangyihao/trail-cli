@@ -12,9 +12,10 @@ import socket
 import typer
 
 from trail.commands.helpers import call_daemon
-from trail.daemon.bootstrap import install_bootstrap, resolve_daemon_home, start_bootstrap, stop_bootstrap
+from trail.daemon.bootstrap import install_bootstrap, start_bootstrap, stop_bootstrap
 from trail.daemon.client import daemon_transport_failure, format_exception_detail
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
+from trail.daemon.paths import resolve_daemon_home
 from trail.output.envelope import command_success
 from trail.output.rendering import print_output
 

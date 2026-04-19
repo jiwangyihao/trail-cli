@@ -20,7 +20,7 @@ description: Use when an agent needs to create a Trail session, verify the HSR w
 
 1. 首次使用先运行 `trail daemon install`
 2. 开始前确认常驻服务状态：`trail daemon status`；如果需要主动预热，运行 `trail daemon start`
-3. 如果游戏尚未启动，先运行 `trail window launch --game-path <StarRail.exe>`；必要时显式传 `--channel official|bilibili|global`
+3. 如果游戏尚未启动，先运行 `trail window launch --channel official|bilibili|global`
 4. 如果还不确定窗口是否可操作，运行 `trail window attach --window-title "崩坏：星穹铁道"`
 5. 运行 `trail session create`
 6. 从返回的 `data.session_id` 记录本局会话 ID
@@ -29,6 +29,16 @@ description: Use when an agent needs to create a Trail session, verify the HSR w
 
 ## 执行规则
 
+- `trail window launch --channel official|bilibili|global` 是默认入口
+- 显式 `--game-path` 仍可显式提供，且优先级最高、失败时不会回退
+- 未显式提供时按历史成功路径 -> 默认路径 -> 直接问用户
+- 默认路径只覆盖 `official`，冻结值为 `C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe`
+- `bilibili` / `global` 无历史成功路径时，通常仍需显式 `--game-path`
+- 显式路径不存在时返回 `GAME_PATH_NOT_FOUND`
+- 显式路径存在但启动失败时返回 `GAME_LAUNCH_FAILED`
+- Agent 不应默认乱搜路径；如果返回 `GAME_PATH_REQUIRED`，直接问用户提供路径
+- 如果游戏已成功启动但历史路径写回失败，仍视为 success，并读取 `warn code=GAME_PATH_PERSIST_FAILED`
+- 上述 success warning 的稳定码是 `GAME_PATH_PERSIST_FAILED`
 - `session create` 成功前，不要开始场景命令
 - 如果窗口检查失败，先解决窗口焦点或绑定问题，再继续
 - 每次命令后优先阅读返回的 `screenshot` 与 `data`

@@ -34,8 +34,8 @@ def build_default_artifact_store() -> ArtifactStore:
 
 
 def build_default_daemon_client():
-    from trail.daemon.bootstrap import resolve_daemon_home
     from trail.daemon.client import TrailDaemonClient, send_daemon_request
+    from trail.daemon.paths import resolve_daemon_home
 
     return TrailDaemonClient(
         workspace_root=Path.cwd(),

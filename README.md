@@ -25,7 +25,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 
 - 首次机器准备：`trail daemon install`
 - 确认或预热常驻服务：`trail daemon status`，必要时 `trail daemon start`
-- 如果游戏还没开：`trail window launch --game-path <StarRail.exe>`
+- 如果游戏还没开：先运行 `trail window launch --channel official|bilibili|global`；只有 `bilibili` / `global` 首次且无历史成功路径时，通常再补 `--game-path <StarRail.exe>`
 - `trail session create`
 - `trail guide fetch cw <lineup_url|lineup_id>`
 - `trail cw enter --session <id> --mode new`
@@ -38,13 +38,26 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `session`：创建并持久化 session
 - `guide`：拉取攻略内容、返回筛选枚举与攻略列表
 - `window`：做窗口绑定检查
-- `window launch`：按显式路径启动《崩坏：星穹铁道》客户端，支持渠道切换
+- `window launch`：支持按 channel 自动解析《崩坏：星穹铁道》启动路径，必要时仍可显式提供 `--game-path`
 - `screen`：截图
 - `ocr`：OCR 读取
 - `image`：模板识别与等待
 - `input`：点击、拖拽、按键
 - `state`：读取 session 与 scene state
 - `cw`：货币战争固定流程命令，包含 `enter`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
+
+## Window Launch
+
+- 入口命令：`trail window launch --channel official|bilibili|global`
+- 显式 `--game-path` 仍可显式提供，且优先级最高、失败时不会回退
+- 无显式路径时固定顺序：历史成功路径 -> 默认路径 -> 直接问用户
+- 默认路径只覆盖 `official`，冻结值为 `C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe`
+- `bilibili` / `global` 无历史成功路径时，通常仍需显式 `--game-path`
+- 显式路径不存在时返回 `GAME_PATH_NOT_FOUND`
+- 显式路径存在但启动失败时返回 `GAME_LAUNCH_FAILED`
+- Agent 不应默认乱搜路径；收到 `GAME_PATH_REQUIRED` 表示现在该直接问用户提供路径
+- 如果游戏已成功启动但历史路径写回失败，仍返回 success，并追加 `warn code=GAME_PATH_PERSIST_FAILED`
+- 上述 success warning 的稳定码是 `GAME_PATH_PERSIST_FAILED`
 
 ## OCR 选项
 
