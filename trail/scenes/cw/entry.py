@@ -61,12 +61,13 @@ class CwStartEntryTruthRequiredError(TrailError):
 
 
 class CwStartProgressPendingError(TrailError):
-    def __init__(self):
+    def __init__(self, *, after_start_click: bool = False):
         super().__init__(
             "CW_START_PROGRESS_PENDING",
             "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run",
         )
         self.data = {"page": "home"}
+        self.completed_after_side_effect = after_start_click
 
 
 def _asset(alias: str) -> str:
@@ -197,6 +198,9 @@ def _enter_from_start_page(runtime, *, mode: str, difficulty: str, battle_mode: 
     if start_box is None:
         start_box = _wait(runtime, "entry.start")
     _click_box_center(runtime, start_box)
+    current = _detect_current_enter_page(runtime, preferred_mode=mode)
+    if current.get("page") == "home" and current.get("unfinished_progress") == "1":
+        raise CwStartProgressPendingError(after_start_click=True)
     _select_battle_mode(runtime, battle_mode=battle_mode)
     if mode == "new":
         _enter_new_game(runtime, difficulty=difficulty)

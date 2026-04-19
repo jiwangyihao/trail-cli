@@ -148,6 +148,8 @@ class CwService:
         except CwSideEffectAppliedError as error:
             raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
         except Exception as error:
+            if getattr(error, "completed_after_side_effect", False):
+                raise
             if tracker.side_effect_applied:
                 raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
             raise

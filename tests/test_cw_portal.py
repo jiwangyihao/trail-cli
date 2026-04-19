@@ -886,7 +886,7 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
     assert persisted.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
     assert persisted.scene_state["cw"]["sell_plan"] == {"stale": True}
     assert status["final_state"] == "completed"
-    assert runtime.ocr_calls == [{}, {}]
+    assert runtime.ocr_calls == [{}, {}, {}]
     assert observed_summary_inputs == [
         {
             "pieces": [{"text": "alpha"}],
@@ -954,6 +954,82 @@ def test_cw_start_rejects_home_with_unfinished_progress_before_side_effects(
     assert runtime.clicks == []
     assert runtime.wait_calls == []
     assert runtime.ocr_calls == [{}]
+    assert persisted.scene_state["cw"]["entry"] == {"page": "home"}
+    assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["希儿"]}
+
+
+@pytest.mark.parametrize("requested_mode", ["new", "continue"])
+def test_cw_start_from_clean_home_reveals_unfinished_progress_after_start_click(
+    tmp_path: Path,
+    monkeypatch,
+    requested_mode: str,
+):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    start_box = _box("entry.start", left=100, top=200)
+
+    class Runtime(StartRuntime):
+        def __init__(self):
+            super().__init__()
+            self._phase = "home"
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box if self._phase == "home" else None
+            if template == _asset("entry.continue"):
+                return _box("entry.continue", left=200, top=300) if self._phase == "after_start" else None
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == start_box.center:
+                self._phase = "after_start"
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(dict(kwargs))
+            if self._phase == "home":
+                return [{"text": "货币战争"}]
+            return [
+                {"text": "继续进度"},
+                {"text": "结束并结算"},
+                {"text": "当前进度1-1M奖励"},
+            ]
+
+    runtime = Runtime()
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "home"},
+        "slots": {"stale": False, "hand": ["希儿"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"stale": False, "steps": [1]},
+    }
+    service.save_session(session)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id=f"req-cw-start-home-late-progress-{requested_mode}",
+        mode=requested_mode,
+        difficulty="current",
+        battle_mode="standard",
+    )
+    status = registry.for_workspace(str(tmp_path)).request_status(f"req-cw-start-home-late-progress-{requested_mode}")
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is False
+    assert envelope["data"] == {"page": "home"}
+    assert envelope["error"] == {
+        "code": "CW_START_PROGRESS_PENDING",
+        "message": "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run",
+    }
+    assert status["final_state"] == "completed"
+    assert status["tainted"] is False
+    assert runtime.clicks == [start_box.center]
+    assert runtime.wait_calls == []
+    assert runtime.ocr_calls == [{}, {}]
     assert persisted.scene_state["cw"]["entry"] == {"page": "home"}
     assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["希儿"]}
 

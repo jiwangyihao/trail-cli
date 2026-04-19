@@ -802,6 +802,96 @@ def test_command_service_handles_cw_start_rejects_home_with_unfinished_progress(
 
 
 @pytest.mark.parametrize("requested_mode", ["new", "continue"])
+def test_command_service_handles_cw_start_reports_completed_known_failure_when_progress_appears_after_start_click(
+    tmp_path: Path,
+    requested_mode: str,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+            self._phase = "home"
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == asset("entry.start"):
+                return _box("entry.start", left=84, top=96) if self._phase == "home" else None
+            if template == asset("entry.continue"):
+                return _box("entry.continue", left=140, top=180) if self._phase == "after_start" else None
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == (104, 106):
+                self._phase = "after_start"
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(dict(kwargs))
+            if self._phase == "home":
+                return [{"text": "货币战争"}]
+            return [{"text": "继续进度"}, {"text": "结束并结算"}, {"text": "当前进度1-1M奖励"}]
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"entry": {"page": "home"}}
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id=f"req-cw-start-home-late-progress-{requested_mode}",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": requested_mode,
+            "difficulty": "current",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+    status = service.request_status(request.request_id)
+    loaded = service.load_session(session.session_id)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"page": "home"}
+    assert payload["error"] == {
+        "code": "CW_START_PROGRESS_PENDING",
+        "message": "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run",
+    }
+    assert status["final_state"] == "completed"
+    assert status["tainted"] is False
+    assert runtime.clicks == [(104, 106)]
+    assert runtime.wait_calls == []
+    assert runtime.ocr_calls == [{}, {}]
+    assert loaded.scene_state.get("daemon", {}).get("tainted", False) is False
+
+
+@pytest.mark.parametrize("requested_mode", ["new", "continue"])
 def test_command_service_handles_cw_start_consumes_unfinished_progress_flag_before_run_start_chain(
     tmp_path: Path,
     requested_mode: str,

@@ -200,12 +200,18 @@ class CommandService:
         payload = deepcopy(request.payload)
         if request.session_id is not None:
             payload.setdefault("session_id", request.session_id)
-        return self._cw_service().handle_mutation(
-            method=request.method,
-            payload=payload,
-            workspace_root=request.workspace_root,
-            session_service=service,
-        )
+        try:
+            return self._cw_service().handle_mutation(
+                method=request.method,
+                payload=payload,
+                workspace_root=request.workspace_root,
+                session_service=service,
+            )
+        except TrailError as error:
+            if getattr(error, "completed_after_side_effect", False):
+                envelope = self._response_with_request_id(request.request_id, self._failure_envelope(error=error))
+                raise CompletedKnownFailure(envelope)
+            raise
 
     def handle(self, request):
         if request.method == "daemon.ping":
@@ -608,6 +614,14 @@ class CommandService:
             last_known_stage = "state_persisted" if handler_persisted_state else "handler_completed"
             response = response_builder(handler_result)
             result = self._response_with_request_id(request.request_id, response)
+        except CompletedKnownFailure as error:
+            return self._persist_terminal_envelope(
+                service=service,
+                request=request,
+                command_name=command_name,
+                final_state="completed",
+                envelope=error.envelope,
+            )
         except FailedBeforeSideEffect as error:
             return self._persist_terminal_envelope(
                 service=service,
@@ -767,4 +781,10 @@ class PersistedButResponseUnknown(Exception):
 class FailedBeforeSideEffect(Exception):
     def __init__(self, envelope: dict[str, Any]):
         super().__init__("failed before side effect")
+        self.envelope = deepcopy(envelope)
+
+
+class CompletedKnownFailure(Exception):
+    def __init__(self, envelope: dict[str, Any]):
+        super().__init__("completed with known business failure")
         self.envelope = deepcopy(envelope)
