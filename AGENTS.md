@@ -51,6 +51,7 @@
 ## 文档与测试同步要求
 
 - 新命令或现有命令输出发生变化时，必须同步更新 `README.md` 示例与说明。
+- 所有会影响普通用户或 Agent 使用方式的变更，都必须同步更新相关 `skills/*/SKILL.md`，不要只改 README 或 spec/plan。
 - 新命令至少要补 renderer 单测，以及受影响的 CLI stdout 测试或 RPC/契约测试增量。
 - 如果新增前缀词、冻结字段、恢复语义或 `--verbose` 事件类型，必须同步更新本文件与 README。
 - 评审输出变更时，优先检查：renderer 家族是否明确、默认模式必出事实是否稳定、YAML allowlist 是否合理、README 与测试是否已同步。
