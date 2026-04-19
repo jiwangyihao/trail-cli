@@ -23,7 +23,8 @@ CURRENCY_WARS_ENTRY_POINT = (int(CW_WIDTH * 0.242), int(CW_HEIGHT * 0.30))
 CURRENCY_WARS_PARTICIPATE_POINT = (int(CW_WIDTH * 0.7786), int(CW_HEIGHT * 0.8194))
 STANDARD_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.2315))
 OVERCLOCK_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.4167))
-HOME_UNFINISHED_PROGRESS_KEYWORDS = ("继续进度", "结束并结算")
+HOME_UNFINISHED_PROGRESS_PRIMARY = "继续进度"
+HOME_UNFINISHED_PROGRESS_SECONDARY = ("结束并结算", "当前进度")
 
 
 class CwEnterStateError(TrailError):
@@ -132,7 +133,9 @@ def _home_has_unfinished_progress(runtime) -> bool:
     except Exception:
         return False
     joined = "".join(texts)
-    return any(keyword in joined for keyword in HOME_UNFINISHED_PROGRESS_KEYWORDS)
+    return HOME_UNFINISHED_PROGRESS_PRIMARY in joined and any(
+        keyword in joined for keyword in HOME_UNFINISHED_PROGRESS_SECONDARY
+    )
 
 
 def _invalidate_stage(session: SessionModel) -> None:
@@ -223,11 +226,11 @@ def _detect_current_enter_page(
     preferred_mode: str | None = None,
 ) -> dict[str, str]:
     start_box = _locate(runtime, "entry.start")
-    if start_box is not None and _home_has_unfinished_progress(runtime):
+    continue_box = _locate(runtime, "entry.continue")
+    if (start_box is not None or continue_box is not None) and _home_has_unfinished_progress(runtime):
         return {"page": "home", "unfinished_progress": "1"}
 
     new_box = _locate(runtime, "entry.new")
-    continue_box = _locate(runtime, "entry.continue")
     if new_box is not None and continue_box is not None:
         if preferred_mode == "continue":
             return {"page": "entry.continue"}

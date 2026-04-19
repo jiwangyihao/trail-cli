@@ -715,11 +715,40 @@ def test_command_service_handles_cw_start_rejects_home_with_unfinished_progress(
     monkeypatch,
 ):
     from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
 
     class Runtime:
         def __init__(self):
+            self.locate_calls: list[str] = []
             self.wait_calls: list[str] = []
             self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+            self._locate_results = {
+                asset("entry.start"): None,
+                asset("entry.new"): None,
+                asset("entry.continue"): _box("entry.continue", left=84, top=96),
+                asset("entry.invest_environment"): None,
+                asset("stage.preparation"): None,
+                asset("stage.shop"): None,
+                asset("stage.replenish"): None,
+                asset("stage.encounter"): None,
+                asset("stage.invest"): None,
+                asset("stage.boss_preview"): None,
+                asset("stage.fortune"): None,
+                asset("stage.event"): None,
+                asset("stage.settle"): None,
+                asset("stage.game_over"): None,
+            }
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            return self._locate_results.get(template)
 
         def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
             del timeout, interval
@@ -730,10 +759,9 @@ def test_command_service_handles_cw_start_rejects_home_with_unfinished_progress(
             del kwargs
             self.clicks.append((x, y))
 
-    monkeypatch.setattr(
-        "trail.scenes.cw.entry._detect_current_enter_page",
-        lambda runtime, session=None, preferred_mode=None: {"page": "home", "unfinished_progress": "1"},
-    )
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(dict(kwargs))
+            return [{"text": "继续进度"}, {"text": "结束并结算"}, {"text": "当前进度1-1M奖励"}]
 
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))
@@ -770,6 +798,7 @@ def test_command_service_handles_cw_start_rejects_home_with_unfinished_progress(
     assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
     assert runtime.clicks == []
     assert runtime.wait_calls == []
+    assert runtime.ocr_calls == [{}]
 
 
 @pytest.mark.parametrize(

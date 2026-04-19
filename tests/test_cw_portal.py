@@ -913,10 +913,10 @@ def test_cw_start_rejects_home_with_unfinished_progress_before_side_effects(
     requested_mode: str,
 ):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
-    start_box = _box("entry.start", left=100, top=200)
+    continue_box = _box("entry.continue", left=200, top=300)
     runtime = StartRuntime(
         locate_results={
-            _asset("entry.start"): start_box,
+            _asset("entry.continue"): continue_box,
         },
         ocr_result=[
             _dict_piece("继续进度", left=100, top=100),
@@ -956,6 +956,64 @@ def test_cw_start_rejects_home_with_unfinished_progress_before_side_effects(
     assert runtime.ocr_calls == [{}]
     assert persisted.scene_state["cw"]["entry"] == {"page": "home"}
     assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["希儿"]}
+
+
+def test_cw_start_entry_continue_still_advances_when_only_continue_progress_text_present(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    cards = _portal_cards()
+    runtime = StartRuntime(
+        locate_results={
+            _asset("entry.continue"): _box("entry.continue", left=200, top=300),
+        },
+        wait_results={
+            _asset("entry.continue"): _box("entry.continue", left=200, top=300),
+            _asset("stage.boss_preview"): _box("stage.boss_preview", left=300, top=400),
+            _asset("entry.invest_environment"): _box("entry.invest_environment", left=400, top=500),
+        },
+        ocr_result=[
+            _dict_piece("继续进度", left=100, top=100),
+        ],
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list: cards)
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "home", "mode": "continue", "difficulty": "lowest", "battle_mode": "standard"},
+        "slots": {"stale": False, "hand": ["希儿"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"stale": False, "steps": [1]},
+    }
+    service.save_session(session)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-start-entry-continue-only-continue-text",
+        mode="new",
+        difficulty="current",
+        battle_mode="overclock",
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"]["cards"] == cards
+    assert envelope["data"]["mode"] == "continue"
+    assert envelope["data"]["difficulty"] == "lowest"
+    assert envelope["data"]["battle_mode"] == "overclock"
+    assert persisted.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": "continue",
+        "difficulty": "lowest",
+        "battle_mode": "overclock",
+    }
+    assert runtime.clicks == [(300, 450), (220, 310), (320, 410)]
+    assert runtime.wait_calls == [
+        _asset("entry.continue"),
+        _asset("stage.boss_preview"),
+        _asset("entry.invest_environment"),
+    ]
+    assert runtime.ocr_calls == [{}, {}]
 
 
 @pytest.mark.parametrize(
