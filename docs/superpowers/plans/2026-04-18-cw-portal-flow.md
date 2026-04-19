@@ -87,15 +87,25 @@
   - 双传时报错
   - `page > 1` 或 `next_page_token` 同传时报错
   - 非法 portal 返回最接近 3 个候选
-  - portal 过滤基于首页前 60 条候选的 detail fan-out，本地返回最多 `limit` 条
+  - `--portal` / `--portal-id` 可重复传入多个值
+  - portal 过滤按真实上游分页不断往后抓，而不是假设 `limit=60` 就等于拿到 60 条候选
+  - 上游单页实际最多返回 10 条时，也必须继续翻页直到为每个 portal 凑够 `limit`、上游 exhausted、或 hit `30 页` 保护上限
+  - portal 过滤基于逐页候选的 detail fan-out，本地对每个 portal 返回最多 `limit` 条
+  - guide 单条摘要要新增核心互动数据：`like`、`favour`
+  - portal 模式下的 `more / next` 要反映“是否还有未扫描上游页”，不能再固定 `more=0`
+  - 多 portal 请求结果按环境分组返回，不做扁平合并
 - [ ] 写失败测试，冻结 daemon / CLI 转发链：
   - `trail/daemon/command_service.py` 必须把 `portal / portal_id` 透传到 guide list 过滤逻辑
   - `tests/test_guide_rpc_contracts.py` 必须覆盖 `--portal` / `--portal-id` payload 映射与互斥错误
 - [ ] 写失败测试，冻结非法 portal 的默认文本失败输出：
   - `why msg=...`
   - 最多 3 条 `warn portal=<title> score=<score>`
+- [ ] 写失败测试，冻结多 portal 成功输出：
+  - 结果按环境分组
+  - 每组都带 `portal_title / list / more / next?`
+  - 单条 guide 摘要新增 `like / favour`
 - [ ] 跑红灯，确认当前 `guide list` 不支持这些语义。
-- [ ] 最小实现 `guide list cw` portal 过滤。
+- [ ] 最小实现 `guide list cw` portal 过滤，并把停止条件锁成：`limit` / exhausted / 30 页上限；把 `<5s` 记成开发期性能目标而不是用户面硬错误。
 - [ ] 运行：
    - `uv run pytest tests/test_guide_portal_filter.py tests/test_cw_guide.py tests/test_guide_rpc_contracts.py tests/test_output_rendering.py -q --basetemp .trail/pytest-temp-cw-portal-guide -p no:cacheprovider`
 - [ ] 提交：`feat(cw): 增加攻略投资环境过滤`

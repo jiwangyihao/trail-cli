@@ -244,6 +244,8 @@ def test_guide_list_portal_payload_mapping_and_filtered_rendering(cli_runner, fa
                             "support_hard": True,
                             "has_change_equip": False,
                             "has_expert": True,
+                            "like": 123,
+                            "favour": 45,
                         }
                     ],
                     "next_page_token": None,
@@ -257,7 +259,7 @@ def test_guide_list_portal_payload_mapping_and_filtered_rendering(cli_runner, fa
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
         "ok guide.list.cw count=1 more=0",
-        "guide id=portal-guide idx=1 carry=希儿 hard=1 change_equip=0 expert=1",
+        "guide id=portal-guide idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
         "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3",
     ]
     assert client.calls == [
@@ -272,6 +274,87 @@ def test_guide_list_portal_payload_mapping_and_filtered_rendering(cli_runner, fa
                 "match_change_job": None,
                 "match_hard": None,
                 "portal": "购物区",
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_guide_list_multi_portal_payload_mapping_and_grouped_rendering(cli_runner, fake_daemon_client, tmp_path: Path):
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": build_success_response(
+                request_id="req-guide-list-portals",
+                data={
+                    "portals": [
+                        {
+                            "portal_title": "购物区",
+                            "list": [
+                                {
+                                    "lineup_id": "shop-guide",
+                                    "carry_roles": ["希儿"],
+                                    "final_role_cards": [{"name": "希儿", "star": 5, "rarity": 3, "is_carry": True}],
+                                    "support_hard": True,
+                                    "has_change_equip": False,
+                                    "has_expert": True,
+                                    "like": 123,
+                                    "favour": 45,
+                                }
+                            ],
+                            "more": False,
+                            "next_page_token": None,
+                        },
+                        {
+                            "portal_title": "事件区",
+                            "list": [
+                                {
+                                    "lineup_id": "event-guide",
+                                    "carry_roles": ["停云"],
+                                    "final_role_cards": [{"name": "停云", "star": 4, "rarity": 2, "is_carry": True}],
+                                    "support_hard": False,
+                                    "has_change_equip": True,
+                                    "has_expert": False,
+                                    "like": 22,
+                                    "favour": 9,
+                                }
+                            ],
+                            "more": False,
+                            "next_page_token": None,
+                        },
+                    ],
+                    "count": 2,
+                    "more": False,
+                },
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--portal", "购物区", "--portal", "事件区", "--limit", "3"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "ok guide.list.cw groups=2 count=2 more=0",
+        "guide portal=购物区 count=1 more=0",
+        "guide portal=购物区 id=shop-guide idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
+        "guide portal=购物区 idx=1 final_roles=希儿/carry:1/star:5/rarity:3",
+        "guide portal=事件区 count=1 more=0",
+        "guide portal=事件区 id=event-guide idx=1 carry=停云 hard=0 change_equip=1 expert=0 like=22 favour=9",
+        "guide portal=事件区 idx=1 final_roles=停云/carry:1/star:4/rarity:2",
+    ]
+    assert client.calls == [
+        {
+            "method": "guide.list.cw",
+            "payload": {
+                "page": 1,
+                "limit": 3,
+                "trait_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+                "portal": ["购物区", "事件区"],
             },
             "workspace_root": str(tmp_path),
             "session_id": None,
@@ -534,6 +617,74 @@ def test_command_service_handles_guide_list_cw_with_portal_filters(tmp_path: Pat
                 "portal": "购物区",
             }
         ]
+
+
+def test_command_service_handles_guide_list_cw_with_multi_portal_groups(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+
+    observed: list[dict[str, object]] = []
+
+    def fake_fetch_guide_list(**kwargs):
+        observed.append(kwargs)
+        return {
+            "portals": [
+                {"portal_title": "购物区", "list": [{"lineup_id": "shop-guide", "like": 123, "favour": 45}], "more": False, "next_page_token": None},
+                {"portal_title": "事件区", "list": [{"lineup_id": "event-guide", "like": 22, "favour": 9}], "more": True, "next_page_token": "token-next"},
+            ],
+            "count": 2,
+            "more": True,
+        }
+
+    monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide_list", fake_fetch_guide_list)
+
+    service = CommandService(runtime_service=SimpleNamespace())
+    payload = service.handle(
+        _guide_request(
+            workspace_root=tmp_path,
+            method="guide.list.cw",
+            payload={
+                "page": 1,
+                "limit": 3,
+                "trait_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+                "portal": ["购物区", "事件区"],
+            },
+        )
+    )
+
+    assert payload == {
+        "request_id": "req-guide.list.cw",
+        "ok": True,
+        "data": {
+            "portals": [
+                {"portal_title": "购物区", "list": [{"lineup_id": "shop-guide", "like": 123, "favour": 45}], "more": False, "next_page_token": None},
+                {"portal_title": "事件区", "list": [{"lineup_id": "event-guide", "like": 22, "favour": 9}], "more": True, "next_page_token": "token-next"},
+            ],
+            "count": 2,
+            "more": True,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    assert observed == [
+        {
+            "page": 1,
+            "limit": 3,
+            "trait_id": None,
+            "order": None,
+            "next_page_token": None,
+            "match_change_job": None,
+            "match_hard": None,
+            "portal": ["购物区", "事件区"],
+        }
+    ]
 
 
 def test_command_service_rejects_unsupported_guide_scene(tmp_path: Path):

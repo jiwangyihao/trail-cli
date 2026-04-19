@@ -471,6 +471,8 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
                     "support_hard": True,
                     "has_change_equip": False,
                     "has_expert": True,
+                    "like": 123,
+                    "favour": 45,
                 },
                 {
                     "lineup_id": "def",
@@ -478,6 +480,8 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
                     "support_hard": False,
                     "has_change_equip": True,
                     "has_expert": False,
+                    "like": 22,
+                    "favour": 9,
                 },
             ],
             "next_page_token": "token-2",
@@ -493,9 +497,9 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
     assert render_output("guide.list.cw", payload).splitlines() == [
         "ok guide.list.cw count=2 more=1 next=token-2",
         "shot path=.trail/shots/req-guide-list.png",
-        "guide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1",
+        "guide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
         "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3|佩拉/star:4/rarity:2",
-        "guide id=def idx=2 hard=0 change_equip=1 expert=0",
+        "guide id=def idx=2 hard=0 change_equip=1 expert=0 like=22 favour=9",
     ]
 
 
@@ -510,6 +514,8 @@ def test_render_output_guide_list_omits_next_when_not_paginated():
                     "support_hard": False,
                     "has_change_equip": False,
                     "has_expert": False,
+                    "like": 7,
+                    "favour": 3,
                 }
             ],
             "next_page_token": None,
@@ -526,9 +532,71 @@ def test_render_output_guide_list_omits_next_when_not_paginated():
 
     assert lines == [
         "ok guide.list.cw count=1 more=0",
-        "guide id=abc idx=1 carry=希儿 hard=0 change_equip=0 expert=0",
+        "guide id=abc idx=1 carry=希儿 hard=0 change_equip=0 expert=0 like=7 favour=3",
     ]
     assert all("final_roles=" not in line for line in lines)
+
+
+def test_render_output_renders_grouped_portal_guide_lists():
+    payload = {
+        "ok": True,
+        "data": {
+            "portals": [
+                {
+                    "portal_title": "购物区",
+                    "list": [
+                        {
+                            "lineup_id": "shop-guide",
+                            "carry_roles": ["希儿"],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": True,
+                            "like": 123,
+                            "favour": 45,
+                            "final_role_cards": [{"name": "希儿", "star": 5, "rarity": 3, "is_carry": True}],
+                        }
+                    ],
+                    "more": False,
+                    "next_page_token": None,
+                },
+                {
+                    "portal_title": "事件区",
+                    "list": [
+                        {
+                            "lineup_id": "event-guide",
+                            "carry_roles": ["停云"],
+                            "support_hard": False,
+                            "has_change_equip": True,
+                            "has_expert": False,
+                            "like": 22,
+                            "favour": 9,
+                            "final_role_cards": [{"name": "停云", "star": 4, "rarity": 2, "is_carry": True}],
+                        }
+                    ],
+                    "more": False,
+                    "next_page_token": None,
+                },
+            ],
+            "count": 2,
+            "more": False,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "ok guide.list.cw groups=2 count=2 more=0",
+        "guide portal=购物区 count=1 more=0",
+        "guide portal=购物区 id=shop-guide idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
+        "guide portal=购物区 idx=1 final_roles=希儿/carry:1/star:5/rarity:3",
+        "guide portal=事件区 count=1 more=0",
+        "guide portal=事件区 id=event-guide idx=1 carry=停云 hard=0 change_equip=1 expert=0 like=22 favour=9",
+        "guide portal=事件区 idx=1 final_roles=停云/carry:1/star:4/rarity:2",
+    ]
 
 
 def test_render_output_renders_guide_fetch_summary_text():

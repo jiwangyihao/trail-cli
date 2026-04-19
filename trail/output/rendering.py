@@ -585,6 +585,54 @@ def _render_guide_fetch(command: str, payload: dict[str, Any]) -> list[str]:
 
 def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
+    portal_groups = _as_list(data.get("portals"))
+    if portal_groups:
+        total_count = data.get("count")
+        if not isinstance(total_count, int):
+            total_count = sum(len(_as_list(group.get("list")) if isinstance(group, dict) else []) for group in portal_groups)
+        summary = _format_fact_sequence(
+            ("groups", len(portal_groups)),
+            ("count", total_count),
+            ("more", bool(data.get("more"))),
+        )
+        lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
+        _append_shot(lines, payload)
+        for group in portal_groups:
+            if not isinstance(group, dict):
+                continue
+            items = _as_list(group.get("list"))
+            _append_fact_line(
+                lines,
+                "guide",
+                ("portal", group.get("portal_title")),
+                ("count", len(items)),
+                ("more", bool(group.get("more"))),
+                ("next", group.get("next_page_token") if group.get("next_page_token") else None),
+            )
+            for index, item in enumerate(items, start=1):
+                if not isinstance(item, dict):
+                    continue
+                final_roles = _compact_role_cards(item.get("final_role_cards"))
+                lines.append(
+                    "guide "
+                    + _format_fact_sequence(
+                        ("portal", group.get("portal_title")),
+                        ("id", _guide_id(item)),
+                        ("idx", index),
+                        ("carry", _first_carry_role(item)),
+                        ("hard", bool(item.get("support_hard"))),
+                        ("change_equip", bool(item.get("has_change_equip"))),
+                        ("expert", bool(item.get("has_expert"))),
+                        ("like", item.get("like")),
+                        ("favour", item.get("favour")),
+                    )
+                )
+                if final_roles is not None:
+                    _append_fact_line(lines, "guide", ("portal", group.get("portal_title")), ("idx", index), ("final_roles", final_roles))
+        _append_warnings(lines, payload)
+        _append_references(lines, payload)
+        return lines
+
     items = _as_list(data.get("list"))
     next_page_token = data.get("next_page_token")
     summary = _format_fact_sequence(
@@ -607,6 +655,8 @@ def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:
                 ("hard", bool(item.get("support_hard"))),
                 ("change_equip", bool(item.get("has_change_equip"))),
                 ("expert", bool(item.get("has_expert"))),
+                ("like", item.get("like")),
+                ("favour", item.get("favour")),
             )
         )
         if final_roles is not None:

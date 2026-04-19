@@ -473,7 +473,7 @@ def test_select_cw_portal_marks_snapshot_stale_after_confirm(tmp_path: Path, mon
     selected = select_cw_portal(session, card_idx=2, runtime=runtime)
 
     assert selected == _portal_cards()[1]
-    assert runtime.clicks == [(960, 540), (960, 920)]
+    assert runtime.clicks == [(960, 540), (1084, 992)]
     assert session.scene_state["cw"]["portal"]["stale"] is True
     assert session.scene_state["cw"]["entry"] == {
         "page": "in_game",

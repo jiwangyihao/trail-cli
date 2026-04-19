@@ -530,12 +530,14 @@ def test_fetch_cw_guide_list_posts_filters_and_normalizes_response(monkeypatch):
                 "has_change_equip": True,
                 "has_expert": True,
                 "version": "3.1",
-                "created_at": 1734691200,
-                "last_edit": 1734777600,
-                "carry_roles": ["希儿", "布洛妮娅"],
-                "interact": {"like": 123, "favour": 45, "view": 6789, "use": 321},
-                "recent_interact": {"like": 12, "favour": 4, "view": 345, "use": 22},
-                "support_hard": True,
+            "created_at": 1734691200,
+            "last_edit": 1734777600,
+            "carry_roles": ["希儿", "布洛妮娅"],
+            "like": 123,
+            "favour": 45,
+            "interact": {"like": 123, "favour": 45, "view": 6789, "use": 321},
+            "recent_interact": {"like": 12, "favour": 4, "view": 345, "use": 22},
+            "support_hard": True,
             }
         ],
         "next_page_token": "next-token-demo",
@@ -592,7 +594,7 @@ def test_fetch_cw_guide_list_filters_by_portal_id_using_detail_fanout(monkeypatc
 
     assert captured_list_request == {
         "page": 1,
-        "limit": 60,
+        "limit": 10,
         "trait_id": 321,
         "order": "Recent",
         "next_page_token": None,
@@ -620,12 +622,14 @@ def test_fetch_cw_guide_list_filters_by_portal_id_using_detail_fanout(monkeypatc
             "created_at": 1734691200,
             "last_edit": 1734777600,
             "carry_roles": ["希儿", "布洛妮娅"],
+            "like": 123,
+            "favour": 45,
             "interact": {"like": 123, "favour": 45, "view": 6789, "use": 321},
             "recent_interact": {"like": 12, "favour": 4, "view": 345, "use": 22},
             "support_hard": True,
         }
     ]
-    assert payload["next_page_token"] is None
+    assert payload["next_page_token"] == "raw-next-token"
 
 
 def test_fetch_cw_guide_payload_rejects_article_url(monkeypatch):
