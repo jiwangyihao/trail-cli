@@ -610,7 +610,7 @@ def test_render_output_renders_cw_start_portal_cards_family():
         "ok": True,
         "data": {
             "cards": [
-                {"card_idx": 1, "portal_title": "Alpha Portal", "portal_description": "Alpha Desc", "score": 0.99},
+                {"card_idx": 1, "portal_title": "Alpha Portal", "portal_description": "Alpha Desc", "score": 0.99, "new": 1},
                 {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
             ],
             "mode": "continue",
@@ -629,7 +629,7 @@ def test_render_output_renders_cw_start_portal_cards_family():
     assert render_output("cw.start", payload).splitlines() == [
         "ok cw.start cards=2",
         "shot path=.trail/shots/req-start.png",
-        'opt idx=1 title="Alpha Portal" score=0.99',
+        'opt idx=1 title="Alpha Portal" score=0.99 new=1',
         'opt idx=1 desc="Alpha Desc"',
         'opt idx=2 title="Beta Portal" score=0.88',
         'opt idx=2 desc="Beta Desc"',
@@ -642,7 +642,7 @@ def test_render_output_renders_cw_portal_refresh_family(command: str):
         "ok": True,
         "data": {
             "cards": [
-                {"card_idx": 1, "portal_title": "Alpha Portal", "portal_description": "Alpha Desc", "score": 0.99},
+                {"card_idx": 1, "portal_title": "Alpha Portal", "portal_description": "Alpha Desc", "score": 0.99, "new": 1},
             ],
             "mode": "continue",
             "difficulty": "current",
@@ -659,7 +659,7 @@ def test_render_output_renders_cw_portal_refresh_family(command: str):
 
     assert render_output(command, payload).splitlines() == [
         f"ok {command} cards=1",
-        'opt idx=1 title="Alpha Portal" score=0.99',
+        'opt idx=1 title="Alpha Portal" score=0.99 new=1',
         'opt idx=1 desc="Alpha Desc"',
     ]
 

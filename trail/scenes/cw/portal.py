@@ -7,6 +7,8 @@ from time import sleep
 from typing import Any
 
 from trail.core.errors import TrailError
+from trail.runtime.model import Box
+from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.entry import _detect_current_enter_page
 from trail.scenes.cw.models import ensure_cw_state
 
@@ -25,7 +27,12 @@ PORTAL_SETTLE_MAX_POLLS = 3
 PORTAL_SETTLE_INTERVAL = 0.2
 
 
-def summarize_portal_cards(ocr_pieces: object, portal_list: object) -> list[dict[str, object]]:
+def summarize_portal_cards(
+    ocr_pieces: object,
+    portal_list: object,
+    *,
+    collection_matches: object | None = None,
+) -> list[dict[str, object]]:
     portals = _normalize_portal_list(portal_list)
     if not portals:
         return [_empty_card_summary(card_idx) for card_idx in range(1, PORTAL_LANE_COUNT + 1)]
@@ -34,10 +41,14 @@ def summarize_portal_cards(ocr_pieces: object, portal_list: object) -> list[dict
     lane_pieces: list[list[dict[str, float | str]]] = [[] for _ in range(PORTAL_LANE_COUNT)]
     for piece in pieces:
         lane_pieces[_resolve_lane_index(float(piece["center_x"]))].append(piece)
+    collection_lanes = _resolve_collection_lane_indices(collection_matches)
 
     summaries: list[dict[str, object]] = []
     for card_idx, lane in enumerate(lane_pieces, start=1):
-        summaries.append(_summarize_lane(card_idx, lane, portals))
+        summary = _summarize_lane(card_idx, lane, portals)
+        if card_idx in collection_lanes:
+            summary["new"] = 1
+        summaries.append(summary)
     return summaries
 
 
@@ -62,7 +73,11 @@ def select_cw_portal(session, *, card_idx: int, runtime) -> dict[str, object]:
 def refresh_cw_portal(session, *, runtime, portal_list: object) -> dict[str, object]:
     _require_portal_page(runtime, session=session, expected_page="invest")
     try:
-        runtime.click_point(*PORTAL_REFRESH_POINT)
+        refresh_box = runtime.locate(_asset("portal.refresh"))
+        if refresh_box is None:
+            runtime.click_point(*PORTAL_REFRESH_POINT)
+        else:
+            runtime.click_point(*_box_center(refresh_box))
     except Exception as error:
         raise TrailError("CW_PORTAL_REFRESH_UNAVAILABLE", "cw portal.refresh unavailable") from error
 
@@ -75,7 +90,7 @@ def refresh_cw_portal(session, *, runtime, portal_list: object) -> dict[str, obj
         error_message="cw portal.refresh did not settle back to invest",
     )
 
-    cards = summarize_portal_cards(runtime.ocr(), portal_list)
+    cards = summarize_portal_cards(runtime.ocr(), portal_list, collection_matches=detect_portal_collection_matches(runtime))
     snapshot = {
         "cards": cards,
         **_portal_entry_truth(session),
@@ -196,6 +211,45 @@ def _mark_portal_stale_after_selection(session) -> None:
 def _card_center(card_idx: int) -> tuple[int, int]:
     lane_width = PORTAL_SCREEN_WIDTH // PORTAL_LANE_COUNT
     return (lane_width * (card_idx - 1) + lane_width // 2, PORTAL_CARD_CENTER_Y)
+
+
+def _box_center(box: Box) -> tuple[int, int]:
+    return (int(box.left + box.width / 2), int(box.top + box.height / 2))
+
+
+def _asset(alias: str) -> str:
+    return str(resolve_scene_asset("cw", alias))
+
+
+def detect_portal_collection_matches(runtime) -> list[Box]:
+    match = runtime.locate(_asset("portal.collection"))
+    if match is None:
+        return []
+    return [match]
+
+
+def _resolve_collection_lane_indices(collection_matches: object) -> set[int]:
+    lanes: set[int] = set()
+    matches = collection_matches if isinstance(collection_matches, list) else [collection_matches]
+    for match in matches:
+        center_x = _extract_match_center_x(match)
+        if center_x is None:
+            continue
+        lanes.add(_resolve_lane_index(center_x) + 1)
+    return lanes
+
+
+def _extract_match_center_x(match: object) -> float | None:
+    if isinstance(match, Box):
+        return float(match.left) + float(match.width) / 2.0
+    if isinstance(match, Mapping):
+        try:
+            left = float(match["left"])
+            width = float(match["width"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return left + width / 2.0
+    return None
 
 
 def _wait_for_portal_page(
@@ -393,6 +447,7 @@ def _normalize_text(text: str) -> str:
 
 
 __all__ = [
+    "detect_portal_collection_matches",
     "refresh_cw_portal",
     "restart_cw_portal_to_homepage",
     "select_cw_portal",

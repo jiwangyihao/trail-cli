@@ -464,7 +464,7 @@ def test_cw_enter_mutation_flows_through_command_service_journal(tmp_path: Path,
         workspace_root=tmp_path,
         request_id="req-cw-enter-1",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
     status = registry.for_workspace(str(tmp_path)).request_status("req-cw-enter-1")
     persisted = service.load_session(session.session_id)
@@ -507,7 +507,7 @@ def test_cw_enter_mutation_rejects_tainted_session_until_reconciled(tmp_path: Pa
         workspace_root=tmp_path,
         request_id="req-cw-enter-blocked",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
 
     assert service.request_status("req-cw-tainted")["tainted"] is True
@@ -526,7 +526,7 @@ def test_cw_enter_mutation_rejects_tainted_session_until_reconciled(tmp_path: Pa
         workspace_root=tmp_path,
         request_id="req-cw-enter-reconciled",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
 
     assert envelope["ok"] is True
@@ -566,7 +566,7 @@ def test_cw_enter_duplicate_terminal_replay_precedes_tainted_gate(tmp_path: Path
         workspace_root=tmp_path,
         request_id="req-cw-enter-tainted",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
     blocked = _run_cw_mutation(
         command_service=command_service,
@@ -574,7 +574,7 @@ def test_cw_enter_duplicate_terminal_replay_precedes_tainted_gate(tmp_path: Path
         workspace_root=tmp_path,
         request_id="req-cw-enter-blocked",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
 
     assert replay["request_id"] == "req-cw-enter-tainted"
@@ -616,7 +616,7 @@ def test_cw_enter_marks_applied_but_not_persisted_when_ui_side_effect_fails_late
         workspace_root=tmp_path,
         request_id="req-cw-enter-late-fail",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
     status = service.request_status("req-cw-enter-late-fail")
     persisted = service.load_session(session.session_id)

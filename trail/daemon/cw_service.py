@@ -34,6 +34,7 @@ from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, fetch_c
 from trail.scenes.cw.guide import fetch_cw_guide_config
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw.portal import (
+    detect_portal_collection_matches,
     refresh_cw_portal,
     restart_cw_portal_to_homepage,
     select_cw_portal,
@@ -371,7 +372,11 @@ def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str)
         runtime=runtime,
     )
     entry_state = ensure_cw_state(refreshed).get("entry")
-    cards = summarize_portal_cards(runtime.ocr(), fetch_cw_guide_config().get("portal_list", []))
+    cards = summarize_portal_cards(
+        runtime.ocr(),
+        fetch_cw_guide_config().get("portal_list", []),
+        collection_matches=detect_portal_collection_matches(runtime),
+    )
     portal_snapshot = {
         "cards": cards,
         "mode": entry_state.get("mode") if isinstance(entry_state, dict) else None,

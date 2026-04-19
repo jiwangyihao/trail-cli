@@ -8,6 +8,8 @@ CW_RESOURCE_ALIASES = {
     "entry.invest_environment": "invest_environment.png",
     "entry.difficulty.highest": "return_highest_rank.png",
     "entry.difficulty.lowest": "down_arrow.png",
+    "portal.collection": "collection.png",
+    "portal.refresh": "invest_env_refresh.png",
     "guide.strategy": "strategy.png",
     "guide.enter_code": "enter_strategy_code.png",
     "guide.confirm": "ensure2.png",

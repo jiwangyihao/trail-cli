@@ -273,6 +273,7 @@ def _render_cw_portal_cards(command: str, payload: dict[str, Any]) -> list[str]:
                 ("idx", card.get("card_idx")),
                 ("title", card.get("portal_title")),
                 ("score", card.get("score")),
+                ("new", 1 if card.get("new") else None),
             )
         )
         lines.append(

@@ -657,7 +657,7 @@ def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path:
         }
         return session
 
-    runtime = SimpleNamespace(ocr=lambda **kwargs: [{"text": "alpha"}])
+    runtime = SimpleNamespace(ocr=lambda **kwargs: [{"text": "alpha"}], locate=lambda template, **kwargs: None)
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
@@ -665,7 +665,7 @@ def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path:
     cw_service = CwService(runtime_service=runtime_service)
     monkeypatch.setattr("trail.daemon.cw_service.start_cw", fake_start_cw)
     monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
-    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list: cards)
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
         request_id="req-cw-start",

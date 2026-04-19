@@ -56,15 +56,30 @@
 - 返回结构化的环境摘要结果
 - 接收并持久化本局的 `mode / difficulty / battle_mode`
 
+这里的 `mode=continue` 语义需要明确收紧：
+
+- 它表示“**上一局已经结束后，再来一局**”
+- 它**不表示**“继续当前仍在进行中的对局”
+- 首页上出现 `继续进度` / `结束并结算` 这类未收尾进度时，`cw start` 不论 `mode=new` 还是 `mode=continue`，都不应自动继续；应稳定报错，把决策权交给 Agent 去先问用户
+
 具体行为：
 
 1. 若当前在货币战争首页，则根据传入的 `mode / difficulty / battle_mode` 执行开局流程，推进到投资环境页。
+   - 但如果首页仍显示未结算/未收尾的当前进度（例如 `继续进度` / `结束并结算`），则直接稳定报错，不自动继续、不自动结算。
+   - 如果首页表面上看是“干净首页”，但在点击 `开始「货币战争」` 之后才确定性暴露出 `继续进度` / `结束并结算`，则允许这一次点击发生，并把它视为一个**已知、可解释的停点**：命令应稳定返回同一个 `CW_START_PROGRESS_PENDING` 业务错误，但不把 session 标为 `tainted`。
 2. 若当前处于以下“首页之后、投资环境之前”的中间态，则继续向前推进，而不是回退：
    - `entry.new`
    - `entry.continue`
    - `stage.boss_preview`
 3. 若当前已经在投资环境页，则 no-op 成功返回当前识别结果。
 4. 若当前已经进入游戏内阶段（补给/备战/商店等），直接报错，不做回推。
+
+当首页存在未收尾进度时，`cw start` 的错误语义固定为：
+
+- 命令稳定失败
+- 错误信息必须足够让 Agent 明确知道：需要先问用户是要 `继续进度`、`结束并结算`，还是稍后再开新局
+- 第一版不在 `cw start` 内自动代做这些动作
+- 如果这条错误是在点击 `开始「货币战争」` 之后才被确定性识别出来，`request-status` 仍记为一次**已完成且可解释**的请求，不进入 unknown-result / tainted 语义
 
 `cw start` 的返回不再是“开局成功”，而是“当前投资环境页的三张卡摘要”。
 
@@ -100,6 +115,17 @@
 - `portal_description`
 - `score`
 
+可选字段：
+
+- `new`
+  - 仅当该卡命中“未收集”标志时才输出
+  - 第一版固定编码为 `new=1`
+
+另外：
+
+- 若该卡命中“未收集”标志（基于 `collection.png` 模板匹配），则额外输出 `new=1`
+- 若未命中，则不输出这个字段
+
 不返回：
 
 - `portal_id`
@@ -119,6 +145,8 @@
    - `title` 相似度
    - `title + description` 相似度
 8. 取两者较高者作为该 portal 的得分，并选择得分最高的 1 个 portal 作为结果；若并列，则先取 `title` 相似度更高者，再按 `portal_id` 字典序打破平局。
+9. 在 portal OCR 之外，再额外做一次 `collection.png` 模板匹配；按当前窗口内 `1920x1080` 坐标系把命中的标志归入对应卡片 lane，并仅对命中的卡追加 `new=1`。
+9. 在 OCR/portal 匹配之外，再额外做一次 `collection.png` 找图；按当前窗口内 `1920x1080` 坐标系把命中的 collection 图标归到对应 card lane，并仅对命中的卡追加 `new=1`。
 
 返回给 Agent 的结果是：
 
@@ -157,6 +185,12 @@
 - 等刷新完成
 - 重新 OCR/合并/匹配
 - 返回刷新后的三张卡摘要
+
+第一版实现要求：
+
+- 不再使用硬编码 refresh 点作为主路径
+- 优先使用 `invest_env_refresh.png` 模板定位刷新按钮
+- 用户已在实机上确认：刷新按钮位于“剩余次数”文字左侧一点；这条观测只作为模板定位失败时的调试线索，不作为对外契约
 
 错误语义：
 
@@ -303,7 +337,7 @@
 
 - `cw.start`
   - 首行：`ok cw.start cards=<n>`
-  - 正文：每张卡使用 `opt` 行输出 `idx / title / score`，再用第二条 `opt` 行输出 `idx / desc`
+  - 正文：每张卡使用 `opt` 行输出 `idx / title / score`，若命中未收集标志则在同一行追加 `new=1`；再用第二条 `opt` 行输出 `idx / desc`
 - `cw.enter`
   - 首行：`ok cw.enter page=home`
   - 若是 no-op，可追加 `info already_home=1`
@@ -311,6 +345,7 @@
   - 与 `cw.start` 同一家族，输出同样的三卡摘要
 - `cw.portal.restart`
   - 与 `cw.start` 同一家族，输出同样的三卡摘要
+  - 若某张卡命中 collection 图标，则对应的 `opt idx=<n> title=... score=...` 行追加 `new=1`
 - `cw.portal.select`
   - 首行：`ok cw.portal.select idx=<card_idx> title=<portal_title>`
   - `title` 明确来自当前 session 中最近一次 `cw start` / `cw.portal.refresh` / `cw.portal.restart` 产出的三卡摘要缓存，不在 `select` 内重跑 OCR
