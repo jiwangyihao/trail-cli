@@ -618,6 +618,7 @@ def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:
                     + _format_fact_sequence(
                         ("portal", group.get("portal_title")),
                         ("id", _guide_id(item)),
+                        ("title", item.get("title")),
                         ("idx", index),
                         ("carry", _first_carry_role(item)),
                         ("hard", bool(item.get("support_hard"))),
@@ -650,6 +651,7 @@ def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:
             "guide "
             + _format_fact_sequence(
                 ("id", _guide_id(item)),
+                ("title", item.get("title")),
                 ("idx", index),
                 ("carry", _first_carry_role(item)),
                 ("hard", bool(item.get("support_hard"))),

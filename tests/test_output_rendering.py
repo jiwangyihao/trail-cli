@@ -462,6 +462,7 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
             "list": [
                 {
                     "lineup_id": "abc",
+                    "title": "购物阵容",
                     "carry_roles": ["希儿", "停云"],
                     "final_role_cards": [
                         {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
@@ -476,6 +477,7 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
                 },
                 {
                     "lineup_id": "def",
+                    "title": "事件阵容",
                     "carry_roles": [],
                     "support_hard": False,
                     "has_change_equip": True,
@@ -497,9 +499,9 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
     assert render_output("guide.list.cw", payload).splitlines() == [
         "ok guide.list.cw count=2 more=1 next=token-2",
         "shot path=.trail/shots/req-guide-list.png",
-        "guide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
+        "guide id=abc title=购物阵容 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
         "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3|佩拉/star:4/rarity:2",
-        "guide id=def idx=2 hard=0 change_equip=1 expert=0 like=22 favour=9",
+        "guide id=def title=事件阵容 idx=2 hard=0 change_equip=1 expert=0 like=22 favour=9",
     ]
 
 
@@ -510,6 +512,7 @@ def test_render_output_guide_list_omits_next_when_not_paginated():
             "list": [
                 {
                     "lineup_id": "abc",
+                    "title": "购物阵容",
                     "carry_roles": ["希儿"],
                     "support_hard": False,
                     "has_change_equip": False,
@@ -532,7 +535,7 @@ def test_render_output_guide_list_omits_next_when_not_paginated():
 
     assert lines == [
         "ok guide.list.cw count=1 more=0",
-        "guide id=abc idx=1 carry=希儿 hard=0 change_equip=0 expert=0 like=7 favour=3",
+        "guide id=abc title=购物阵容 idx=1 carry=希儿 hard=0 change_equip=0 expert=0 like=7 favour=3",
     ]
     assert all("final_roles=" not in line for line in lines)
 
@@ -547,6 +550,7 @@ def test_render_output_renders_grouped_portal_guide_lists():
                     "list": [
                         {
                             "lineup_id": "shop-guide",
+                            "title": "购物区优选阵容",
                             "carry_roles": ["希儿"],
                             "support_hard": True,
                             "has_change_equip": False,
@@ -564,6 +568,7 @@ def test_render_output_renders_grouped_portal_guide_lists():
                     "list": [
                         {
                             "lineup_id": "event-guide",
+                            "title": "事件区优选阵容",
                             "carry_roles": ["停云"],
                             "support_hard": False,
                             "has_change_equip": True,
@@ -591,10 +596,10 @@ def test_render_output_renders_grouped_portal_guide_lists():
     assert render_output("guide.list.cw", payload).splitlines() == [
         "ok guide.list.cw groups=2 count=2 more=0",
         "guide portal=购物区 count=1 more=0",
-        "guide portal=购物区 id=shop-guide idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
+        "guide portal=购物区 id=shop-guide title=购物区优选阵容 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
         "guide portal=购物区 idx=1 final_roles=希儿/carry:1/star:5/rarity:3",
         "guide portal=事件区 count=1 more=0",
-        "guide portal=事件区 id=event-guide idx=1 carry=停云 hard=0 change_equip=1 expert=0 like=22 favour=9",
+        "guide portal=事件区 id=event-guide title=事件区优选阵容 idx=1 carry=停云 hard=0 change_equip=1 expert=0 like=22 favour=9",
         "guide portal=事件区 idx=1 final_roles=停云/carry:1/star:4/rarity:2",
     ]
 

@@ -201,12 +201,15 @@ class CommandService:
         if request.session_id is not None:
             payload.setdefault("session_id", request.session_id)
         try:
-            return self._cw_service().handle_mutation(
+            response = self._cw_service().handle_mutation(
                 method=request.method,
                 payload=payload,
                 workspace_root=request.workspace_root,
                 session_service=service,
+                request_id=request.request_id,
+                verbose=request.verbose,
             )
+            return _normalize_capture_payload(response, workspace_root=Path(request.workspace_root))
         except TrailError as error:
             if getattr(error, "completed_after_side_effect", False):
                 envelope = self._response_with_request_id(request.request_id, self._failure_envelope(error=error))
@@ -355,7 +358,7 @@ class CommandService:
                     request.method,
                     lambda session_service: self._run_cw_mutation(request, service=session_service),
                     handler_persisted_state=True,
-                    response_builder=success,
+                    response_builder=lambda payload: payload,
                     enforce_cw_tainted=bool(isinstance(session_id, str) and session_id),
                     tainted_session_id=session_id if isinstance(session_id, str) and session_id else None,
                 )

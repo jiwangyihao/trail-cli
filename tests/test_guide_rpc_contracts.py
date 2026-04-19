@@ -158,6 +158,7 @@ def test_guide_list_renders_paging_and_facts(cli_runner, fake_daemon_client, tmp
                     "list": [
                         {
                             "lineup_id": "abc",
+                            "title": "7群攻2银河学者",
                             "carry_roles": ["希儿", "停云"],
                             "final_role_cards": [
                                 {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
@@ -167,6 +168,8 @@ def test_guide_list_renders_paging_and_facts(cli_runner, fake_daemon_client, tmp
                             "support_hard": True,
                             "has_change_equip": False,
                             "has_expert": True,
+                            "like": 123,
+                            "favour": 45,
                         }
                     ],
                     "next_page_token": "next-token",
@@ -201,7 +204,7 @@ def test_guide_list_renders_paging_and_facts(cli_runner, fake_daemon_client, tmp
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
         "ok guide.list.cw count=1 more=1 next=next-token",
-        "guide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1",
+        "guide id=abc title=7群攻2银河学者 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
         "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3|佩拉/star:4/rarity:2",
     ]
     assert client.calls == [
@@ -237,6 +240,7 @@ def test_guide_list_portal_payload_mapping_and_filtered_rendering(cli_runner, fa
                     "list": [
                         {
                             "lineup_id": "portal-guide",
+                            "title": "购物阵容",
                             "carry_roles": ["希儿"],
                             "final_role_cards": [
                                 {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
@@ -259,7 +263,7 @@ def test_guide_list_portal_payload_mapping_and_filtered_rendering(cli_runner, fa
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
         "ok guide.list.cw count=1 more=0",
-        "guide id=portal-guide idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
+        "guide id=portal-guide title=购物阵容 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
         "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3",
     ]
     assert client.calls == [
@@ -294,6 +298,7 @@ def test_guide_list_multi_portal_payload_mapping_and_grouped_rendering(cli_runne
                             "list": [
                                 {
                                     "lineup_id": "shop-guide",
+                                    "title": "购物区优选阵容",
                                     "carry_roles": ["希儿"],
                                     "final_role_cards": [{"name": "希儿", "star": 5, "rarity": 3, "is_carry": True}],
                                     "support_hard": True,
@@ -311,6 +316,7 @@ def test_guide_list_multi_portal_payload_mapping_and_grouped_rendering(cli_runne
                             "list": [
                                 {
                                     "lineup_id": "event-guide",
+                                    "title": "事件区优选阵容",
                                     "carry_roles": ["停云"],
                                     "final_role_cards": [{"name": "停云", "star": 4, "rarity": 2, "is_carry": True}],
                                     "support_hard": False,
@@ -337,10 +343,10 @@ def test_guide_list_multi_portal_payload_mapping_and_grouped_rendering(cli_runne
     assert result.stdout.splitlines() == [
         "ok guide.list.cw groups=2 count=2 more=0",
         "guide portal=购物区 count=1 more=0",
-        "guide portal=购物区 id=shop-guide idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
+        "guide portal=购物区 id=shop-guide title=购物区优选阵容 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
         "guide portal=购物区 idx=1 final_roles=希儿/carry:1/star:5/rarity:3",
         "guide portal=事件区 count=1 more=0",
-        "guide portal=事件区 id=event-guide idx=1 carry=停云 hard=0 change_equip=1 expert=0 like=22 favour=9",
+        "guide portal=事件区 id=event-guide title=事件区优选阵容 idx=1 carry=停云 hard=0 change_equip=1 expert=0 like=22 favour=9",
         "guide portal=事件区 idx=1 final_roles=停云/carry:1/star:4/rarity:2",
     ]
     assert client.calls == [

@@ -5,6 +5,7 @@ from pathlib import Path
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
 from trail.daemon.command_service import SideEffectAppliedButStateNotPersisted
+from trail.output.capture import with_auto_capture
 from trail.scenes.cw.entry import enter_cw, start_cw
 from trail.scenes.cw.events import (
     build_cw_battle_continuer,
@@ -119,6 +120,18 @@ class _SideEffectTrackingRuntime:
         return wrapped
 
 
+class _RequestScopedCaptureRuntime:
+    def __init__(self, runtime, request_id: str):
+        self._runtime = runtime
+        self._request_id = request_id
+
+    def capture_after_action(self, optional: bool = False):
+        return self._runtime.capture_after_action(optional=optional, request_id=self._request_id)
+
+    def __getattr__(self, name: str):
+        return getattr(self._runtime, name)
+
+
 class CwService:
     def __init__(self, *, runtime_service):
         self.runtime_service = runtime_service
@@ -135,8 +148,17 @@ class CwService:
         session_service.save_session(session)
         return result
 
-    def handle_mutation(self, *, method: str, payload: dict, workspace_root: str, session_service) -> dict | None:
-        session, _, _, handlers, tracker = self._context(
+    def handle_mutation(
+        self,
+        *,
+        method: str,
+        payload: dict,
+        workspace_root: str,
+        session_service,
+        request_id: str,
+        verbose: bool = False,
+    ) -> dict | None:
+        session, _, runtime, handlers, tracker = self._context(
             method=method,
             payload=payload,
             workspace_root=workspace_root,
@@ -160,7 +182,8 @@ class CwService:
         except Exception as error:
             raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
 
-        return result
+        capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id)
+        return with_auto_capture(capture_runtime, lambda: result, verbose=verbose)
 
     def _context(self, *, method: str, payload: dict, workspace_root: str, session_service, track_side_effects: bool = False):
         session_id = payload.get("session_id")

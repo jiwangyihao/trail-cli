@@ -1018,6 +1018,21 @@ def test_command_service_handles_cw_start_rejects_invalid_enums(
 def test_command_service_handles_cw_portal_select_and_marks_snapshot_stale(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-portal-select.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
@@ -1026,7 +1041,8 @@ def test_command_service_handles_cw_portal_select_and_marks_snapshot_stale(tmp_p
         "portal": {"cards": [{"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
     }
     service.save_session(session)
-    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
     cw_service = CwService(runtime_service=runtime_service)
     monkeypatch.setattr(
         "trail.daemon.cw_service.select_cw_portal",
@@ -1047,12 +1063,29 @@ def test_command_service_handles_cw_portal_select_and_marks_snapshot_stale(tmp_p
 
     assert payload["ok"] is True
     assert payload["data"] == {"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}
+    assert payload["screenshot"] == ".trail/shots/req-cw-portal-select.png"
     assert service.load_session(session.session_id).scene_state["cw"]["portal"]["stale"] is True
     assert service.request_status("req-cw-portal-select")["final_state"] == "completed"
+    assert runtime.capture_requests == [(False, "req-cw-portal-select")]
 
 
 def test_command_service_handles_cw_portal_refresh_and_updates_snapshot(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-portal-refresh.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
 
     snapshot = {
         "cards": [{"card_idx": 1, "portal_title": "New Alpha", "portal_description": "New Desc", "score": 0.91}],
@@ -1069,7 +1102,8 @@ def test_command_service_handles_cw_portal_refresh_and_updates_snapshot(tmp_path
         "portal": {"cards": [], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
     }
     service.save_session(session)
-    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
     cw_service = CwService(runtime_service=runtime_service)
     monkeypatch.setattr("trail.daemon.cw_service.refresh_cw_portal", lambda session, runtime, portal_list: session.scene_state["cw"].__setitem__("portal", snapshot) or snapshot)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
@@ -1087,8 +1121,10 @@ def test_command_service_handles_cw_portal_refresh_and_updates_snapshot(tmp_path
 
     assert payload["ok"] is True
     assert payload["data"] == snapshot
+    assert payload["screenshot"] == ".trail/shots/req-cw-portal-refresh.png"
     assert service.load_session(session.session_id).scene_state["cw"]["portal"] == snapshot
     assert service.request_status("req-cw-portal-refresh")["final_state"] == "completed"
+    assert runtime.capture_requests == [(False, "req-cw-portal-refresh")]
 
 
 def test_command_service_handles_cw_portal_restart_and_reuses_request_journal(tmp_path: Path, monkeypatch):
