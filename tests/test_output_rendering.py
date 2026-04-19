@@ -1019,6 +1019,132 @@ def test_render_output_omits_recover_for_local_control_plane_failure():
     ]
 
 
+def test_render_output_window_launch_required_path_has_request_id_without_recover():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"request_id": "req-window-launch-required"},
+        "error": {"code": "GAME_PATH_REQUIRED", "message": "请提供游戏路径"},
+    }
+
+    assert render_output("window.launch", payload).splitlines() == [
+        "fail window.launch code=GAME_PATH_REQUIRED",
+        "request id=req-window-launch-required",
+        "why msg=请提供游戏路径",
+    ]
+
+
+def test_render_output_window_launch_explicit_missing_path_keeps_game_path_not_found():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"request_id": "req-window-launch-missing"},
+        "error": {"code": "GAME_PATH_NOT_FOUND", "message": "未找到游戏启动路径"},
+    }
+
+    assert render_output("window.launch", payload).splitlines() == [
+        "fail window.launch code=GAME_PATH_NOT_FOUND",
+        "request id=req-window-launch-missing",
+        "why msg=未找到游戏启动路径",
+    ]
+
+
+def test_render_output_window_launch_explicit_launch_failure_keeps_stable_code():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"request_id": "req-window-launch-failed"},
+        "error": {"code": "GAME_LAUNCH_FAILED", "message": "显式提供的游戏路径启动失败: launch explode"},
+    }
+
+    assert render_output("window.launch", payload).splitlines() == [
+        "fail window.launch code=GAME_LAUNCH_FAILED",
+        "request id=req-window-launch-failed",
+        'why msg="显式提供的游戏路径启动失败: launch explode"',
+    ]
+
+
+def test_render_output_window_launch_success_keeps_persist_failure_warning():
+    path = r"C:\Games\StarRail.exe"
+    payload = {
+        "ok": True,
+        "data": {
+            "started": True,
+            "already_running": False,
+            "path": path,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [
+            {
+                "code": "GAME_PATH_PERSIST_FAILED",
+                "message": "游戏已成功启动，但历史路径持久化失败: disk full",
+            }
+        ],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("window.launch", payload).splitlines() == [
+        'ok window.launch started=1 already_running=0 path="C:\\\\Games\\\\StarRail.exe"',
+        'warn code=GAME_PATH_PERSIST_FAILED msg="游戏已成功启动，但历史路径持久化失败: disk full"',
+    ]
+
+
+def test_readme_documents_window_launch_path_resolution_contract() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "`trail window launch --channel official|bilibili|global`" in readme
+    assert "显式 `--game-path` 仍可显式提供，且优先级最高、失败时不会回退" in readme
+    assert "无显式路径时固定顺序：历史成功路径 -> 默认路径 -> 直接问用户" in readme
+    assert "默认路径只覆盖 `official`" in readme
+    assert r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe" in readme
+    assert "`bilibili` / `global` 无历史成功路径时，通常仍需显式 `--game-path`" in readme
+    assert "Agent 不应默认乱搜路径" in readme
+    assert "`GAME_PATH_REQUIRED` 表示现在该直接问用户提供路径" in readme
+    assert "`GAME_PATH_NOT_FOUND`" in readme
+    assert "`GAME_LAUNCH_FAILED`" in readme
+    assert "`GAME_PATH_PERSIST_FAILED`" in readme
+    assert "trail window launch --game-path <StarRail.exe>" not in readme
+    assert "自动搜索常见目录" not in readme
+    assert "注册表" not in readme
+    assert "全盘搜索" not in readme
+
+
+def test_skill_docs_document_window_launch_path_resolution_contract() -> None:
+    for skill_name in ("trail-hsr", "trail-cw"):
+        skill_doc = (PROJECT_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+
+        assert "`trail window launch --channel official|bilibili|global`" in skill_doc
+        assert "显式 `--game-path` 仍可显式提供，且优先级最高、失败时不会回退" in skill_doc
+        assert "历史成功路径 -> 默认路径 -> 直接问用户" in skill_doc
+        assert "默认路径只覆盖 `official`" in skill_doc
+        assert r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe" in skill_doc
+        assert "`bilibili` / `global` 无历史成功路径时，通常仍需显式 `--game-path`" in skill_doc
+        assert "Agent 不应默认乱搜路径" in skill_doc
+        assert "`GAME_PATH_REQUIRED`" in skill_doc
+        assert "`GAME_PATH_NOT_FOUND`" in skill_doc
+        assert "`GAME_LAUNCH_FAILED`" in skill_doc
+        assert "`GAME_PATH_PERSIST_FAILED`" in skill_doc
+        assert "trail window launch --game-path <StarRail.exe>" not in skill_doc
+        assert "自动搜索常见目录" not in skill_doc
+        assert "注册表" not in skill_doc
+        assert "全盘搜索" not in skill_doc
+
+
 def test_render_output_renders_daemon_restart_summary():
     payload = {
         "ok": True,

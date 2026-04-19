@@ -31,7 +31,7 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 1. 确认当前用户已经完成 `trail daemon install`
 2. 用 `trail daemon status` 确认常驻服务可用；如需显式预热，运行 `trail daemon start`
 3. 使用来自 `trail-hsr` 的既有 `session_id`
-4. 如果窗口尚未恢复，先回到 `trail-hsr`，必要时用 `trail window launch --game-path <StarRail.exe>` 重新启动游戏并重建可用 session
+4. 如果窗口尚未恢复，先回到 `trail-hsr`，必要时用 `trail window launch --channel official|bilibili|global` 重新启动游戏并重建可用 session
 5. `trail cw enter --session <id> --mode new|continue`
 6. 如果是 `new` 模式，先把入口链推进到“投资环境”页，并由 Agent 亲自完成投资环境选择
 7. 进入游戏后，如果当前 session 还没有已加载的攻略，则切到 `trail-cw-guide`，执行：
@@ -51,6 +51,16 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 
 ## 执行规则
 
+- `trail window launch --channel official|bilibili|global` 是恢复游戏窗口时的默认入口
+- 显式 `--game-path` 仍可显式提供，且优先级最高、失败时不会回退
+- 未显式提供时按历史成功路径 -> 默认路径 -> 直接问用户
+- 默认路径只覆盖 `official`，冻结值为 `C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe`
+- `bilibili` / `global` 无历史成功路径时，通常仍需显式 `--game-path`
+- 显式路径不存在时返回 `GAME_PATH_NOT_FOUND`
+- 显式路径存在但启动失败时返回 `GAME_LAUNCH_FAILED`
+- Agent 不应默认乱搜路径；如果返回 `GAME_PATH_REQUIRED`，直接问用户提供路径
+- 如果游戏已成功启动但历史路径写回失败，仍视为 success，并读取 `warn code=GAME_PATH_PERSIST_FAILED`
+- 上述 success warning 的稳定码是 `GAME_PATH_PERSIST_FAILED`
 - 攻略拉取和攻略应用分两步，不能隐式复用“上一条 fetch 结果”
 - `guide fetch` 主要是把攻略内容直接提供给 Agent；真正的本地 artifact 记录发生在 `cw guide apply` 成功之后
 - 所有 `trail cw ...` 命令都必须显式传入 `--session <id>`

@@ -14,6 +14,7 @@ from PIL import Image, ImageGrab
 
 from trail.core.errors import TrailError
 from trail.runtime.model import Region, WindowBinding
+from trail.runtime.launch_paths import read_launch_paths, write_launch_path
 
 
 def _enable_dpi_awareness() -> None:
@@ -35,6 +36,9 @@ GAME_CHANNEL_CONFIG = {
     "official": (1, 1),
     "bilibili": (14, 0),
     "global": None,
+}
+DEFAULT_GAME_PATHS = {
+    "official": Path(r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe"),
 }
 
 WINDOWS_RESERVED_CAPTURE_STEMS = {
@@ -353,45 +357,117 @@ def change_game_config(game_path: Path, *, channel: int, sub_channel: int) -> No
     config_file.write_text("\n".join(updated) + "\n", encoding="utf-8")
 
 
-def launch_game(
+def _iter_launch_game_candidates(*, game_path: Path | None, channel: str):
+    if game_path is not None:
+        yield Path(game_path), "explicit"
+        return
+
+    raw_history = read_launch_paths().get(channel)
+    history_path = raw_history.get("last_success_game_path") if isinstance(raw_history, dict) else None
+    if isinstance(history_path, str) and history_path:
+        yield Path(history_path), "history"
+
+    default_path = DEFAULT_GAME_PATHS.get(channel)
+    if default_path is not None:
+        yield Path(default_path), "default"
+
+
+def _launch_game_from_path(
     *,
-    game_path: Path,
-    channel: str = "official",
-    launch_args: list[str] | None = None,
-    use_cmd: bool = False,
+    path: Path,
+    channel: str,
+    channel_config: tuple[int, int] | None,
+    launch_args: list[str],
+    use_cmd: bool,
 ) -> dict:
-    path = Path(game_path)
     if not path.exists():
         raise TrailError("GAME_PATH_NOT_FOUND", f"未找到游戏启动路径 {path}")
 
-    args = list(launch_args or [])
     if is_process_running("StarRail.exe"):
         return {
             "started": False,
             "already_running": True,
             "path": str(path),
             "channel": channel,
-            "args": args,
+            "args": launch_args,
         }
 
-    channel_config = GAME_CHANNEL_CONFIG.get(channel)
-    if channel_config is None and channel != "global":
-        raise TrailError("GAME_CHANNEL_INVALID", f"未知游戏渠道 {channel}")
     if channel_config is not None:
         change_game_config(path, channel=channel_config[0], sub_channel=channel_config[1])
 
     cwd = str(path.parent)
     if use_cmd:
-        subprocess.Popen(["cmd", "/c", "start", "", str(path), *args], cwd=cwd)
+        subprocess.Popen(["cmd", "/c", "start", "", str(path), *launch_args], cwd=cwd)
     else:
-        subprocess.Popen([str(path)] + args, cwd=cwd)
+        subprocess.Popen([str(path)] + launch_args, cwd=cwd)
     return {
         "started": True,
         "already_running": False,
         "path": str(path),
         "channel": channel,
-        "args": args,
+        "args": launch_args,
     }
+
+
+def _build_game_path_persist_warning(error: OSError) -> dict[str, str]:
+    base_message = "游戏已成功启动，但历史路径持久化失败"
+    detail = str(error).strip()
+    return {
+        "code": "GAME_PATH_PERSIST_FAILED",
+        "message": f"{base_message}: {detail}" if detail else base_message,
+    }
+
+
+def _build_explicit_game_launch_error(path: Path, error: Exception) -> TrailError:
+    if isinstance(error, TrailError) and error.code == "GAME_PATH_NOT_FOUND":
+        return error
+    if isinstance(error, TrailError) and error.code == "GAME_LAUNCH_FAILED":
+        return error
+
+    detail = str(error).strip()
+    message = f"显式提供的游戏路径启动失败: {path}"
+    if detail:
+        message = f"{message}: {detail}"
+    return TrailError("GAME_LAUNCH_FAILED", message)
+
+
+def launch_game(
+    *,
+    game_path: Path | None = None,
+    channel: str = "official",
+    launch_args: list[str] | None = None,
+    use_cmd: bool = False,
+) -> dict:
+    args = list(launch_args or [])
+    channel_config = GAME_CHANNEL_CONFIG.get(channel)
+    if channel_config is None and channel != "global":
+        raise TrailError("GAME_CHANNEL_INVALID", f"未知游戏渠道 {channel}")
+
+    last_error: TrailError | OSError | None = None
+    for path, source in _iter_launch_game_candidates(game_path=game_path, channel=channel):
+        try:
+            result = _launch_game_from_path(
+                path=path,
+                channel=channel,
+                channel_config=channel_config,
+                launch_args=args,
+                use_cmd=use_cmd,
+            )
+            if result.get("started") is True and result.get("already_running") is not True:
+                try:
+                    write_launch_path(channel, str(path))
+                except OSError as error:
+                    result["warnings"] = [_build_game_path_persist_warning(error)]
+            return result
+        except (TrailError, OSError) as exc:
+            if source == "explicit":
+                raise _build_explicit_game_launch_error(path, exc) from exc
+            last_error = exc
+            continue
+
+    if game_path is None:
+        raise TrailError("GAME_PATH_REQUIRED", "请提供游戏路径") from last_error
+    raise TrailError("GAME_PATH_NOT_FOUND", f"未找到游戏启动路径 {Path(game_path)}")
 
 
 def _grab_region_with_imagegrab(region: Region):

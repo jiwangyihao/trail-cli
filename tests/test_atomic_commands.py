@@ -18,6 +18,38 @@ from tests.support.fake_daemon import build_success_response, write_ready_manife
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _extract_help_option_block(output: str, option_name: str) -> str:
+    lines = output.splitlines()
+    block: list[str] = []
+    capture = False
+    in_options = False
+
+    for raw_line in lines:
+        line = raw_line.strip(" │")
+        if "Options" in line:
+            in_options = True
+            continue
+        if not line:
+            if capture and block:
+                break
+            continue
+
+        if not in_options:
+            continue
+
+        if option_name in line:
+            capture = True
+            block.append(line)
+            continue
+
+        if capture:
+            if line.startswith("--"):
+                break
+            block.append(line)
+
+    return " ".join(block)
+
+
 @pytest.fixture(autouse=True)
 def _clear_ocr_env(monkeypatch):
     for name in (
@@ -162,6 +194,65 @@ def test_window_launch_returns_structured_payload(cli_runner, fake_daemon_client
             "verbose": False,
         }
     ]
+
+
+def test_window_launch_allows_omitted_game_path_and_preserves_channel_payload(cli_runner, fake_daemon_client, tmp_path):
+    resolved = tmp_path / "resolved.exe"
+    client = fake_daemon_client(
+        {
+            "window.launch": build_success_response(
+                request_id="req-window-launch-omitted",
+                data={
+                    "started": True,
+                    "already_running": False,
+                    "path": str(resolved),
+                    "channel": "bilibili",
+                    "args": ["-popupwindow"],
+                },
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "window",
+            "launch",
+            "--channel",
+            "bilibili",
+            "--arg",
+            "-popupwindow",
+            "--use-cmd",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert client.calls == [
+        {
+            "method": "window.launch",
+            "payload": {
+                "channel": "bilibili",
+                "launch_args": ["-popupwindow"],
+                "use_cmd": True,
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_window_launch_help_describes_game_path_option_resolution_contract(cli_runner):
+    result = cli_runner.invoke(app, ["window", "launch", "--help"])
+    game_path_help = _extract_help_option_block(result.output, "--game-path")
+
+    assert result.exit_code == 0
+    assert "--game-path" in game_path_help
+    assert "历史成功路径 -> 默认路径 -> 直接问用户" in game_path_help
+    assert "默认路径仅覆盖 official" in game_path_help
+    assert "GAME_PATH_NOT_FOUND" in result.output
+    assert "GAME_LAUNCH_FAILED" in result.output
+    assert "GAME_PATH_PERSIST_FAILED" in result.output
 
 
 def test_screen_shot_returns_envelope_and_screenshot(cli_runner, fake_daemon_client, tmp_path):

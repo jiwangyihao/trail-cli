@@ -43,7 +43,7 @@ class RuntimeService:
         from trail.runtime.window import launch_game
 
         resolved = dict(payload)
-        game_path = resolved.get("game_path")
-        if game_path is not None:
-            resolved["game_path"] = Path(game_path)
+        if "game_path" in resolved:
+            game_path = resolved["game_path"]
+            resolved["game_path"] = None if game_path is None else Path(game_path)
         return launch_game(**resolved)

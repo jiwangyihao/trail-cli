@@ -69,12 +69,26 @@ class ProtocolRuntime:
 
 
 class ProtocolRuntimeService:
-    def __init__(self, runtime):
+    def __init__(self, runtime, *, launch_result: dict | None = None):
         self._runtime = runtime
+        self.launch_result = {
+            "started": True,
+            "already_running": False,
+            "path": r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe",
+            "channel": "official",
+            "args": [],
+        }
+        if launch_result is not None:
+            self.launch_result = dict(launch_result)
+        self.launch_calls: list[dict[str, object]] = []
 
     def get_runtime(self, *, workspace_root: str, window_binding):
         del workspace_root, window_binding
         return self._runtime
+
+    def launch_game(self, **payload):
+        self.launch_calls.append(dict(payload))
+        return dict(self.launch_result)
 
 
 class FailingProtocolRuntimeService:
@@ -480,6 +494,220 @@ def test_server_handle_payload_preserves_captured_mutation_failure_envelope(tmp_
     assert response["references"] == [{"path": "trail/ref.png", "similarity": 0.97, "screenshot": "input-fail.png"}]
     assert response["debug"] == {"trace": [{"step": "click"}]}
     assert registry.for_workspace(str(tmp_path)).request_status("req-server-fail")["final_state"] == "failed_before_side_effect"
+
+
+def test_server_handle_payload_routes_window_launch_without_game_path(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    runtime_service = ProtocolRuntimeService(
+        ProtocolRuntime(tmp_path / "window-launch.png"),
+        launch_result={
+            "started": True,
+            "already_running": False,
+            "path": r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe",
+            "channel": "official",
+            "args": ["-popupwindow"],
+        },
+    )
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-window-launch-no-path",
+            method="window.launch",
+            payload={
+                "channel": "official",
+                "launch_args": ["-popupwindow"],
+                "use_cmd": False,
+            },
+        )
+    )
+
+    assert response["ok"] is True
+    assert response["data"] == {
+        "started": True,
+        "already_running": False,
+        "path": r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe",
+        "channel": "official",
+        "args": ["-popupwindow"],
+    }
+    assert response["screenshot"] is None
+    assert runtime_service.launch_calls == [
+        {
+            "channel": "official",
+            "launch_args": ["-popupwindow"],
+            "use_cmd": False,
+        }
+    ]
+
+
+def test_server_handle_payload_routes_window_launch_without_game_path_through_real_runtime_service(tmp_path: Path, monkeypatch):
+    from trail.daemon.runtime_service import RuntimeService
+
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    launch_calls: list[dict[str, object]] = []
+
+    def fake_launch_game(*, game_path=None, channel="official", launch_args=None, use_cmd=False):
+        launch_calls.append(
+            {
+                "game_path": game_path,
+                "channel": channel,
+                "launch_args": list(launch_args or []),
+                "use_cmd": use_cmd,
+            }
+        )
+        raise TrailError("GAME_PATH_REQUIRED", "请提供游戏路径")
+
+    monkeypatch.setattr("trail.runtime.window.launch_game", fake_launch_game)
+    command_service = CommandService(
+        runtime_service=RuntimeService(),
+        session_service=SessionServiceRegistry(),
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-window-launch-real-runtime-service",
+            method="window.launch",
+            payload={
+                "channel": "official",
+                "launch_args": ["-popupwindow"],
+                "use_cmd": False,
+            },
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["request_id"] == "req-window-launch-real-runtime-service"
+    assert response["error"] == {
+        "code": "GAME_PATH_REQUIRED",
+        "message": "请提供游戏路径",
+    }
+    assert response["screenshot"] is None
+    assert response["warnings"] == []
+    assert response["references"] == []
+    assert launch_calls == [
+        {
+            "game_path": None,
+            "channel": "official",
+            "launch_args": ["-popupwindow"],
+            "use_cmd": False,
+        }
+    ]
+
+
+def test_server_handle_payload_promotes_window_launch_warnings_to_envelope(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    runtime_service = ProtocolRuntimeService(
+        ProtocolRuntime(tmp_path / "window-launch-warning.png"),
+        launch_result={
+            "started": True,
+            "already_running": False,
+            "path": r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe",
+            "channel": "official",
+            "args": [],
+            "warnings": [
+                {
+                    "code": "GAME_PATH_PERSIST_FAILED",
+                    "message": "游戏已成功启动，但历史路径持久化失败: disk full",
+                }
+            ],
+        },
+    )
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-window-launch-warning",
+            method="window.launch",
+            payload={
+                "channel": "official",
+                "launch_args": [],
+                "use_cmd": False,
+            },
+        )
+    )
+
+    assert response["ok"] is True
+    assert response["data"] == {
+        "started": True,
+        "already_running": False,
+        "path": r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe",
+        "channel": "official",
+        "args": [],
+    }
+    assert response["warnings"] == [
+        {
+            "code": "GAME_PATH_PERSIST_FAILED",
+            "message": "游戏已成功启动，但历史路径持久化失败: disk full",
+        }
+    ]
+
+
+def test_server_handle_payload_window_launch_explicit_launch_failure_keeps_stable_error_code(tmp_path: Path, monkeypatch):
+    from trail.daemon.runtime_service import RuntimeService
+
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    executable = tmp_path / "StarRail.exe"
+    executable.write_text("demo", encoding="utf-8")
+
+    monkeypatch.setattr("trail.runtime.window.is_process_running", lambda process_name: False)
+    monkeypatch.setattr("trail.runtime.window.write_launch_path", lambda *args, **kwargs: None)
+    monkeypatch.setattr("trail.runtime.window.change_game_config", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "trail.runtime.window.subprocess.Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("launch explode")),
+    )
+
+    command_service = CommandService(
+        runtime_service=RuntimeService(),
+        session_service=SessionServiceRegistry(),
+    )
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-window-launch-explicit-fail",
+            method="window.launch",
+            payload={
+                "game_path": str(executable),
+                "channel": "official",
+                "launch_args": [],
+                "use_cmd": False,
+            },
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["request_id"] == "req-window-launch-explicit-fail"
+    assert response["error"]["code"] == "GAME_LAUNCH_FAILED"
+    assert "launch explode" in response["error"]["message"]
+    assert response["error"]["code"] != "UNEXPECTED_ERROR"
 
 
 def test_server_handle_ocr_protocol_request_routes_ocr_mode_and_retry_high_options_to_runtime(tmp_path: Path, monkeypatch):
