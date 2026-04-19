@@ -596,6 +596,18 @@ def _render_session_create(command: str, payload: dict[str, Any]) -> list[str]:
     )
 
 
+def _render_start_run(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    first_line = (
+        f"ok {command} "
+        f"session={_encode_value(data.get('session'))} "
+        f"reused={_encode_value(data.get('reused'))} "
+        f"title={_encode_value(data.get('title'))} "
+        f"hwnd={_encode_value(data.get('hwnd'))}"
+    )
+    return _append_common_success_lines([first_line], payload)
+
+
 def _render_screen_shot(command: str, payload: dict[str, Any]) -> list[str]:
     data = payload.get("data") or {}
     return _append_common_success_lines(
@@ -691,6 +703,7 @@ def _render_daemon_request_status(command: str, payload: dict[str, Any]) -> list
     data = payload.get("data") or {}
     facts = _format_fact_sequence(
         ("request", data.get("request_id")),
+        ("session", data.get("session_id")),
         ("final_state", data.get("final_state")),
         ("last_visible_stage", data.get("last_visible_stage")),
         ("tainted", bool(data.get("tainted"))),
@@ -793,6 +806,7 @@ TEXT_RENDERERS = {
     "window.attach": _render_window_attach,
     "window.launch": _render_window_launch,
     "session.create": _render_session_create,
+    "start.run": _render_start_run,
     "screen.shot": _render_screen_shot,
     "ocr.read": _render_ocr_read,
     "image.locate": _render_image_locate,

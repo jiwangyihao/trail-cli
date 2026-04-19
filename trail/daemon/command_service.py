@@ -131,6 +131,15 @@ def _parse_optional_bool(value: str | bool | None, *, option_name: str) -> bool 
     raise TrailError("GUIDE_INPUT_INVALID", f"guide option '{option_name}' must be true or false")
 
 
+def _resolve_start_session_id(result: dict[str, Any] | None) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    session_id = result.get("session")
+    if isinstance(session_id, str) and session_id:
+        return session_id
+    return None
+
+
 class _RequestScopedCaptureRuntime:
     def __init__(self, runtime, request_id: str):
         self._runtime = runtime
@@ -229,6 +238,15 @@ class CommandService:
             service = self._session_service(request)
             session = service.create_session(window_binding=binding)
             return success(session.to_dict(), request_id=request.request_id)
+
+        if request.method == "start.run":
+            return self._run_mutation(
+                request,
+                "start.run",
+                lambda service: self._start_run(request, request.payload, service),
+                response_builder=success,
+                session_id_resolver=_resolve_start_session_id,
+            )
 
         if request.method == "state.dump":
             service = self._session_service(request)
@@ -497,10 +515,12 @@ class CommandService:
         command_name: str,
         final_state: str,
         envelope: dict[str, Any],
+        session_id: str | None = None,
     ) -> dict[str, Any]:
+        effective_session_id = request.session_id if session_id is None else session_id
         try:
             service.finish_mutation(
-                session_id=request.session_id,
+                session_id=effective_session_id,
                 request_id=request.request_id,
                 command_name=command_name,
                 final_state=final_state,
@@ -513,12 +533,38 @@ class CommandService:
                     command_name=command_name,
                     final_state=final_state,
                     envelope=envelope,
+                    session_id=effective_session_id,
                 )
             except Exception as finalize_error:
                 payload = self._attach_recovery_detail(envelope, recovery_error)
                 return self._attach_recovery_detail(payload, finalize_error)
             return self._attach_recovery_detail(envelope, recovery_error)
         return envelope
+
+    def _start_run(self, request, payload, service):
+        window_title = str(payload.get("window_title") or "崩坏：星穹铁道")
+        binding = to_jsonable(
+            self.runtime_service.start_run(
+                window_title=window_title,
+                game_path=payload.get("game_path"),
+                channel=str(payload.get("channel") or "official"),
+            )
+        )
+        session = service.find_reusable_session(window_binding=binding)
+        if session is not None:
+            return {
+                "session": session.session_id,
+                "reused": 1,
+                "title": binding["title"],
+                "hwnd": binding["hwnd"],
+            }
+        created = service.create_session(window_binding=binding)
+        return {
+            "session": created.session_id,
+            "reused": 0,
+            "title": binding["title"],
+            "hwnd": binding["hwnd"],
+        }
 
     def _failure_envelope(self, *, error: Exception) -> dict[str, Any]:
         if isinstance(error, TrailError):
@@ -548,10 +594,12 @@ class CommandService:
         response_builder=None,
         enforce_cw_tainted: bool = False,
         tainted_session_id: str | None = None,
+        session_id_resolver=None,
     ):
         if response_builder is None:
             response_builder = lambda payload: payload
         service = self._session_service(request)
+        effective_session_id = request.session_id
         accepted = service.begin_mutation(
             session_id=request.session_id,
             request_id=request.request_id,
@@ -597,6 +645,8 @@ class CommandService:
             )
             last_known_stage = "executing"
             handler_result = handler(service)
+            if session_id_resolver is not None:
+                effective_session_id = session_id_resolver(handler_result) or request.session_id
             last_known_stage = "state_persisted" if handler_persisted_state else "handler_completed"
             response = response_builder(handler_result)
             result = self._response_with_request_id(request.request_id, response)
@@ -607,13 +657,17 @@ class CommandService:
                 command_name=command_name,
                 final_state="failed_before_side_effect",
                 envelope=error.envelope,
+                session_id=effective_session_id,
             )
         except SideEffectAppliedButStateNotPersisted as error:
             envelope = self._response_with_request_id(request.request_id, error.envelope)
+            data_payload = envelope.get("data") if isinstance(envelope.get("data"), dict) else {}
+            if session_id_resolver is not None:
+                effective_session_id = session_id_resolver(data_payload) or request.session_id
             try:
                 service.mark_side_effect_applied(
                     request_id=request.request_id,
-                    session_id=request.session_id,
+                    session_id=effective_session_id,
                     command_name=command_name,
                 )
             except Exception as stage_error:
@@ -624,18 +678,22 @@ class CommandService:
                 command_name=command_name,
                 final_state="applied_but_not_persisted",
                 envelope=envelope,
+                session_id=effective_session_id,
             )
         except PersistedButResponseUnknown as error:
             envelope = self._response_with_request_id(request.request_id, error.envelope)
+            data_payload = envelope.get("data") if isinstance(envelope.get("data"), dict) else {}
+            if session_id_resolver is not None:
+                effective_session_id = session_id_resolver(data_payload) or request.session_id
             try:
                 service.mark_side_effect_applied(
                     request_id=request.request_id,
-                    session_id=request.session_id,
+                    session_id=effective_session_id,
                     command_name=command_name,
                 )
                 service.mark_state_persisted(
                     request_id=request.request_id,
-                    session_id=request.session_id,
+                    session_id=effective_session_id,
                     command_name=command_name,
                 )
             except Exception as stage_error:
@@ -646,6 +704,7 @@ class CommandService:
                 command_name=command_name,
                 final_state="persisted_but_response_unknown",
                 envelope=envelope,
+                session_id=effective_session_id,
             )
         except Exception as error:
             if last_known_stage in {"handler_completed", "state_persisted"}:
@@ -665,25 +724,26 @@ class CommandService:
                 command_name=command_name,
                 final_state=final_state,
                 envelope=envelope,
+                session_id=effective_session_id,
             )
 
         last_known_stage = "state_persisted" if handler_persisted_state else "handler_completed"
         try:
             service.mark_side_effect_applied(
                 request_id=request.request_id,
-                session_id=request.session_id,
+                session_id=effective_session_id,
                 command_name=command_name,
             )
             if not handler_persisted_state:
                 last_known_stage = "side_effect_applied"
             service.mark_state_persisted(
                 request_id=request.request_id,
-                session_id=request.session_id,
+                session_id=effective_session_id,
                 command_name=command_name,
             )
             last_known_stage = "state_persisted"
             service.finish_mutation(
-                session_id=request.session_id,
+                session_id=effective_session_id,
                 request_id=request.request_id,
                 command_name=command_name,
                 final_state="completed",
@@ -704,8 +764,8 @@ class CommandService:
                 command_name=command_name,
                 final_state=final_state,
                 envelope=envelope,
+                session_id=effective_session_id,
             )
-
     def _read_ocr(self, runtime, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             ocr_call = split_ocr_call(payload)

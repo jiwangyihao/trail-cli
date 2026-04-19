@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
+from time import monotonic
+from time import sleep
+
+from trail.core.errors import TrailError
 
 
 class RuntimeService:
@@ -47,3 +51,39 @@ class RuntimeService:
             game_path = resolved["game_path"]
             resolved["game_path"] = None if game_path is None else Path(game_path)
         return launch_game(**resolved)
+
+    def start_run(
+        self,
+        *,
+        window_title: str,
+        game_path: str | None = None,
+        channel: str = "official",
+        timeout_seconds: int = 30,
+        interval_seconds: int = 1,
+    ):
+        try:
+            return self.attach_window(window_title=window_title)
+        except TrailError as error:
+            if error.code != "WINDOW_NOT_FOUND":
+                raise
+
+        launch_result = self.launch_game(game_path=game_path, channel=channel)
+        if not launch_result.get("started") and not launch_result.get("already_running"):
+            raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
+
+        last_error: TrailError | None = None
+        deadline = monotonic() + timeout_seconds
+        while True:
+            try:
+                return self.attach_window(window_title=window_title)
+            except TrailError as error:
+                if error.code != "WINDOW_NOT_FOUND":
+                    raise
+                last_error = error
+            if monotonic() >= deadline:
+                break
+            sleep(interval_seconds)
+
+        if last_error is not None:
+            raise last_error
+        raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")

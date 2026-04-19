@@ -97,6 +97,18 @@ class SessionService:
     def save_session(self, session) -> None:
         self._store.save(session)
 
+    def find_reusable_session(self, *, window_binding: dict):
+        with self._mutex:
+            candidates = []
+            for session in self._store.list():
+                if session.window_binding != window_binding:
+                    continue
+                if self._is_session_tainted_unlocked(session.session_id):
+                    continue
+                candidates.append(session)
+        candidates.sort(key=lambda item: (item.updated_at or item.created_at, item.created_at), reverse=True)
+        return candidates[0] if candidates else None
+
     def dump_state(self, *, session_id: str) -> dict:
         snapshot = self.load_session(session_id).to_dict()
         snapshot.setdefault("scene_state", {}).setdefault("daemon", {})["tainted"] = self.is_session_tainted(session_id)
@@ -104,7 +116,10 @@ class SessionService:
 
     def _session_record_is_tainted(self, session_id: str) -> bool:
         for path in self._journal_root.glob("*.json"):
-            record = json.loads(path.read_text(encoding="utf-8"))
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
             if record.get("session_id") != session_id:
                 continue
             if self._record_tainted(record):
@@ -143,6 +158,15 @@ class SessionService:
         with self._mutex:
             record = self._load_record(request_id)
             if record is not None:
+                if (
+                    command_name == "start.run"
+                    and record.get("method") == "start.run"
+                    and session_id is None
+                    and record.get("session_id") is not None
+                ):
+                    if record.get("final_state"):
+                        return {"status": "duplicate_terminal", "record": deepcopy(record)}
+                    return {"status": "duplicate_in_progress", "record": deepcopy(record)}
                 if record.get("session_id") != session_id or record.get("method") != command_name:
                     return {"status": "request_id_conflict", "record": deepcopy(record)}
                 if record.get("final_state"):
@@ -189,6 +213,7 @@ class SessionService:
     ) -> None:
         with self._mutex:
             record = self._require_record(request_id=request_id)
+            record["session_id"] = session_id
             risky_final_state = final_state in RISKY_FINAL_STATES
             record = self._apply_terminal_record(
                 record=record,
@@ -217,9 +242,18 @@ class SessionService:
             if not risky_final_state:
                 self._save_record(record)
 
-    def finalize_journal_record(self, *, request_id: str, command_name: str, final_state: str, envelope: dict) -> None:
+    def finalize_journal_record(
+        self,
+        *,
+        request_id: str,
+        command_name: str,
+        final_state: str,
+        envelope: dict,
+        session_id: str | None = None,
+    ) -> None:
         with self._mutex:
             record = self._require_record(request_id=request_id)
+            record["session_id"] = session_id
             record = self._apply_terminal_record(
                 record=record,
                 command_name=command_name,
@@ -259,7 +293,10 @@ class SessionService:
             session.scene_state.setdefault("daemon", {})["tainted"] = False
             self.save_session(session)
             for path in self._journal_root.glob("*.json"):
-                record = json.loads(path.read_text(encoding="utf-8"))
+                try:
+                    record = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, json.JSONDecodeError):
+                    continue
                 if record.get("session_id") != session_id:
                     continue
                 if not self._record_tainted(record):

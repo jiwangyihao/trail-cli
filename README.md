@@ -2,48 +2,51 @@
 
 Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输出 Agent 友好的紧凑文本协议，并在命令产生截图时显式返回截图路径，供多模态 agent 直接消费。
 
-## Daemon 模式
+## Simple / Advanced 分层
 
 - `trail` CLI 现在是非管理员薄壳，负责参数解析、workspace 解析、RPC 请求发送，以及把结果渲染为默认文本协议、显式 `--format yaml` 兜底或 `--verbose` 调试层
 - 常驻 `traild` daemon 持有 runtime、截图、OCR、找图、输入、guide、`cw` 场景执行和 session 热状态
-- 首次使用前先运行：`trail daemon install`
-- 查看常驻服务状态：`trail daemon status`
-- 如需显式预热或重启常驻服务：`trail daemon start`
-- 如果命令返回“结果未知”或需要排障，使用：`trail daemon request-status --request-id <id>`
-- 如果 session 被标记为 `tainted`，清理前先确认请求终态，再运行：`trail daemon reconcile-session --session <id>`
+- 默认 simple 层只教 3 个起手能力：`trail start`、`trail ocr read`、`trail input ...`
+- `trail start` 会自动收口 daemon、游戏、窗口与 session，并返回可继续使用的 `session=<id>`
+- 如果 `trail start` 失败，或 simple 层不能满足定位需求，再切到 `skills/trail-hsr-advanced` 处理 daemon / window / session / screen / image / state 等进阶命令
 
 ## Quick Start
 
-推荐入口：
+推荐入口（simple-first）：
 
-- 首次在当前用户环境启用常驻服务：`trail daemon install`
-- 开始前先确认 daemon 可用：`trail daemon status`
-- 先用 `trail-hsr` 创建 session、检查窗口，并把流程切到 `trail-cw`
-- 再由 `trail-cw` 负责编排完整一局货币战争
+- 启动并拿到可用 session：`trail start`
+- 观察当前画面：`trail ocr read`
+- 执行明确动作：`trail input click ...`、`trail input drag ...`、`trail input key ...`
+- 需要进入具体场景 skill 时，先用 `trail-hsr` 跑 simple 层，再切到 `trail-cw`
 
 手工 CLI 冒烟顺序：
 
-- 首次机器准备：`trail daemon install`
-- 确认或预热常驻服务：`trail daemon status`，必要时 `trail daemon start`
-- 如果游戏还没开：先运行 `trail window launch --channel official|bilibili|global`；只有 `bilibili` / `global` 首次且无历史成功路径时，通常再补 `--game-path <StarRail.exe>`
-- `trail session create`
-- `trail guide fetch cw <lineup_url|lineup_id>`
-- `trail cw enter --session <id> --mode new`
-- 在进入游戏并完成投资环境选择后，再执行：`trail cw guide apply --session <id> --lineup-id <lineup_id>`
-- 如需回顾当前已应用攻略：`trail cw guide current --session <id>`
+- `trail start`
+- `trail ocr read`
+- `trail input ...`
+
+## Advanced 启动与排障
+
+- simple 层失败或不够用时，加载 `skills/trail-hsr-advanced`
+- 进阶原子命令包括：`trail daemon install`、`trail daemon status`、`trail daemon start`
+- 结果未知或需要恢复时，使用：`trail daemon request-status --request-id <id>`、`trail daemon reconcile-session --session <id>`
+- 需要手工控制游戏与窗口时，使用：`trail window launch --channel official|bilibili|global`、`trail window attach --window-title "崩坏：星穹铁道"`
+- 需要手工建 session 时，使用：`trail session create`
+- 需要额外截图、模板识别或状态转储时，使用：`trail screen shot`、`trail image ...`、`trail state dump`
 
 ## 命令面概览
 
-- `daemon`：安装、启动、停止、查看常驻服务，并提供 `request-status` / `reconcile-session` 管理查询面
-- `session`：创建并持久化 session
+- `start`：simple-first 启动入口，自动收口 daemon、游戏、窗口与 session
+- `daemon`：进阶安装、启动、停止、查看常驻服务，并提供 `request-status` / `reconcile-session` 管理查询面
+- `session`：进阶创建并持久化 session
 - `guide`：拉取攻略内容、返回筛选枚举与攻略列表
-- `window`：做窗口绑定检查
+- `window`：进阶做窗口绑定检查或手工启动游戏
 - `window launch`：支持按 channel 自动解析《崩坏：星穹铁道》启动路径，必要时仍可显式提供 `--game-path`
-- `screen`：截图
+- `screen`：进阶截图
 - `ocr`：OCR 读取
-- `image`：模板识别与等待
+- `image`：进阶模板识别与等待
 - `input`：点击、拖拽、按键
-- `state`：读取 session 与 scene state
+- `state`：进阶读取 session 与 scene state
 - `cw`：货币战争固定流程命令，包含 `enter`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
 ## Window Launch
@@ -105,7 +108,7 @@ DirectML 安装与环境 profile 说明：
 - `shot path=...` 表示当前命令结果对应的截图路径；只要当前命令有截图，就会输出 `shot path=...`，且位于实体行之前
 - 默认失败路径只要当前结果携带 `request_id`，就会保留 `request id=<id>`，用于恢复与排障
 - 只有结果未知或当前失败显式可恢复时，才会出现 `recover action=daemon.request_status request=<id>`；仅有 `request id=<id>` 不等于当前失败一定可恢复
-- `trail daemon request-status --request-id <id>` 用于回查某个请求的终态、最近可见阶段与污染状态，典型输出是 `ok daemon.request_status request=req-42 final_state=completed last_visible_stage=responded tainted=0`
+- `trail daemon request-status --request-id <id>` 用于回查某个请求的终态、关联 session、最近可见阶段与污染状态，典型输出是 `ok daemon.request_status request=req-42 session=sess-1 final_state=completed last_visible_stage=responded tainted=0`
 - `tainted=1` 表示当前 failure 或状态带有运行态污染风险；继续执行前，先确认请求终态，再决定是否执行 `trail daemon reconcile-session --session <id>`
 - `--format yaml` 仍然保留同一条首行摘要，但只在允许的命令上提供结构化视图；当前更适合 `daemon status`、`state dump`、`guide config cw` 这类结果体量更大或层级更深的命令
 - `--verbose` 只追加 `debug kind=...` 调试行，不改变默认文本协议里的事实集合与顺序
@@ -154,10 +157,11 @@ recover action=daemon.request_status request=req-42
 - skill 负责整局编排、阶段切换、策略判断与失败恢复
 - 本项目不追求“内建识别穷尽所有状态”，而是优先把真实动作链和最小可靠检测做出来，把复杂画面判断留给 agent 的多模态能力
 - 货币战争里，攻略应用应放在“进入游戏并完成投资环境选择之后”执行，不建议在更早的入口阶段导入攻略
-- `skills/trail-hsr` 负责 session、窗口检查与场景切换
+- `skills/trail-hsr` 负责 `trail start`、`trail ocr read`、`trail input ...` 的 simple-first 起手与场景切换
+- `skills/trail-hsr-advanced` 负责 daemon / window / session / screen / image / state 等进阶命令
 - `skills/trail-cw` 负责整局货币战争循环
 - `skills/trail-cw-*` 负责攻略、商店、补给、编队、事件等子流程
-- README 里的 CLI 序列只用于手工检查命令面，不是推荐的整局自动化入口
+- README 里的 simple 层序列是默认入口；advanced 段落只在 simple 层失败或不够用时启用
 
 ## 项目边界
 

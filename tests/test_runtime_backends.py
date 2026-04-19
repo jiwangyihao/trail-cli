@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
+import json
 from pathlib import Path
 from statistics import median
 import sys
@@ -321,6 +322,13 @@ def _command_request(
         method=method,
         payload=payload or {},
     )
+
+
+def _rewrite_session_payload(store, session_id: str, **updates):
+    path = store._path_for(session_id)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload.update(updates)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 FAST_OCR_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "ocr"
@@ -1627,6 +1635,109 @@ def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Pa
         {"workspace_root": str(tmp_path), "window_binding": None},
         {"workspace_root": str(tmp_path), "window_binding": None},
     ]
+
+
+def test_session_service_reuses_latest_non_tainted_matching_session(tmp_path: Path):
+    from trail.daemon.session_service import SessionService
+
+    service = SessionService(workspace_root=tmp_path)
+
+    old = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+    _rewrite_session_payload(service._store, old.session_id, updated_at="2026-04-19T00:00:00+00:00")
+
+    newest = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+    _rewrite_session_payload(service._store, newest.session_id, updated_at="2026-04-19T01:00:00+00:00")
+
+    tainted = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+    tainted_path = service._store._path_for(tainted.session_id)
+    tainted_payload = json.loads(tainted_path.read_text(encoding="utf-8"))
+    tainted_payload.setdefault("scene_state", {}).setdefault("daemon", {})["tainted"] = True
+    tainted_payload["updated_at"] = "2026-04-19T02:00:00+00:00"
+    tainted_path.write_text(json.dumps(tainted_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    reusable = service.find_reusable_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+
+    assert reusable is not None
+    assert reusable.session_id == newest.session_id
+
+
+def test_session_service_does_not_reuse_same_title_with_different_hwnd(tmp_path: Path):
+    from trail.daemon.session_service import SessionService
+
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+    service.save_session(session)
+
+    reusable = service.find_reusable_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 999})
+
+    assert reusable is None
+
+
+def test_session_service_falls_back_to_created_at_when_updated_at_missing(tmp_path: Path):
+    from trail.daemon.session_service import SessionService
+
+    service = SessionService(workspace_root=tmp_path)
+
+    older = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+    _rewrite_session_payload(
+        service._store,
+        older.session_id,
+        updated_at=None,
+        created_at="2026-04-19T00:00:00+00:00",
+    )
+
+    newer = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+    _rewrite_session_payload(
+        service._store,
+        newer.session_id,
+        updated_at=None,
+        created_at="2026-04-19T01:00:00+00:00",
+    )
+
+    reusable = service.find_reusable_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+
+    assert reusable is not None
+    assert reusable.session_id == newer.session_id
+
+
+def test_session_service_skips_corrupt_session_files_when_finding_reusable(tmp_path: Path):
+    from trail.daemon.session_service import SessionService
+
+    service = SessionService(workspace_root=tmp_path)
+    good = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+    corrupt_path = service._store._path_for("deadbeefdeadbeefdeadbeefdeadbeef")
+    corrupt_path.write_text("{not-json", encoding="utf-8")
+
+    reusable = service.find_reusable_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+
+    assert reusable is not None
+    assert reusable.session_id == good.session_id
+
+
+def test_session_service_skips_corrupt_request_records_when_checking_taint(tmp_path: Path):
+    from trail.daemon.session_service import SessionService
+
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+    corrupt_record = service._journal_root / "bad-request.json"
+    corrupt_record.write_text("{broken", encoding="utf-8")
+
+    assert service.is_session_tainted(session.session_id) is False
+
+
+def test_session_service_reconcile_session_skips_corrupt_request_records(tmp_path: Path):
+    from trail.daemon.session_service import SessionService
+
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
+    session.scene_state.setdefault("daemon", {})["tainted"] = True
+    service.save_session(session)
+    corrupt_record = service._journal_root / "bad-request.json"
+    corrupt_record.write_text("{broken", encoding="utf-8")
+
+    result = service.reconcile_session(session.session_id)
+
+    assert result == {"session_id": session.session_id, "tainted": False}
 
 
 def test_command_service_returns_structured_errors_for_missing_ocr_and_images(tmp_path: Path):

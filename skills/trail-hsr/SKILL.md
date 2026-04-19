@@ -1,15 +1,16 @@
 ---
 name: trail-hsr
-description: Use when an agent needs to create a Trail session, verify the HSR window, and hand control to a scene-specific Trail skill.
+description: Use when an agent needs the simple-first Trail HSR entry: run `trail start`, inspect with `trail ocr read`, then act with `trail input ...`.
 ---
 
 # Skill: trail-hsr
 
 ## 职责
 
-- 创建 `session`
-- 检查《崩坏：星穹铁道》窗口是否可绑定
-- 把流程切换到具体场景 skill，例如 `trail-cw`
+- 默认先用 simple 层拿到可用 `session`
+- 用 `trail ocr read` 观察当前界面
+- 用 `trail input ...` 执行显式动作
+- 需要进入具体场景 skill 时切换到 `trail-cw`
 
 ## 推荐输入
 
@@ -18,33 +19,18 @@ description: Use when an agent needs to create a Trail session, verify the HSR w
 
 ## 标准流程
 
-1. 首次使用先运行 `trail daemon install`
-2. 开始前确认常驻服务状态：`trail daemon status`；如果需要主动预热，运行 `trail daemon start`
-3. 如果游戏尚未启动，先运行 `trail window launch --channel official|bilibili|global`
-4. 如果还不确定窗口是否可操作，运行 `trail window attach --window-title "崩坏：星穹铁道"`
-5. 运行 `trail session create`
-6. 从返回的 `data.session_id` 记录本局会话 ID
-7. 把后续所有场景命令都显式带上 `--session <id>`
-8. 需要进入货币战争时，切换到 `trail-cw`
+1. 运行 `trail start`
+2. 从首行记录 `session=<id>`
+3. 需要补充当前画面文字与截图时，运行 `trail ocr read`
+4. 需要点击、拖拽或按键时，运行 `trail input ...`
+5. 需要进入货币战争时，切换到 `trail-cw` 并显式带上 `--session <id>`
 
 ## 执行规则
 
-- `trail window launch --channel official|bilibili|global` 是默认入口
-- 显式 `--game-path` 仍可显式提供，且优先级最高、失败时不会回退
-- 未显式提供时按历史成功路径 -> 默认路径 -> 直接问用户
-- 默认路径只覆盖 `official`，冻结值为 `C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe`
-- `bilibili` / `global` 无历史成功路径时，通常仍需显式 `--game-path`
-- 显式路径不存在时返回 `GAME_PATH_NOT_FOUND`
-- 显式路径存在但启动失败时返回 `GAME_LAUNCH_FAILED`
-- Agent 不应默认乱搜路径；如果返回 `GAME_PATH_REQUIRED`，直接问用户提供路径
-- 如果游戏已成功启动但历史路径写回失败，仍视为 success，并读取 `warn code=GAME_PATH_PERSIST_FAILED`
-- 上述 success warning 的稳定码是 `GAME_PATH_PERSIST_FAILED`
-- `session create` 成功前，不要开始场景命令
-- 如果窗口检查失败，先解决窗口焦点或绑定问题，再继续
+- 默认 simple 层只教 `trail start`、`trail ocr read`、`trail input ...`
+- `trail start` 成功后优先复用返回的 `session=<id>`，后续场景命令都显式带上它
+- 如果 `trail ocr read` 已返回 OCR 结果和 `shot path=...`，不要马上再跑额外截图命令
+- `trail ocr read` 默认走 `ocr_mode=fast`（`1280x720`）；当你怀疑快档漏字、需要更稳的 box，或要做高精度对照时，再显式加 `--ocr-mode high`。如需强制做一次快档后高精度补跑，可再加 `--retry-high always`；正常情况下保持默认 `--retry-high auto`
+- 如果 `trail start` 失败、simple 层不足以定位问题，或你需要手工拆解启动/恢复链路，加载 advanced skill `trail-hsr-advanced`
 - 每次命令后优先阅读返回的 `screenshot` 与 `data`
-- 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补一条 `trail screen shot`
-- `trail ocr read` 现在默认走 `ocr_mode=fast`（`1280x720`）；当你怀疑快档漏字、需要更稳的 box，或要做高精度对照时，再显式加 `--ocr-mode high`。如需强制做一次快档后高精度补跑，可再加 `--retry-high always`；正常情况下保持默认 `--retry-high auto`
-- 如果需要调试窗口绑定、前台状态或复杂场景动作，可给 CLI 加顶层 `--verbose`
-- 如果命令结果未知，优先读取默认文本里的 `request id=<id>`；只有 transport/control-plane 失败或显式 `--verbose` 调试时，再看 `debug.request_id`，随后执行 `trail daemon request-status --request-id <id>`
-- 如果 session 被标记为 `tainted`，先查清请求终态，再执行 `trail daemon reconcile-session --session <id>`
 - 这个 skill 不负责货币战争具体策略

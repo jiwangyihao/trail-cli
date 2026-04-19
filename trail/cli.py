@@ -12,6 +12,7 @@ from trail.commands.input import input_app
 from trail.commands.ocr import ocr_app
 from trail.commands.screen import screen_app
 from trail.commands.session import session_app
+from trail.commands.start import start_app
 from trail.commands.state import state_app
 from trail.commands.window import window_app
 from trail.output.capture import set_capture_options
@@ -40,6 +41,7 @@ def version() -> None:
 
 
 app.add_typer(session_app, name="session")
+app.add_typer(start_app, name="start")
 app.add_typer(daemon_app, name="daemon")
 app.add_typer(guide_app, name="guide")
 app.add_typer(window_app, name="window")
