@@ -23,6 +23,7 @@ CURRENCY_WARS_ENTRY_POINT = (int(CW_WIDTH * 0.242), int(CW_HEIGHT * 0.30))
 CURRENCY_WARS_PARTICIPATE_POINT = (int(CW_WIDTH * 0.7786), int(CW_HEIGHT * 0.8194))
 STANDARD_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.2315))
 OVERCLOCK_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.4167))
+HOME_UNFINISHED_PROGRESS_KEYWORDS = ("继续进度", "结束并结算")
 
 
 class CwEnterStateError(TrailError):
@@ -56,6 +57,15 @@ class CwStartEntryTruthRequiredError(TrailError):
     def __init__(self, *, page: str, fields: tuple[str, ...]):
         joined = "/".join(fields)
         super().__init__("CW_START_ENTRY_TRUTH_REQUIRED", f"cw start requires recorded {joined} before continuing from {page}")
+
+
+class CwStartProgressPendingError(TrailError):
+    def __init__(self):
+        super().__init__(
+            "CW_START_PROGRESS_PENDING",
+            "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run",
+        )
+        self.data = {"page": "home"}
 
 
 def _asset(alias: str) -> str:
@@ -98,6 +108,31 @@ def _wait(runtime, alias: str):
     if box is None:
         raise TrailError("CW_ENTRY_UI_NOT_FOUND", f"未识别到货币战争界面元素: {alias}")
     return box
+
+
+def _extract_ocr_texts(ocr_result: object) -> list[str]:
+    if not isinstance(ocr_result, (list, tuple)):
+        return []
+    texts: list[str] = []
+    for piece in ocr_result:
+        if isinstance(piece, Mapping):
+            text = str(piece.get("text") or piece.get("ocr_text") or "").strip()
+        elif isinstance(piece, (list, tuple)) and len(piece) >= 2 and isinstance(piece[1], str):
+            text = piece[1].strip()
+        else:
+            continue
+        if text:
+            texts.append("".join(text.split()))
+    return texts
+
+
+def _home_has_unfinished_progress(runtime) -> bool:
+    try:
+        texts = _extract_ocr_texts(runtime.ocr())
+    except Exception:
+        return False
+    joined = "".join(texts)
+    return any(keyword in joined for keyword in HOME_UNFINISHED_PROGRESS_KEYWORDS)
 
 
 def _invalidate_stage(session: SessionModel) -> None:
@@ -187,6 +222,10 @@ def _detect_current_enter_page(
     session: SessionModel | None = None,
     preferred_mode: str | None = None,
 ) -> dict[str, str]:
+    start_box = _locate(runtime, "entry.start")
+    if start_box is not None and _home_has_unfinished_progress(runtime):
+        return {"page": "home", "unfinished_progress": "1"}
+
     new_box = _locate(runtime, "entry.new")
     continue_box = _locate(runtime, "entry.continue")
     if new_box is not None and continue_box is not None:
@@ -219,7 +258,7 @@ def _detect_current_enter_page(
             return {"page": "stage.boss_preview", "stage": stage}
         return {"page": "in_game", "stage": stage}
 
-    if _locate(runtime, "entry.start") is not None:
+    if start_box is not None:
         if session is not None:
             cw_state = ensure_cw_state(session)
             recorded_stage = cw_state.get("stage", {})
@@ -299,6 +338,8 @@ def _run_start_chain(
 ) -> dict[str, str | None]:
     page = current["page"]
     if page == "home":
+        if current.get("unfinished_progress") == "1":
+            raise CwStartProgressPendingError()
         start_box = _locate(runtime, "entry.start")
         _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode, start_box=start_box)
         return {"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode}

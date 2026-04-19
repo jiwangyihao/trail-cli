@@ -886,7 +886,7 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
     assert persisted.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
     assert persisted.scene_state["cw"]["sell_plan"] == {"stale": True}
     assert status["final_state"] == "completed"
-    assert runtime.ocr_calls == [{}]
+    assert runtime.ocr_calls == [{}, {}]
     assert observed_summary_inputs == [
         {
             "pieces": [{"text": "alpha"}],
@@ -904,6 +904,58 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
         _asset("stage.boss_preview"),
         _asset("entry.invest_environment"),
     ]
+
+
+@pytest.mark.parametrize("requested_mode", ["new", "continue"])
+def test_cw_start_rejects_home_with_unfinished_progress_before_side_effects(
+    tmp_path: Path,
+    monkeypatch,
+    requested_mode: str,
+):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    start_box = _box("entry.start", left=100, top=200)
+    runtime = StartRuntime(
+        locate_results={
+            _asset("entry.start"): start_box,
+        },
+        ocr_result=[
+            _dict_piece("继续进度", left=100, top=100),
+            _dict_piece("结束并结算", left=260, top=100),
+        ],
+    )
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "home"},
+        "slots": {"stale": False, "hand": ["希儿"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"stale": False, "steps": [1]},
+    }
+    service.save_session(session)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id=f"req-cw-start-home-progress-{requested_mode}",
+        mode=requested_mode,
+        difficulty="current",
+        battle_mode="standard",
+    )
+    status = registry.for_workspace(str(tmp_path)).request_status(f"req-cw-start-home-progress-{requested_mode}")
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is False
+    assert envelope["data"] == {"page": "home"}
+    assert envelope["error"] == {
+        "code": "CW_START_PROGRESS_PENDING",
+        "message": "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run",
+    }
+    assert status["final_state"] == "failed_before_side_effect"
+    assert runtime.clicks == []
+    assert runtime.wait_calls == []
+    assert runtime.ocr_calls == [{}]
+    assert persisted.scene_state["cw"]["entry"] == {"page": "home"}
+    assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["希儿"]}
 
 
 @pytest.mark.parametrize(
