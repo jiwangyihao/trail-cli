@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timezone
 import json
+from time import monotonic, sleep
 from typing import Annotated
 from pathlib import Path
 import os
@@ -12,6 +13,7 @@ import socket
 import typer
 
 from trail.commands.helpers import call_daemon
+from trail.core.errors import TrailError
 from trail.daemon.bootstrap import install_bootstrap, start_bootstrap, stop_bootstrap
 from trail.daemon.client import daemon_transport_failure, format_exception_detail
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
@@ -111,6 +113,50 @@ def _load_manifest_for_command(*, daemon_home: Path, request_id: str):
             message="daemon manifest invalid",
             debug={"detail": format_exception_detail(error)},
         )
+
+
+def ensure_bootstrap_installed(*, daemon_home: Path) -> Path:
+    manifest_path = manifest_path_for_user(daemon_home)
+    if manifest_path.exists():
+        return manifest_path
+
+    try:
+        return install_bootstrap(daemon_home)
+    except Exception as error:
+        raise TrailError("DAEMON_INSTALL_FAILED", "daemon install failed") from error
+
+
+def _poll_daemon_runtime_state(daemon_home: Path) -> str:
+    try:
+        manifest = load_manifest(manifest_path_for_user(daemon_home))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return ""
+    return str(manifest.runtime.state)
+
+
+def ensure_runtime_ready(*, daemon_home: Path, timeout_seconds: float = 30.0, interval_seconds: float = 1.0) -> None:
+    manifest, failure = _load_manifest_for_command(daemon_home=daemon_home, request_id="local-start-run")
+    if failure is not None:
+        error = failure.get("error") or {}
+        raise TrailError(str(error.get("code")), str(error.get("message")))
+
+    if runtime_manifest_is_live(manifest) and _poll_daemon_runtime_state(daemon_home) == "ready":
+        return
+
+    if not runtime_manifest_is_live(manifest) and not start_bootstrap(daemon_home):
+        raise TrailError("DAEMON_START_FAILED", "daemon start failed")
+
+    deadline = monotonic() + timeout_seconds
+    while monotonic() < deadline:
+        manifest, failure = _load_manifest_for_command(daemon_home=daemon_home, request_id="local-start-run")
+        if failure is not None:
+            sleep(interval_seconds)
+            continue
+        if runtime_manifest_is_live(manifest) and _poll_daemon_runtime_state(daemon_home) == "ready":
+            return
+        sleep(interval_seconds)
+
+    raise TrailError("DAEMON_UNAVAILABLE", "daemon did not become ready in time")
 
 
 daemon_app = typer.Typer(no_args_is_help=True)

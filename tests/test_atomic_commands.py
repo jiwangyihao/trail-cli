@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from trail.cli import app
+from trail.core.errors import TrailError
 from trail.daemon.client import TrailDaemonClient
 from trail.runtime.ocr_config import OCR_LANG_UNSUPPORTED
 from trail.runtime.model import Box
@@ -16,6 +17,13 @@ from tests.support.fake_daemon import build_success_response, write_ready_manife
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _maybe_import_start_module():
+    try:
+        return importlib.import_module("trail.commands.start")
+    except ModuleNotFoundError:
+        return None
 
 
 def _extract_help_option_block(output: str, option_name: str) -> str:
@@ -141,6 +149,110 @@ def test_session_create_uses_daemon_client(cli_runner, fake_daemon_client, tmp_p
             "session_id": None,
             "verbose": False,
         }
+    ]
+
+
+def test_trail_start_help_describes_simple_entry(cli_runner):
+    result = cli_runner.invoke(app, ["start", "--help"])
+
+    assert result.exit_code == 0
+    assert "自动完成 daemon、游戏、窗口、session 的启动收口" in result.output
+    assert "start.run" in result.output
+    assert "--window-title" in result.output
+    assert "--game-path" in result.output
+    assert "--channel" in result.output
+    assert "trail daemon status" not in result.output
+    assert "trail window attach" not in result.output
+    assert "trail session create" not in result.output
+
+
+def test_trail_start_dispatches_single_start_run_after_local_ready(
+    cli_runner, fake_daemon_client, tmp_path, monkeypatch
+):
+    daemon_home = Path("C:/Users/demo/.trail-daemon")
+    installed: list[bool] = []
+    ready: list[Path] = []
+    start_module = _maybe_import_start_module()
+    if start_module is not None:
+        monkeypatch.setattr(start_module, "_ensure_local_daemon_installed", lambda: installed.append(True) or daemon_home)
+        monkeypatch.setattr(start_module, "_ensure_local_daemon_ready", lambda resolved_home: ready.append(resolved_home))
+    client = fake_daemon_client(
+        {
+            "start.run": build_success_response(
+                request_id="req-start-dispatch",
+                data={"session": "sess-start-1", "reused": 0, "title": "Demo Window", "hwnd": 321},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "start",
+            "--window-title",
+            "Demo Window",
+            "--game-path",
+            str(tmp_path / "StarRail.exe"),
+            "--channel",
+            "bilibili",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        'ok start.run session=sess-start-1 reused=0 title="Demo Window" hwnd=321'
+    ]
+    assert installed == [True]
+    assert ready == [daemon_home]
+    assert client.calls == [
+        {
+            "method": "start.run",
+            "payload": {
+                "window_title": "Demo Window",
+                "game_path": str(tmp_path / "StarRail.exe"),
+                "channel": "bilibili",
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_trail_start_local_install_failure_renders_fail_start_run(cli_runner, monkeypatch):
+    start_module = _maybe_import_start_module()
+    if start_module is not None:
+        monkeypatch.setattr(
+            start_module,
+            "_ensure_local_daemon_installed",
+            lambda: (_ for _ in ()).throw(TrailError("DAEMON_INSTALL_FAILED", "daemon install failed")),
+        )
+
+    result = cli_runner.invoke(app, ["start"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail start.run code=DAEMON_INSTALL_FAILED",
+        'why msg="daemon install failed"',
+    ]
+
+
+def test_trail_start_local_ready_failure_renders_fail_start_run(cli_runner, monkeypatch):
+    start_module = _maybe_import_start_module()
+    if start_module is not None:
+        monkeypatch.setattr(start_module, "_ensure_local_daemon_installed", lambda: Path("C:/Users/demo/.trail-daemon"))
+        monkeypatch.setattr(
+            start_module,
+            "_ensure_local_daemon_ready",
+            lambda daemon_home: (_ for _ in ()).throw(TrailError("DAEMON_UNAVAILABLE", "daemon did not become ready in time")),
+        )
+
+    result = cli_runner.invoke(app, ["start"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail start.run code=DAEMON_UNAVAILABLE",
+        'why msg="daemon did not become ready in time"',
     ]
 
 
@@ -1351,6 +1463,7 @@ def test_cli_help_exposes_top_level_command_groups(cli_runner):
     result = cli_runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
+    assert "start" in result.stdout
     assert "session" in result.stdout
     assert "guide" in result.stdout
     assert "window" in result.stdout

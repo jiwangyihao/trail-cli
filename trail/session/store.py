@@ -56,13 +56,24 @@ class SessionStore:
         return self.workspace / f"{self._validate_session_id(session_id)}.json"
 
     def create(self, *, window_binding: dict) -> SessionModel:
+        now = datetime.now(timezone.utc).isoformat()
         session = SessionModel(
             session_id=uuid4().hex,
             workspace=self.workspace,
             window_binding=deepcopy(window_binding),
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=now,
+            updated_at=now,
         )
         return self.save(session)
+
+    def list(self) -> list[SessionModel]:
+        sessions: list[SessionModel] = []
+        for path in sorted(self.workspace.glob("*.json")):
+            try:
+                sessions.append(self.load(path.stem))
+            except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+                continue
+        return sessions
 
     def load(self, session_id: str) -> SessionModel:
         path = self._path_for(session_id)
@@ -76,6 +87,7 @@ class SessionStore:
     def save(self, session: SessionModel) -> SessionModel:
         safe_session_id = self._validate_session_id(session.session_id)
         session.workspace = self.workspace
+        session.updated_at = datetime.now(timezone.utc).isoformat()
         path = self.workspace / f"{safe_session_id}.json"
         path.write_text(
             json.dumps(session.to_dict(workspace_root=self._workspace_root()), ensure_ascii=False, indent=2),

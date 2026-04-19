@@ -35,6 +35,7 @@ class SessionModel:
     workspace: Path
     window_binding: JsonDict
     created_at: str
+    updated_at: str | None = None
     scene_state: dict[str, JsonDict] = field(default_factory=dict)
     last_result: JsonDict | None = None
     last_screenshot: str | None = None
@@ -46,6 +47,7 @@ class SessionModel:
             "workspace": _to_workspace_relative(self.workspace, workspace_root=workspace_root),
             "window_binding": self.window_binding,
             "created_at": self.created_at,
+            "updated_at": self.updated_at,
             "scene_state": self.scene_state,
             "last_result": self.last_result,
             "last_screenshot": _to_workspace_relative(self.last_screenshot, workspace_root=workspace_root),
@@ -59,6 +61,7 @@ class SessionModel:
             workspace=_from_workspace_relative(payload["workspace"], workspace_root=workspace_root),
             window_binding=dict(payload["window_binding"]),
             created_at=str(payload["created_at"]),
+            updated_at=str(payload["updated_at"]) if payload.get("updated_at") is not None else None,
             scene_state=dict(payload.get("scene_state") or {}),
             last_result=payload.get("last_result"),
             last_screenshot=_to_workspace_relative(payload.get("last_screenshot"), workspace_root=workspace_root),

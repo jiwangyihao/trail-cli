@@ -15,7 +15,7 @@ def test_daemon_request_status_renders_recovery_state(cli_runner, fake_daemon_cl
                     "request_id": "req-42",
                     "method": "input.click",
                     "workspace_root": str(tmp_path),
-                    "session_id": None,
+                    "session_id": "sess-1",
                     "final_state": "completed",
                     "last_visible_stage": "responded",
                     "tainted": False,
@@ -30,7 +30,7 @@ def test_daemon_request_status_renders_recovery_state(cli_runner, fake_daemon_cl
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
-        "ok daemon.request_status request=req-42 final_state=completed last_visible_stage=responded tainted=0"
+        "ok daemon.request_status request=req-42 session=sess-1 final_state=completed last_visible_stage=responded tainted=0"
     ]
     assert client.calls == [
         {

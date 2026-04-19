@@ -158,6 +158,26 @@ def test_readme_documents_ocr_mode_and_retry_high_contract() -> None:
     assert "模式与重试事实只在 `--verbose` 下出现" in readme
 
 
+def test_readme_documents_trail_start_as_default_entry() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    quick_start = readme.split("## Quick Start", 1)[1].split("## ", 1)[0]
+
+    assert "trail start" in quick_start
+    assert "trail ocr read" in quick_start
+    assert "trail input" in quick_start
+    assert "trail daemon install" not in quick_start
+    assert "trail daemon status" not in quick_start
+    assert "trail daemon start" not in quick_start
+    assert "trail daemon request-status" not in quick_start
+    assert "trail daemon reconcile-session" not in quick_start
+    assert "trail window launch" not in quick_start
+    assert "trail window attach" not in quick_start
+    assert "trail session create" not in quick_start
+    assert "trail screen shot" not in quick_start
+    assert "trail image" not in quick_start
+    assert "trail state dump" not in quick_start
+
+
 def test_render_output_renders_canonical_stage_wait_text():
     payload = _stage_payload()
 
@@ -1104,6 +1124,135 @@ def test_render_output_window_launch_success_keeps_persist_failure_warning():
     ]
 
 
+def test_render_output_start_run_success_keeps_fixed_first_line_order():
+    payload = {
+        "ok": True,
+        "data": {
+            "session": "sess-start-1",
+            "reused": 1,
+            "title": "崩坏：星穹铁道",
+            "hwnd": 123,
+        },
+        "screenshot": ".trail/shots/req-start-run.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("start.run", payload).splitlines() == [
+        "ok start.run session=sess-start-1 reused=1 title=崩坏：星穹铁道 hwnd=123",
+        "shot path=.trail/shots/req-start-run.png",
+    ]
+
+
+def test_render_output_start_run_success_keeps_reused_zero_fact():
+    payload = {
+        "ok": True,
+        "data": {
+            "session": "sess-start-2",
+            "reused": 0,
+            "title": "崩坏：星穹铁道",
+            "hwnd": 456,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("start.run", payload).splitlines() == [
+        "ok start.run session=sess-start-2 reused=0 title=崩坏：星穹铁道 hwnd=456"
+    ]
+
+
+def test_render_output_start_run_game_path_required_keeps_request_without_recover():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"request_id": "req-start-game-path"},
+        "error": {"code": "GAME_PATH_REQUIRED", "message": "请提供游戏路径"},
+    }
+
+    assert render_output("start.run", payload).splitlines() == [
+        "fail start.run code=GAME_PATH_REQUIRED",
+        "request id=req-start-game-path",
+        "why msg=请提供游戏路径",
+    ]
+
+
+def test_render_output_start_run_unknown_result_keeps_request_tainted_and_recover():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": ".trail/shots/req-start-unknown.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "request_id": "req-start-unknown",
+            "last_known_stage": "state_persisted",
+        },
+        "error": {"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+    }
+
+    assert render_output("start.run", payload).splitlines() == [
+        "fail start.run code=DAEMON_UNAVAILABLE tainted=1",
+        "request id=req-start-unknown",
+        "shot path=.trail/shots/req-start-unknown.png",
+        'why msg="mutation result unknown"',
+        "recover action=daemon.request_status request=req-start-unknown",
+    ]
+
+
+def test_render_output_start_run_local_pre_daemon_failure_stays_on_start_run_token():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": {"code": "DAEMON_INSTALL_FAILED", "message": "daemon install failed"},
+    }
+
+    assert render_output("start.run", payload).splitlines() == [
+        "fail start.run code=DAEMON_INSTALL_FAILED",
+        'why msg="daemon install failed"',
+    ]
+
+
+def test_render_output_daemon_request_status_keeps_session_fact_for_reconcile_chain():
+    payload = {
+        "ok": True,
+        "data": {
+            "request_id": "req-42",
+            "session_id": "sess-1",
+            "final_state": "completed",
+            "last_visible_stage": "responded",
+            "tainted": False,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("daemon.request_status", payload).splitlines() == [
+        "ok daemon.request_status request=req-42 session=sess-1 final_state=completed last_visible_stage=responded tainted=0"
+    ]
+
+
 def test_readme_documents_window_launch_path_resolution_contract() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
@@ -1124,25 +1273,87 @@ def test_readme_documents_window_launch_path_resolution_contract() -> None:
     assert "全盘搜索" not in readme
 
 
-def test_skill_docs_document_window_launch_path_resolution_contract() -> None:
-    for skill_name in ("trail-hsr", "trail-cw"):
-        skill_doc = (PROJECT_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+def test_skill_docs_split_simple_and_advanced_commands() -> None:
+    basic = (PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md").read_text(encoding="utf-8")
+    advanced = (PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md").read_text(encoding="utf-8")
+    cw = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
 
-        assert "`trail window launch --channel official|bilibili|global`" in skill_doc
-        assert "显式 `--game-path` 仍可显式提供，且优先级最高、失败时不会回退" in skill_doc
-        assert "历史成功路径 -> 默认路径 -> 直接问用户" in skill_doc
-        assert "默认路径只覆盖 `official`" in skill_doc
-        assert r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe" in skill_doc
-        assert "`bilibili` / `global` 无历史成功路径时，通常仍需显式 `--game-path`" in skill_doc
-        assert "Agent 不应默认乱搜路径" in skill_doc
-        assert "`GAME_PATH_REQUIRED`" in skill_doc
-        assert "`GAME_PATH_NOT_FOUND`" in skill_doc
-        assert "`GAME_LAUNCH_FAILED`" in skill_doc
-        assert "`GAME_PATH_PERSIST_FAILED`" in skill_doc
-        assert "trail window launch --game-path <StarRail.exe>" not in skill_doc
-        assert "自动搜索常见目录" not in skill_doc
-        assert "注册表" not in skill_doc
-        assert "全盘搜索" not in skill_doc
+    assert "trail start" in basic
+    assert "trail ocr read" in basic
+    assert "trail input" in basic
+    assert "加载 advanced skill" in basic
+    assert "trail-hsr-advanced" in basic
+    assert "trail daemon install" not in basic
+    assert "trail daemon status" not in basic
+    assert "trail daemon start" not in basic
+    assert "trail daemon request-status" not in basic
+    assert "trail daemon reconcile-session" not in basic
+    assert "trail window launch" not in basic
+    assert "trail window attach" not in basic
+    assert "trail session create" not in basic
+    assert "trail screen shot" not in basic
+    assert "trail image" not in basic
+    assert "trail state dump" not in basic
+    assert "trail daemon install" in advanced
+    assert "trail daemon status" in advanced
+    assert "trail daemon start" in advanced
+    assert "trail daemon request-status" in advanced
+    assert "trail daemon reconcile-session" in advanced
+    assert "trail window launch" in advanced
+    assert "trail window attach" in advanced
+    assert "trail session create" in advanced
+    assert "trail screen shot" in advanced
+    assert "trail image locate" in advanced
+    assert "trail image wait" in advanced
+    assert "trail state dump" in advanced
+    assert "trail start" in cw
+
+
+def test_advanced_skill_documents_window_launch_path_resolution_contract() -> None:
+    advanced = (PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "`trail window launch --channel official|bilibili|global`" in advanced
+    assert "显式 `--game-path` 仍可显式提供，且优先级最高、失败时不会回退" in advanced
+    assert "历史成功路径 -> 默认路径 -> 直接问用户" in advanced
+    assert "默认路径只覆盖 `official`" in advanced
+    assert r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe" in advanced
+    assert "`bilibili` / `global` 无历史成功路径时，通常仍需显式 `--game-path`" in advanced
+    assert "Agent 不应默认乱搜路径" in advanced
+    assert "`GAME_PATH_REQUIRED`" in advanced
+    assert "`GAME_PATH_NOT_FOUND`" in advanced
+    assert "`GAME_LAUNCH_FAILED`" in advanced
+    assert "`GAME_PATH_PERSIST_FAILED`" in advanced
+    assert "session=<id>" in advanced
+    assert "trail window launch --game-path <StarRail.exe>" not in advanced
+    assert "自动搜索常见目录" not in advanced
+    assert "注册表" not in advanced
+    assert "全盘搜索" not in advanced
+
+
+def test_cw_skill_family_uses_existing_session_instead_of_old_bootstrap_chain() -> None:
+    for relative_path in (
+        Path("skills/trail-cw/SKILL.md"),
+        Path("skills/trail-cw-events/SKILL.md"),
+        Path("skills/trail-cw-guide/SKILL.md"),
+        Path("skills/trail-cw-replenish/SKILL.md"),
+        Path("skills/trail-cw-shop/SKILL.md"),
+        Path("skills/trail-cw-slots/SKILL.md"),
+    ):
+        content = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
+
+        assert "trail daemon install" not in content
+        assert "trail daemon status" not in content
+        assert "trail daemon start" not in content
+        assert "trail daemon request-status" not in content
+        assert "trail daemon reconcile-session" not in content
+        assert "trail window launch" not in content
+        assert "trail window attach" not in content
+        assert "trail session create" not in content
+        assert "trail screen shot" not in content
+        assert "trail image" not in content
+        assert "trail state dump" not in content
+        assert "使用已有 session" in content or "trail start" in content
+        assert "--session <id>" in content or "--session <session_id>" in content
 
 
 def test_render_output_renders_daemon_restart_summary():

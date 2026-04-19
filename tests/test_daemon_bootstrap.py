@@ -309,6 +309,36 @@ def test_daemon_start_is_idempotent_when_runtime_ready(cli_runner, monkeypatch, 
     assert token_after == token_before
 
 
+def test_daemon_state_ready_not_degraded(monkeypatch, tmp_path: Path):
+    import trail.commands.daemon as daemon_module
+
+    ensure_runtime_ready = getattr(daemon_module, "ensure_runtime_ready", None)
+    assert ensure_runtime_ready is not None
+
+    manifest = SimpleNamespace(runtime=SimpleNamespace(state="degraded"))
+    poll_states = iter(["degraded", "ready"])
+    seen_states: list[str] = []
+    started: list[Path] = []
+    monotonic_values = iter([0.0, 0.1])
+
+    monkeypatch.setattr(daemon_module, "_load_manifest_for_command", lambda *, daemon_home, request_id: (manifest, None))
+    monkeypatch.setattr(daemon_module, "runtime_manifest_is_live", lambda loaded_manifest: True)
+    monkeypatch.setattr(
+        daemon_module,
+        "_poll_daemon_runtime_state",
+        lambda daemon_home: seen_states.append(next(poll_states)) or seen_states[-1],
+        raising=False,
+    )
+    monkeypatch.setattr(daemon_module, "start_bootstrap", lambda daemon_home: started.append(daemon_home) or True)
+    monkeypatch.setattr(daemon_module, "monotonic", lambda: next(monotonic_values), raising=False)
+    monkeypatch.setattr(daemon_module, "sleep", lambda seconds: None, raising=False)
+
+    ensure_runtime_ready(daemon_home=tmp_path / "daemon-home")
+
+    assert seen_states == ["degraded", "ready"]
+    assert started == []
+
+
 def test_daemon_start_restarts_stale_ready_runtime(cli_runner, monkeypatch, tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
     listener = socket.create_server(("127.0.0.1", 0))

@@ -14,6 +14,7 @@ from trail.daemon.models import DaemonRequest
 from trail.daemon.protocol import PROTOCOL_VERSION
 from trail.daemon.server import TrailDaemonServer
 from trail.daemon.session_service import SessionServiceRegistry
+from trail.output.envelope import command_failure
 from tests.support.fake_daemon import (
     FakeDaemonClient,
     build_success_response,
@@ -89,6 +90,54 @@ class ProtocolRuntimeService:
     def launch_game(self, **payload):
         self.launch_calls.append(dict(payload))
         return dict(self.launch_result)
+
+
+class StartRuntimeServiceStub:
+    def __init__(
+        self,
+        *,
+        attach_binding: dict[str, object] | None = None,
+        launch_result: dict[str, object] | None = None,
+        attach_failures_before_success: int = 0,
+    ):
+        self.attach_binding = attach_binding or {"title": "崩坏：星穹铁道", "hwnd": 123}
+        self.launch_result = launch_result or {
+            "started": True,
+            "already_running": False,
+            "path": "demo.exe",
+            "channel": "official",
+            "args": [],
+        }
+        self.attach_failures_before_success = attach_failures_before_success
+        self.attach_attempts = 0
+        self.launch_calls: list[dict[str, object]] = []
+
+    def attach_window(self, *, window_title: str):
+        self.attach_attempts += 1
+        if self.attach_attempts <= self.attach_failures_before_success:
+            raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
+        return dict(self.attach_binding)
+
+    def launch_game(self, **payload):
+        self.launch_calls.append(dict(payload))
+        return dict(self.launch_result)
+
+    def start_run(self, *, window_title: str, game_path: str | None = None, channel: str = "official"):
+        try:
+            return self.attach_window(window_title=window_title)
+        except TrailError as error:
+            if error.code != "WINDOW_NOT_FOUND":
+                raise
+
+        launch_result = self.launch_game(game_path=game_path, channel=channel)
+        if not launch_result.get("started") and not launch_result.get("already_running"):
+            raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
+        while True:
+            try:
+                return self.attach_window(window_title=window_title)
+            except TrailError as error:
+                if error.code != "WINDOW_NOT_FOUND":
+                    raise
 
 
 class FailingProtocolRuntimeService:
@@ -360,6 +409,165 @@ def test_command_service_handles_state_dump(tmp_path: Path):
 
     assert payload["ok"] is True
     assert payload["data"]["session_id"] == session.session_id
+
+
+def test_command_service_start_run_returns_session_and_window_facts(tmp_path: Path):
+    runtime_service = StartRuntimeServiceStub()
+    session_services = SessionServiceRegistry()
+    service = CommandService(runtime_service=runtime_service, session_service=session_services)
+
+    payload = service.handle(
+        SimpleNamespace(
+            request_id="req-start-1",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["data"]["session"]
+    assert payload["data"]["reused"] in {0, 1}
+    assert payload["data"]["title"] == "崩坏：星穹铁道"
+    assert payload["data"]["hwnd"] == 123
+
+
+@pytest.mark.parametrize(
+    "launch_result",
+    [
+        {"started": True, "already_running": False, "path": "demo.exe", "channel": "official", "args": []},
+        {"started": False, "already_running": True, "path": "demo.exe", "channel": "official", "args": []},
+    ],
+)
+def test_start_run_waits_for_attach_after_window_launch_started_or_already_running(
+    tmp_path: Path,
+    launch_result: dict[str, object],
+):
+    runtime = StartRuntimeServiceStub(launch_result=launch_result, attach_failures_before_success=2)
+    session_services = SessionServiceRegistry()
+    service = CommandService(runtime_service=runtime, session_service=session_services)
+    request = SimpleNamespace(
+        request_id="req-start-wait",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=None,
+        verbose=False,
+        method="start.run",
+        payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+    )
+
+    result = service.handle(request)
+
+    assert result["ok"] is True
+    assert runtime.attach_attempts == 3
+    assert runtime.launch_calls == [{"game_path": None, "channel": "official"}]
+
+
+def test_runtime_service_start_run_accepts_attach_on_last_allowed_attempt(monkeypatch):
+    from trail.daemon.runtime_service import RuntimeService
+
+    attempts = {"count": 0}
+    times = iter([0.0, 0.0, 0.5, 1.0, 1.0])
+
+    def fake_attach_window(self, *, window_title: str):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
+        return {"title": window_title, "hwnd": 123}
+
+    monkeypatch.setattr("trail.daemon.runtime_service.monotonic", lambda: next(times))
+    monkeypatch.setattr("trail.daemon.runtime_service.sleep", lambda seconds: None)
+    monkeypatch.setattr(RuntimeService, "attach_window", fake_attach_window)
+    monkeypatch.setattr(RuntimeService, "launch_game", lambda self, **payload: {"started": True, "already_running": False, "path": "demo.exe", "channel": payload.get("channel", "official"), "args": []})
+
+    result = RuntimeService().start_run(window_title="崩坏：星穹铁道", channel="official", timeout_seconds=1, interval_seconds=1)
+
+    assert result == {"title": "崩坏：星穹铁道", "hwnd": 123}
+
+
+def test_command_service_start_run_reuses_existing_session_on_second_call_with_real_runtime_service(tmp_path: Path, monkeypatch):
+    from trail.daemon.runtime_service import RuntimeService
+
+    monkeypatch.setattr("trail.runtime.window.attach_window", lambda window_title: {"title": window_title, "hwnd": 123})
+    monkeypatch.setattr("trail.runtime.window.launch_game", lambda **payload: {"started": False, "already_running": False, "path": "demo.exe", "channel": payload.get("channel", "official"), "args": []})
+
+    command_service = CommandService(
+        runtime_service=RuntimeService(),
+        session_service=SessionServiceRegistry(),
+    )
+
+    first = command_service.handle(
+        SimpleNamespace(
+            request_id="req-start-first",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        )
+    )
+    second = command_service.handle(
+        SimpleNamespace(
+            request_id="req-start-second",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        )
+    )
+
+    assert first["ok"] is True
+    assert first["data"]["reused"] == 0
+    assert second["ok"] is True
+    assert second["data"]["reused"] == 1
+    assert second["data"]["session"] == first["data"]["session"]
+
+
+def test_start_run_unknown_result_keeps_request_and_taints_created_session(tmp_path: Path):
+    runtime = StartRuntimeServiceStub()
+    session_services = SessionServiceRegistry()
+    service = CommandService(runtime_service=runtime, session_service=session_services)
+    original = service._start_run
+
+    def exploding(request, payload, session_service):
+        result = original(request, payload, session_service)
+        envelope = command_failure(
+            code="DAEMON_UNAVAILABLE",
+            message="mutation result unknown",
+            screenshot=None,
+            debug={"last_known_stage": "state_persisted", "tainted": True},
+        )
+        envelope["data"] = result
+        raise PersistedButResponseUnknown(envelope)
+
+    service._start_run = exploding
+    response = service.handle(
+        SimpleNamespace(
+            request_id="req-start-unknown",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["request_id"] == "req-start-unknown"
+    assert response["error"]["code"] == "DAEMON_UNAVAILABLE"
+    assert response["debug"]["last_known_stage"] == "state_persisted"
+
+    status = session_services.for_workspace(tmp_path).request_status("req-start-unknown")
+    assert status["tainted"] is True
+    created_session_id = status["session_id"]
+    assert session_services.for_workspace(tmp_path).is_session_tainted(created_session_id) is True
 
 
 def test_command_service_handles_cw_stage_detect(tmp_path: Path, monkeypatch):
