@@ -3373,6 +3373,52 @@ def test_runtime_operator_prepares_window_before_type_text_actions():
     ]
 
 
+def test_runtime_operator_type_text_on_windows_does_not_require_pyautogui_backend(monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    calls: list[tuple[str, object | None]] = []
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+        def prepare_input(self):
+            calls.append(("prepare_input", None))
+
+        def is_foreground(self):
+            return True
+
+    class User32:
+        def SendInput(self, count: int, inputs, size: int):
+            calls.append(("SendInput", count))
+            return count
+
+    monkeypatch.setattr(operator_module.sys, "platform", "win32")
+    monkeypatch.setattr(operator_module.ctypes, "windll", SimpleNamespace(user32=User32()))
+    monkeypatch.setattr(
+        operator_module.PyAutoGuiInputDriver,
+        "_load_backend",
+        staticmethod(lambda: (_ for _ in ()).throw(RuntimeError("pyautogui should not be loaded before native type_text"))),
+    )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=operator_module.PyAutoGuiInputDriver(),
+    )
+
+    runtime.type_text("##demo##")
+
+    assert calls == [
+        ("prepare_input", None),
+        ("SendInput", len("##demo##") * 2),
+    ]
+
+
 def test_runtime_operator_click_and_drag_translate_window_relative_pixels():
     import trail.runtime.operator as operator_module
 
@@ -4756,6 +4802,172 @@ def test_pyautogui_input_driver_click_uses_win32_cursor_for_virtual_screen_coord
         ("mouse_event", (0x0002, 0, 0, 0, 0)),
         ("mouse_event", (0x0004, 0, 0, 0, 0)),
     ]
+
+
+def test_pyautogui_input_driver_type_text_uses_sendinput_unicode_packets_on_windows(monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    packets: list[tuple[int, int, int]] = []
+    backend_calls: list[tuple[str, float]] = []
+
+    class User32:
+        def SendInput(self, count: int, inputs, size: int):
+            for index in range(count):
+                record = inputs[index]
+                packets.append((record.ki.wVk, record.ki.wScan, record.ki.dwFlags))
+            return count
+
+    user32 = User32()
+    monkeypatch.setattr(operator_module.sys, "platform", "win32")
+    monkeypatch.setattr(operator_module.ctypes, "windll", SimpleNamespace(user32=user32))
+    monkeypatch.setattr(
+        operator_module.PyAutoGuiInputDriver,
+        "_load_backend",
+        staticmethod(lambda: SimpleNamespace(write=lambda text, interval=0: backend_calls.append((text, interval)))),
+    )
+
+    driver = operator_module.PyAutoGuiInputDriver()
+    driver.type_text("##")
+
+    assert backend_calls == []
+    assert packets == [
+        (0, ord("#"), 0x0004),
+        (0, ord("#"), 0x0004 | operator_module.PyAutoGuiInputDriver.KEYEVENTF_KEYUP),
+        (0, ord("#"), 0x0004),
+        (0, ord("#"), 0x0004 | operator_module.PyAutoGuiInputDriver.KEYEVENTF_KEYUP),
+    ]
+
+
+def test_pyautogui_input_driver_type_text_uses_utf16_code_units_for_non_bmp(monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    packets: list[tuple[int, int]] = []
+
+    class User32:
+        def SendInput(self, count: int, inputs, size: int):
+            for index in range(count):
+                record = inputs[index]
+                packets.append((record.ki.wScan, record.ki.dwFlags))
+            return count
+
+    monkeypatch.setattr(operator_module.sys, "platform", "win32")
+    monkeypatch.setattr(operator_module.ctypes, "windll", SimpleNamespace(user32=User32()))
+
+    driver = operator_module.PyAutoGuiInputDriver()
+    driver.type_text("😀")
+
+    assert packets == [
+        (0xD83D, operator_module.PyAutoGuiInputDriver.KEYEVENTF_UNICODE),
+        (
+            0xD83D,
+            operator_module.PyAutoGuiInputDriver.KEYEVENTF_UNICODE | operator_module.PyAutoGuiInputDriver.KEYEVENTF_KEYUP,
+        ),
+        (0xDE00, operator_module.PyAutoGuiInputDriver.KEYEVENTF_UNICODE),
+        (
+            0xDE00,
+            operator_module.PyAutoGuiInputDriver.KEYEVENTF_UNICODE | operator_module.PyAutoGuiInputDriver.KEYEVENTF_KEYUP,
+        ),
+    ]
+
+
+def test_pyautogui_input_driver_type_text_raises_without_fallback_when_sendinput_short_writes(monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    backend_calls: list[tuple[str, float]] = []
+
+    class User32:
+        def SendInput(self, count: int, inputs, size: int):
+            return count - 1
+
+    monkeypatch.setattr(operator_module.sys, "platform", "win32")
+    monkeypatch.setattr(operator_module.ctypes, "windll", SimpleNamespace(user32=User32()))
+    monkeypatch.setattr(
+        operator_module.PyAutoGuiInputDriver,
+        "_load_backend",
+        staticmethod(lambda: SimpleNamespace(write=lambda text, interval=0: backend_calls.append((text, interval)))),
+    )
+
+    driver = operator_module.PyAutoGuiInputDriver()
+
+    with pytest.raises(TrailError) as exc_info:
+        driver.type_text("##demo##")
+
+    assert exc_info.value.code == "INPUT_BACKEND_UNAVAILABLE"
+    assert backend_calls == []
+
+
+def test_pyautogui_input_driver_type_text_uses_backend_write_off_windows(monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    backend_calls: list[tuple[str, float]] = []
+
+    class User32:
+        def SendInput(self, count: int, inputs, size: int):
+            raise AssertionError("SendInput should not be used off Windows")
+
+    monkeypatch.setattr(operator_module.sys, "platform", "linux")
+    monkeypatch.setattr(operator_module.ctypes, "windll", SimpleNamespace(user32=User32()))
+    monkeypatch.setattr(
+        operator_module.PyAutoGuiInputDriver,
+        "_load_backend",
+        staticmethod(lambda: SimpleNamespace(write=lambda text, interval=0: backend_calls.append((text, interval)))),
+    )
+
+    driver = operator_module.PyAutoGuiInputDriver()
+    driver.type_text("##demo##")
+
+    assert backend_calls == [("##demo##", 0)]
+
+
+def test_pyautogui_input_driver_input_struct_matches_full_win32_layout():
+    import ctypes
+    from ctypes import wintypes
+
+    import trail.runtime.operator as operator_module
+
+    ulong_ptr = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == ctypes.sizeof(ctypes.c_ulonglong) else ctypes.c_ulong
+
+    class MirrorMouseInput(ctypes.Structure):
+        _fields_ = [
+            ("dx", wintypes.LONG),
+            ("dy", wintypes.LONG),
+            ("mouseData", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ulong_ptr),
+        ]
+
+    class MirrorKeybdInput(ctypes.Structure):
+        _fields_ = [
+            ("wVk", wintypes.WORD),
+            ("wScan", wintypes.WORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ulong_ptr),
+        ]
+
+    class MirrorHardwareInput(ctypes.Structure):
+        _fields_ = [
+            ("uMsg", wintypes.DWORD),
+            ("wParamL", wintypes.WORD),
+            ("wParamH", wintypes.WORD),
+        ]
+
+    class MirrorInputUnion(ctypes.Union):
+        _fields_ = [
+            ("mi", MirrorMouseInput),
+            ("ki", MirrorKeybdInput),
+            ("hi", MirrorHardwareInput),
+        ]
+
+    class MirrorInput(ctypes.Structure):
+        _fields_ = [
+            ("type", wintypes.DWORD),
+            ("value", MirrorInputUnion),
+        ]
+
+    assert ctypes.sizeof(operator_module.INPUT_UNION) == ctypes.sizeof(MirrorInputUnion)
+    assert ctypes.sizeof(operator_module.INPUT) == ctypes.sizeof(MirrorInput)
 
 
 def test_pyautogui_input_driver_click_uses_win32_cursor_for_primary_coords_on_windows(monkeypatch):
