@@ -72,7 +72,9 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 - 阶段切换由这个 skill 决定，子 skill 不负责整局调度
 - `trail cw enter` 只到首页，不再直接推进到投资环境页；真正开局一律使用 `trail cw start`
 - `trail cw start` 负责把首页推进到投资环境页，并把 `mode / difficulty / battle_mode` 固化到当前 session
+- `trail cw guide` 只负责当前对局攻略的 apply/current；攻略查询与拉取继续使用 `trail guide ... cw`
 - `trail cw portal.select|refresh|restart` 只在投资环境页可用；`refresh/restart` 是否允许，先看用户在首页给出的偏好
+- `trail cw stage` 只负责检测或等待，不代替分组动作执行
 - 如果当前动作让 `stage` 失效，立刻回到 `trail cw stage detect --session <id>`
 - `continue` 模式表示“继续当前 UI 进度”，不是重新创建 session；只有当 session 中缺少 guide 状态时，才重新走攻略子 skill
 - 不要假设 `read_*` 命令已经穷尽了所有 UI 语义；必要时直接根据 screenshot 做多模态判断后，再调用显式动作命令

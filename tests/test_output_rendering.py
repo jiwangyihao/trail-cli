@@ -178,6 +178,31 @@ def test_readme_documents_trail_start_as_default_entry() -> None:
     assert "trail state dump" not in quick_start
 
 
+def test_readme_and_cw_skills_document_help_boundaries() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
+    cw_guide_skill = (PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md").read_text(encoding="utf-8")
+    replenish_skill = (PROJECT_ROOT / "skills" / "trail-cw-replenish" / "SKILL.md").read_text(encoding="utf-8")
+    events_skill = (PROJECT_ROOT / "skills" / "trail-cw-events" / "SKILL.md").read_text(encoding="utf-8")
+    shop_skill = (PROJECT_ROOT / "skills" / "trail-cw-shop" / "SKILL.md").read_text(encoding="utf-8")
+    slots_skill = (PROJECT_ROOT / "skills" / "trail-cw-slots" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页" in readme
+    assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in readme
+    assert "`trail cw invest.read|choose` 继续只表示局内 invest 事件" in readme
+    assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in cw_skill
+    assert "`trail cw stage` 只负责检测或等待" in cw_skill
+    assert (
+        "`trail cw guide apply/current` 只面向当前对局已选攻略；攻略查询与拉取继续使用顶层 `trail guide ... cw`"
+        in cw_guide_skill
+    )
+    assert "`trail cw invest.read|choose` 继续只表示局内 invest 事件" in replenish_skill
+    assert "处理 Boss 预览、特殊事件、结算翻页与战斗继续" in events_skill
+    assert "不负责商店、补给和整局循环" in events_skill
+    assert "已经完成 `trail cw start` 和 `trail cw portal.select`" in shop_skill
+    assert "已经完成 `trail cw start` 和 `trail cw portal.select`" in slots_skill
+
+
 def test_render_output_renders_canonical_stage_wait_text():
     payload = _stage_payload()
 
