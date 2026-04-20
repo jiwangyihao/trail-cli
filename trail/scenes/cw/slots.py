@@ -70,8 +70,9 @@ SLOT_POINTS_BY_AREA = {
 INFO_DISMISS_POINT = _point(0.5, 0.5)
 HAND_EXPAND_DISMISS_POINT = _point(0.35, 0.20)
 SELL_SLOT_POINT = _point(0.05, 0.86)
-SLOT_NAME_REGION = _region(0.775, 0.175, 0.880, 0.2315)
+SLOT_NAME_REGION = _region(0.78, 0.175, 0.880, 0.2315)
 CANNOT_BE_FIELDED_REGION = _region(0.25, 0.25, 0.75, 0.75)
+CRYSTAL_DRAG_DURATION_SECONDS = 0.2
 CRYSTAL_DRAG_PATHS = [
     (*_point(0.68, 0.18), *_point(0.82, 0.18)),
     (*_point(0.68, 0.25), *_point(0.82, 0.25)),
@@ -131,7 +132,7 @@ def _read_ocr_piece(item: Any) -> str:
 
 def _capture_slot_name_panel_image(runtime, *, point: tuple[int, int]):
     runtime.click_point(*point)
-    sleep(SLOT_PANEL_SETTLE_SECONDS)
+    sleep(SLOT_PANEL_SETTLE_SECONDS * 2)
     try:
         return runtime.capture_image(**SLOT_NAME_REGION, normalize=False)
     finally:
@@ -312,40 +313,84 @@ def _score_slot_name_candidates(text: str, *, candidates: list[str]) -> list[tup
     return sorted(scored, key=lambda item: (-item[1], item[0]))
 
 
-def _session_slot_name_candidates(cw_state: dict[str, Any]) -> list[str]:
-    candidates: list[str] = []
+def _collect_nested_slot_name_candidates(value: Any, *, candidates: list[str]) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "name":
+                text = str(item or "").strip()
+                if text:
+                    candidates.append(text)
+            _collect_nested_slot_name_candidates(item, candidates=candidates)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _collect_nested_slot_name_candidates(item, candidates=candidates)
+
+
+def _dedupe_slot_name_candidates(candidates: list[str]) -> list[str]:
+    return list(dict.fromkeys(candidates))
+
+
+def _session_slot_name_candidates(cw_state: dict[str, Any]) -> tuple[list[str], list[str]]:
+    authoritative_candidates: list[str] = []
     guide = cw_state.get("guide") if isinstance(cw_state.get("guide"), dict) else {}
     for group in (guide.get("on_field", {}), guide.get("off_field", {})):
         if isinstance(group, dict):
             for name in group:
                 text = str(name).strip()
                 if text:
-                    candidates.append(text)
+                    authoritative_candidates.append(text)
+    _collect_nested_slot_name_candidates(guide, candidates=authoritative_candidates)
 
+    portal = cw_state.get("portal") if isinstance(cw_state.get("portal"), dict) else {}
+    _collect_nested_slot_name_candidates(portal, candidates=authoritative_candidates)
+
+    slot_candidates: list[str] = []
     slots = cw_state.get("slots") if isinstance(cw_state.get("slots"), dict) else {}
     if slots.get("stale") is False:
         for area in ("front", "back", "hand"):
             for value in slots.get(area, []) or []:
                 text = str(value or "").strip()
                 if text:
-                    candidates.append(text)
-    return list(dict.fromkeys(candidates))
+                    slot_candidates.append(text)
+    return _dedupe_slot_name_candidates(authoritative_candidates), _dedupe_slot_name_candidates(slot_candidates)
 
 
-def _normalize_slot_name(raw: str | None, *, candidates: list[str]) -> str | None:
-    text = str(raw or "").strip()
-    if not text:
-        return None
+def _is_short_slot_name_variant(left: str, right: str) -> bool:
+    if not left or not right or left == right or len(left) != len(right) or len(left) > 4:
+        return False
+    same_positions = sum(1 for left_char, right_char in zip(left, right, strict=False) if left_char == right_char)
+    return same_positions >= len(left) - 1
+
+
+def _normalize_slot_name_against_candidates(text: str, *, candidates: list[str]) -> str | None:
     if text in candidates:
         return text
 
     scored = _score_slot_name_candidates(text, candidates=candidates)
     if not scored:
-        return text
+        return None
     best_candidate, best_score = scored[0]
     second_score = scored[1][1] if len(scored) > 1 else 0.0
     if best_score >= 0.72 and (best_score - second_score) >= 0.12:
         return best_candidate
+
+    short_variants = [candidate for candidate, _ in scored if _is_short_slot_name_variant(text, candidate)]
+    if len(short_variants) == 1:
+        return short_variants[0]
+    return None
+
+
+def _normalize_slot_name(raw: str | None, *, authoritative_candidates: list[str], slot_candidates: list[str]) -> str | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    normalized = _normalize_slot_name_against_candidates(text, candidates=authoritative_candidates)
+    if normalized is not None:
+        return normalized
+    normalized = _normalize_slot_name_against_candidates(text, candidates=slot_candidates)
+    if normalized is not None:
+        return normalized
     return text
 
 
@@ -408,6 +453,8 @@ def build_cw_slots_reader(runtime, targets: list[str] | None = None) -> SlotsSna
         }
 
         captures: list[dict[str, Any]] = []
+        runtime.click_point(*INFO_DISMISS_POINT)
+        sleep(SLOT_PANEL_SETTLE_SECONDS)
         for area in ("front", "back", "hand"):
             points = SLOT_POINTS_BY_AREA[area]
             for index in sorted(targets_by_area[area]):
@@ -453,7 +500,7 @@ def build_cw_hand_seller(runtime) -> HandSeller:
 def build_cw_crystal_collector(runtime) -> CrystalCollector:
     def collector() -> None:
         for drag in CRYSTAL_DRAG_PATHS:
-            runtime.drag_to(*drag)
+            runtime.drag_to(*drag, duration=CRYSTAL_DRAG_DURATION_SECONDS)
 
     return collector
 
@@ -463,10 +510,10 @@ def read_cw_slots(session: SessionModel, *, reader: SlotsSnapshotReader, targets
     cw_state = ensure_cw_state(session)
     previous = cw_state.get("slots") if isinstance(cw_state.get("slots"), dict) else {}
     parsed_targets = _parse_slot_targets(targets)
-    candidates = _session_slot_name_candidates(cw_state)
-    front = [_normalize_slot_name(value, candidates=candidates) for value in front]
-    back = [_normalize_slot_name(value, candidates=candidates) for value in back]
-    hand = [_normalize_slot_name(value, candidates=candidates) for value in hand]
+    authoritative_candidates, slot_candidates = _session_slot_name_candidates(cw_state)
+    front = [_normalize_slot_name(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in front]
+    back = [_normalize_slot_name(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in back]
+    hand = [_normalize_slot_name(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in hand]
     merged_front = _merge_area_snapshot(previous.get("front"), front, size=len(FRONT_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["front"])
     merged_back = _merge_area_snapshot(previous.get("back"), back, size=len(BACK_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["back"])
     merged_hand = _merge_area_snapshot(previous.get("hand"), hand, size=len(HAND_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["hand"])

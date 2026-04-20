@@ -425,6 +425,70 @@ def test_build_cw_slots_reader_reads_only_requested_slots(monkeypatch):
     assert len(runtime.ocr_image_calls) == 1
 
 
+def test_build_cw_slots_reader_dismisses_center_before_first_slot_capture(monkeypatch):
+    slots_module = load_cw_slots_module()
+    build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
+    assert build_cw_slots_reader is not None
+    monkeypatch.setattr(slots_module, "sleep", lambda seconds: None, raising=False)
+
+    class RuntimeSpy:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def capture_image(self, **kwargs):
+            del kwargs
+            return Image.new("RGB", (201, 61), color="white")
+
+        def ocr_image(self, image, *, ocr=None):
+            del image, ocr
+            return []
+
+    runtime = RuntimeSpy()
+
+    build_cw_slots_reader(runtime, targets=["front:0"])()
+
+    assert runtime.clicks[:3] == [
+        slots_module.INFO_DISMISS_POINT,
+        slots_module.FRONT_SLOT_POINTS[0],
+        slots_module.INFO_DISMISS_POINT,
+    ]
+
+
+def test_capture_slot_name_panel_image_waits_longer_before_capture_and_keeps_dismiss_settle(monkeypatch):
+    slots_module = load_cw_slots_module()
+    capture_slot_name_panel_image = getattr(slots_module, "_capture_slot_name_panel_image", None)
+    assert capture_slot_name_panel_image is not None
+    sleeps: list[float] = []
+
+    class RuntimeSpy:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def capture_image(self, **kwargs):
+            del kwargs
+            return Image.new("RGB", (201, 61), color="white")
+
+    runtime = RuntimeSpy()
+    monkeypatch.setattr(slots_module, "sleep", lambda seconds: sleeps.append(seconds), raising=False)
+
+    capture_slot_name_panel_image(runtime, point=slots_module.FRONT_SLOT_POINTS[0])
+
+    assert runtime.clicks == [slots_module.FRONT_SLOT_POINTS[0], slots_module.INFO_DISMISS_POINT]
+    assert sleeps == [slots_module.SLOT_PANEL_SETTLE_SECONDS * 2, slots_module.SLOT_PANEL_SETTLE_SECONDS]
+
+
 def test_build_cw_slots_reader_waits_for_slot_panel_settle_between_interactions(monkeypatch):
     slots_module = load_cw_slots_module()
     build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
@@ -666,6 +730,74 @@ def test_slots_read_does_not_use_stale_slot_names_as_normalization_candidates(tm
     assert refreshed.scene_state["cw"]["slots"]["front"][0] == "布罗妮娅"
 
 
+def test_slots_read_normalizes_name_from_nested_portal_guide_role_candidates(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "on_field": {},
+        "off_field": {},
+    }
+    session.scene_state["cw"]["portal"] = {
+        "cards": [
+            {
+                "guides": [
+                    {
+                        "final_role_cards": [
+                            {"name": "爻光"},
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: ([None] * 4, [None] * 6, [None, None, None, None, None, None, "交光", None, None]),
+        targets=["hand:6"],
+    )
+
+    assert refreshed.scene_state["cw"]["slots"]["hand"][6] == "爻光"
+
+
+def test_slots_read_prefers_portal_candidates_over_previous_fresh_slot_noise(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "on_field": {},
+        "off_field": {},
+    }
+    session.scene_state["cw"]["portal"] = {
+        "cards": [
+            {
+                "guides": [
+                    {
+                        "final_role_cards": [
+                            {"name": "爻光"},
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+    session.scene_state["cw"]["slots"]["hand"] = ["银狼", None, "阮·梅", None, None, None, "目交光", None, None]
+    session.scene_state["cw"]["slots"]["stale"] = False
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: ([None] * 4, [None] * 6, [None, None, None, None, None, None, "交光", None, None]),
+        targets=["hand:6"],
+    )
+
+    assert refreshed.scene_state["cw"]["slots"]["hand"][6] == "爻光"
+
+
 def test_slots_read_keeps_ambiguous_name_when_best_match_is_not_unique(tmp_path):
     slots_module = load_cw_slots_module()
     read_cw_slots = getattr(slots_module, "read_cw_slots", None)
@@ -844,18 +976,18 @@ def test_build_cw_hand_seller_and_crystal_collector_use_runtime_drags():
 
     class RuntimeSpy:
         def __init__(self):
-            self.drags: list[tuple[int, int, int, int]] = []
+            self.drags: list[tuple[int, int, int, int, float | None]] = []
 
-        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int):
-            self.drags.append((from_x, from_y, to_x, to_y))
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration: float | None = None):
+            self.drags.append((from_x, from_y, to_x, to_y, duration))
 
     runtime = RuntimeSpy()
 
     build_cw_hand_seller(runtime)(slot=2)
     build_cw_crystal_collector(runtime)()
 
-    assert runtime.drags[0] == (*slots_module.HAND_SLOT_POINTS[2], *slots_module.SELL_SLOT_POINT)
-    assert runtime.drags[1:] == slots_module.CRYSTAL_DRAG_PATHS
+    assert runtime.drags[0] == (*slots_module.HAND_SLOT_POINTS[2], *slots_module.SELL_SLOT_POINT, None)
+    assert runtime.drags[1:] == [(*drag, 0.2) for drag in slots_module.CRYSTAL_DRAG_PATHS]
 
 
 def test_sell_plan_returns_candidates_and_refreshes_snapshot(tmp_path):
