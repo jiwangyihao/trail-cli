@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from time import sleep
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
@@ -31,13 +32,13 @@ from trail.scenes.cw.events import (
     settle_cw_next,
     start_cw_battle,
 )
-from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, fetch_cw_guide, fetch_cw_guide_payload
+from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, fetch_cw_guide, fetch_cw_guide_list, fetch_cw_guide_payload
 from trail.scenes.cw.guide import fetch_cw_guide_config
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw.portal import (
     detect_portal_collection_matches,
     refresh_cw_portal,
-    restart_cw_portal_to_homepage,
+    restart_cw_portal_to_settlement_entry,
     select_cw_portal,
     summarize_portal_cards,
     wait_cw_portal_in_game,
@@ -92,6 +93,7 @@ battle_continuer_factory = build_cw_battle_continuer
 settle_continuer_factory = build_cw_settle_continuer
 DEFAULT_CW_STAGE_WAIT_TIMEOUT = 120
 SIDE_EFFECT_RUNTIME_METHODS = {"click_point", "drag_to", "press_key", "type_text"}
+PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS = 2.0
 
 
 class _RuntimeSideEffectTracker:
@@ -121,11 +123,14 @@ class _SideEffectTrackingRuntime:
 
 
 class _RequestScopedCaptureRuntime:
-    def __init__(self, runtime, request_id: str):
+    def __init__(self, runtime, request_id: str, *, extra_delay_seconds: float = 0.0):
         self._runtime = runtime
         self._request_id = request_id
+        self._extra_delay_seconds = extra_delay_seconds
 
     def capture_after_action(self, optional: bool = False):
+        if self._extra_delay_seconds > 0:
+            sleep(self._extra_delay_seconds)
         return self._runtime.capture_after_action(optional=optional, request_id=self._request_id)
 
     def __getattr__(self, name: str):
@@ -182,7 +187,8 @@ class CwService:
         except Exception as error:
             raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
 
-        capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id)
+        extra_delay_seconds = PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS if method == "cw.portal.select" else 0.0
+        capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id, extra_delay_seconds=extra_delay_seconds)
         return with_auto_capture(capture_runtime, lambda: result, verbose=verbose)
 
     def _context(self, *, method: str, payload: dict, workspace_root: str, session_service, track_side_effects: bool = False):
@@ -246,10 +252,13 @@ class CwService:
                 card_idx=payload["card_idx"],
                 runtime=runtime(),
             ),
-            "cw.portal.refresh": lambda: refresh_cw_portal(
+            "cw.portal.refresh": lambda: _attach_guides_to_portal_snapshot(
                 session,
-                runtime=runtime(),
-                portal_list=fetch_cw_guide_config().get("portal_list", []),
+                refresh_cw_portal(
+                    session,
+                    runtime=runtime(),
+                    portal_list=fetch_cw_guide_config().get("portal_list", []),
+                ),
             ),
             "cw.portal.restart": lambda: _restart_cw(session, runtime=runtime()),
             "cw.stage.detect": lambda: detect_cw_stage(
@@ -401,7 +410,7 @@ def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str)
         collection_matches=detect_portal_collection_matches(runtime),
     )
     portal_snapshot = {
-        "cards": cards,
+        "cards": _attach_guides_to_cards(cards),
         "mode": entry_state.get("mode") if isinstance(entry_state, dict) else None,
         "difficulty": entry_state.get("difficulty") if isinstance(entry_state, dict) else None,
         "battle_mode": entry_state.get("battle_mode") if isinstance(entry_state, dict) else None,
@@ -422,8 +431,72 @@ def _restart_cw(session, *, runtime) -> dict:
 
     select_cw_portal(session, card_idx=1, runtime=runtime)
     wait_cw_portal_in_game(session, runtime=runtime)
-    restart_cw_portal_to_homepage(session, runtime=runtime)
-    return _start_cw(session, runtime=runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode)
+    restart_cw_portal_to_settlement_entry(session, runtime=runtime)
+    return _start_cw(session, runtime=runtime, mode="continue", difficulty=difficulty, battle_mode=battle_mode)
+
+
+def _attach_guides_to_cards(cards: list[dict[str, object]], *, timeout: int = 10) -> list[dict[str, object]]:
+    portal_titles: list[str] = []
+    seen_titles: set[str] = set()
+    for card in cards:
+        title = card.get("portal_title")
+        if not isinstance(title, str) or not title or title in seen_titles:
+            continue
+        seen_titles.add(title)
+        portal_titles.append(title)
+
+    if not portal_titles:
+        return cards
+
+    try:
+        guide_payload = fetch_cw_guide_list(
+            page=1,
+            limit=3,
+            trait_id=None,
+            order=None,
+            next_page_token=None,
+            match_change_job=None,
+            match_hard=None,
+            portal=portal_titles if len(portal_titles) > 1 else portal_titles[0],
+            timeout=timeout,
+        )
+    except TrailError:
+        return cards
+
+    guides_by_portal: dict[str, list[dict[str, object]]] = {}
+    portal_groups = guide_payload.get("portals")
+    if isinstance(portal_groups, list):
+        for group in portal_groups:
+            if not isinstance(group, dict):
+                continue
+            title = group.get("portal_title")
+            guides = group.get("list")
+            if isinstance(title, str) and isinstance(guides, list):
+                guides_by_portal[title] = guides[:3]
+    else:
+        title = portal_titles[0]
+        guides = guide_payload.get("list")
+        if isinstance(guides, list):
+            guides_by_portal[title] = guides[:3]
+
+    enriched: list[dict[str, object]] = []
+    for card in cards:
+        enriched_card = dict(card)
+        title = card.get("portal_title")
+        guides = guides_by_portal.get(title) if isinstance(title, str) else None
+        if guides:
+            enriched_card["guides"] = guides
+        enriched.append(enriched_card)
+    return enriched
+
+
+def _attach_guides_to_portal_snapshot(session, snapshot: dict[str, object], *, timeout: int = 10) -> dict[str, object]:
+    enriched = {
+        **snapshot,
+        "cards": _attach_guides_to_cards(snapshot.get("cards", []), timeout=timeout),
+    }
+    ensure_cw_state(session)["portal"] = enriched
+    return enriched
 
 
 def _unknown_result_envelope(error: Exception) -> dict:

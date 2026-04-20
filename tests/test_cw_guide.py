@@ -879,7 +879,8 @@ def test_cw_guide_apply_marks_persisted_but_response_unknown_when_response_build
         lambda runtime, share_code: applied_share_codes.append(share_code),
     )
     monkeypatch.setattr(
-        "trail.daemon.command_service.success",
+        command_service,
+        "_response_with_request_id",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("response build failed")),
     )
 

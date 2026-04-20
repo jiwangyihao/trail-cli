@@ -160,10 +160,14 @@
 - Modify: `tests/test_daemon_protocol.py`
 
 - [ ] 写失败测试，冻结 `cw start`：
-  - 首页 -> 推进到投资环境页并返回三卡摘要
+  - 干净首页 + `mode=new` -> 推进到投资环境页并返回三卡摘要
+  - 干净首页 + `mode=continue` -> 稳定报错，提示这里应改用 `new`
   - 首页若仍有未收尾的当前进度（`继续进度` / `结束并结算`）-> 稳定报错，并要求 Agent 先问用户
   - 首页若在点击 `开始「货币战争」` 后才确定性暴露未收尾进度 -> 仍稳定报同一错误，但 request-status 记为 `completed` 且 `tainted=0`
-  - `entry.new / entry.continue / stage.boss_preview` -> 继续推进
+  - 整局结算链页面 + `mode=continue` -> 收完结算链后直接再开一局，停在投资环境页
+  - 整局结算链页面 + `mode=new` -> 稳定报错
+  - 整局结算链页面 + `mode=continue` 成功后，持久化到 `scene_state["cw"]["entry"]` / `scene_state["cw"]["portal"]` 的 `mode` 应写成 `new`
+  - `entry.new / entry.continue / stage.boss_preview` -> 仅 `mode=new` 继续推进
   - invest -> no-op 返回三卡摘要
   - in-game -> 稳定报错
   - 在 no-op 分支上，若 session 尚无 `mode/difficulty/battle_mode` 则补写；若已存在且冲突则报错
@@ -171,7 +175,9 @@
 - [ ] 跑红灯，确认当前不存在 `cw.start`。
 - [ ] 在 `trail/scenes/cw/entry.py` 中抽出“从首页之后继续推进到投资环境页”的 scene helper，避免执行者在 `cw_service.py` 里复制旧入口链。
 - [ ] 最小实现 `cw start`，并把 entry 参数持久化到 session 真相源。
-  - `mode=continue` 明确表示“上一局结束后再来一局”，不是继续当前未收尾对局；如果首页仍显示 `继续进度` / `结束并结算`，必须稳定报错。
+  - `mode=continue` 明确表示“上一局打完、仍停在整局结算链上时，再来一局”，不是继续当前未收尾对局，也不是首页上的普通开新局。
+  - 若已经回到首页，则 `mode=continue` 必须稳定报错，提示改用 `new`。
+  - 若首页仍显示 `继续进度` / `结束并结算`，不论 `mode=new/continue` 都必须稳定报错。
   - 若是在点击 `开始「货币战争」` 之后才暴露出未收尾进度，按稳定业务错误处理，不进入 unknown-result / tainted。
 - [ ] 运行：
   - `uv run pytest tests/test_cw_portal.py tests/test_daemon_protocol.py -q --basetemp .trail/pytest-temp-cw-start -p no:cacheprovider`
@@ -270,8 +276,10 @@
   - `uv run pytest -q --basetemp .trail/pytest-temp-cw-portal-full -p no:cacheprovider`
 - [ ] 手工 / 实机 smoke：
   - `cw enter` 到首页
+  - 干净首页上 `cw start --mode continue` 稳定报错
   - 首页不再继续开局
-  - `cw start` 到投资环境页并返回三卡摘要
+  - `cw start --mode new` 到投资环境页并返回三卡摘要
+  - 整局结算链上 `cw start --mode continue` 能收尾并重新开一局到投资环境页
   - 若当前页存在 collection 标志，返回摘要里对应卡应带 `new=1`
   - `cw portal.select` 可完成选卡+确认
   - `cw portal.refresh` 可刷新并返回新三卡

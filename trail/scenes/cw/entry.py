@@ -25,6 +25,11 @@ STANDARD_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.2315))
 OVERCLOCK_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.4167))
 HOME_UNFINISHED_PROGRESS_PRIMARY = "继续进度"
 HOME_UNFINISHED_PROGRESS_SECONDARY = ("结束并结算", "当前进度")
+SETTLEMENT_CONTINUE_PRIMARY = ("挑战成功", "挑战失败")
+SETTLEMENT_CONTINUE_NEXT = ("下一步", "下一页")
+SETTLEMENT_CONTINUE_RETURN = "返回货币战争"
+SETTLEMENT_CONTINUE_POINT = (960, 908)
+SETTLEMENT_CONTINUE_SETTLE_SECONDS = 1.0
 
 
 class CwEnterStateError(TrailError):
@@ -68,6 +73,28 @@ class CwStartProgressPendingError(TrailError):
         )
         self.data = {"page": "home"}
         self.completed_after_side_effect = after_start_click
+
+
+class CwStartContinuePageError(TrailError):
+    def __init__(self, *, page: str, stage: str | None = None):
+        message = f"cw start --mode continue only supports whole-run settlement pages, current page: {page}"
+        if stage is not None:
+            message += f", stage: {stage}"
+        super().__init__("CW_START_CONTINUE_PAGE_INVALID", message)
+        self.data = {"page": page}
+        if stage is not None:
+            self.data["stage"] = stage
+
+
+class CwStartNewPageError(TrailError):
+    def __init__(self, *, page: str, stage: str | None = None):
+        message = f"cw start --mode new only supports the true cw homepage or pre-invest pages, current page: {page}"
+        if stage is not None:
+            message += f", stage: {stage}"
+        super().__init__("CW_START_NEW_PAGE_INVALID", message)
+        self.data = {"page": page}
+        if stage is not None:
+            self.data["stage"] = stage
 
 
 def _asset(alias: str) -> str:
@@ -139,6 +166,21 @@ def _home_has_unfinished_progress(runtime) -> bool:
     )
 
 
+def _detect_continue_settlement_page(runtime) -> dict[str, str] | None:
+    try:
+        texts = _extract_ocr_texts(runtime.ocr())
+    except Exception:
+        return None
+    joined = "".join(texts)
+    if SETTLEMENT_CONTINUE_RETURN in joined:
+        return {"page": "settlement.return"}
+    if any(keyword in joined for keyword in SETTLEMENT_CONTINUE_PRIMARY) and "下一步" in joined:
+        return {"page": "settlement.entry"}
+    if "下一页" in joined and any(keyword in joined for keyword in ("奖励", "对局评价", "小队生命值", "总经济", "标准博弈", "对局未完成")):
+        return {"page": "settlement.followup"}
+    return None
+
+
 def _invalidate_stage(session: SessionModel) -> None:
     ensure_cw_state(session)["stage"] = {"stale": True}
     session.last_stage = None
@@ -192,6 +234,24 @@ def _consume_click_blank_prompt(runtime) -> None:
 
 def _handle_invest_environment_flow(runtime) -> None:
     _wait(runtime, "entry.invest_environment")
+
+
+def _continue_from_settlement_chain(runtime, *, difficulty: str, battle_mode: str) -> None:
+    for _ in range(6):
+        current = _detect_current_enter_page(runtime, preferred_mode="continue")
+        page = current["page"]
+        if page == "settlement.entry" or page == "settlement.followup":
+            runtime.click_point(*SETTLEMENT_CONTINUE_POINT)
+            _transition_sleep(SETTLEMENT_CONTINUE_SETTLE_SECONDS)
+            continue
+        if page == "settlement.return":
+            runtime.click_point(*SETTLEMENT_CONTINUE_POINT)
+            _transition_sleep(SETTLEMENT_CONTINUE_SETTLE_SECONDS)
+            start_box = _wait(runtime, "entry.start")
+            _enter_from_start_page(runtime, mode="new", difficulty=difficulty, battle_mode=battle_mode, start_box=start_box)
+            return
+        raise CwStartContinuePageError(page=page, stage=current.get("stage"))
+    raise TrailError("CW_START_CONTINUE_TIMEOUT", "cw start --mode continue did not finish the whole-run settlement chain in time")
 
 
 def _enter_from_start_page(runtime, *, mode: str, difficulty: str, battle_mode: str, start_box=None) -> None:
@@ -248,6 +308,10 @@ def _detect_current_enter_page(
 
     if _locate(runtime, "entry.invest_environment") is not None:
         return {"page": "invest"}
+
+    continue_page = _detect_continue_settlement_page(runtime)
+    if continue_page is not None:
+        return continue_page
 
     try:
         ocr_stage = _detect_cw_stage_from_ocr(runtime)
@@ -347,14 +411,25 @@ def _run_start_chain(
     if page == "home":
         if current.get("unfinished_progress") == "1":
             raise CwStartProgressPendingError()
+        if mode == "continue":
+            raise CwStartContinuePageError(page="home")
         start_box = _locate(runtime, "entry.start")
         _enter_from_start_page(runtime, mode=mode, difficulty=difficulty, battle_mode=battle_mode, start_box=start_box)
         return {"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode}
+    if page == "settlement.entry" or page == "settlement.followup" or page == "settlement.return":
+        if mode != "continue":
+            raise CwStartNewPageError(page=page)
+        _continue_from_settlement_chain(runtime, difficulty=difficulty, battle_mode=battle_mode)
+        return {"mode": "new", "difficulty": difficulty, "battle_mode": battle_mode}
     if page == "entry.new":
+        if mode != "new":
+            raise CwStartContinuePageError(page="entry.new")
         _select_battle_mode(runtime, battle_mode=battle_mode)
         _enter_new_game(runtime, difficulty=difficulty)
         return {"mode": "new", "difficulty": difficulty, "battle_mode": battle_mode}
     if page == "entry.continue":
+        if mode != "new":
+            raise CwStartContinuePageError(page="entry.continue")
         recorded_difficulty = existing_entry.get("difficulty") if isinstance(existing_entry.get("difficulty"), str) else None
         if recorded_difficulty is None:
             raise CwStartEntryTruthRequiredError(page="entry.continue", fields=("difficulty",))
@@ -363,6 +438,8 @@ def _run_start_chain(
         _handle_invest_environment_flow(runtime)
         return {"mode": "continue", "difficulty": recorded_difficulty, "battle_mode": battle_mode}
     if page == "stage.boss_preview":
+        if mode != "new":
+            raise CwStartContinuePageError(page="stage.boss_preview", stage="boss_preview")
         recorded_mode = existing_entry.get("mode") if isinstance(existing_entry.get("mode"), str) else None
         recorded_difficulty = existing_entry.get("difficulty") if isinstance(existing_entry.get("difficulty"), str) else None
         recorded_battle_mode = existing_entry.get("battle_mode") if isinstance(existing_entry.get("battle_mode"), str) else None

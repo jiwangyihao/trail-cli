@@ -25,6 +25,12 @@ PORTAL_RESTART_HOME_MAX_ESC_PRESSES = 3
 PORTAL_RESTART_HOME_INTERVAL = 0.2
 PORTAL_SETTLE_MAX_POLLS = 3
 PORTAL_SETTLE_INTERVAL = 0.2
+PORTAL_RESTART_ABORT_POINT = (750, 750)
+PORTAL_RESTART_EXIT_DIALOG_PRIMARY = "放弃并结算"
+PORTAL_RESTART_EXIT_DIALOG_SECONDARY = "暂时离开"
+PORTAL_RESTART_EXIT_DIALOG_SETTLE_SECONDS = 1.0
+PORTAL_RESTART_SETTLEMENT_MAX_POLLS = 6
+PORTAL_RESTART_SETTLEMENT_INTERVAL = 1.0
 
 
 def summarize_portal_cards(
@@ -107,28 +113,32 @@ def refresh_cw_portal(session, *, runtime, portal_list: object) -> dict[str, obj
     return snapshot
 
 
-def restart_cw_portal_to_homepage(session, *, runtime) -> None:
+def restart_cw_portal_to_settlement_entry(session, *, runtime) -> None:
     current = _detect_current_enter_page(runtime, session=session)
     if current.get("page") != "in_game":
         raise TrailError(
-            "CW_PORTAL_RESTART_HOME_INVALID",
+            "CW_PORTAL_RESTART_SETTLEMENT_INVALID",
             f"cw portal restart helper only supports in_game, current page: {current.get('page')}",
         )
 
     for _ in range(PORTAL_RESTART_HOME_MAX_ESC_PRESSES):
         runtime.press_key("esc", presses=1, interval=PORTAL_RESTART_HOME_INTERVAL)
-        current = _detect_current_enter_page(runtime, session=session)
-        if current.get("page") == "home":
-            truth = _portal_entry_truth(session)
-            ensure_cw_state(session)["entry"] = {
-                "page": "home",
-                "mode": truth.get("mode"),
-                "difficulty": truth.get("difficulty"),
-                "battle_mode": truth.get("battle_mode"),
-            }
-            return
+        sleep(PORTAL_RESTART_EXIT_DIALOG_SETTLE_SECONDS)
+        if _detect_portal_restart_exit_dialog(runtime):
+            runtime.click_point(*PORTAL_RESTART_ABORT_POINT)
+            sleep(PORTAL_RESTART_SETTLEMENT_INTERVAL)
+            for attempt in range(PORTAL_RESTART_SETTLEMENT_MAX_POLLS):
+                current = _detect_current_enter_page(runtime, session=session)
+                if str(current.get("page", "")).startswith("settlement."):
+                    return
+                if attempt < PORTAL_RESTART_SETTLEMENT_MAX_POLLS - 1:
+                    sleep(PORTAL_RESTART_SETTLEMENT_INTERVAL)
+            raise TrailError(
+                "CW_PORTAL_RESTART_SETTLEMENT_TIMEOUT",
+                "cw portal restart helper did not reach settlement chain after abandon",
+            )
 
-    raise TrailError("CW_PORTAL_RESTART_HOME_FAILED", "cw portal restart helper failed to return home")
+    raise TrailError("CW_PORTAL_RESTART_EXIT_DIALOG_TIMEOUT", "cw portal restart helper failed to reach exit dialog")
 
 
 def wait_cw_portal_in_game(session, *, runtime) -> None:
@@ -269,6 +279,21 @@ def _wait_for_portal_page(
         if attempt < max_polls - 1:
             sleep(interval)
     raise TrailError(error_code, error_message)
+
+
+def _detect_portal_restart_exit_dialog(runtime) -> bool:
+    try:
+        pieces = runtime.ocr()
+    except Exception:
+        return False
+    texts: list[str] = []
+    for piece in pieces:
+        if isinstance(piece, Mapping):
+            texts.append(str(piece.get("text") or ""))
+        elif isinstance(piece, (list, tuple)) and len(piece) >= 2:
+            texts.append(str(piece[1] or ""))
+    joined = " ".join(_normalize_text(text) for text in texts if text)
+    return PORTAL_RESTART_EXIT_DIALOG_PRIMARY in joined and PORTAL_RESTART_EXIT_DIALOG_SECONDARY in joined
 
 
 def _normalize_portal_list(portal_list: object) -> list[dict[str, str]]:
@@ -449,7 +474,7 @@ def _normalize_text(text: str) -> str:
 __all__ = [
     "detect_portal_collection_matches",
     "refresh_cw_portal",
-    "restart_cw_portal_to_homepage",
+    "restart_cw_portal_to_settlement_entry",
     "select_cw_portal",
     "summarize_portal_cards",
     "wait_cw_portal_in_game",

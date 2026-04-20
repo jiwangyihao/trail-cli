@@ -314,48 +314,49 @@ def test_summarize_portal_cards_marks_card_new_when_collection_match_hits_lane()
     assert "new" not in cards[2]
 
 
-def test_restart_cw_portal_to_homepage_requires_in_game_page(tmp_path: Path, monkeypatch):
+def test_restart_cw_portal_to_settlement_entry_requires_in_game_page(tmp_path: Path, monkeypatch):
     import trail.scenes.cw.portal as portal_module
 
-    restart_to_homepage = getattr(portal_module, "restart_cw_portal_to_homepage", None)
-    assert restart_to_homepage is not None
+    restart_to_settlement_entry = getattr(portal_module, "restart_cw_portal_to_settlement_entry", None)
+    assert restart_to_settlement_entry is not None
 
     session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     runtime = PortalRuntime()
     monkeypatch.setattr(portal_module, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: {"page": "invest"}, raising=False)
 
     with pytest.raises(TrailError) as exc_info:
-        restart_to_homepage(session, runtime=runtime)
+        restart_to_settlement_entry(session, runtime=runtime)
 
-    assert exc_info.value.code == "CW_PORTAL_RESTART_HOME_INVALID"
+    assert exc_info.value.code == "CW_PORTAL_RESTART_SETTLEMENT_INVALID"
     assert str(exc_info.value) == "cw portal restart helper only supports in_game, current page: invest"
     assert runtime.keys == []
 
 
-def test_restart_cw_portal_to_homepage_presses_esc_until_home(tmp_path: Path, monkeypatch):
+def test_restart_cw_portal_to_settlement_entry_presses_esc_clicks_abandon_and_waits_for_settlement(tmp_path: Path, monkeypatch):
     import trail.scenes.cw.portal as portal_module
 
-    restart_to_homepage = getattr(portal_module, "restart_cw_portal_to_homepage", None)
-    assert restart_to_homepage is not None
+    restart_to_settlement_entry = getattr(portal_module, "restart_cw_portal_to_settlement_entry", None)
+    assert restart_to_settlement_entry is not None
 
     session = SessionServiceRegistry().for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
-    session.scene_state["cw"] = {"entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"}}
+    session.scene_state["cw"] = {"entry": {"page": "in_game", "mode": "continue", "difficulty": "current", "battle_mode": "standard"}}
     runtime = PortalRuntime()
     states = iter([
         {"page": "in_game", "stage": "shop"},
-        {"page": "home", "already_home": "1"},
+        {"page": "settlement.entry"},
     ])
+    dialog_checks: list[str] = []
+    sleep_calls: list[float] = []
     monkeypatch.setattr(portal_module, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: next(states), raising=False)
+    monkeypatch.setattr(portal_module, "_detect_portal_restart_exit_dialog", lambda runtime: dialog_checks.append("dialog") or True, raising=False)
+    monkeypatch.setattr(portal_module, "sleep", lambda seconds: sleep_calls.append(seconds), raising=False)
 
-    restart_to_homepage(session, runtime=runtime)
+    restart_to_settlement_entry(session, runtime=runtime)
 
     assert runtime.keys == [("esc", 1, 0.2)]
-    assert session.scene_state["cw"]["entry"] == {
-        "page": "home",
-        "mode": "continue",
-        "difficulty": "current",
-        "battle_mode": "standard",
-    }
+    assert runtime.clicks == [(750, 750)]
+    assert dialog_checks == ["dialog"]
+    assert sleep_calls == [portal_module.PORTAL_RESTART_EXIT_DIALOG_SETTLE_SECONDS, portal_module.PORTAL_RESTART_SETTLEMENT_INTERVAL]
 
 
 def test_select_cw_portal_rejects_non_invest_page(tmp_path: Path, monkeypatch):
@@ -755,8 +756,8 @@ def test_restart_cw_portal_selects_first_card_returns_home_and_restarts_into_inv
     runtime = PortalRuntime(ocr_result=[{"text": "restart"}])
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
-        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
-        "portal": {"cards": cards, "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+        "entry": {"page": "invest", "mode": "new", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": cards, "mode": "new", "difficulty": "current", "battle_mode": "standard", "stale": False},
     }
     service.save_session(session)
     select_calls: list[int] = []
@@ -770,13 +771,14 @@ def test_restart_cw_portal_selects_first_card_returns_home_and_restarts_into_inv
         lambda session, runtime: wait_calls.append("waited") or session.scene_state.setdefault("cw", {}).update({"entry": {"page": "in_game", "mode": "continue", "difficulty": "current", "battle_mode": "standard"}}),
         raising=False,
     )
-    monkeypatch.setattr(cw_service_module, "restart_cw_portal_to_homepage", lambda session, runtime: restart_calls.append("home") or session, raising=False)
+    monkeypatch.setattr(cw_service_module, "restart_cw_portal_to_settlement_entry", lambda session, runtime: restart_calls.append("settlement") or session, raising=False)
 
     def fake_start_cw(session, *, mode: str, difficulty: str, battle_mode: str, runtime):
         start_calls.append({"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode})
+        resolved_mode = "new" if mode == "continue" else mode
         session.scene_state.setdefault("cw", {})["entry"] = {
             "page": "invest",
-            "mode": mode,
+            "mode": resolved_mode,
             "difficulty": difficulty,
             "battle_mode": battle_mode,
         }
@@ -799,14 +801,14 @@ def test_restart_cw_portal_selects_first_card_returns_home_and_restarts_into_inv
     assert envelope["ok"] is True
     assert envelope["data"] == {
         "cards": restarted_cards,
-        "mode": "continue",
+        "mode": "new",
         "difficulty": "current",
         "battle_mode": "standard",
         "stale": False,
     }
     assert select_calls == [1]
     assert wait_calls == ["waited"]
-    assert restart_calls == ["home"]
+    assert restart_calls == ["settlement"]
     assert start_calls == [{"mode": "continue", "difficulty": "current", "battle_mode": "standard"}]
     assert persisted.scene_state["cw"]["portal"] == envelope["data"]
 
@@ -817,8 +819,8 @@ def test_restart_cw_portal_waits_for_in_game_before_returning_home(tmp_path: Pat
     runtime = PortalRuntime(ocr_result=[{"text": "restart"}])
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
-        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
-        "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+        "entry": {"page": "invest", "mode": "new", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": _portal_cards(), "mode": "new", "difficulty": "current", "battle_mode": "standard", "stale": False},
     }
     service.save_session(session)
     wait_calls: list[str] = []
@@ -833,14 +835,14 @@ def test_restart_cw_portal_waits_for_in_game_before_returning_home(tmp_path: Pat
     )
     monkeypatch.setattr(
         cw_service_module,
-        "restart_cw_portal_to_homepage",
-        lambda session, runtime: restart_calls.append(session.scene_state["cw"]["entry"]["page"]) or session.scene_state.setdefault("cw", {}).update({"entry": {"page": "home", "mode": "continue", "difficulty": "current", "battle_mode": "standard"}}),
+        "restart_cw_portal_to_settlement_entry",
+        lambda session, runtime: restart_calls.append(session.scene_state["cw"]["entry"]["page"]) or session.scene_state.setdefault("cw", {}).update({"entry": {"page": "settlement.entry", "mode": "continue", "difficulty": "current", "battle_mode": "standard"}}),
         raising=False,
     )
     monkeypatch.setattr(
         cw_service_module,
         "start_cw",
-        lambda session, mode, difficulty, battle_mode, runtime: session.scene_state.setdefault("cw", {}).update({"entry": {"page": "invest", "mode": mode, "difficulty": difficulty, "battle_mode": battle_mode}}) or session,
+        lambda session, mode, difficulty, battle_mode, runtime: session.scene_state.setdefault("cw", {}).update({"entry": {"page": "invest", "mode": "new" if mode == "continue" else mode, "difficulty": difficulty, "battle_mode": battle_mode}}) or session,
         raising=False,
     )
     monkeypatch.setattr(cw_service_module, "fetch_cw_guide_config", lambda timeout=10: {"portal_list": []}, raising=False)
@@ -863,7 +865,9 @@ def test_restart_cw_portal_waits_for_in_game_before_returning_home(tmp_path: Pat
 def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
     start_box = _box("entry.start", left=100, top=200)
-    continue_box = _box("entry.continue", left=200, top=300)
+    entry_new_box = _box("entry.new", left=200, top=300)
+    start_game_box = _box("entry.start_game", left=240, top=340)
+    settle_box = _box("stage.settle", left=320, top=420)
     boss_preview_box = _box("stage.boss_preview", left=300, top=400)
     invest_box = _box("entry.invest_environment", left=400, top=500)
     runtime = StartRuntime(
@@ -872,7 +876,9 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
             _asset("portal.collection"): Box(left=623, top=221, width=23, height=24, source=_asset("portal.collection")),
         },
         wait_results={
-            _asset("entry.continue"): continue_box,
+            _asset("entry.new"): entry_new_box,
+            _asset("entry.start_game"): start_game_box,
+            _asset("stage.settle"): settle_box,
             _asset("stage.boss_preview"): boss_preview_box,
             _asset("entry.invest_environment"): invest_box,
         },
@@ -905,7 +911,7 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
         session=session,
         workspace_root=tmp_path,
         request_id="req-cw-start-home",
-        mode="continue",
+        mode="new",
         difficulty="current",
         battle_mode="standard",
     )
@@ -915,7 +921,7 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
     assert envelope["ok"] is True
     assert envelope["data"] == {
         "cards": cards,
-        "mode": "continue",
+        "mode": "new",
         "difficulty": "current",
         "battle_mode": "standard",
         "stale": False,
@@ -923,7 +929,7 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
     assert persisted.scene_state["cw"]["portal"] == envelope["data"]
     assert persisted.scene_state["cw"]["entry"] == {
         "page": "invest",
-        "mode": "continue",
+        "mode": "new",
         "difficulty": "current",
         "battle_mode": "standard",
     }
@@ -931,7 +937,7 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
     assert persisted.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
     assert persisted.scene_state["cw"]["sell_plan"] == {"stale": True}
     assert status["final_state"] == "completed"
-    assert runtime.ocr_calls == [{}, {}, {}]
+    assert runtime.ocr_calls == [{}, {}, {}, {}, {}]
     assert observed_summary_inputs == [
         {
             "pieces": [{"text": "alpha"}],
@@ -942,11 +948,15 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
     assert runtime.clicks == [
         start_box.center,
         (300, 250),
-        continue_box.center,
+        entry_new_box.center,
+        start_game_box.center,
+        settle_box.center,
         boss_preview_box.center,
     ]
     assert runtime.wait_calls == [
-        _asset("entry.continue"),
+        _asset("entry.new"),
+        _asset("entry.start_game"),
+        _asset("stage.settle"),
         _asset("stage.boss_preview"),
         _asset("entry.invest_environment"),
     ]
@@ -1004,11 +1014,44 @@ def test_cw_start_rejects_home_with_unfinished_progress_before_side_effects(
     assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["希儿"]}
 
 
-@pytest.mark.parametrize("requested_mode", ["new", "continue"])
+def test_cw_start_rejects_continue_mode_on_clean_home_before_side_effects(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    start_box = _box("entry.start", left=100, top=200)
+    runtime = StartRuntime(
+        locate_results={
+            _asset("entry.start"): start_box,
+        },
+        ocr_result=[_dict_piece("货币战争", left=100, top=100)],
+    )
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {"entry": {"page": "home"}}
+    service.save_session(session)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-start-home-continue-invalid",
+        mode="continue",
+        difficulty="current",
+        battle_mode="standard",
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["data"] == {"page": "home"}
+    assert envelope["error"] == {
+        "code": "CW_START_CONTINUE_PAGE_INVALID",
+        "message": "cw start --mode continue only supports whole-run settlement pages, current page: home",
+    }
+    assert registry.for_workspace(str(tmp_path)).request_status("req-cw-start-home-continue-invalid")["final_state"] == "failed_before_side_effect"
+    assert runtime.clicks == []
+    assert runtime.wait_calls == []
+    assert runtime.ocr_calls == [{}, {}]
+
+
 def test_cw_start_from_clean_home_reveals_unfinished_progress_after_start_click(
     tmp_path: Path,
     monkeypatch,
-    requested_mode: str,
 ):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
     start_box = _box("entry.start", left=100, top=200)
@@ -1057,12 +1100,12 @@ def test_cw_start_from_clean_home_reveals_unfinished_progress_after_start_click(
         command_service=command_service,
         session=session,
         workspace_root=tmp_path,
-        request_id=f"req-cw-start-home-late-progress-{requested_mode}",
-        mode=requested_mode,
+        request_id="req-cw-start-home-late-progress-new",
+        mode="new",
         difficulty="current",
         battle_mode="standard",
     )
-    status = registry.for_workspace(str(tmp_path)).request_status(f"req-cw-start-home-late-progress-{requested_mode}")
+    status = registry.for_workspace(str(tmp_path)).request_status("req-cw-start-home-late-progress-new")
     persisted = service.load_session(session.session_id)
 
     assert envelope["ok"] is False
@@ -1075,9 +1118,128 @@ def test_cw_start_from_clean_home_reveals_unfinished_progress_after_start_click(
     assert status["tainted"] is False
     assert runtime.clicks == [start_box.center]
     assert runtime.wait_calls == []
-    assert runtime.ocr_calls == [{}, {}]
+    assert runtime.ocr_calls == [{}, {}, {}]
     assert persisted.scene_state["cw"]["entry"] == {"page": "home"}
     assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["希儿"]}
+
+
+def test_cw_start_continue_from_whole_run_settlement_chain_reaches_invest_and_persists_new_mode(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    cards = _portal_cards()
+    start_box = _box("entry.start", left=100, top=200)
+    entry_new_box = _box("entry.new", left=200, top=300)
+    start_game_box = _box("entry.start_game", left=300, top=400)
+    settle_box = _box("stage.settle", left=400, top=500)
+    boss_preview_box = _box("stage.boss_preview", left=500, top=600)
+    invest_box = _box("entry.invest_environment", left=600, top=700)
+
+    class Runtime(StartRuntime):
+        def __init__(self):
+            super().__init__()
+            self._phase = "settlement.entry"
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box if self._phase == "home" else None
+            if template == _asset("entry.new"):
+                return entry_new_box if self._phase == "after_home_start" else None
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box if self._phase == "home" else None
+            if template == _asset("entry.new"):
+                return entry_new_box if self._phase == "after_home_start" else None
+            if template == _asset("entry.start_game"):
+                return start_game_box
+            if template == _asset("stage.settle"):
+                return settle_box
+            if template == _asset("stage.boss_preview"):
+                return boss_preview_box
+            if template == _asset("entry.invest_environment"):
+                return invest_box
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == (960, 908):
+                if self._phase == "settlement.entry":
+                    self._phase = "settlement.followup"
+                elif self._phase == "settlement.followup":
+                    self._phase = "settlement.return"
+                elif self._phase == "settlement.return":
+                    self._phase = "home"
+            elif (x, y) == start_box.center:
+                self._phase = "after_home_start"
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(dict(kwargs))
+            if self._phase == "settlement.entry":
+                return [{"text": "挑战失败"}, {"text": "对局评价"}, {"text": "下一步"}]
+            if self._phase == "settlement.followup":
+                return [{"text": "1-1M奖励"}, {"text": "标准博弈"}, {"text": "下一页"}]
+            if self._phase == "settlement.return":
+                return [{"text": "小队生命值"}, {"text": "总经济"}, {"text": "返回货币战争"}]
+            return [{"text": "货币战争"}]
+
+    runtime = Runtime()
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "home"},
+        "slots": {"stale": False, "hand": ["希儿"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"stale": False, "steps": [1]},
+    }
+    service.save_session(session)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-start-whole-run-continue",
+        mode="continue",
+        difficulty="current",
+        battle_mode="standard",
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"]["cards"] == cards
+    assert envelope["data"]["mode"] == "new"
+    assert envelope["data"]["difficulty"] == "current"
+    assert envelope["data"]["battle_mode"] == "standard"
+    assert persisted.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": "new",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+    assert runtime.clicks == [
+        (960, 908),
+        (960, 908),
+        (960, 908),
+        start_box.center,
+        (300, 250),
+        entry_new_box.center,
+        start_game_box.center,
+        settle_box.center,
+        boss_preview_box.center,
+    ]
+    assert runtime.wait_calls == [
+        _asset("entry.start"),
+        _asset("entry.new"),
+        _asset("entry.start_game"),
+        _asset("stage.settle"),
+        _asset("stage.boss_preview"),
+        _asset("entry.invest_environment"),
+    ]
 
 
 @pytest.mark.parametrize("requested_mode", ["new", "continue"])
@@ -1181,6 +1343,125 @@ def test_cw_start_entry_continue_still_advances_when_only_continue_progress_text
     assert runtime.ocr_calls == [{}, {}]
 
 
+def test_cw_start_continue_from_whole_run_settlement_chain_reaches_invest_and_persists_new_mode(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    cards = _portal_cards()
+    start_box = _box("entry.start", left=100, top=200)
+    entry_new_box = _box("entry.new", left=140, top=180)
+    start_game_box = _box("entry.start_game", left=240, top=280)
+    settle_box = _box("stage.settle", left=340, top=380)
+    boss_preview_box = _box("stage.boss_preview", left=440, top=480)
+    invest_box = _box("entry.invest_environment", left=540, top=580)
+
+    class Runtime(StartRuntime):
+        def __init__(self):
+            super().__init__()
+            self._phase = "settlement.entry"
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box if self._phase == "home" else None
+            if template == _asset("entry.new"):
+                return entry_new_box if self._phase == "after_home_start" else None
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box if self._phase == "home" else None
+            if template == _asset("entry.new"):
+                return entry_new_box if self._phase == "after_home_start" else None
+            if template == _asset("entry.start_game"):
+                return start_game_box
+            if template == _asset("stage.settle"):
+                return settle_box
+            if template == _asset("stage.boss_preview"):
+                return boss_preview_box
+            if template == _asset("entry.invest_environment"):
+                return invest_box
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == (960, 908):
+                if self._phase == "settlement.entry":
+                    self._phase = "settlement.followup"
+                elif self._phase == "settlement.followup":
+                    self._phase = "settlement.return"
+                elif self._phase == "settlement.return":
+                    self._phase = "home"
+            elif (x, y) == start_box.center:
+                self._phase = "after_home_start"
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(dict(kwargs))
+            if self._phase == "settlement.entry":
+                return [{"text": "挑战失败"}, {"text": "对局评价"}, {"text": "下一步"}]
+            if self._phase == "settlement.followup":
+                return [{"text": "1-1M奖励"}, {"text": "标准博弈"}, {"text": "下一页"}]
+            if self._phase == "settlement.return":
+                return [{"text": "小队生命值"}, {"text": "总经济"}, {"text": "返回货币战争"}]
+            return [{"text": "货币战争"}]
+
+    runtime = Runtime()
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "home"},
+        "slots": {"stale": False, "hand": ["希儿"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"stale": False, "steps": [1]},
+    }
+    service.save_session(session)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-start-whole-run-continue",
+        mode="continue",
+        difficulty="current",
+        battle_mode="standard",
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"]["cards"] == cards
+    assert envelope["data"]["mode"] == "new"
+    assert envelope["data"]["difficulty"] == "current"
+    assert envelope["data"]["battle_mode"] == "standard"
+    assert persisted.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": "new",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+    assert runtime.clicks == [
+        (960, 908),
+        (960, 908),
+        (960, 908),
+        start_box.center,
+        (300, 250),
+        entry_new_box.center,
+        start_game_box.center,
+        settle_box.center,
+        boss_preview_box.center,
+    ]
+    assert runtime.wait_calls == [
+        _asset("entry.start"),
+        _asset("entry.new"),
+        _asset("entry.start_game"),
+        _asset("stage.settle"),
+        _asset("stage.boss_preview"),
+        _asset("entry.invest_environment"),
+    ]
+
+
 @pytest.mark.parametrize(
     (
         "page",
@@ -1196,7 +1477,7 @@ def test_cw_start_entry_continue_still_advances_when_only_continue_progress_text
     [
         (
             "entry.new",
-            "continue",
+            "new",
             "overclock",
             {},
             {_asset("entry.new"): _box("entry.new", left=120, top=220)},

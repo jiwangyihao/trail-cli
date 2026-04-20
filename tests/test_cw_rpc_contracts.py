@@ -115,7 +115,26 @@ def test_cw_start_renders_portal_cards_and_shot(cli_runner, fake_daemon_client, 
                 request_id="req-cw-start",
                 data={
                     "cards": [
-                        {"card_idx": 1, "portal_title": "Alpha Portal", "portal_description": "Alpha Desc", "score": 0.99, "new": 1},
+                        {
+                            "card_idx": 1,
+                            "portal_title": "Alpha Portal",
+                            "portal_description": "Alpha Desc",
+                            "score": 0.99,
+                            "new": 1,
+                            "guides": [
+                                {
+                                    "lineup_id": "alpha-guide",
+                                    "title": "Alpha攻略",
+                                    "carry_roles": ["希儿"],
+                                    "support_hard": True,
+                                    "has_change_equip": False,
+                                    "has_expert": True,
+                                    "like": 123,
+                                    "favour": 45,
+                                    "final_role_cards": [{"name": "希儿", "star": 5, "rarity": 3, "is_carry": True}],
+                                }
+                            ],
+                        },
                         {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
                     ],
                     "mode": "continue",
@@ -151,6 +170,8 @@ def test_cw_start_renders_portal_cards_and_shot(cli_runner, fake_daemon_client, 
         body=[
             'opt idx=1 title="Alpha Portal" score=0.99 new=1',
             'opt idx=1 desc="Alpha Desc"',
+            'guide idx=1 gid=1 id=alpha-guide title=Alpha攻略 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45',
+            'guide idx=1 gid=1 final_roles=希儿/carry:1/star:5/rarity:3',
             'opt idx=2 title="Beta Portal" score=0.88',
             'opt idx=2 desc="Beta Desc"',
         ],
@@ -198,7 +219,25 @@ def test_cw_portal_refresh_and_restart_render_portal_cards(cli_runner, fake_daem
                 request_id=f"req-{method}",
                 data={
                     "cards": [
-                        {"card_idx": 1, "portal_title": "Alpha Portal", "portal_description": "Alpha Desc", "score": 0.99, "new": 1},
+                        {
+                            "card_idx": 1,
+                            "portal_title": "Alpha Portal",
+                            "portal_description": "Alpha Desc",
+                            "score": 0.99,
+                            "new": 1,
+                            "guides": [
+                                {
+                                    "lineup_id": "alpha-guide",
+                                    "title": "Alpha攻略",
+                                    "carry_roles": ["希儿"],
+                                    "support_hard": True,
+                                    "has_change_equip": False,
+                                    "has_expert": True,
+                                    "like": 123,
+                                    "favour": 45,
+                                }
+                            ],
+                        },
                         {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
                     ],
                     "mode": "continue",
@@ -220,6 +259,7 @@ def test_cw_portal_refresh_and_restart_render_portal_cards(cli_runner, fake_daem
         body=[
             'opt idx=1 title="Alpha Portal" score=0.99 new=1',
             'opt idx=1 desc="Alpha Desc"',
+            'guide idx=1 gid=1 id=alpha-guide title=Alpha攻略 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45',
             'opt idx=2 title="Beta Portal" score=0.88',
             'opt idx=2 desc="Beta Desc"',
         ],

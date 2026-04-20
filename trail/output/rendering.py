@@ -267,10 +267,11 @@ def _render_cw_portal_cards(command: str, payload: dict[str, Any]) -> list[str]:
     for card in cards:
         if not isinstance(card, dict):
             continue
+        card_idx = card.get("card_idx")
         lines.append(
             "opt "
             + _format_fact_sequence(
-                ("idx", card.get("card_idx")),
+                ("idx", card_idx),
                 ("title", card.get("portal_title")),
                 ("score", card.get("score")),
                 ("new", 1 if card.get("new") else None),
@@ -279,10 +280,31 @@ def _render_cw_portal_cards(command: str, payload: dict[str, Any]) -> list[str]:
         lines.append(
             "opt "
             + _format_fact_sequence(
-                ("idx", card.get("card_idx")),
+                ("idx", card_idx),
                 ("desc", card.get("portal_description")),
             )
         )
+        for guide_index, guide in enumerate(_as_list(card.get("guides")), start=1):
+            if not isinstance(guide, dict):
+                continue
+            lines.append(
+                "guide "
+                + _format_fact_sequence(
+                    ("idx", card_idx),
+                    ("gid", guide_index),
+                    ("id", _guide_id(guide)),
+                    ("title", guide.get("title")),
+                    ("carry", _first_carry_role(guide)),
+                    ("hard", bool(guide.get("support_hard"))),
+                    ("change_equip", bool(guide.get("has_change_equip"))),
+                    ("expert", bool(guide.get("has_expert"))),
+                    ("like", guide.get("like")),
+                    ("favour", guide.get("favour")),
+                )
+            )
+            final_roles = _compact_role_cards(guide.get("final_role_cards"))
+            if final_roles is not None:
+                _append_fact_line(lines, "guide", ("idx", card_idx), ("gid", guide_index), ("final_roles", final_roles))
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
