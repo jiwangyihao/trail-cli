@@ -167,6 +167,66 @@ def fake_cw_config_response() -> dict:
     }
 
 
+def trait_lookup_config_response() -> dict:
+    payload = fake_cw_config_response()
+    payload["data"]["trait_info_list"] = [
+        {"trait_id": 2001, "trait_name": "巡猎", "trait_type": "path"},
+        {"trait_id": 2002, "trait_name": "量子", "trait_type": "element"},
+        {"trait_id": 2003, "trait_name": "智识", "trait_type": "path"},
+        {"trait_id": 2004, "trait_name": "毁灭", "trait_type": "path"},
+    ]
+    return payload
+
+
+def fuzzy_role_config_response() -> dict:
+    payload = fake_cw_config_response()
+    payload["data"]["role_list"] = [
+        {
+            "id": 1001,
+            "name": "黑塔",
+            "front_back_type": "front",
+            "trait_details": [{"id": 2001}],
+            "role_tags": ["输出", "智识"],
+        },
+        {
+            "id": 1002,
+            "name": "大黑塔",
+            "front_back_type": "front",
+            "trait_details": [{"id": 2001}],
+            "role_tags": ["输出"],
+        },
+        {
+            "id": 1003,
+            "name": "银狼",
+            "front_back_type": "back",
+            "trait_details": [{"id": 2002}],
+            "role_tags": ["减防"],
+        },
+        {
+            "id": 1004,
+            "name": "银狼Lv.999",
+            "front_back_type": "back",
+            "trait_details": [{"id": 2002}],
+            "role_tags": ["减防"],
+        },
+        {
+            "id": 1005,
+            "name": "花火",
+            "front_back_type": "back",
+            "trait_details": [{"id": 2002}],
+            "role_tags": ["辅助"],
+        },
+        {
+            "id": 1006,
+            "name": "火花",
+            "front_back_type": "back",
+            "trait_details": [{"id": 2002}],
+            "role_tags": ["辅助"],
+        },
+    ]
+    return payload
+
+
 def fake_lineup_index_response() -> dict:
     return {
         "retcode": 0,
@@ -463,6 +523,26 @@ def test_fetch_cw_guide_config_returns_minimal_catalog(monkeypatch):
     }
 
 
+def test_build_guide_list_request_payload_includes_role_ids():
+    guide_module = load_cw_guide_module()
+
+    payload = json.loads(
+        guide_module._build_guide_list_request_payload(
+            page=1,
+            limit=10,
+            trait_id=321,
+            role_ids=["1001", "1002"],
+            order=None,
+            next_page_token=None,
+            match_change_job=None,
+            match_hard=None,
+        ).decode("utf-8")
+    )
+
+    assert payload["trait_ids"] == ["321", ""]
+    assert payload["role_ids"] == ["1001", "1002"]
+
+
 def test_fetch_cw_guide_list_posts_filters_and_normalizes_response(monkeypatch):
     guide_module = load_cw_guide_module()
     fetch_cw_guide_list = getattr(guide_module, "fetch_cw_guide_list", None)
@@ -544,6 +624,362 @@ def test_fetch_cw_guide_list_posts_filters_and_normalizes_response(monkeypatch):
     }
 
 
+def test_fetch_cw_guide_list_resolves_trait_name_to_single_trait_id(monkeypatch):
+    guide_module = load_cw_guide_module()
+    captured_list_request: dict[str, object] = {}
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: captured_list_request.update(kwargs) or {"list": [], "next_page_token": None},
+        raising=False,
+    )
+
+    guide_module.fetch_cw_guide_list(
+        page=1,
+        limit=10,
+        trait="巡猎",
+        trait_id=None,
+        role=None,
+        role_id=None,
+        order=None,
+        next_page_token=None,
+        match_change_job=None,
+        match_hard=None,
+    )
+
+    assert captured_list_request["trait_id"] == 2001
+
+
+def test_fetch_cw_guide_list_trait_name_miss_raises_GuideTraitLookupError(monkeypatch):
+    guide_module = load_cw_guide_module()
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: trait_lookup_config_response()["data"], raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: pytest.fail("trait lookup miss should fail before requesting guide list"),
+        raising=False,
+    )
+
+    with pytest.raises(guide_module.GuideTraitLookupError) as exc_info:
+        guide_module.fetch_cw_guide_list(
+            page=1,
+            limit=10,
+            trait="巡猎者",
+            trait_id=None,
+            role=None,
+            role_id=None,
+            order=None,
+            next_page_token=None,
+            match_change_job=None,
+            match_hard=None,
+        )
+
+    assert exc_info.value.code == "GUIDE_TRAIT_INVALID"
+    assert [candidate["trait"] for candidate in exc_info.value.candidates] == ["巡猎", "智识", "毁灭"]
+    assert [candidate["trait_id"] for candidate in exc_info.value.candidates] == ["2001", "2003", "2004"]
+
+
+def test_fetch_cw_guide_list_role_name_miss_returns_role_candidates_and_warning(monkeypatch):
+    guide_module = load_cw_guide_module()
+    captured_list_request: dict[str, object] = {}
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fuzzy_role_config_response()["data"], raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: captured_list_request.update(kwargs) or {"list": [fake_lineup_index_item(lineup_id="lineup-herta", title="黑塔阵容")], "next_page_token": None},
+        raising=False,
+    )
+
+    payload = guide_module.fetch_cw_guide_list(
+        page=1,
+        limit=10,
+        trait=None,
+        trait_id=None,
+        role="黑搭",
+        role_id=None,
+        order=None,
+        next_page_token=None,
+        match_change_job=None,
+        match_hard=None,
+    )
+
+    assert captured_list_request["role_ids"] == ["1001"]
+    assert payload["role_candidates"] == [
+        {
+            "query": "黑搭",
+            "role_resolution": "fuzzy",
+            "resolved": "黑塔",
+            "candidates": [
+                {
+                    "query": "黑搭",
+                    "role": "黑塔",
+                    "id": "1001",
+                    "selected": True,
+                    "score": 0.5,
+                    "front_back": "front",
+                    "traits": ["巡猎"],
+                    "role_tags": ["输出", "智识"],
+                },
+                {
+                    "query": "黑搭",
+                    "role": "大黑塔",
+                    "id": "1002",
+                    "selected": False,
+                    "score": 0.4,
+                    "front_back": "front",
+                    "traits": ["巡猎"],
+                    "role_tags": ["输出"],
+                },
+                {
+                    "query": "黑搭",
+                    "role": "火花",
+                    "id": "1006",
+                    "selected": False,
+                    "score": 0.0,
+                    "front_back": "back",
+                    "traits": ["量子"],
+                    "role_tags": ["辅助"],
+                },
+            ],
+        }
+    ]
+    assert payload["role_warnings"] == [
+        {
+            "code": "GUIDE_ROLE_FUZZY_MATCH",
+            "query": "黑搭",
+            "resolved": "黑塔",
+            "message": "角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+        }
+    ]
+
+
+def test_fetch_cw_guide_list_role_id_values_pass_through_to_role_ids(monkeypatch):
+    guide_module = load_cw_guide_module()
+    captured_list_request: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_config_data",
+        lambda timeout=10: pytest.fail("role-id passthrough should not require config lookup"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: captured_list_request.update(kwargs) or {"list": [], "next_page_token": None},
+        raising=False,
+    )
+
+    guide_module.fetch_cw_guide_list(
+        page=1,
+        limit=10,
+        trait=None,
+        trait_id=None,
+        role=None,
+        role_id=["1003", "1002", "1003"],
+        order=None,
+        next_page_token=None,
+        match_change_job=None,
+        match_hard=None,
+    )
+
+    assert captured_list_request["role_ids"] == ["1003", "1002", "1003"]
+
+
+def test_fetch_cw_guide_list_role_exact_match_keeps_ambiguous_candidates(monkeypatch):
+    guide_module = load_cw_guide_module()
+    captured_list_request: dict[str, object] = {}
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fuzzy_role_config_response()["data"], raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: captured_list_request.update(kwargs) or {"list": [fake_lineup_index_item(lineup_id="lineup-huohuo", title="花火阵容")], "next_page_token": None},
+        raising=False,
+    )
+
+    payload = guide_module.fetch_cw_guide_list(
+        page=1,
+        limit=10,
+        trait=None,
+        trait_id=None,
+        role="花火",
+        role_id=None,
+        order=None,
+        next_page_token=None,
+        match_change_job=None,
+        match_hard=None,
+    )
+
+    assert captured_list_request["role_ids"] == ["1005"]
+    assert payload["role_candidates"] == [
+        {
+            "query": "花火",
+            "role_resolution": "exact_ambiguous",
+            "resolved": "花火",
+            "candidates": [
+                {
+                    "query": "花火",
+                    "role": "花火",
+                    "id": "1005",
+                    "selected": True,
+                    "score": 1.0,
+                    "front_back": "back",
+                    "traits": ["量子"],
+                    "role_tags": ["辅助"],
+                },
+                {
+                    "query": "花火",
+                    "role": "火花",
+                    "id": "1006",
+                    "selected": False,
+                    "score": 0.5,
+                    "front_back": "back",
+                    "traits": ["量子"],
+                    "role_tags": ["辅助"],
+                },
+            ],
+        }
+    ]
+    assert payload["role_warnings"] == [
+        {
+            "code": "GUIDE_ROLE_SIMILAR_CANDIDATES",
+            "query": "花火",
+            "resolved": "花火",
+            "message": "角色名虽已精确命中，但存在高相似候选，请确认目标角色是否正确",
+        }
+    ]
+
+
+def test_fetch_cw_guide_list_multi_role_queries_keep_blocks_when_resolved_role_repeats(monkeypatch):
+    guide_module = load_cw_guide_module()
+    captured_list_request: dict[str, object] = {}
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fuzzy_role_config_response()["data"], raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: captured_list_request.update(kwargs) or {"list": [fake_lineup_index_item(lineup_id="lineup-herta", title="黑塔阵容")], "next_page_token": None},
+        raising=False,
+    )
+
+    payload = guide_module.fetch_cw_guide_list(
+        page=1,
+        limit=10,
+        trait=None,
+        trait_id=None,
+        role=["黑搭", "塔黑"],
+        role_id=None,
+        order=None,
+        next_page_token=None,
+        match_change_job=None,
+        match_hard=None,
+    )
+
+    assert captured_list_request["role_ids"] == ["1001"]
+    assert [block["query"] for block in payload["role_candidates"]] == ["黑搭", "塔黑"]
+    assert [block["resolved"] for block in payload["role_candidates"]] == ["黑塔", "黑塔"]
+    assert [warning["query"] for warning in payload["role_warnings"]] == ["黑搭", "塔黑"]
+
+
+def test_fetch_cw_guide_list_role_fuzzy_resolution_prefers_highest_similarity_over_contains_priority(monkeypatch):
+    guide_module = load_cw_guide_module()
+    captured_list_request: dict[str, object] = {}
+
+    def regression_role_config_response() -> dict:
+        payload = fake_cw_config_response()
+        payload["data"]["role_list"] = [
+            {
+                "id": 3001,
+                "name": "ab",
+                "front_back_type": "front",
+                "trait_details": [{"id": 2001}],
+                "role_tags": ["contains"],
+            },
+            {
+                "id": 3002,
+                "name": "axef",
+                "front_back_type": "back",
+                "trait_details": [{"id": 2001}],
+                "role_tags": ["best-score"],
+            },
+            {
+                "id": 3003,
+                "name": "feab",
+                "front_back_type": "back",
+                "trait_details": [{"id": 2001}],
+                "role_tags": ["rearranged"],
+            },
+        ]
+        return payload
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: regression_role_config_response()["data"], raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: captured_list_request.update(kwargs) or {"list": [fake_lineup_index_item(lineup_id="lineup-regression", title="回归阵容")], "next_page_token": None},
+        raising=False,
+    )
+
+    payload = guide_module.fetch_cw_guide_list(
+        page=1,
+        limit=10,
+        trait=None,
+        trait_id=None,
+        role="abef",
+        role_id=None,
+        order=None,
+        next_page_token=None,
+        match_change_job=None,
+        match_hard=None,
+    )
+
+    assert captured_list_request["role_ids"] == ["3002"]
+    assert payload["role_candidates"] == [
+        {
+            "query": "abef",
+            "role_resolution": "fuzzy",
+            "resolved": "axef",
+            "candidates": [
+                {
+                    "query": "abef",
+                    "role": "axef",
+                    "id": "3002",
+                    "selected": True,
+                    "score": 0.75,
+                    "front_back": "back",
+                    "traits": ["巡猎"],
+                    "role_tags": ["best-score"],
+                },
+                {
+                    "query": "abef",
+                    "role": "feab",
+                    "id": "3003",
+                    "selected": False,
+                    "score": 0.5,
+                    "front_back": "back",
+                    "traits": ["巡猎"],
+                    "role_tags": ["rearranged"],
+                },
+                {
+                    "query": "abef",
+                    "role": "ab",
+                    "id": "3001",
+                    "selected": False,
+                    "score": 0.67,
+                    "front_back": "front",
+                    "traits": ["巡猎"],
+                    "role_tags": ["contains"],
+                },
+            ],
+        }
+    ]
+
+
 def test_fetch_cw_guide_list_filters_by_portal_id_using_detail_fanout(monkeypatch):
     guide_module = load_cw_guide_module()
     fetch_cw_guide_list = getattr(guide_module, "fetch_cw_guide_list", None)
@@ -596,6 +1032,7 @@ def test_fetch_cw_guide_list_filters_by_portal_id_using_detail_fanout(monkeypatc
         "page": 1,
         "limit": 10,
         "trait_id": 321,
+        "role_ids": [],
         "order": "Recent",
         "next_page_token": None,
         "match_change_job": True,
@@ -630,6 +1067,126 @@ def test_fetch_cw_guide_list_filters_by_portal_id_using_detail_fanout(monkeypatc
         }
     ]
     assert payload["next_page_token"] == "raw-next-token"
+
+
+def test_fetch_cw_guide_list_portal_filter_reuses_resolved_role_ids(monkeypatch):
+    guide_module = load_cw_guide_module()
+    raw_items = [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容")]
+    captured_list_request: dict[str, object] = {}
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fuzzy_role_config_response()["data"], raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: captured_list_request.update(kwargs) or {"list": raw_items, "next_page_token": None},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_lineup_details_for_portal_filter",
+        lambda lineup_items, timeout: [
+            (
+                lineup_items[0],
+                {
+                    "id": "lineup-shop",
+                    "tourn_detail": {
+                        "portals": [{"id": "shop", "name": "购物区", "description": "detail-desc"}],
+                    },
+                },
+            )
+        ],
+        raising=False,
+    )
+
+    payload = guide_module.fetch_cw_guide_list(
+        page=1,
+        limit=1,
+        trait=None,
+        trait_id=None,
+        role="黑搭",
+        role_id=None,
+        order=None,
+        next_page_token=None,
+        match_change_job=None,
+        match_hard=None,
+        portal_id="shop",
+    )
+
+    assert captured_list_request["role_ids"] == ["1001"]
+    assert payload["role_candidates"][0]["resolved"] == "黑塔"
+    assert payload["list"][0]["id"] == "lineup-shop"
+
+
+def test_fetch_cw_guide_list_portal_filter_reuses_resolved_trait_id(monkeypatch):
+    guide_module = load_cw_guide_module()
+    raw_items = [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容")]
+    captured_list_request: dict[str, object] = {}
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: captured_list_request.update(kwargs) or {"list": raw_items, "next_page_token": None},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_lineup_details_for_portal_filter",
+        lambda lineup_items, timeout: [
+            (
+                lineup_items[0],
+                {
+                    "id": "lineup-shop",
+                    "tourn_detail": {
+                        "portals": [{"id": "shop", "name": "购物区", "description": "detail-desc"}],
+                    },
+                },
+            )
+        ],
+        raising=False,
+    )
+
+    guide_module.fetch_cw_guide_list(
+        page=1,
+        limit=1,
+        trait="巡猎",
+        trait_id=None,
+        role=None,
+        role_id=None,
+        order=None,
+        next_page_token=None,
+        match_change_job=None,
+        match_hard=None,
+        portal_id="shop",
+    )
+
+    assert captured_list_request["trait_id"] == 2001
+
+
+def test_normalize_lineup_summary_keeps_version_in_list_payload(monkeypatch):
+    guide_module = load_cw_guide_module()
+
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: fake_lineup_index_response()["data"],
+        raising=False,
+    )
+
+    payload = guide_module.fetch_cw_guide_list(
+        page=1,
+        limit=10,
+        trait=None,
+        trait_id=None,
+        role=None,
+        role_id=None,
+        order=None,
+        next_page_token=None,
+        match_change_job=None,
+        match_hard=None,
+    )
+
+    assert payload["list"][0]["version"] == "3.1"
 
 
 def test_fetch_cw_guide_payload_rejects_article_url(monkeypatch):
