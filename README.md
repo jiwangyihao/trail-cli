@@ -121,7 +121,7 @@ DirectML 安装与环境 profile 说明：
 - 默认输出是紧凑文本协议，统一首行为 `<ok|fail> <command> <核心事实...>`，例如 `ok cw.shop.status count=2`
 - 默认模式是常规消费层；`--format yaml` 是结构化兜底，`--verbose` 是开发/排障层，不应作为终端 Agent 的常规依赖
 - 默认模式绝不输出 YAML；只有显式指定 `--format yaml` 且命令进入 allowlist 时，才会在首行摘要后追加结构化块
-- 常见正文前缀包括 `shot`、`item`、`guide`、`text`、`why`、`warn`、`ref`、`request`、`recover`；`debug` 仅在 `--verbose` 下追加
+- 常见正文前缀包括 `shot`、`item`、`guide`、`text`、`info`、`why`、`warn`、`ref`、`request`、`recover`；`debug` 仅在 `--verbose` 下追加
 - `shot path=...` 表示当前命令结果对应的截图路径；只要当前命令有截图，就会输出 `shot path=...`，且位于实体行之前
 - 默认失败路径只要当前结果携带 `request_id`，就会保留 `request id=<id>`，用于恢复与排障
 - 只有结果未知或当前失败显式可恢复时，才会出现 `recover action=daemon.request_status request=<id>`；仅有 `request id=<id>` 不等于当前失败一定可恢复
@@ -151,7 +151,10 @@ ok cw.shop.status count=2
 shot path=.trail/shots/req-shop.png
 item idx=1 slot=1 name=希儿 cost=2
 item idx=2 slot=2 name=停云 cost=1
+info coins=40 level=7 reserve_full=0 max_team_size=8
 ```
+
+- 商店快照里的 `coins` / `level` / `reserve_full` / `max_team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露；`open` / `refresh` / `close` 不重复输出旧快照事实
 
 ```text
 fail input.click code=INPUT_BACKEND_MISSING tainted=1

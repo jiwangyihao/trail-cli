@@ -232,6 +232,17 @@ def _append_cw_shop_items(lines: list[str], data: dict[str, Any]) -> None:
         lines.append("item " + _format_fact_sequence(*facts))
 
 
+def _append_cw_shop_snapshot_info(lines: list[str], data: dict[str, Any]) -> None:
+    _append_fact_line(
+        lines,
+        "info",
+        ("coins", data.get("coins") if "coins" in data else None),
+        ("level", data.get("level") if "level" in data else None),
+        ("reserve_full", bool(data.get("reserve_full")) if "reserve_full" in data else None),
+        ("max_team_size", data.get("max_team_size") if "max_team_size" in data else None),
+    )
+
+
 def _should_render_recover(payload: dict[str, Any]) -> bool:
     debug = payload.get("debug") or {}
     return isinstance(debug.get("last_known_stage"), str) and bool(debug.get("last_known_stage"))
@@ -410,6 +421,7 @@ def _render_cw_shop_status(command: str, payload: dict[str, Any]) -> list[str]:
     lines = [f"ok {command} count={_encode_value(len(items))}"]
     _append_shot(lines, payload)
     _append_cw_shop_items(lines, data)
+    _append_cw_shop_snapshot_info(lines, data)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
@@ -430,6 +442,8 @@ def _render_cw_shop_action(command: str, payload: dict[str, Any]) -> list[str]:
     _append_shot(lines, payload)
     if items is not None:
         _append_cw_shop_items(lines, data)
+    if command == "cw.shop.scan":
+        _append_cw_shop_snapshot_info(lines, data)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines

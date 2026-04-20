@@ -121,11 +121,12 @@ def _capture_win32_window(hwnd: int, region: Region):
     save_bitmap = None
 
     try:
+        window_region = _resolve_window_region(hwnd)
         hwnd_dc = win32gui.GetWindowDC(hwnd)
         mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
         save_dc = mfc_dc.CreateCompatibleDC()
         save_bitmap = win32ui.CreateBitmap()
-        save_bitmap.CreateCompatibleBitmap(mfc_dc, region.width, region.height)
+        save_bitmap.CreateCompatibleBitmap(mfc_dc, window_region.width, window_region.height)
         save_dc.SelectObject(save_bitmap)
 
         flags = 1 | 2
@@ -144,7 +145,7 @@ def _capture_win32_window(hwnd: int, region: Region):
             0,
             1,
         )
-        return image
+        return _crop_window_image_to_region(image, hwnd=hwnd, client_region=region)
     finally:
         if save_bitmap is not None:
             win32gui.DeleteObject(save_bitmap.GetHandle())
@@ -235,6 +236,14 @@ def _capture_with_windows_capture(hwnd: int, client_region: Region):
     crop_box = _window_capture_crop_box(frame_size, _resolve_window_region(hwnd), client_region)
     left, top, right, bottom = crop_box
     return Image.fromarray(frame_buffer[top:bottom, left:right, :3][:, :, ::-1], "RGB")
+
+
+def _crop_window_image_to_region(image, *, hwnd: int, client_region: Region):
+    crop_box = _window_capture_crop_box(image.size, _resolve_window_region(hwnd), client_region)
+    left, top, right, bottom = crop_box
+    if right <= left or bottom <= top:
+        raise TrailError("SCREENSHOT_FAILED", "无法截取窗口内容")
+    return image.crop(crop_box)
 
 
 def _create_windows_capture(hwnd: int):
@@ -518,6 +527,13 @@ def _scale_canonical_point(value: int | float, *, target_size: int, canonical_si
     return min(max(scaled, 0), max(target_size - 1, 0))
 
 
+def _scale_canonical_capture_value(value: int | float, *, target_size: int, canonical_size: int) -> int | float:
+    if isinstance(value, float) and 0.0 <= value <= 1.0:
+        return value
+    scaled = round(target_size * (float(value) / canonical_size))
+    return min(max(scaled, 0), max(target_size, 0))
+
+
 def _grab_window_with_imagegrab(hwnd: int):
     return ImageGrab.grab(window=hwnd)
 
@@ -634,7 +650,12 @@ class WindowsWindowController:
         window = self._resolve_window()
         region = self._resolve_region(window)
         if all(value is not None for value in (from_x, from_y, to_x, to_y)):
-            region = region.sub_region(from_x, from_y, to_x, to_y)
+            region = region.sub_region(
+                _scale_canonical_capture_value(from_x, target_size=region.width, canonical_size=CANONICAL_CLIENT_WIDTH),
+                _scale_canonical_capture_value(from_y, target_size=region.height, canonical_size=CANONICAL_CLIENT_HEIGHT),
+                _scale_canonical_capture_value(to_x, target_size=region.width, canonical_size=CANONICAL_CLIENT_WIDTH),
+                _scale_canonical_capture_value(to_y, target_size=region.height, canonical_size=CANONICAL_CLIENT_HEIGHT),
+            )
 
         hwnd = getattr(window, "_hWnd", None)
         capture_hwnd = int(hwnd) if hwnd is not None else None
@@ -645,15 +666,19 @@ class WindowsWindowController:
                 capture_hwnd, capture_region = overlay_target
         target_size = _target_capture_size(region, int(hwnd) if hwnd is not None else None)
         if sys.platform == "win32" and capture_hwnd is not None:
+            scaled_region = _scale_region_for_screen_capture(capture_region, capture_hwnd)
             try:
                 image = _capture_with_windows_capture(capture_hwnd, capture_region)
             except Exception:
                 try:
-                    scaled_region = _scale_region_for_screen_capture(capture_region, capture_hwnd)
                     image = _grab_region_with_imagegrab(scaled_region)
                 except Exception:
                     try:
-                        image = _grab_window_with_imagegrab(capture_hwnd)
+                        image = _crop_window_image_to_region(
+                            _grab_window_with_imagegrab(capture_hwnd),
+                            hwnd=capture_hwnd,
+                            client_region=capture_region,
+                        )
                     except Exception:
                         try:
                             image = _capture_win32_window(capture_hwnd, capture_region)
@@ -661,7 +686,7 @@ class WindowsWindowController:
                             if exc.code != "SCREENSHOT_FAILED":
                                 raise
                             self.prepare_input()
-                            image = _grab_region_with_imagegrab(capture_region)
+                            image = _grab_region_with_imagegrab(scaled_region)
         else:
             image = _grab_region_with_imagegrab(region)
         image = self._normalize_captured_image(image, target_size=target_size)

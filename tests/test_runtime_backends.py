@@ -3632,6 +3632,137 @@ def test_windows_window_controller_scales_canonical_points_to_client_region(monk
     assert controller.to_screen_point(1920, 1080) == (2031, -171)
 
 
+def test_windows_window_controller_scales_canonical_capture_region_to_client_region(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    monkeypatch.setattr(window_module.sys, "platform", "linux")
+
+    class FakeImageGrab:
+        called_with = None
+
+        @staticmethod
+        def grab(*, bbox, all_screens=False):
+            FakeImageGrab.called_with = (bbox, all_screens)
+            return Image.new("RGB", (10, 6), color="white")
+
+    monkeypatch.setattr(window_module, "ImageGrab", FakeImageGrab)
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+    monkeypatch.setattr(controller, "_resolve_window", lambda: object())
+    monkeypatch.setattr(
+        controller,
+        "_resolve_region",
+        lambda window=None: window_module.Region(left=256, top=-992, width=1536, height=864),
+    )
+
+    image_bytes = controller.capture(from_x=364, from_y=280, to_x=1689, to_y=334)
+
+    assert FakeImageGrab.called_with == ((547, -768, 1607, -725), False)
+    assert image_bytes.startswith(b"\x89PNG")
+
+
+def test_crop_window_image_to_region_uses_window_relative_offsets(monkeypatch):
+    import trail.runtime.window as window_module
+
+    monkeypatch.setattr(
+        window_module,
+        "_resolve_window_region",
+        lambda hwnd: window_module.Region(left=100, top=200, width=200, height=100),
+    )
+
+    cropped = window_module._crop_window_image_to_region(
+        Image.new("RGB", (200, 100), color="white"),
+        hwnd=321,
+        client_region=window_module.Region(left=150, top=225, width=100, height=50),
+    )
+
+    assert cropped.size == (100, 50)
+
+
+def test_windows_window_controller_scales_canonical_capture_region_before_windows_capture(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        window_module,
+        "_capture_with_windows_capture",
+        lambda hwnd, region: captured.update({"hwnd": hwnd, "region": region}) or Image.new("RGB", (1060, 43), color="white"),
+    )
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+    monkeypatch.setattr(controller, "_resolve_window", lambda: SimpleNamespace(_hWnd=321))
+    monkeypatch.setattr(
+        controller,
+        "_resolve_region",
+        lambda window=None: window_module.Region(left=256, top=-992, width=1536, height=864),
+    )
+
+    image_bytes = controller.capture(from_x=364, from_y=280, to_x=1689, to_y=334)
+
+    assert captured == {
+        "hwnd": 321,
+        "region": window_module.Region(left=547, top=-768, width=1060, height=43),
+    }
+    assert image_bytes.startswith(b"\x89PNG")
+
+
+def test_windows_window_controller_final_bbox_fallback_scales_region_using_window_dpi(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    class User32:
+        def GetDpiForWindow(self, hwnd: int):
+            return 120
+
+    class FakeImageGrab:
+        calls: list[dict] = []
+
+        @staticmethod
+        def grab(*, bbox=None, all_screens=False, window=None):
+            call = {"bbox": bbox, "all_screens": all_screens, "window": window}
+            FakeImageGrab.calls.append(call)
+            if window is not None:
+                raise OSError("window grab unavailable")
+            if len(FakeImageGrab.calls) == 1:
+                raise OSError("bbox grab unavailable")
+            return Image.new("RGB", (10, 6), color="white")
+
+    monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(window_module.ctypes, "windll", SimpleNamespace(user32=User32()))
+    monkeypatch.setattr(window_module, "ImageGrab", FakeImageGrab)
+    monkeypatch.setattr(window_module, "_capture_with_windows_capture", lambda hwnd, region: (_ for _ in ()).throw(OSError("graphics capture unavailable")))
+    monkeypatch.setattr(window_module, "_capture_win32_window", lambda hwnd, region: (_ for _ in ()).throw(TrailError("SCREENSHOT_FAILED", "无法截取窗口内容")))
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+    prepare_calls: list[str] = []
+    monkeypatch.setattr(controller, "_resolve_window", lambda: SimpleNamespace(_hWnd=321))
+    monkeypatch.setattr(controller, "prepare_input", lambda: prepare_calls.append("prepare"))
+    monkeypatch.setattr(
+        controller,
+        "_resolve_region",
+        lambda window=None: window_module.Region(left=256, top=-992, width=1536, height=864),
+    )
+
+    image_bytes = controller.capture(from_x=364, from_y=280, to_x=1689, to_y=334)
+
+    assert prepare_calls == ["prepare"]
+    assert FakeImageGrab.calls == [
+        {"bbox": (684, -960, 2009, -906), "all_screens": True, "window": None},
+        {"bbox": None, "all_screens": False, "window": 321},
+        {"bbox": (684, -960, 2009, -906), "all_screens": True, "window": None},
+    ]
+    assert image_bytes.startswith(b"\x89PNG")
+
+
 def test_change_game_config_updates_channel_values(tmp_path):
     import trail.runtime.window as window_module
 

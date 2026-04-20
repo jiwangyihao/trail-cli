@@ -118,9 +118,10 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert (
-        "```text\nok cw.shop.status count=2\nshot path=.trail/shots/req-shop.png\nitem idx=1 slot=1 name=希儿 cost=2\nitem idx=2 slot=2 name=停云 cost=1\n```"
+        "```text\nok cw.shop.status count=2\nshot path=.trail/shots/req-shop.png\nitem idx=1 slot=1 name=希儿 cost=2\nitem idx=2 slot=2 name=停云 cost=1\ninfo coins=40 level=7 reserve_full=0 max_team_size=8\n```"
         in readme
     )
+    assert "商店快照里的 `coins` / `level` / `reserve_full` / `max_team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" in readme
     assert (
         "```text\nfail input.click code=INPUT_BACKEND_MISSING tainted=1\nrequest id=req-42\nwhy msg=\"input backend missing\"\nrecover action=daemon.request_status request=req-42\n```"
         in readme
@@ -196,7 +197,11 @@ def test_render_output_renders_cw_shop_status_sorted_items_and_costs():
                 {"slot": 1, "name": "希儿", "price": 2},
                 {"name": "无槽位条目", "price": 9},
                 {"slot": 2, "name": "停云", "price": 1},
-            ]
+            ],
+            "coins": 40,
+            "level": 7,
+            "reserve_full": False,
+            "max_team_size": 8,
         },
         "screenshot": ".trail/shots/req-shop.png",
         "timing": {},
@@ -213,6 +218,7 @@ def test_render_output_renders_cw_shop_status_sorted_items_and_costs():
         "item idx=2 slot=2 name=停云 cost=1",
         "item idx=3 slot=3 name=布洛妮娅 cost=4",
         "item idx=4 name=无槽位条目 cost=9",
+        "info coins=40 level=7 reserve_full=0 max_team_size=8",
     ]
 
 
@@ -885,6 +891,61 @@ def test_render_output_renders_cw_shop_buy_slot_summary_text():
         "shot path=.trail/shots/req-buy-slot.png",
         "item idx=1 slot=1 name=银狼 cost=20",
         "item idx=2 slot=2 name=停云 cost=10",
+    ]
+
+
+def test_render_output_renders_cw_shop_scan_snapshot_info_text():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "opened": True,
+            "stale": False,
+            "coins": 40,
+            "level": 7,
+            "reserve_full": False,
+            "max_team_size": 8,
+        },
+        "screenshot": ".trail/shots/req-shop-scan.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.scan", payload).splitlines() == [
+        "ok cw.shop.scan opened=1 stale=0 count=1",
+        "shot path=.trail/shots/req-shop-scan.png",
+        "item idx=1 slot=1 name=银狼 cost=20",
+        "info coins=40 level=7 reserve_full=0 max_team_size=8",
+    ]
+
+
+def test_render_output_does_not_render_stale_shop_snapshot_info_for_open_command():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "opened": True,
+            "stale": True,
+            "coins": 40,
+            "level": 7,
+            "reserve_full": False,
+            "max_team_size": 8,
+        },
+        "screenshot": ".trail/shots/req-shop-open.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.open", payload).splitlines() == [
+        "ok cw.shop.open opened=1 stale=1 count=1",
+        "shot path=.trail/shots/req-shop-open.png",
+        "item idx=1 slot=1 name=银狼 cost=20",
     ]
 
 
