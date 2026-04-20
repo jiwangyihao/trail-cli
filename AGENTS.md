@@ -62,3 +62,15 @@
 - `guide.fetch.cw` 默认首行按中文字段返回攻略核心事实，至少保留：`攻略标题`、`攻略码`、`版本`、`最低金币`、`最低等级`、`中期等级`。
 - `guide.fetch.cw` 正文继续使用 `guide` 行补充：`攻略标签`、`羁绊列表`、`投资环境`、`优选投资策略`、`次选投资策略`、`简易装备优先度`、`进阶装备优先度`、`运营思路`，以及按阶段展开的阵容摘要与角色推荐装备；`适用超频博弈`、`星徽攻略`、`专家顾问` 折叠成 `#标签` 并入 `攻略标签` 同一行，`羁绊列表` 与阶段 `羁绊` 在上游提供层数时要保留成 `6贝洛伯格` 这类形式。
 - `guide.fetch.cw` 允许 `--format yaml`，用于在默认文本之外回落到完整结构化 `data`。
+
+## guide / cw 攻略摘要约束
+
+- guide.list.cw 的默认文本改用 攻略ID/攻略标题/版本/主C/攻略标签/最终阵容，并继续保留 `count`、`more`、`next`、`idx` 这些冻结控制字段。
+- `guide.list.cw` 非分组条目字段冻结为 `攻略ID/攻略标题/版本/主C/攻略标签/点赞/收藏`；第二行固定使用 `guide ... 最终阵容=...`，不能回退成 `final_role_cards` 或布尔技术位直出。
+- `guide.list.cw` 分组视图固定使用 `guide 投资环境=... count=... more=...`；只有分组行允许携带 `next=...`，顶层 grouped 首行不带 `next`。
+- `cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`；`待收集` 必须统一编码为 `0/1`，即使为 `0` 也不能省略。
+- `cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`；`cw.start` / `cw.portal.*` 下挂攻略摘要继续复用 `guide.list.cw` 的中文条目与 `最终阵容` 语义。
+- `cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id。
+- `cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径；`current/apply` 只看当前已应用攻略摘要，完整攻略仍由 `guide.fetch.cw` 提供。
+- `guide.config.cw` 使用 `赛季/子赛季/大版本/搜牌档位/羁绊/角色/角色标签/投资环境`；这五个统计项即使为 `0` 也必须保留。
+- `guide.config.cw --format yaml` 仍然先输出中文摘要，再追加原英文 key 的 YAML shape，不得回退成纯英文首屏。

@@ -1608,6 +1608,40 @@ def test_cw_group_help_avoids_forbidden_phrases(cli_runner, group_name, forbidde
     assert forbidden_phrase not in normalized
 
 
+def test_guide_list_cw_help_uses_chinese_summary_terms(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    assert "攻略ID" in normalized
+    assert "攻略标签" in normalized
+    assert "最终阵容" in normalized
+    assert "has_change_equip" not in normalized
+    assert "has_expert" not in normalized
+    assert "support_hard" not in normalized
+    assert "final_role_cards" not in normalized
+
+
+def test_cw_portal_help_mentions_invest_portal_terms(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "portal", "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    assert "投资环境" in normalized
+    assert "title=" not in normalized
+    assert "desc=" not in normalized
+    assert "new=" not in normalized
+
+
+def test_cw_guide_help_mentions_snapshot_id(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "guide", "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    assert "攻略快照ID" in normalized
+    assert "artifact=" not in normalized
+
+
 def test_cw_enter_help_exposes_home_only_contract(cli_runner):
     result = cli_runner.invoke(app, ["cw", "enter", "--help"])
 

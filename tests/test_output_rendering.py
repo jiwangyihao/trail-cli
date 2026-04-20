@@ -115,9 +115,11 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert (
-        "```text\nok guide.list.cw count=2 more=1 next=token-2\nguide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1\nguide id=def idx=2 hard=0 change_equip=1 expert=0\n```"
+        "```text\nok guide.list.cw count=2 more=1 next=token-2\nguide 攻略ID=abc 攻略标题=7群攻2银河学者 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45\nguide idx=1 最终阵容=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3\n```"
         in readme
     )
+    assert "guide 投资环境=购物区 count=1 more=1 next=group-token" in readme
+    assert "guide.config.cw --format yaml" in readme
     assert "`trail guide fetch cw` 默认文本会直接返回你选中的完整攻略字段，字段名尽量使用货币战争页面里的中文文案；现在还会补充 `羁绊列表`、`运营思路`" in readme
     assert (
         "```text\nok ocr.read hits=2\nshot path=.trail/shots/req-ocr.png\ntext value=点击进入 box=122,88,74,20 center=159,98\ntext value=开始挑战 box=410,502,120,36 center=470,520\n```"
@@ -206,6 +208,13 @@ def test_readme_and_cw_skills_document_help_boundaries() -> None:
     assert "`stage` 只用于已进入货币战争后的内部阶段快速检测/等待" in readme
     assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in readme
     assert "`trail cw invest.read|choose` 继续只表示局内 invest 事件" in readme
+    assert "guide 投资环境=购物区 count=1 more=1 next=group-token" in readme
+    assert "guide.config.cw --format yaml" in readme
+    assert "artifact=" not in readme
+    assert (
+        "```text\nok guide.list.cw count=2 more=1 next=token-2\nguide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1\nguide id=def idx=2 hard=0 change_equip=1 expert=0\n```"
+        not in readme
+    )
     assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in cw_skill
     assert (
         "`trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断，也不代替分组动作执行"
@@ -220,6 +229,9 @@ def test_readme_and_cw_skills_document_help_boundaries() -> None:
         in cw_guide_skill
     )
     assert "`trail cw invest.read|choose` 继续只表示局内 invest 事件" in replenish_skill
+    assert "攻略快照ID" in cw_guide_skill
+    assert "artifact=" not in cw_guide_skill
+    assert "artifact=" not in cw_skill
     assert "处理 Boss 预览、特殊事件、结算翻页与战斗继续" in events_skill
     assert "不负责商店、补给和整局循环" in events_skill
     assert "已经完成 `trail cw start` 和 `trail cw portal.select`" in shop_skill
@@ -375,12 +387,11 @@ def test_render_output_renders_cw_shop_status_sorted_items_and_costs():
             },
             [
                 "ok guide.list.cw count=1 more=1 next=next-guide-token",
-                "guide id=guide-1",
-                "carry=希儿",
-                "hard=1",
-                "change_equip=0",
-                "expert=1",
-                "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3|佩拉/star:4/rarity:2",
+                "guide 攻略ID=guide-1",
+                "idx=1",
+                "主C=希儿",
+                "攻略标签=#适用超频博弈|#专家顾问",
+                "guide idx=1 最终阵容=希儿/carry:1/star:5/rarity:3|佩拉/star:4/rarity:2",
             ],
         ),
         (
@@ -567,6 +578,7 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
                 {
                     "lineup_id": "abc",
                     "title": "购物阵容",
+                    "version": "3.2",
                     "carry_roles": ["希儿", "停云"],
                     "final_role_cards": [
                         {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
@@ -582,6 +594,7 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
                 {
                     "lineup_id": "def",
                     "title": "事件阵容",
+                    "version": "3.2",
                     "carry_roles": [],
                     "support_hard": False,
                     "has_change_equip": True,
@@ -603,9 +616,9 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
     assert render_output("guide.list.cw", payload).splitlines() == [
         "ok guide.list.cw count=2 more=1 next=token-2",
         "shot path=.trail/shots/req-guide-list.png",
-        "guide id=abc title=购物阵容 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
-        "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3|佩拉/star:4/rarity:2",
-        "guide id=def title=事件阵容 idx=2 hard=0 change_equip=1 expert=0 like=22 favour=9",
+        "guide 攻略ID=abc 攻略标题=购物阵容 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45",
+        "guide idx=1 最终阵容=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3|佩拉/star:4/rarity:2",
+        "guide 攻略ID=def 攻略标题=事件阵容 版本=3.2 idx=2 攻略标签=#星徽攻略 点赞=22 收藏=9",
     ]
 
 
@@ -617,6 +630,7 @@ def test_render_output_guide_list_omits_next_when_not_paginated():
                 {
                     "lineup_id": "abc",
                     "title": "购物阵容",
+                    "version": "3.2",
                     "carry_roles": ["希儿"],
                     "support_hard": False,
                     "has_change_equip": False,
@@ -639,9 +653,40 @@ def test_render_output_guide_list_omits_next_when_not_paginated():
 
     assert lines == [
         "ok guide.list.cw count=1 more=0",
-        "guide id=abc title=购物阵容 idx=1 carry=希儿 hard=0 change_equip=0 expert=0 like=7 favour=3",
+        "guide 攻略ID=abc 攻略标题=购物阵容 版本=3.2 idx=1 主C=希儿 点赞=7 收藏=3",
     ]
-    assert all("final_roles=" not in line for line in lines)
+    assert all("最终阵容=" not in line for line in lines)
+    assert "攻略标签=" not in "\n".join(lines)
+
+
+def test_render_output_guide_list_falls_back_to_boolean_tags_when_labels_missing():
+    payload = {
+        "ok": True,
+        "data": {
+            "list": [
+                {
+                    "lineup_id": "abc",
+                    "title": "仅布尔标签",
+                    "version": "3.2",
+                    "carry_roles": ["希儿"],
+                    "labels": [],
+                    "support_hard": True,
+                }
+            ],
+            "next_page_token": None,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "ok guide.list.cw count=1 more=0",
+        "guide 攻略ID=abc 攻略标题=仅布尔标签 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈",
+    ]
 
 
 def test_render_output_renders_grouped_portal_guide_lists():
@@ -652,12 +697,13 @@ def test_render_output_renders_grouped_portal_guide_lists():
                 {
                     "portal_title": "购物区",
                     "list": [
-                        {
-                            "lineup_id": "shop-guide",
-                            "title": "购物区优选阵容",
-                            "carry_roles": ["希儿"],
-                            "support_hard": True,
-                            "has_change_equip": False,
+                                {
+                                    "lineup_id": "shop-guide",
+                                    "title": "购物区优选阵容",
+                                    "version": "3.2",
+                                    "carry_roles": ["希儿"],
+                                    "support_hard": True,
+                                    "has_change_equip": False,
                             "has_expert": True,
                             "like": 123,
                             "favour": 45,
@@ -670,12 +716,13 @@ def test_render_output_renders_grouped_portal_guide_lists():
                 {
                     "portal_title": "事件区",
                     "list": [
-                        {
-                            "lineup_id": "event-guide",
-                            "title": "事件区优选阵容",
-                            "carry_roles": ["停云"],
-                            "support_hard": False,
-                            "has_change_equip": True,
+                                {
+                                    "lineup_id": "event-guide",
+                                    "title": "事件区优选阵容",
+                                    "version": "3.2",
+                                    "carry_roles": ["停云"],
+                                    "support_hard": False,
+                                    "has_change_equip": True,
                             "has_expert": False,
                             "like": 22,
                             "favour": 9,
@@ -699,12 +746,53 @@ def test_render_output_renders_grouped_portal_guide_lists():
 
     assert render_output("guide.list.cw", payload).splitlines() == [
         "ok guide.list.cw groups=2 count=2 more=0",
-        "guide portal=购物区 count=1 more=0",
-        "guide portal=购物区 id=shop-guide title=购物区优选阵容 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
-        "guide portal=购物区 idx=1 final_roles=希儿/carry:1/star:5/rarity:3",
-        "guide portal=事件区 count=1 more=0",
-        "guide portal=事件区 id=event-guide title=事件区优选阵容 idx=1 carry=停云 hard=0 change_equip=1 expert=0 like=22 favour=9",
-        "guide portal=事件区 idx=1 final_roles=停云/carry:1/star:4/rarity:2",
+        "guide 投资环境=购物区 count=1 more=0",
+        "guide 投资环境=购物区 攻略ID=shop-guide 攻略标题=购物区优选阵容 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45",
+        "guide 投资环境=购物区 idx=1 最终阵容=希儿/carry:1/star:5/rarity:3",
+        "guide 投资环境=事件区 count=1 more=0",
+        "guide 投资环境=事件区 攻略ID=event-guide 攻略标题=事件区优选阵容 版本=3.2 idx=1 主C=停云 攻略标签=#星徽攻略 点赞=22 收藏=9",
+        "guide 投资环境=事件区 idx=1 最终阵容=停云/carry:1/star:4/rarity:2",
+    ]
+
+
+def test_render_output_renders_grouped_portal_guide_lists_with_group_next_only():
+    payload = {
+        "ok": True,
+        "data": {
+            "portals": [
+                {
+                    "portal_title": "购物区",
+                    "list": [
+                        {
+                            "lineup_id": "shop-guide",
+                            "title": "购物区优选阵容",
+                            "version": "3.2",
+                            "carry_roles": ["希儿"],
+                            "labels": [],
+                            "support_hard": True,
+                            "like": 123,
+                            "favour": 45,
+                        }
+                    ],
+                    "more": True,
+                    "next_page_token": "group-token",
+                }
+            ],
+            "count": 1,
+            "more": True,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "ok guide.list.cw groups=1 count=1 more=1",
+        "guide 投资环境=购物区 count=1 more=1 next=group-token",
+        "guide 投资环境=购物区 攻略ID=shop-guide 攻略标题=购物区优选阵容 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈 点赞=123 收藏=45",
     ]
 
 
@@ -921,6 +1009,8 @@ def test_render_output_renders_cw_start_portal_cards_family():
                         {
                             "lineup_id": "alpha-guide",
                             "title": "Alpha攻略",
+                            "version": "3.2",
+                            "labels": [],
                             "carry_roles": ["希儿"],
                             "support_hard": True,
                             "has_change_equip": False,
@@ -949,13 +1039,53 @@ def test_render_output_renders_cw_start_portal_cards_family():
     assert render_output("cw.start", payload).splitlines() == [
         "ok cw.start cards=2",
         "shot path=.trail/shots/req-start.png",
-        'opt idx=1 title="Alpha Portal" score=0.99 new=1',
-        'opt idx=1 desc="Alpha Desc"',
-        'guide idx=1 gid=1 id=alpha-guide title=Alpha攻略 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45',
-        'guide idx=1 gid=1 final_roles=希儿/carry:1/star:5/rarity:3',
-        'opt idx=2 title="Beta Portal" score=0.88',
-        'opt idx=2 desc="Beta Desc"',
+        'opt idx=1 投资环境="Alpha Portal" score=0.99 待收集=1',
+        'opt idx=1 说明="Alpha Desc"',
+        'guide idx=1 gid=1 攻略ID=alpha-guide 攻略标题=Alpha攻略 版本=3.2 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45',
+        'guide idx=1 gid=1 最终阵容=希儿/carry:1/star:5/rarity:3',
+        'opt idx=2 投资环境="Beta Portal" score=0.88 待收集=0',
+        'opt idx=2 说明="Beta Desc"',
     ]
+
+
+def test_render_output_cw_start_omits_guide_tag_field_when_portal_guide_has_no_tags():
+    payload = {
+        "ok": True,
+        "data": {
+            "cards": [
+                {
+                    "card_idx": 1,
+                    "portal_title": "No Tag Portal",
+                    "portal_description": "No Tag Desc",
+                    "score": 0.42,
+                    "guides": [
+                        {
+                            "lineup_id": "plain-guide",
+                            "title": "无标签攻略",
+                            "version": "3.2",
+                            "carry_roles": ["希儿"],
+                            "labels": [],
+                            "support_hard": False,
+                            "has_change_equip": False,
+                            "has_expert": False,
+                        }
+                    ],
+                }
+            ]
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    rendered = render_output("cw.start", payload)
+
+    assert 'opt idx=1 投资环境="No Tag Portal" score=0.42 待收集=0' in rendered
+    assert 'guide idx=1 gid=1 攻略ID=plain-guide 攻略标题=无标签攻略 版本=3.2 主C=希儿' in rendered
+    assert "攻略标签=" not in rendered
 
 
 @pytest.mark.parametrize("command", ["cw.portal.refresh", "cw.portal.restart"])
@@ -974,15 +1104,18 @@ def test_render_output_renders_cw_portal_refresh_family(command: str):
                         {
                             "lineup_id": "alpha-guide",
                             "title": "Alpha攻略",
+                            "version": "3.2",
                             "carry_roles": ["希儿"],
                             "support_hard": True,
                             "has_change_equip": False,
                             "has_expert": True,
                             "like": 123,
                             "favour": 45,
+                            "final_role_cards": [{"name": "希儿", "star": 5, "rarity": 3, "is_carry": True}],
                         }
                     ],
                 },
+                {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
             ],
             "mode": "continue",
             "difficulty": "current",
@@ -998,10 +1131,13 @@ def test_render_output_renders_cw_portal_refresh_family(command: str):
     }
 
     assert render_output(command, payload).splitlines() == [
-        f"ok {command} cards=1",
-        'opt idx=1 title="Alpha Portal" score=0.99 new=1',
-        'opt idx=1 desc="Alpha Desc"',
-        'guide idx=1 gid=1 id=alpha-guide title=Alpha攻略 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45',
+        f"ok {command} cards=2",
+        'opt idx=1 投资环境="Alpha Portal" score=0.99 待收集=1',
+        'opt idx=1 说明="Alpha Desc"',
+        'guide idx=1 gid=1 攻略ID=alpha-guide 攻略标题=Alpha攻略 版本=3.2 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45',
+        'guide idx=1 gid=1 最终阵容=希儿/carry:1/star:5/rarity:3',
+        'opt idx=2 投资环境="Beta Portal" score=0.88 待收集=0',
+        'opt idx=2 说明="Beta Desc"',
     ]
 
 
@@ -1018,8 +1154,165 @@ def test_render_output_renders_cw_portal_select_summary_text():
     }
 
     assert render_output("cw.portal.select", payload).splitlines() == [
-        'ok cw.portal.select idx=2 title="Beta Portal"',
+        'ok cw.portal.select idx=2 投资环境="Beta Portal"',
         "shot path=.trail/shots/req-portal-select.png",
+    ]
+
+
+def test_render_output_renders_cw_guide_current_summary_text():
+    payload = {
+        "ok": True,
+        "data": {
+            "lineup_id": "abc",
+            "title": "7群攻2银河学者",
+            "share_code": "##demo##",
+            "version": "3.2",
+            "labels": ["7级搜牌"],
+            "support_hard": True,
+            "artifact": "art-1",
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.guide.current", payload).splitlines() == [
+        "ok cw.guide.current 攻略ID=abc 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2",
+        "guide 攻略标签=#7级搜牌|#适用超频博弈",
+        "info 攻略快照ID=art-1",
+    ]
+
+
+def test_render_output_renders_cw_guide_sparse_summaries_and_omits_empty_fields():
+    sparse_payload = {
+        "ok": True,
+        "data": {"lineup_id": "abc", "share_code": "##demo##"},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    sparse_apply_payload = {
+        "ok": True,
+        "data": {"lineup_id": "abc", "share_code": "##demo##"},
+        "screenshot": ".trail/shots/req-cw-guide-apply.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.guide.current", sparse_payload).splitlines() == [
+        "ok cw.guide.current 攻略ID=abc 攻略码=##demo##",
+    ]
+    assert render_output("cw.guide.apply", sparse_apply_payload).splitlines() == [
+        "ok cw.guide.apply 攻略ID=abc 攻略码=##demo##",
+        "shot path=.trail/shots/req-cw-guide-apply.png",
+    ]
+    assert "guide 攻略标签=" not in render_output("cw.guide.current", sparse_payload)
+    assert "攻略快照ID=" not in render_output(
+        "cw.guide.current",
+        {
+            "ok": True,
+            "data": {"lineup_id": "abc", "share_code": "##demo##", "artifact": ""},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": None,
+            "error": None,
+        },
+    )
+    assert '版本=""' not in render_output(
+        "cw.guide.current",
+        {
+            "ok": True,
+            "data": {"lineup_id": "abc", "share_code": "##demo##", "version": ""},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": None,
+            "error": None,
+        },
+    )
+    assert '攻略标题=""' not in render_output(
+        "cw.guide.current",
+        {
+            "ok": True,
+            "data": {"lineup_id": "abc", "title": "", "share_code": "##demo##"},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": None,
+            "error": None,
+        },
+    )
+    assert '攻略码=""' not in render_output(
+        "cw.guide.current",
+        {
+            "ok": True,
+            "data": {"lineup_id": "abc", "share_code": ""},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": None,
+            "error": None,
+        },
+    )
+
+
+def test_render_output_renders_guide_config_summary_and_zero_counts():
+    payload = {
+        "ok": True,
+        "data": {
+            "meta": {"season_id": 12, "sub_season_id": 3, "big_version": "3.2"},
+            "lineup_levels": [{"id": 1}],
+            "traits": [{"id": 1001}, {"id": 1002}],
+            "roles": [{"id": 1}, {"id": 2}, {"id": 3}],
+            "role_tags": [{"id": 11}],
+            "portal_list": [{"portal_id": "shop"}, {"portal_id": "event"}],
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    zero_payload = {
+        "ok": True,
+        "data": {
+            "meta": {"season_id": 12, "sub_season_id": 3, "big_version": "3.2"},
+            "lineup_levels": [],
+            "traits": [],
+            "roles": [],
+            "role_tags": [],
+            "portal_list": [],
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("guide.config.cw", payload).splitlines() == [
+        "ok guide.config.cw 赛季=12 子赛季=3 大版本=3.2",
+        "info 搜牌档位=1 羁绊=2 角色=3 角色标签=1 投资环境=2",
+    ]
+    assert render_output("guide.config.cw", zero_payload).splitlines() == [
+        "ok guide.config.cw 赛季=12 子赛季=3 大版本=3.2",
+        "info 搜牌档位=0 羁绊=0 角色=0 角色标签=0 投资环境=0",
     ]
 
 
@@ -1488,7 +1781,7 @@ def test_render_output_guide_config_tolerates_non_mapping_data():
 
     assert render_output("guide.config.cw", payload).splitlines() == [
         "ok guide.config.cw",
-        "info lineup_levels=0 traits=0 roles=0 role_tags=0 portal_list=0",
+        "info 搜牌档位=0 羁绊=0 角色=0 角色标签=0 投资环境=0",
     ]
 
 

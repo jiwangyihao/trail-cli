@@ -151,9 +151,50 @@ guide 运营思路="前期：过渡\n中期：D牌\n后期：补强"
 
 ```text
 ok guide.list.cw count=2 more=1 next=token-2
-guide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1
-guide id=def idx=2 hard=0 change_equip=1 expert=0
+guide 攻略ID=abc 攻略标题=7群攻2银河学者 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45
+guide idx=1 最终阵容=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3
 ```
+
+```text
+ok guide.list.cw groups=2 count=1 more=1
+guide 投资环境=购物区 count=1 more=1 next=group-token
+guide 投资环境=购物区 攻略ID=shop-guide 攻略标题=购物区优选阵容 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈 点赞=123 收藏=45
+guide 投资环境=购物区 idx=1 最终阵容=希儿/carry:1/star:5/rarity:3
+guide 投资环境=事件区 count=0 more=1 next=group-token
+```
+
+- 多 `--portal` 请求时，`guide.list.cw` 会按 `投资环境` 分组；分页信息只挂在各组 `guide 投资环境=...` 行上，不会回到顶层首行
+
+```text
+ok cw.start cards=2
+shot path=.trail/shots/req-start.png
+opt idx=1 投资环境="购物区" score=0.99 待收集=1
+opt idx=1 说明="花金币买角色和升级"
+guide idx=1 gid=1 攻略ID=shop-guide 攻略标题=购物区优选阵容 版本=3.2 主C=希儿 攻略标签=#适用超频博弈 点赞=123 收藏=45
+guide idx=1 gid=1 最终阵容=希儿/carry:1/star:5/rarity:3
+```
+
+```text
+ok cw.portal.select idx=2 投资环境="购物区"
+shot path=.trail/shots/req-portal-select.png
+```
+
+```text
+ok cw.guide.current 攻略ID=abc 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2
+guide 攻略标签=#7级搜牌|#适用超频博弈
+info 攻略快照ID=art-1
+```
+
+```text
+ok guide.config.cw 赛季=12 子赛季=3 大版本=3.2
+info 搜牌档位=3 羁绊=42 角色=80 角色标签=11 投资环境=6
+```
+
+- `guide.fetch.cw` 看完整攻略
+- `guide.list.cw` 看筛选摘要
+- `cw.guide.current|apply` 看当前已应用攻略摘要
+- `guide.config.cw` 看筛选枚举和全局配置规模
+- `guide.config.cw --format yaml` 会先输出中文摘要，再附原始英文 key 的结构化 YAML data
 
 ```text
 ok ocr.read hits=2
@@ -182,17 +223,18 @@ recover action=daemon.request_status request=req-42
 ## Guide 字段语义
 
 - `trail guide fetch cw` 默认文本会直接返回攻略标题、攻略标签、投资环境、投资策略、装备优先度与阶段阵容等完整关键信息，方便在 apply 前确认是否就是目标攻略
+- `trail guide list cw` 默认文本只保留选攻略最关键的摘要：`攻略ID/攻略标题/版本/主C/攻略标签/点赞/收藏`，并在第二行补 `最终阵容=`
+- `trail cw guide current|apply` 只返回当前已应用攻略摘要：首行看 `攻略ID/攻略标题/攻略码/版本`，正文按需补 `guide 攻略标签=...`
+- `攻略快照ID`：只出现在 `trail cw guide current|apply` 的 `info 攻略快照ID=...`，它是 artifact id / 恢复追踪 id，不是 `shot path=...` 截图路径
+- `trail guide fetch cw` 负责看完整攻略；`trail cw guide current|apply` 负责回顾当前已应用攻略；两者不要混用
 - `攻略标签`：除了原始标签外，还会把布尔类攻略特征折叠成 `#标签`，例如 `#适用超频博弈`、`#星徽攻略`、`#专家顾问`；值为 false 时省略
 - `羁绊列表`：按当前攻略各阶段阵容里出现过的羁绊去重汇总，并尽量保留层数，形如 `6贝洛伯格`，便于 Agent 直接对照攻略核心体系
-- `适用超频博弈`：是否适用于超频博弈，不表示“更适合高压环境”
 - `最低金币`：这套攻略默认要求保留的最低金币阈值；后续 shop 决策应把它当成约束，而不是可随意花完的预算
 - `优选投资策略` / `次选投资策略`：分别对应页面里的 primary / secondary investment strategy，不是战斗增益名的技术字段
 - `简易装备优先度` / `进阶装备优先度`：分别对应页面里的 base / advanced equip priority，不是泛化的“基础顺序 / 成型顺序”
 - `优选装备` / `次选装备`：按角色展开的推荐装备列表；当前只在该角色确实配置过对应装备时才输出
 - `运营思路`：取自攻略详情原始 `description` 文本，会保留换行，适合直接作为局内运营参考
-- `星徽攻略`：是否需要转阵营道具/星徽，这对选攻略非常关键
-- `专家顾问`：是否包含专家顾问角色；这类角色通常不能在商店中直接购买
-- `final_role_cards`：最终阵容角色摘要，包含 `name / star / rarity / is_carry`，适合在 list 阶段判断“是否存在 X 星 X 费角色”
+- `最终阵容`：用于 `guide.list.cw` 与 `cw.start/cw.portal.*` 的摘要第二行，保留角色、星级、费用和主C标记，适合快速判断这套阵容是否值得选
 - 对语义尚不明确、或当前 fetch 响应里没有直接来源的字段，不默认重新发明英文别名，避免误导 Agent
 
 ## Skill 边界

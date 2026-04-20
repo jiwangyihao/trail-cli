@@ -11,8 +11,8 @@ from trail.output.rendering import print_output
 DEFAULT_CW_STAGE_WAIT_TIMEOUT = 120
 
 CW_APP_HELP = "货币战争固定流程命令：enter 到首页，start 从首页进入投资环境页；其余分组处理局内阶段与资源。"
-CW_GUIDE_HELP = "应用或回顾当前对局已选攻略。"
-CW_PORTAL_HELP = "投资环境页上的选择/刷新/重开动作。"
+CW_GUIDE_HELP = "应用或回顾当前对局已选攻略。当前攻略摘要会输出 攻略ID、攻略标题、攻略码、版本、攻略标签 与 攻略快照ID。"
+CW_PORTAL_HELP = "投资环境页上的选择/刷新/重开动作。投资环境卡片会输出 投资环境、说明、待收集、score，以及下挂攻略摘要。"
 CW_STAGE_HELP = "仅用于货币战争内部阶段的快速检测或等待；不适用于登录页、大世界等非 CW 场景。"
 CW_SLOTS_HELP = "读取编队槽位并执行换位或上场。"
 CW_SHOP_HELP = "读取商店、购买槽位并刷新或关闭。"

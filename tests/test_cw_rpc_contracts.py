@@ -125,6 +125,8 @@ def test_cw_start_renders_portal_cards_and_shot(cli_runner, fake_daemon_client, 
                                 {
                                     "lineup_id": "alpha-guide",
                                     "title": "Alpha攻略",
+                                    "version": "3.2",
+                                    "labels": [],
                                     "carry_roles": ["希儿"],
                                     "support_hard": True,
                                     "has_change_equip": False,
@@ -168,12 +170,12 @@ def test_cw_start_renders_portal_cards_and_shot(cli_runner, fake_daemon_client, 
         "ok cw.start cards=2",
         screenshot=".trail/shots/req-cw-start.png",
         body=[
-            'opt idx=1 title="Alpha Portal" score=0.99 new=1',
-            'opt idx=1 desc="Alpha Desc"',
-            'guide idx=1 gid=1 id=alpha-guide title=Alpha攻略 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45',
-            'guide idx=1 gid=1 final_roles=希儿/carry:1/star:5/rarity:3',
-            'opt idx=2 title="Beta Portal" score=0.88',
-            'opt idx=2 desc="Beta Desc"',
+            'opt idx=1 投资环境="Alpha Portal" score=0.99 待收集=1',
+            'opt idx=1 说明="Alpha Desc"',
+            'guide idx=1 gid=1 攻略ID=alpha-guide 攻略标题=Alpha攻略 版本=3.2 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45',
+            'guide idx=1 gid=1 最终阵容=希儿/carry:1/star:5/rarity:3',
+            'opt idx=2 投资环境="Beta Portal" score=0.88 待收集=0',
+            'opt idx=2 说明="Beta Desc"',
         ],
     )
     _assert_single_call(
@@ -199,7 +201,7 @@ def test_cw_portal_select_renders_selected_card_summary(cli_runner, fake_daemon_
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == _expected_lines(
-        'ok cw.portal.select idx=2 title="Beta Portal"',
+        'ok cw.portal.select idx=2 投资环境="Beta Portal"',
         screenshot=".trail/shots/req-cw-portal-select.png",
     )
     _assert_single_call(client, method="cw.portal.select", payload={"card_idx": 2}, tmp_path=tmp_path)
@@ -229,12 +231,14 @@ def test_cw_portal_refresh_and_restart_render_portal_cards(cli_runner, fake_daem
                                 {
                                     "lineup_id": "alpha-guide",
                                     "title": "Alpha攻略",
+                                    "version": "3.2",
                                     "carry_roles": ["希儿"],
                                     "support_hard": True,
                                     "has_change_equip": False,
                                     "has_expert": True,
                                     "like": 123,
                                     "favour": 45,
+                                    "final_role_cards": [{"name": "希儿", "star": 5, "rarity": 3, "is_carry": True}],
                                 }
                             ],
                         },
@@ -257,11 +261,12 @@ def test_cw_portal_refresh_and_restart_render_portal_cards(cli_runner, fake_daem
         f"ok {method} cards=2",
         screenshot=screenshot,
         body=[
-            'opt idx=1 title="Alpha Portal" score=0.99 new=1',
-            'opt idx=1 desc="Alpha Desc"',
-            'guide idx=1 gid=1 id=alpha-guide title=Alpha攻略 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45',
-            'opt idx=2 title="Beta Portal" score=0.88',
-            'opt idx=2 desc="Beta Desc"',
+            'opt idx=1 投资环境="Alpha Portal" score=0.99 待收集=1',
+            'opt idx=1 说明="Alpha Desc"',
+            'guide idx=1 gid=1 攻略ID=alpha-guide 攻略标题=Alpha攻略 版本=3.2 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45',
+            'guide idx=1 gid=1 最终阵容=希儿/carry:1/star:5/rarity:3',
+            'opt idx=2 投资环境="Beta Portal" score=0.88 待收集=0',
+            'opt idx=2 说明="Beta Desc"',
         ],
     )
     _assert_single_call(client, method=method, payload={}, tmp_path=tmp_path)
@@ -308,7 +313,15 @@ def test_cw_guide_current_renders_guide_summary(cli_runner, fake_daemon_client, 
         {
             "cw.guide.current": build_success_response(
                 request_id="req-cw-guide-current",
-                data={"lineup_id": "abc", "artifact_id": "art-1"},
+                data={
+                    "lineup_id": "abc",
+                    "title": "7群攻2银河学者",
+                    "share_code": "##demo##",
+                    "version": "3.2",
+                    "labels": ["7级搜牌"],
+                    "support_hard": True,
+                    "artifact_id": "art-1",
+                },
             )
         }
     )
@@ -316,7 +329,11 @@ def test_cw_guide_current_renders_guide_summary(cli_runner, fake_daemon_client, 
     result = cli_runner.invoke(app, ["cw", "guide", "current", "--session", SESSION_ID])
 
     assert result.exit_code == 0
-    assert result.stdout.splitlines() == ["ok cw.guide.current id=abc artifact=art-1"]
+    assert result.stdout.splitlines() == [
+        "ok cw.guide.current 攻略ID=abc 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2",
+        "guide 攻略标签=#7级搜牌|#适用超频博弈",
+        "info 攻略快照ID=art-1",
+    ]
     _assert_single_call(client, method="cw.guide.current", payload={}, tmp_path=tmp_path)
 
 
@@ -326,7 +343,15 @@ def test_cw_guide_apply_renders_guide_summary(cli_runner, fake_daemon_client, tm
         {
             "cw.guide.apply": build_success_response(
                 request_id=f"req-cw-guide-apply-{guide_flag.lstrip('-')}",
-                data={"lineup_id": "abc", "artifact_id": "art-1"},
+                data={
+                    "lineup_id": "abc",
+                    "title": "7群攻2银河学者",
+                    "share_code": "##demo##",
+                    "version": "3.2",
+                    "labels": ["7级搜牌"],
+                    "support_hard": True,
+                    "artifact_id": "art-1",
+                },
                 screenshot=".trail/shots/req-cw-guide-apply.png",
             )
         }
@@ -336,8 +361,9 @@ def test_cw_guide_apply_renders_guide_summary(cli_runner, fake_daemon_client, tm
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == _expected_lines(
-        "ok cw.guide.apply id=abc artifact=art-1",
+        "ok cw.guide.apply 攻略ID=abc 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2",
         screenshot=".trail/shots/req-cw-guide-apply.png",
+        body=["guide 攻略标签=#7级搜牌|#适用超频博弈", "info 攻略快照ID=art-1"],
     )
     _assert_single_call(client, method="cw.guide.apply", payload={"lineup_id": "abc"}, tmp_path=tmp_path)
 

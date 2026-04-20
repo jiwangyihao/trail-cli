@@ -53,7 +53,7 @@ def guide_list(
     portal: list[str] | None = typer.Option(None, "--portal"),
     portal_id: list[str] | None = typer.Option(None, "--portal-id"),
 ) -> None:
-    """列出可选攻略。默认字段面向“选攻略”，会保留 has_change_equip / has_expert / support_hard / final_role_cards 等高价值信息。"""
+    """列出可选攻略。默认摘要保留攻略ID、攻略标签、主C、版本、点赞/收藏与最终阵容。"""
 
     if not _require_cw_scene(scene):
         print_output(f"guide.list.{scene}", _unsupported_scene_response(scene))
