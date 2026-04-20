@@ -109,6 +109,17 @@ def _collect_capture_metadata(runtime, *, screenshot, verbose: bool) -> dict:
     }
 
 
+def _safe_collect_capture_metadata(runtime, *, screenshot, verbose: bool) -> dict:
+    try:
+        return _collect_capture_metadata(runtime, screenshot=screenshot, verbose=verbose)
+    except Exception:
+        return {
+            "warnings": [],
+            "references": [],
+            "debug": None,
+        }
+
+
 def with_auto_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None = None):
     effective_verbose = _resolve_verbose(verbose)
     started = perf_counter()
@@ -140,6 +151,37 @@ def with_auto_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None =
 
         screenshot = _capture_screenshot(resolved_runtime, optional=False)
         metadata = _collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
+        return command_success(
+            data=data,
+            screenshot=screenshot,
+            timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
+            **metadata,
+        )
+    finally:
+        _end_capture_scope(resolved_runtime)
+
+
+def with_selective_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None = None):
+    effective_verbose = _resolve_verbose(verbose)
+    started = perf_counter()
+    resolved_runtime = _resolve_runtime(runtime)
+    _begin_capture_scope(resolved_runtime)
+    try:
+        try:
+            data = fn()
+        except TrailError as exc:
+            screenshot = _capture_optional_screenshot(resolved_runtime)
+            metadata = _safe_collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
+            return command_failure(
+                code=exc.code,
+                message=str(exc),
+                screenshot=screenshot,
+                timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
+                **metadata,
+            )
+
+        screenshot = _capture_screenshot(resolved_runtime, optional=False)
+        metadata = _safe_collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
         return command_success(
             data=data,
             screenshot=screenshot,

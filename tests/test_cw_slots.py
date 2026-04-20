@@ -80,10 +80,11 @@ def test_slots_read_rejects_empty_snapshot_and_preserves_previous_state(tmp_path
     assert session.scene_state["cw"] == previous
 
 
-def test_build_cw_slots_reader_reads_runtime_slot_snapshots_and_closes_overlay():
+def test_build_cw_slots_reader_reads_runtime_slot_snapshots_and_closes_overlay(monkeypatch):
     slots_module = load_cw_slots_module()
     build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
     assert build_cw_slots_reader is not None
+    monkeypatch.setattr(slots_module, "sleep", lambda seconds: None, raising=False)
 
     class RuntimeSpy:
         def __init__(self):
@@ -141,10 +142,11 @@ def test_build_cw_slots_reader_reads_runtime_slot_snapshots_and_closes_overlay()
     assert len(runtime.ocr_calls) == 19
 
 
-def test_build_cw_slots_reader_reads_only_requested_slots():
+def test_build_cw_slots_reader_reads_only_requested_slots(monkeypatch):
     slots_module = load_cw_slots_module()
     build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
     assert build_cw_slots_reader is not None
+    monkeypatch.setattr(slots_module, "sleep", lambda seconds: None, raising=False)
 
     class RuntimeSpy:
         def __init__(self):
@@ -183,6 +185,63 @@ def test_build_cw_slots_reader_reads_only_requested_slots():
     assert len(runtime.ocr_calls) == 2
 
 
+def test_build_cw_slots_reader_waits_for_slot_panel_settle_between_interactions(monkeypatch):
+    slots_module = load_cw_slots_module()
+    build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
+    assert build_cw_slots_reader is not None
+
+    class RuntimeSpy:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.state = "idle"
+            self.current_name: str | None = None
+            self.names = {
+                slots_module.FRONT_SLOT_POINTS[0]: "希儿",
+                slots_module.HAND_SLOT_POINTS[0]: "银狼",
+            }
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            point = (x, y)
+            self.clicks.append(point)
+            if point == slots_module.INFO_DISMISS_POINT:
+                if self.state == "panel-open":
+                    self.state = "panel-closing"
+                return
+            if self.state != "idle":
+                return
+            self.current_name = self.names.get(point)
+            self.state = "panel-opening"
+
+        def ocr(self, **kwargs):
+            del kwargs
+            if self.state == "panel-open" and self.current_name is not None:
+                return [([0, 0], self.current_name, 0.99)]
+            return []
+
+        def settle(self, seconds: float):
+            assert seconds > 0
+            if self.state == "panel-opening":
+                self.state = "panel-open"
+                return
+            if self.state == "panel-closing":
+                self.state = "idle"
+                self.current_name = None
+
+    runtime = RuntimeSpy()
+    monkeypatch.setattr(slots_module, "sleep", runtime.settle, raising=False)
+
+    front, back, hand = build_cw_slots_reader(runtime, targets=["front:0", "hand:0"])()
+
+    assert front == ["希儿", None, None, None]
+    assert back == [None, None, None, None, None, None]
+    assert hand == ["银狼", None, None, None, None, None, None, None, None]
+
+
 def test_slots_read_partial_refresh_preserves_existing_unknown_positions(tmp_path):
     slots_module = load_cw_slots_module()
     read_cw_slots = getattr(slots_module, "read_cw_slots", None)
@@ -204,10 +263,11 @@ def test_slots_read_partial_refresh_preserves_existing_unknown_positions(tmp_pat
     }
 
 
-def test_collapse_expanded_hand_card_rejects_stuck_open_overlay():
+def test_collapse_expanded_hand_card_rejects_stuck_open_overlay(monkeypatch):
     slots_module = load_cw_slots_module()
     collapse = getattr(slots_module, "_collapse_expanded_hand_card", None)
     assert collapse is not None
+    monkeypatch.setattr(slots_module, "sleep", lambda seconds: None, raising=False)
 
     class RuntimeSpy:
         def __init__(self):
@@ -231,6 +291,44 @@ def test_collapse_expanded_hand_card_rejects_stuck_open_overlay():
     assert exc_info.value.code == "SLOTS_OPEN_STUCK"
     assert runtime.locate_calls == slots_module.HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS
     assert runtime.clicks == [(25, 40), slots_module.HAND_EXPAND_DISMISS_POINT] * slots_module.HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS
+
+
+def test_collapse_expanded_hand_card_waits_for_dismiss_settle(monkeypatch):
+    slots_module = load_cw_slots_module()
+    collapse = getattr(slots_module, "_collapse_expanded_hand_card", None)
+    assert collapse is not None
+
+    class RuntimeSpy:
+        def __init__(self):
+            self.locate_calls = 0
+            self.clicks: list[tuple[int, int]] = []
+            self.state = "open"
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            self.locate_calls += 1
+            if self.state != "closed":
+                return Box(left=10, top=20, width=30, height=40)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == slots_module.HAND_EXPAND_DISMISS_POINT and self.state == "open":
+                self.state = "closing"
+
+        def settle(self, seconds: float):
+            assert seconds > 0
+            if self.state == "closing":
+                self.state = "closed"
+
+    runtime = RuntimeSpy()
+    monkeypatch.setattr(slots_module, "sleep", runtime.settle, raising=False)
+
+    collapse(runtime)
+
+    assert runtime.locate_calls == 2
+    assert runtime.clicks == [(25, 40), slots_module.HAND_EXPAND_DISMISS_POINT]
 
 
 def test_slots_swap_invalidates_existing_snapshot(tmp_path):
@@ -488,6 +586,141 @@ def test_cw_slots_read_service_preserves_existing_snapshot_shape(tmp_path: Path,
 
     assert result["front"][1] == "布洛妮娅"
     assert service.load_session(session.session_id).scene_state["cw"]["slots"]["front"][1] == "布洛妮娅"
+
+
+def test_cw_slots_read_command_service_captures_screenshot(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+    from trail.daemon.cw_service import CwService
+    from trail.daemon.models import DaemonRequest
+    from trail.daemon.protocol import PROTOCOL_VERSION
+    from trail.daemon.session_service import SessionServiceRegistry
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional
+            return tmp_path / ".trail" / "shots" / f"{request_id}.png"
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.slots_reader_factory",
+        lambda runtime, targets=None: lambda: (["希儿", None, None, None], [None] * 6, [None] * 9),
+    )
+
+    request_id = "req-cw-slots-read-capture"
+    envelope = command_service.handle(
+        DaemonRequest(
+            request_id=request_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.slots.read",
+            payload={"session_id": session.session_id, "slot": ["front:0"]},
+        )
+    )
+
+    assert envelope["ok"] is True
+    assert envelope["request_id"] == request_id
+    assert envelope["screenshot"] == f".trail/shots/{request_id}.png"
+    with pytest.raises(TrailError) as exc_info:
+        service.request_status(request_id)
+    assert exc_info.value.code == "REQUEST_NOT_FOUND"
+
+
+def test_cw_slots_read_command_service_preserves_read_failure_semantics(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+    from trail.daemon.cw_service import CwService
+    from trail.daemon.models import DaemonRequest
+    from trail.daemon.protocol import PROTOCOL_VERSION
+    from trail.daemon.session_service import SessionServiceRegistry
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional
+            return tmp_path / ".trail" / "shots" / f"{request_id}.png"
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del x, y, kwargs
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.slots_reader_factory",
+        lambda runtime, targets=None: lambda: ([None] * 4, [None] * 6, [None] * 9),
+    )
+
+    request_id = "req-cw-slots-read-empty"
+    envelope = command_service.handle(
+        DaemonRequest(
+            request_id=request_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.slots.read",
+            payload={"session_id": session.session_id},
+        )
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["request_id"] == request_id
+    assert envelope["error"] == {
+        "code": "SLOTS_READ_EMPTY",
+        "message": "未读取到任何货币战争槽位角色，请确认当前在编队界面",
+    }
+    assert envelope["screenshot"] == f".trail/shots/{request_id}.png"
+
+
+def test_cw_slots_read_command_service_preserves_unexpected_exception_semantics(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+    from trail.daemon.cw_service import CwService
+    from trail.daemon.models import DaemonRequest
+    from trail.daemon.protocol import PROTOCOL_VERSION
+    from trail.daemon.session_service import SessionServiceRegistry
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return tmp_path / ".trail" / "shots" / "unexpected.png"
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.slots_reader_factory",
+        lambda runtime, targets=None: lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        command_service.handle(
+            DaemonRequest(
+                request_id="req-cw-slots-read-unexpected",
+                protocol_version=PROTOCOL_VERSION,
+                workspace_root=str(tmp_path),
+                session_id=session.session_id,
+                verbose=False,
+                method="cw.slots.read",
+                payload={"session_id": session.session_id},
+            )
+        )
 
 
 @pytest.mark.parametrize(

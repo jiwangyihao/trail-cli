@@ -205,6 +205,23 @@ class CommandService:
             session_service=service,
         )
 
+    def _run_cw_with_capture(self, request, *, service):
+        payload = deepcopy(request.payload)
+        if request.session_id is not None:
+            payload.setdefault("session_id", request.session_id)
+        response = self._response_with_request_id(
+            request.request_id,
+            self._cw_service().handle_with_capture(
+                method=request.method,
+                payload=payload,
+                workspace_root=request.workspace_root,
+                session_service=service,
+                request_id=request.request_id,
+                verbose=request.verbose,
+            ),
+        )
+        return _normalize_capture_payload(response, workspace_root=Path(request.workspace_root))
+
     def _run_cw_mutation(self, request, *, service):
         payload = deepcopy(request.payload)
         if request.session_id is not None:
@@ -365,6 +382,8 @@ class CommandService:
 
         if request.method.startswith("cw."):
             service = self._session_service(request)
+            if request.method == "cw.slots.read":
+                return self._run_cw_with_capture(request, service=service)
             if request.method in CW_MUTATING_METHODS:
                 session_id = request.session_id or request.payload.get("session_id")
                 return self._run_mutation(

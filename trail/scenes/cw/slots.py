@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
+from time import sleep
 from typing import Any
 
 from trail.core.errors import TrailError
@@ -78,6 +79,7 @@ CRYSTAL_DRAG_PATHS = [
 OPEN_TEMPLATE_ALIAS = "slots.open"
 CANNOT_BE_FIELDED_ALIAS = "slots.cannot_be_fielded"
 HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS = 5
+SLOT_PANEL_SETTLE_SECONDS = 0.2
 
 
 def _clear_sell_plan(cw_state: dict) -> None:
@@ -124,10 +126,12 @@ def _read_ocr_piece(item: Any) -> str:
 
 def _read_slot_name(runtime, *, point: tuple[int, int]) -> str | None:
     runtime.click_point(*point)
+    sleep(SLOT_PANEL_SETTLE_SECONDS)
     try:
         pieces = runtime.ocr(capture=SLOT_NAME_REGION) or []
     finally:
         runtime.click_point(*INFO_DISMISS_POINT)
+        sleep(SLOT_PANEL_SETTLE_SECONDS)
     name = "".join(_read_ocr_piece(piece).strip() for piece in pieces).strip()
     return name or None
 
@@ -140,6 +144,7 @@ def _collapse_expanded_hand_card(runtime) -> None:
             return
         runtime.click_point(*_box_center(box))
         runtime.click_point(*HAND_EXPAND_DISMISS_POINT)
+        sleep(SLOT_PANEL_SETTLE_SECONDS)
     raise TrailError("SLOTS_OPEN_STUCK", "手牌展开卡片未关闭，请确认当前在编队界面")
 
 

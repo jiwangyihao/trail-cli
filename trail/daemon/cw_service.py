@@ -6,7 +6,7 @@ from time import sleep
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
 from trail.daemon.command_service import SideEffectAppliedButStateNotPersisted
-from trail.output.capture import with_auto_capture
+from trail.output.capture import with_auto_capture, with_selective_capture
 from trail.scenes.cw.entry import enter_cw, start_cw
 from trail.scenes.cw.events import (
     build_cw_battle_continuer,
@@ -152,6 +152,30 @@ class CwService:
         result = handlers[method]()
         session_service.save_session(session)
         return result
+
+    def handle_with_capture(
+        self,
+        *,
+        method: str,
+        payload: dict,
+        workspace_root: str,
+        session_service,
+        request_id: str,
+        verbose: bool = False,
+    ) -> dict | None:
+        session, _, runtime, handlers, _ = self._context(
+            method=method,
+            payload=payload,
+            workspace_root=workspace_root,
+            session_service=session_service,
+        )
+
+        capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id)
+        return with_selective_capture(
+            capture_runtime,
+            lambda: _handle_and_save_session(handlers[method], session_service, session),
+            verbose=verbose,
+        )
 
     def handle_mutation(
         self,
@@ -377,6 +401,12 @@ class CwService:
             raise TrailError("DAEMON_METHOD_NOT_SUPPORTED", f"unsupported method: {method}")
 
         return session, artifact_store, runtime, handlers, tracker
+
+
+def _handle_and_save_session(handler, session_service, session):
+    result = handler()
+    session_service.save_session(session)
+    return result
 
 
 def _current_guide(session):
