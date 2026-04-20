@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from trail.runtime.model import Box
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.entry import enter_cw
@@ -18,7 +20,13 @@ def _box(alias: str, *, left: int, top: int, width: int = 40, height: int = 20) 
     return Box(left=left, top=top, width=width, height=height, source=_asset(alias))
 
 
-def _install_template_runtime(runtime, *, locate_results: dict[str, object] | None = None, wait_results: dict[str, object] | None = None) -> None:
+def _install_template_runtime(
+    runtime,
+    *,
+    locate_results: dict[str, object] | None = None,
+    wait_results: dict[str, object] | None = None,
+    ocr_results: object | None = None,
+) -> None:
     locate_results = locate_results or {}
     wait_results = wait_results or {}
 
@@ -32,8 +40,13 @@ def _install_template_runtime(runtime, *, locate_results: dict[str, object] | No
         runtime.wait_calls.append(template)
         return wait_results.get(template)
 
+    def ocr(**kwargs):
+        del kwargs
+        return ocr_results or []
+
     runtime.locate = locate
     runtime.wait_img = wait_img
+    runtime.ocr = ocr
 
 
 def test_enter_cw_records_entry_snapshot_and_invalidates_stage(tmp_path):
@@ -47,28 +60,18 @@ def test_enter_cw_records_entry_snapshot_and_invalidates_stage(tmp_path):
 
     refreshed = enter_cw(session, mode="continue", difficulty="highest", battle_mode="overclock")
 
-    assert refreshed.scene_state["cw"]["entry"] == {
-        "mode": "continue",
-        "difficulty": "highest",
-        "battle_mode": "overclock",
-    }
+    assert refreshed.scene_state["cw"]["entry"] == {"page": "home"}
     assert refreshed.scene_state["cw"]["stage"] == {"stale": True}
     assert refreshed.scene_state["cw"]["slots"] == {"stale": True, "hand": ["希儿"]}
     assert refreshed.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
     assert refreshed.scene_state["cw"]["sell_plan"] == {"stale": True}
 
 
-def test_enter_cw_runs_new_mode_ui_flow_from_start_related_pages(tmp_path):
+def test_enter_cw_returns_home_noop_when_already_on_start_page(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
     session.last_stage = {"scene": "cw", "value": "shop"}
 
     start_box = _box("entry.start", left=10, top=20)
-    enter_box = _box("entry.new", left=80, top=90)
-    highest_box = _box("entry.difficulty.highest", left=140, top=160)
-    start_game_box = _box("entry.start_game", left=220, top=260)
-    next_step_box = _box("stage.settle", left=320, top=360)
-    blank_box = _box("stage.boss_preview", left=360, top=400)
-    invest_box = _box("entry.invest_environment", left=420, top=460)
 
     class Runtime:
         def __init__(self):
@@ -89,56 +92,101 @@ def test_enter_cw_runs_new_mode_ui_flow_from_start_related_pages(tmp_path):
         runtime,
         locate_results={
             _asset("entry.start"): start_box,
-            _asset("stage.preparation"): None,
-            _asset("stage.settle"): next_step_box,
-            _asset("stage.invest"): None,
-        },
-        wait_results={
-            _asset("entry.new"): enter_box,
-            _asset("entry.difficulty.highest"): highest_box,
-            _asset("entry.start_game"): start_game_box,
-            _asset("stage.settle"): next_step_box,
-            _asset("stage.boss_preview"): blank_box,
-            _asset("entry.invest_environment"): invest_box,
         },
     )
 
     refreshed = enter_cw(session, mode="new", difficulty="highest", battle_mode="overclock", runtime=runtime)
 
-    assert refreshed.scene_state["cw"]["entry"] == {
-        "mode": "new",
-        "difficulty": "highest",
-        "battle_mode": "overclock",
-    }
+    assert refreshed.scene_state["cw"]["entry"] == {"page": "home", "already_home": True}
     assert refreshed.scene_state["cw"]["stage"] == {"stale": True}
     assert refreshed.last_stage is None
-    assert runtime.clicks == [
-        start_box.center,
-        (300, 450),
-        enter_box.center,
-        highest_box.center,
-        start_game_box.center,
-        next_step_box.center,
-        blank_box.center,
-    ]
-    assert runtime.wait_calls == [
-        _asset("entry.new"),
-        _asset("entry.difficulty.highest"),
-        _asset("entry.start_game"),
-        _asset("stage.settle"),
-        _asset("stage.boss_preview"),
-        _asset("entry.invest_environment"),
-    ]
+    assert runtime.clicks == []
+    assert runtime.wait_calls == []
 
 
-def test_enter_cw_runs_world_to_currency_wars_entry_chain_before_continue_flow(tmp_path):
+def test_enter_cw_returns_home_when_start_page_visible_and_ocr_backend_errors(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+
+    start_box = _box("entry.start", left=10, top=20)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+    runtime = Runtime()
+    _install_template_runtime(runtime, locate_results={_asset("entry.start"): start_box})
+    runtime.ocr = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("ocr backend missing"))
+
+    refreshed = enter_cw(session, mode="new", runtime=runtime)
+
+    assert refreshed.scene_state["cw"]["entry"] == {"page": "home", "already_home": True}
+
+
+def test_enter_cw_rejects_game_over_state_recorded_in_session(tmp_path):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
+
+    start_box = _box("entry.start", left=10, top=20)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+    runtime = Runtime()
+    _install_template_runtime(runtime, locate_results={_asset("entry.start"): start_box})
+
+    with pytest.raises(Exception) as exc_info:
+        enter_cw(session, mode="continue", runtime=runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_ENTER_ALREADY_PAST_HOME"
+    assert getattr(exc_info.value, "data", None) == {"page": "in_game", "stage": "game_over"}
+
+
+def test_enter_cw_prefers_recorded_game_over_over_home_on_shared_start_resource(tmp_path):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {
+        "entry": {"page": "home"},
+        "stage": {"value": "game_over", "stale": False},
+    }
+
+    start_box = _box("entry.start", left=10, top=20)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+    runtime = Runtime()
+    _install_template_runtime(runtime, locate_results={_asset("entry.start"): start_box})
+
+    with pytest.raises(Exception) as exc_info:
+        enter_cw(session, mode="continue", runtime=runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_ENTER_ALREADY_PAST_HOME"
+    assert getattr(exc_info.value, "data", None) == {"page": "in_game", "stage": "game_over"}
+
+
+def test_enter_cw_ignores_recorded_game_over_when_runtime_is_still_world(tmp_path):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
 
     menu_box = _box("entry.menu", left=12, top=24)
     cosmic_box = _box("entry.cosmic_strife", left=36, top=48)
     start_box = _box("entry.start", left=84, top=96)
-    continue_box = _box("entry.continue", left=120, top=132)
-    blank_box = _box("stage.boss_preview", left=168, top=180)
 
     class Runtime:
         def __init__(self):
@@ -162,46 +210,97 @@ def test_enter_cw_runs_world_to_currency_wars_entry_chain_before_continue_flow(t
     _install_template_runtime(
         runtime,
         locate_results={
-            _asset("stage.preparation"): None,
-            _asset("entry.start"): None,
             _asset("entry.new"): None,
             _asset("entry.continue"): None,
-            _asset("stage.settle"): None,
-            _asset("stage.invest"): None,
+            _asset("entry.invest_environment"): None,
+            _asset("stage.preparation"): None,
+            _asset("stage.shop"): None,
+            _asset("stage.replenish"): None,
+            _asset("stage.encounter"): None,
+            _asset("stage.fortune"): None,
+            _asset("stage.event"): None,
+            _asset("stage.boss_preview"): None,
+            _asset("entry.start"): None,
         },
         wait_results={
             _asset("entry.menu"): menu_box,
             _asset("entry.cosmic_strife"): cosmic_box,
             _asset("entry.start"): start_box,
-            _asset("entry.continue"): continue_box,
-            _asset("stage.boss_preview"): blank_box,
+        },
+        ocr_results=[],
+    )
+
+    refreshed = enter_cw(session, mode="continue", runtime=runtime)
+
+    assert refreshed.scene_state["cw"]["entry"] == {"page": "home"}
+    assert runtime.keys == [("f4", 1, 0.2)]
+
+
+def test_enter_cw_runs_world_to_currency_wars_entry_chain_until_home(tmp_path):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+
+    menu_box = _box("entry.menu", left=12, top=24)
+    cosmic_box = _box("entry.cosmic_strife", left=36, top=48)
+    start_box = _box("entry.start", left=84, top=96)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.keys: list[tuple[str, int, float]] = []
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            self.keys.append((key, presses, interval))
+
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={
+            _asset("entry.start"): None,
+            _asset("entry.new"): None,
+            _asset("entry.continue"): None,
+            _asset("entry.invest_environment"): None,
+            _asset("stage.preparation"): None,
+            _asset("stage.invest"): None,
+            _asset("stage.boss_preview"): None,
+            _asset("stage.shop"): None,
+            _asset("stage.replenish"): None,
+            _asset("stage.encounter"): None,
+            _asset("stage.fortune"): None,
+            _asset("stage.event"): None,
+            _asset("stage.settle"): None,
+            _asset("stage.game_over"): None,
+        },
+        wait_results={
+            _asset("entry.menu"): menu_box,
+            _asset("entry.cosmic_strife"): cosmic_box,
+            _asset("entry.start"): start_box,
         },
     )
 
     refreshed = enter_cw(session, mode="continue", difficulty="current", battle_mode="standard", runtime=runtime)
 
-    assert refreshed.scene_state["cw"]["entry"] == {
-        "mode": "continue",
-        "difficulty": "current",
-        "battle_mode": "standard",
-    }
+    assert refreshed.scene_state["cw"]["entry"] == {"page": "home"}
     assert refreshed.scene_state["cw"]["stage"] == {"stale": True}
     assert runtime.keys == [("f4", 1, 0.2)]
     assert runtime.clicks == [
         cosmic_box.center,
         (464, 324),
         (1494, 884),
-        start_box.center,
-        (300, 250),
-        continue_box.center,
-        blank_box.center,
     ]
     assert runtime.wait_calls == [
         _asset("entry.menu"),
         _asset("entry.cosmic_strife"),
         _asset("entry.start"),
-        _asset("entry.continue"),
-        _asset("stage.boss_preview"),
     ]
 
 
@@ -213,9 +312,6 @@ def test_enter_cw_world_entry_flow_waits_between_guide_transitions(tmp_path, mon
     menu_box = _box("entry.menu", left=12, top=24)
     cosmic_box = _box("entry.cosmic_strife", left=36, top=48)
     start_box = _box("entry.start", left=84, top=96)
-    continue_box = _box("entry.continue", left=120, top=132)
-    blank_box = _box("stage.boss_preview", left=168, top=180)
-
     class Runtime:
         def __init__(self):
             self.locate_calls: list[str] = []
@@ -238,19 +334,25 @@ def test_enter_cw_world_entry_flow_waits_between_guide_transitions(tmp_path, mon
     _install_template_runtime(
         runtime,
         locate_results={
-            _asset("stage.preparation"): None,
             _asset("entry.start"): None,
             _asset("entry.new"): None,
             _asset("entry.continue"): None,
-            _asset("stage.settle"): None,
+            _asset("entry.invest_environment"): None,
+            _asset("stage.preparation"): None,
             _asset("stage.invest"): None,
+            _asset("stage.boss_preview"): None,
+            _asset("stage.shop"): None,
+            _asset("stage.replenish"): None,
+            _asset("stage.encounter"): None,
+            _asset("stage.fortune"): None,
+            _asset("stage.event"): None,
+            _asset("stage.settle"): None,
+            _asset("stage.game_over"): None,
         },
         wait_results={
             _asset("entry.menu"): menu_box,
             _asset("entry.cosmic_strife"): cosmic_box,
             _asset("entry.start"): start_box,
-            _asset("entry.continue"): continue_box,
-            _asset("stage.boss_preview"): blank_box,
         },
     )
     sleep_calls: list[float] = []
@@ -261,15 +363,19 @@ def test_enter_cw_world_entry_flow_waits_between_guide_transitions(tmp_path, mon
     assert sleep_calls == [2.0, 1.0, 0.8, 1.0]
 
 
-def test_enter_cw_does_not_treat_generic_settle_template_as_top_level_entry_recovery(tmp_path):
+@pytest.mark.parametrize(
+    ("locate_results", "ocr_results", "expected_data", "expected_message"),
+    [
+        ({_asset("entry.new"): _box("entry.new", left=10, top=20)}, None, {"page": "entry.new"}, "cw enter only supports world or home, current page: entry.new"),
+        ({_asset("entry.continue"): _box("entry.continue", left=10, top=20)}, None, {"page": "entry.continue"}, "cw enter only supports world or home, current page: entry.continue"),
+        ({_asset("stage.boss_preview"): _box("stage.boss_preview", left=10, top=20)}, None, {"page": "stage.boss_preview", "stage": "boss_preview"}, "cw enter only supports world or home, current page: stage.boss_preview, stage: boss_preview"),
+        ({_asset("entry.invest_environment"): _box("entry.invest_environment", left=10, top=20)}, None, {"page": "invest"}, "cw enter only supports world or home, current page: invest"),
+        ({_asset("stage.preparation"): _box("stage.preparation", left=10, top=20)}, None, {"page": "in_game", "stage": "preparation"}, "cw enter only supports world or home, current page: in_game, stage: preparation"),
+        ({_asset("entry.start"): _box("entry.start", left=10, top=20)}, [([0, 0], "挑战失败", 0.99), ([0, 0], "继续挑战", 0.99)], {"page": "in_game", "stage": "settle"}, "cw enter only supports world or home, current page: in_game, stage: settle"),
+    ],
+)
+def test_enter_cw_rejects_pages_beyond_home(tmp_path, locate_results, ocr_results, expected_data, expected_message):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
-
-    menu_box = _box("entry.menu", left=20, top=32)
-    cosmic_box = _box("entry.cosmic_strife", left=44, top=56)
-    start_box = _box("entry.start", left=92, top=104)
-    continue_box = _box("entry.continue", left=128, top=140)
-    blank_box = _box("stage.boss_preview", left=176, top=188)
-    next_step_box = _box("stage.settle", left=224, top=236)
 
     class Runtime:
         def __init__(self):
@@ -290,43 +396,18 @@ def test_enter_cw_does_not_treat_generic_settle_template_as_top_level_entry_reco
             self.keys.append((key, presses, interval))
 
     runtime = Runtime()
-    _install_template_runtime(
-        runtime,
-        locate_results={
-            _asset("stage.preparation"): None,
-            _asset("entry.start"): None,
-            _asset("entry.new"): None,
-            _asset("entry.continue"): None,
-            _asset("stage.settle"): next_step_box,
-            _asset("stage.invest"): None,
-        },
-        wait_results={
-            _asset("entry.menu"): menu_box,
-            _asset("entry.cosmic_strife"): cosmic_box,
-            _asset("entry.start"): start_box,
-            _asset("entry.continue"): continue_box,
-            _asset("stage.boss_preview"): blank_box,
-        },
-    )
+    _install_template_runtime(runtime, locate_results=locate_results, ocr_results=ocr_results)
 
-    refreshed = enter_cw(session, mode="continue", runtime=runtime)
+    with pytest.raises(Exception) as exc_info:
+        enter_cw(session, mode="continue", runtime=runtime)
 
-    assert refreshed.scene_state["cw"]["entry"] == {
-        "mode": "continue",
-        "difficulty": "current",
-        "battle_mode": "standard",
-    }
-    assert runtime.keys == [("f4", 1, 0.2)]
-    assert next_step_box.center not in runtime.clicks
-    assert runtime.clicks == [
-        cosmic_box.center,
-        (464, 324),
-        (1494, 884),
-        start_box.center,
-        (300, 250),
-        continue_box.center,
-        blank_box.center,
-    ]
+    assert isinstance(exc_info.value, Exception)
+    assert getattr(exc_info.value, "code", None) == "CW_ENTER_ALREADY_PAST_HOME"
+    assert str(exc_info.value) == expected_message
+    assert getattr(exc_info.value, "data", None) == expected_data
+    assert runtime.keys == []
+    assert runtime.clicks == []
+    assert runtime.wait_calls == []
 
 
 def _build_cw_harness(tmp_path: Path, *, runtime=None):
@@ -371,9 +452,9 @@ def test_cw_enter_mutation_flows_through_command_service_journal(tmp_path: Path,
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
     monkeypatch.setattr(
         "trail.daemon.cw_service.enter_cw",
-        lambda session, mode, difficulty, battle_mode, runtime: _set_entry(
+        lambda session, runtime: _set_entry(
             session,
-            {"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode},
+            {"page": "home"},
         ),
     )
 
@@ -383,15 +464,15 @@ def test_cw_enter_mutation_flows_through_command_service_journal(tmp_path: Path,
         workspace_root=tmp_path,
         request_id="req-cw-enter-1",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
     status = registry.for_workspace(str(tmp_path)).request_status("req-cw-enter-1")
     persisted = service.load_session(session.session_id)
 
     assert envelope["ok"] is True
-    assert envelope["data"]["mode"] == "continue"
+    assert envelope["data"] == {"page": "home"}
     assert status["final_state"] == "completed"
-    assert persisted.scene_state["cw"]["entry"]["battle_mode"] == "standard"
+    assert persisted.scene_state["cw"]["entry"] == {"page": "home"}
     assert persisted.scene_state["cw"]["stage"] == {"stale": True}
 
 
@@ -417,11 +498,7 @@ def test_cw_enter_mutation_rejects_tainted_session_until_reconciled(tmp_path: Pa
     enter_calls: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
         "trail.daemon.cw_service.enter_cw",
-        lambda session, mode, difficulty, battle_mode, runtime: enter_calls.append((mode, difficulty, battle_mode))
-        or _set_entry(
-            session,
-            {"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode},
-        ),
+        lambda session, runtime: enter_calls.append(("called", "called", "called")) or _set_entry(session, {"page": "home"}),
     )
 
     blocked = _run_cw_mutation(
@@ -430,7 +507,7 @@ def test_cw_enter_mutation_rejects_tainted_session_until_reconciled(tmp_path: Pa
         workspace_root=tmp_path,
         request_id="req-cw-enter-blocked",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
 
     assert service.request_status("req-cw-tainted")["tainted"] is True
@@ -449,11 +526,11 @@ def test_cw_enter_mutation_rejects_tainted_session_until_reconciled(tmp_path: Pa
         workspace_root=tmp_path,
         request_id="req-cw-enter-reconciled",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
 
     assert envelope["ok"] is True
-    assert enter_calls == [("continue", "current", "standard")]
+    assert enter_calls == [("called", "called", "called")]
     assert service.request_status("req-cw-enter-reconciled")["final_state"] == "completed"
 
 
@@ -462,11 +539,7 @@ def test_cw_enter_duplicate_terminal_replay_precedes_tainted_gate(tmp_path: Path
     enter_calls: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
         "trail.daemon.cw_service.enter_cw",
-        lambda session, mode, difficulty, battle_mode, runtime: enter_calls.append((mode, difficulty, battle_mode))
-        or _set_entry(
-            session,
-            {"mode": mode, "difficulty": difficulty, "battle_mode": battle_mode},
-        ),
+        lambda session, runtime: enter_calls.append(("called", "called", "called")) or _set_entry(session, {"page": "home"}),
     )
     risky_envelope = {
         "ok": False,
@@ -493,7 +566,7 @@ def test_cw_enter_duplicate_terminal_replay_precedes_tainted_gate(tmp_path: Path
         workspace_root=tmp_path,
         request_id="req-cw-enter-tainted",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
     blocked = _run_cw_mutation(
         command_service=command_service,
@@ -501,7 +574,7 @@ def test_cw_enter_duplicate_terminal_replay_precedes_tainted_gate(tmp_path: Path
         workspace_root=tmp_path,
         request_id="req-cw-enter-blocked",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
 
     assert replay["request_id"] == "req-cw-enter-tainted"
@@ -530,8 +603,8 @@ def test_cw_enter_marks_applied_but_not_persisted_when_ui_side_effect_fails_late
     runtime = Runtime()
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path, runtime=runtime)
 
-    def late_failure(session, mode, difficulty, battle_mode, runtime):
-        del session, mode, difficulty, battle_mode
+    def late_failure(session, runtime):
+        del session
         runtime.click_point(640, 360)
         raise RuntimeError("cw enter late failure")
 
@@ -543,7 +616,7 @@ def test_cw_enter_marks_applied_but_not_persisted_when_ui_side_effect_fails_late
         workspace_root=tmp_path,
         request_id="req-cw-enter-late-fail",
         method="cw.enter",
-        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        payload={},
     )
     status = service.request_status("req-cw-enter-late-fail")
     persisted = service.load_session(session.session_id)

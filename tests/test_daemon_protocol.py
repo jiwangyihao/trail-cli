@@ -181,6 +181,10 @@ def _set_shop(session, shop: dict):
     return session
 
 
+def _box(alias: str, *, left: int, top: int, width: int = 40, height: int = 20) -> dict[str, object]:
+    return {"left": left, "top": top, "width": width, "height": height, "source": alias}
+
+
 def test_protocol_version_is_fixed():
     assert PROTOCOL_VERSION == 1
 
@@ -597,6 +601,1150 @@ def test_command_service_handles_cw_stage_detect(tmp_path: Path, monkeypatch):
 
     assert payload["ok"] is True
     assert registry.for_workspace(str(tmp_path)).load_session(session.session_id).scene_state["cw"]["stage"]["value"] == "preparation"
+
+
+def test_command_service_handles_cw_enter_world_to_home(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.keys: list[tuple[str, int, float]] = []
+            self._locate_results = {
+                asset("entry.start"): None,
+                asset("entry.new"): None,
+                asset("entry.continue"): None,
+                asset("entry.invest_environment"): None,
+                asset("stage.preparation"): None,
+                asset("stage.shop"): None,
+                asset("stage.replenish"): None,
+                asset("stage.encounter"): None,
+                asset("stage.invest"): None,
+                asset("stage.boss_preview"): None,
+                asset("stage.fortune"): None,
+                asset("stage.event"): None,
+                asset("stage.settle"): None,
+                asset("stage.game_over"): None,
+            }
+            self._wait_results = {
+                asset("entry.menu"): _box("entry.menu", left=12, top=24),
+                asset("entry.cosmic_strife"): _box("entry.cosmic_strife", left=36, top=48),
+                asset("entry.start"): _box("entry.start", left=84, top=96),
+            }
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            return self._locate_results.get(template)
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            return self._wait_results.get(template)
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            self.keys.append((key, presses, interval))
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-enter-home",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.enter",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"] == {"page": "home"}
+    assert registry.for_workspace(str(tmp_path)).load_session(session.session_id).scene_state["cw"]["entry"] == {"page": "home"}
+    assert runtime.keys == [("f4", 1, 0.2)]
+    assert runtime.clicks == [(56, 58), (464, 324), (1494, 884)]
+    assert runtime.wait_calls == [asset("entry.menu"), asset("entry.cosmic_strife"), asset("entry.start")]
+
+
+def test_command_service_handles_cw_enter_rejects_pages_past_home(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == asset("entry.new"):
+                return _box("entry.new", left=20, top=40)
+            return None
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-enter-entry-new",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.enter",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"page": "entry.new"}
+    assert payload["error"] == {
+        "code": "CW_ENTER_ALREADY_PAST_HOME",
+        "message": "cw enter only supports world or home, current page: entry.new",
+    }
+    assert registry.for_workspace(str(tmp_path)).request_status("req-cw-enter-entry-new")["final_state"] == "failed_before_side_effect"
+
+
+def test_command_service_handles_cw_enter_rejects_settle_screen_before_home(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == asset("entry.start"):
+                return _box("entry.start", left=20, top=40)
+            return None
+
+        def ocr(self, **kwargs):
+            del kwargs
+            return [([0, 0], "挑战失败", 0.99), ([0, 0], "继续挑战", 0.99)]
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-enter-settle",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.enter",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"page": "in_game", "stage": "settle"}
+    assert payload["error"] == {
+        "code": "CW_ENTER_ALREADY_PAST_HOME",
+        "message": "cw enter only supports world or home, current page: in_game, stage: settle",
+    }
+    assert registry.for_workspace(str(tmp_path)).request_status("req-cw-enter-settle")["final_state"] == "failed_before_side_effect"
+
+
+def test_command_service_handles_cw_enter_rejects_recorded_game_over_before_home(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == asset("entry.start"):
+                return _box("entry.start", left=20, top=40)
+            return None
+
+        def ocr(self, **kwargs):
+            del kwargs
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
+    service.save_session(session)
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-enter-game-over",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.enter",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"page": "in_game", "stage": "game_over"}
+    assert payload["error"] == {
+        "code": "CW_ENTER_ALREADY_PAST_HOME",
+        "message": "cw enter only supports world or home, current page: in_game, stage: game_over",
+    }
+
+
+def test_command_service_handles_cw_enter_rejects_legacy_start_payload_fields(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-enter-legacy-fields",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.enter",
+        payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {}
+    assert payload["error"] == {
+        "code": "CW_ENTER_ARGS_NOT_SUPPORTED",
+        "message": "cw enter no longer accepts mode/difficulty/battle_mode; use cw start",
+    }
+    assert registry.for_workspace(str(tmp_path)).request_status("req-cw-enter-legacy-fields")["final_state"] == "failed_before_side_effect"
+
+
+def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    cards = [
+        {"card_idx": 1, "portal_title": "Alpha Portal", "portal_description": "Alpha Desc", "score": 0.99},
+        {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
+        {"card_idx": 3, "portal_title": "Gamma Portal", "portal_description": "Gamma Desc", "score": 0.77},
+    ]
+    calls: list[dict[str, object]] = []
+    guide_calls: list[dict[str, object]] = []
+
+    def fake_start_cw(session, *, mode: str, difficulty: str, battle_mode: str, runtime):
+        calls.append(
+            {
+                "mode": mode,
+                "difficulty": difficulty,
+                "battle_mode": battle_mode,
+                "runtime": runtime,
+            }
+        )
+        session.scene_state.setdefault("cw", {})["entry"] = {
+            "page": "invest",
+            "mode": "new",
+            "difficulty": "highest",
+            "battle_mode": "overclock",
+        }
+        return session
+
+    runtime = SimpleNamespace(ocr=lambda **kwargs: [{"text": "alpha"}], locate=lambda template, **kwargs: None)
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr("trail.daemon.cw_service.start_cw", fake_start_cw)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.fetch_cw_guide_list",
+        lambda **kwargs: guide_calls.append(kwargs) or {
+            "portals": [
+                {
+                    "portal_title": "Alpha Portal",
+                    "list": [
+                        {
+                            "lineup_id": "alpha-guide",
+                            "title": "Alpha攻略",
+                            "carry_roles": ["希儿"],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": True,
+                            "like": 123,
+                            "favour": 45,
+                        }
+                    ],
+                    "more": False,
+                    "next_page_token": None,
+                }
+            ],
+            "count": 1,
+            "more": False,
+        },
+    )
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-start",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "continue",
+            "difficulty": "current",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+    persisted = service.load_session(session.session_id)
+
+    assert payload["ok"] is True
+    assert payload["data"] == {
+        "cards": [
+            {
+                **cards[0],
+                "guides": [
+                    {
+                        "lineup_id": "alpha-guide",
+                        "title": "Alpha攻略",
+                        "carry_roles": ["希儿"],
+                        "support_hard": True,
+                        "has_change_equip": False,
+                        "has_expert": True,
+                        "like": 123,
+                        "favour": 45,
+                    }
+                ],
+            },
+            cards[1],
+            cards[2],
+        ],
+        "mode": "new",
+        "difficulty": "highest",
+        "battle_mode": "overclock",
+        "stale": False,
+    }
+    assert len(calls) == 1
+    assert calls[0]["mode"] == "continue"
+    assert calls[0]["difficulty"] == "current"
+    assert calls[0]["battle_mode"] == "standard"
+    assert calls[0]["runtime"].ocr() == runtime.ocr()
+    assert persisted.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": "new",
+        "difficulty": "highest",
+        "battle_mode": "overclock",
+    }
+    assert persisted.scene_state["cw"]["portal"] == payload["data"]
+    assert service.request_status("req-cw-start")["final_state"] == "completed"
+    assert guide_calls == [
+        {
+            "page": 1,
+            "limit": 3,
+            "trait_id": None,
+            "order": None,
+            "next_page_token": None,
+            "match_change_job": None,
+            "match_hard": None,
+            "portal": ["Alpha Portal", "Beta Portal", "Gamma Portal"],
+            "timeout": 10,
+        }
+    ]
+
+
+@pytest.mark.parametrize("requested_mode", ["new", "continue"])
+def test_command_service_handles_cw_start_rejects_home_with_unfinished_progress(
+    tmp_path: Path,
+    requested_mode: str,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+            self._locate_results = {
+                asset("entry.start"): None,
+                asset("entry.new"): None,
+                asset("entry.continue"): _box("entry.continue", left=84, top=96),
+                asset("entry.invest_environment"): None,
+                asset("stage.preparation"): None,
+                asset("stage.shop"): None,
+                asset("stage.replenish"): None,
+                asset("stage.encounter"): None,
+                asset("stage.invest"): None,
+                asset("stage.boss_preview"): None,
+                asset("stage.fortune"): None,
+                asset("stage.event"): None,
+                asset("stage.settle"): None,
+                asset("stage.game_over"): None,
+            }
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            return self._locate_results.get(template)
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(dict(kwargs))
+            return [{"text": "继续进度"}, {"text": "结束并结算"}, {"text": "当前进度1-1M奖励"}]
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"entry": {"page": "home"}}
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id=f"req-cw-start-home-progress-{requested_mode}",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": requested_mode,
+            "difficulty": "current",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"page": "home"}
+    assert payload["error"] == {
+        "code": "CW_START_PROGRESS_PENDING",
+        "message": "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run",
+    }
+    assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
+    assert runtime.clicks == []
+    assert runtime.wait_calls == []
+    assert runtime.ocr_calls == [{}]
+
+
+def test_command_service_handles_cw_start_reports_completed_known_failure_when_progress_appears_after_start_click(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+            self._phase = "home"
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == asset("entry.start"):
+                return _box("entry.start", left=84, top=96) if self._phase == "home" else None
+            if template == asset("entry.continue"):
+                return _box("entry.continue", left=140, top=180) if self._phase == "after_start" else None
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == (104, 106):
+                self._phase = "after_start"
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(dict(kwargs))
+            if self._phase == "home":
+                return [{"text": "货币战争"}]
+            return [{"text": "继续进度"}, {"text": "结束并结算"}, {"text": "当前进度1-1M奖励"}]
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"entry": {"page": "home"}}
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-start-home-late-progress-new",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "new",
+            "difficulty": "current",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+    status = service.request_status(request.request_id)
+    loaded = service.load_session(session.session_id)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"page": "home"}
+    assert payload["error"] == {
+        "code": "CW_START_PROGRESS_PENDING",
+        "message": "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run",
+    }
+    assert status["final_state"] == "completed"
+    assert status["tainted"] is False
+    assert runtime.clicks == [(104, 106)]
+    assert runtime.wait_calls == []
+    assert runtime.ocr_calls == [{}, {}, {}]
+    assert loaded.scene_state.get("daemon", {}).get("tainted", False) is False
+
+
+@pytest.mark.parametrize("requested_mode", ["new", "continue"])
+def test_command_service_handles_cw_start_consumes_unfinished_progress_flag_before_run_start_chain(
+    tmp_path: Path,
+    requested_mode: str,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    monkeypatch.setattr(
+        "trail.scenes.cw.entry._detect_current_enter_page",
+        lambda runtime, session=None, preferred_mode=None: {"page": "home", "unfinished_progress": "1"},
+    )
+    monkeypatch.setattr(
+        "trail.scenes.cw.entry._run_start_chain",
+        lambda *args, **kwargs: pytest.fail("unfinished_progress should short-circuit before _run_start_chain"),
+    )
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"entry": {"page": "home"}}
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id=f"req-cw-start-short-circuit-{requested_mode}",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": requested_mode,
+            "difficulty": "current",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"page": "home"}
+    assert payload["error"] == {
+        "code": "CW_START_PROGRESS_PENDING",
+        "message": "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run",
+    }
+    assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
+    assert runtime.clicks == []
+
+
+def test_command_service_handles_cw_start_rejects_continue_mode_on_clean_home(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == asset("entry.start"):
+                return _box("entry.start", left=84, top=96)
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del template, timeout, interval
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(dict(kwargs))
+            return [{"text": "货币战争"}]
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"entry": {"page": "home"}}
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-start-home-continue-invalid",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "continue",
+            "difficulty": "current",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"page": "home"}
+    assert payload["error"] == {
+        "code": "CW_START_CONTINUE_PAGE_INVALID",
+        "message": "cw start --mode continue only supports whole-run settlement pages, current page: home",
+    }
+    assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
+    assert runtime.clicks == []
+    assert runtime.ocr_calls == [{}, {}]
+
+
+def test_command_service_handles_cw_start_continue_from_whole_run_settlement_chain(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+            self._phase = "settlement.entry"
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == asset("entry.start"):
+                return _box("entry.start", left=84, top=96) if self._phase == "home" else None
+            if template == asset("entry.new"):
+                return _box("entry.new", left=140, top=180) if self._phase == "after_home_start" else None
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            if template == asset("entry.start"):
+                return _box("entry.start", left=84, top=96) if self._phase == "home" else None
+            if template == asset("entry.new"):
+                return _box("entry.new", left=140, top=180) if self._phase == "after_home_start" else None
+            if template == asset("entry.start_game"):
+                return _box("entry.start_game", left=240, top=280)
+            if template == asset("stage.settle"):
+                return _box("stage.settle", left=340, top=380)
+            if template == asset("stage.boss_preview"):
+                return _box("stage.boss_preview", left=440, top=480)
+            if template == asset("entry.invest_environment"):
+                return _box("entry.invest_environment", left=540, top=580)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == (960, 908):
+                if self._phase == "settlement.entry":
+                    self._phase = "settlement.followup"
+                elif self._phase == "settlement.followup":
+                    self._phase = "settlement.return"
+                elif self._phase == "settlement.return":
+                    self._phase = "home"
+            elif (x, y) == (104, 106):
+                self._phase = "after_home_start"
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(dict(kwargs))
+            if self._phase == "settlement.entry":
+                return [{"text": "挑战失败"}, {"text": "对局评价"}, {"text": "下一步"}]
+            if self._phase == "settlement.followup":
+                return [{"text": "1-1M奖励"}, {"text": "标准博弈"}, {"text": "下一页"}]
+            if self._phase == "settlement.return":
+                return [{"text": "小队生命值"}, {"text": "总经济"}, {"text": "返回货币战争"}]
+            return [{"text": "货币战争"}]
+
+    cards = [{"card_idx": 1, "portal_title": "Alpha", "portal_description": "Desc", "score": 0.95}]
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"entry": {"page": "home"}}
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-start-settlement-continue",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "continue",
+            "difficulty": "current",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+    loaded = service.load_session(session.session_id)
+
+    assert payload["ok"] is True
+    assert payload["data"]["cards"] == cards
+    assert payload["data"]["mode"] == "new"
+    assert payload["data"]["difficulty"] == "current"
+    assert payload["data"]["battle_mode"] == "standard"
+    assert service.request_status(request.request_id)["final_state"] == "completed"
+    assert loaded.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": "new",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+    assert runtime.clicks == [
+        (960, 908),
+        (960, 908),
+        (960, 908),
+        (104, 106),
+        (300, 250),
+        (160, 190),
+        (260, 290),
+        (360, 390),
+        (460, 490),
+    ]
+
+@pytest.mark.parametrize(
+    ("payload_override", "expected_code", "expected_message"),
+    [
+        ({"mode": "warp"}, "CW_START_MODE_INVALID", "unsupported cw start mode: warp"),
+        ({"difficulty": "nightmare"}, "CW_START_DIFFICULTY_INVALID", "unsupported cw start difficulty: nightmare"),
+        ({"battle_mode": "turbo"}, "CW_START_BATTLE_MODE_INVALID", "unsupported cw start battle_mode: turbo"),
+    ],
+)
+def test_command_service_handles_cw_start_rejects_invalid_enums(
+    tmp_path: Path,
+    monkeypatch,
+    payload_override: dict[str, str],
+    expected_code: str,
+    expected_message: str,
+):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = SimpleNamespace(ocr=lambda **kwargs: [{"text": "alpha"}])
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    start_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.start_cw",
+        lambda session, *, mode, difficulty, battle_mode, runtime: start_calls.append(
+            {
+                "mode": mode,
+                "difficulty": difficulty,
+                "battle_mode": battle_mode,
+            }
+        ) or session,
+    )
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id=f"req-cw-start-{expected_code.lower()}",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "continue",
+            "difficulty": "current",
+            "battle_mode": "standard",
+            **payload_override,
+        },
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {}
+    assert payload["error"] == {
+        "code": expected_code,
+        "message": expected_message,
+    }
+    assert start_calls == []
+    assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
+
+
+def test_command_service_handles_cw_portal_select_and_marks_snapshot_stale(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-portal-select.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": [{"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: session.scene_state["cw"]["portal"].__setitem__("stale", True) or {"card_idx": card_idx, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88},
+    )
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-portal-select",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.portal.select",
+        payload={"session_id": session.session_id, "card_idx": 2},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"] == {"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}
+    assert payload["screenshot"] == ".trail/shots/req-cw-portal-select.png"
+    assert service.load_session(session.session_id).scene_state["cw"]["portal"]["stale"] is True
+    assert service.request_status("req-cw-portal-select")["final_state"] == "completed"
+    assert runtime.capture_requests == [(False, "req-cw-portal-select")]
+
+
+def test_command_service_handles_cw_portal_select_waits_extra_before_capture(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-portal-select-delay.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    sleeps: list[float] = []
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": [{"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88},
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: sleeps.append(seconds))
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-portal-select-delay",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.portal.select",
+        payload={"session_id": session.session_id, "card_idx": 2},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert sleeps == [2.0]
+    assert runtime.capture_requests == [(False, "req-cw-portal-select-delay")]
+
+
+def test_command_service_handles_cw_portal_refresh_and_updates_snapshot(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-portal-refresh.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    snapshot = {
+        "cards": [{"card_idx": 1, "portal_title": "New Alpha", "portal_description": "New Desc", "score": 0.91}],
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+        "stale": False,
+    }
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": [], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.fetch_cw_guide_list",
+        lambda **kwargs: {
+            "portals": [
+                {
+                    "portal_title": "New Alpha",
+                    "list": [
+                        {
+                            "lineup_id": "alpha-guide",
+                            "title": "Alpha攻略",
+                            "carry_roles": ["希儿"],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": True,
+                            "like": 123,
+                            "favour": 45,
+                        }
+                    ],
+                    "more": False,
+                    "next_page_token": None,
+                }
+            ],
+            "count": 1,
+            "more": False,
+        },
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.refresh_cw_portal", lambda session, runtime, portal_list: session.scene_state["cw"].__setitem__("portal", snapshot) or snapshot)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-portal-refresh",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.portal.refresh",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"] == {
+        **snapshot,
+        "cards": [
+            {
+                **snapshot["cards"][0],
+                "guides": [
+                    {
+                        "lineup_id": "alpha-guide",
+                        "title": "Alpha攻略",
+                        "carry_roles": ["希儿"],
+                        "support_hard": True,
+                        "has_change_equip": False,
+                        "has_expert": True,
+                        "like": 123,
+                        "favour": 45,
+                    }
+                ],
+            }
+        ],
+    }
+    assert payload["screenshot"] == ".trail/shots/req-cw-portal-refresh.png"
+    assert service.load_session(session.session_id).scene_state["cw"]["portal"] == payload["data"]
+    assert service.request_status("req-cw-portal-refresh")["final_state"] == "completed"
+    assert runtime.capture_requests == [(False, "req-cw-portal-refresh")]
+
+
+def test_command_service_handles_cw_portal_restart_and_reuses_request_journal(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    snapshot = {
+        "cards": [{"card_idx": 1, "portal_title": "Restarted", "portal_description": "Desc", "score": 0.91}],
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+        "stale": False,
+    }
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "new", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": [{"card_idx": 1, "portal_title": "Old", "portal_description": "Old", "score": 0.5}], "mode": "new", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    restart_calls: list[dict[str, object]] = []
+
+    def fake_restart(session, *, runtime):
+        restart_calls.append(
+            {
+                "entry_mode": session.scene_state["cw"]["entry"]["mode"],
+                "portal_mode": session.scene_state["cw"]["portal"]["mode"],
+            }
+        )
+        session.scene_state["cw"]["portal"] = snapshot
+        return snapshot
+
+    monkeypatch.setattr("trail.daemon.cw_service._restart_cw", fake_restart)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-portal-restart",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.portal.restart",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"] == snapshot
+    assert service.load_session(session.session_id).scene_state["cw"]["portal"] == snapshot
+    assert service.request_status("req-cw-portal-restart")["final_state"] == "completed"
+    assert restart_calls == [{"entry_mode": "new", "portal_mode": "new"}]
 
 
 def test_command_service_routes_cw_shop_buy_slot_through_mutation_journal(tmp_path: Path, monkeypatch):
@@ -1328,8 +2476,8 @@ def test_server_handle_payload_keeps_cw_unknown_result_envelope_for_late_ui_fail
     cw_service = CwService(runtime_service=runtime_service)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
 
-    def late_failure(session, mode, difficulty, battle_mode, runtime):
-        del session, mode, difficulty, battle_mode
+    def late_failure(session, runtime):
+        del session
         runtime.click_point(640, 360)
         raise TrailError("CW_ENTRY_UI_NOT_FOUND", "late failure after ui action")
 
@@ -1342,7 +2490,7 @@ def test_server_handle_payload_keeps_cw_unknown_result_envelope_for_late_ui_fail
             token="token-1",
             request_id="req-server-cw-enter-late-fail",
             method="cw.enter",
-            payload={"session_id": session.session_id, "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+            payload={"session_id": session.session_id},
             session_id=session.session_id,
         )
     )

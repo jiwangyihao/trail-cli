@@ -62,13 +62,87 @@ def test_cw_stage_detect_renders_stage_and_shot(cli_runner, fake_daemon_client, 
     _assert_single_call(client, method="cw.stage.detect", payload={}, tmp_path=tmp_path)
 
 
-def test_cw_enter_renders_entry_summary_and_shot(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_enter_renders_home_summary_and_shot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.enter": build_success_response(
                 request_id="req-cw-enter",
-                data={"mode": "new", "difficulty": "current", "battle_mode": "standard"},
+                data={"page": "home"},
                 screenshot=".trail/shots/req-cw-enter.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "enter", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.enter page=home",
+        screenshot=".trail/shots/req-cw-enter.png",
+    )
+    _assert_single_call(client, method="cw.enter", payload={}, tmp_path=tmp_path)
+
+
+def test_cw_enter_renders_already_home_info(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.enter": build_success_response(
+                request_id="req-cw-enter-already-home",
+                data={"page": "home", "already_home": True},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "enter", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok cw.enter page=home", "info already_home=1"]
+    _assert_single_call(client, method="cw.enter", payload={}, tmp_path=tmp_path)
+
+
+def test_cw_enter_rejects_legacy_start_options(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "enter", "--session", SESSION_ID, "--mode", "new"])
+
+    assert result.exit_code == 2
+    assert "No such option" in result.output
+    assert "--mode" in result.output
+
+
+def test_cw_start_renders_portal_cards_and_shot(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.start": build_success_response(
+                request_id="req-cw-start",
+                data={
+                    "cards": [
+                        {
+                            "card_idx": 1,
+                            "portal_title": "Alpha Portal",
+                            "portal_description": "Alpha Desc",
+                            "score": 0.99,
+                            "new": 1,
+                            "guides": [
+                                {
+                                    "lineup_id": "alpha-guide",
+                                    "title": "Alpha攻略",
+                                    "carry_roles": ["希儿"],
+                                    "support_hard": True,
+                                    "has_change_equip": False,
+                                    "has_expert": True,
+                                    "like": 123,
+                                    "favour": 45,
+                                    "final_role_cards": [{"name": "希儿", "star": 5, "rarity": 3, "is_carry": True}],
+                                }
+                            ],
+                        },
+                        {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
+                    ],
+                    "mode": "continue",
+                    "difficulty": "current",
+                    "battle_mode": "standard",
+                    "stale": False,
+                },
+                screenshot=".trail/shots/req-cw-start.png",
             )
         }
     )
@@ -77,11 +151,11 @@ def test_cw_enter_renders_entry_summary_and_shot(cli_runner, fake_daemon_client,
         app,
         [
             "cw",
-            "enter",
+            "start",
             "--session",
             SESSION_ID,
             "--mode",
-            "new",
+            "continue",
             "--difficulty",
             "current",
             "--battle-mode",
@@ -91,15 +165,106 @@ def test_cw_enter_renders_entry_summary_and_shot(cli_runner, fake_daemon_client,
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == _expected_lines(
-        "ok cw.enter mode=new difficulty=current battle=standard",
-        screenshot=".trail/shots/req-cw-enter.png",
+        "ok cw.start cards=2",
+        screenshot=".trail/shots/req-cw-start.png",
+        body=[
+            'opt idx=1 title="Alpha Portal" score=0.99 new=1',
+            'opt idx=1 desc="Alpha Desc"',
+            'guide idx=1 gid=1 id=alpha-guide title=Alpha攻略 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45',
+            'guide idx=1 gid=1 final_roles=希儿/carry:1/star:5/rarity:3',
+            'opt idx=2 title="Beta Portal" score=0.88',
+            'opt idx=2 desc="Beta Desc"',
+        ],
     )
     _assert_single_call(
         client,
-        method="cw.enter",
-        payload={"mode": "new", "difficulty": "current", "battle_mode": "standard"},
+        method="cw.start",
+        payload={"mode": "continue", "difficulty": "current", "battle_mode": "standard"},
         tmp_path=tmp_path,
     )
+
+
+def test_cw_portal_select_renders_selected_card_summary(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.portal.select": build_success_response(
+                request_id="req-cw-portal-select",
+                data={"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
+                screenshot=".trail/shots/req-cw-portal-select.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "portal", "select", "--session", SESSION_ID, "--card-idx", "2"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        'ok cw.portal.select idx=2 title="Beta Portal"',
+        screenshot=".trail/shots/req-cw-portal-select.png",
+    )
+    _assert_single_call(client, method="cw.portal.select", payload={"card_idx": 2}, tmp_path=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("args", "method", "screenshot"),
+    [
+        (["cw", "portal", "refresh", "--session", SESSION_ID], "cw.portal.refresh", ".trail/shots/req-cw-portal-refresh.png"),
+        (["cw", "portal", "restart", "--session", SESSION_ID], "cw.portal.restart", ".trail/shots/req-cw-portal-restart.png"),
+    ],
+)
+def test_cw_portal_refresh_and_restart_render_portal_cards(cli_runner, fake_daemon_client, tmp_path, args, method: str, screenshot: str):
+    client = fake_daemon_client(
+        {
+            method: build_success_response(
+                request_id=f"req-{method}",
+                data={
+                    "cards": [
+                        {
+                            "card_idx": 1,
+                            "portal_title": "Alpha Portal",
+                            "portal_description": "Alpha Desc",
+                            "score": 0.99,
+                            "new": 1,
+                            "guides": [
+                                {
+                                    "lineup_id": "alpha-guide",
+                                    "title": "Alpha攻略",
+                                    "carry_roles": ["希儿"],
+                                    "support_hard": True,
+                                    "has_change_equip": False,
+                                    "has_expert": True,
+                                    "like": 123,
+                                    "favour": 45,
+                                }
+                            ],
+                        },
+                        {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
+                    ],
+                    "mode": "continue",
+                    "difficulty": "current",
+                    "battle_mode": "standard",
+                    "stale": False,
+                },
+                screenshot=screenshot,
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, args)
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        f"ok {method} cards=2",
+        screenshot=screenshot,
+        body=[
+            'opt idx=1 title="Alpha Portal" score=0.99 new=1',
+            'opt idx=1 desc="Alpha Desc"',
+            'guide idx=1 gid=1 id=alpha-guide title=Alpha攻略 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45',
+            'opt idx=2 title="Beta Portal" score=0.88',
+            'opt idx=2 desc="Beta Desc"',
+        ],
+    )
+    _assert_single_call(client, method=method, payload={}, tmp_path=tmp_path)
 
 
 def test_cw_shop_buy_slot_renders_purchase_summary_and_shot(cli_runner, fake_daemon_client, tmp_path):

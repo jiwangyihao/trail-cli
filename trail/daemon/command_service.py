@@ -14,6 +14,10 @@ from trail.runtime.ocr_config import OCR_LANG_UNSUPPORTED, split_ocr_call
 
 CW_MUTATING_METHODS = {
     "cw.enter",
+    "cw.start",
+    "cw.portal.select",
+    "cw.portal.refresh",
+    "cw.portal.restart",
     "cw.guide.apply",
     "cw.slots.swap",
     "cw.slots.place_one",
@@ -205,12 +209,21 @@ class CommandService:
         payload = deepcopy(request.payload)
         if request.session_id is not None:
             payload.setdefault("session_id", request.session_id)
-        return self._cw_service().handle_mutation(
-            method=request.method,
-            payload=payload,
-            workspace_root=request.workspace_root,
-            session_service=service,
-        )
+        try:
+            response = self._cw_service().handle_mutation(
+                method=request.method,
+                payload=payload,
+                workspace_root=request.workspace_root,
+                session_service=service,
+                request_id=request.request_id,
+                verbose=request.verbose,
+            )
+            return _normalize_capture_payload(response, workspace_root=Path(request.workspace_root))
+        except TrailError as error:
+            if getattr(error, "completed_after_side_effect", False):
+                envelope = self._response_with_request_id(request.request_id, self._failure_envelope(error=error))
+                raise CompletedKnownFailure(envelope)
+            raise
 
     def handle(self, request):
         if request.method == "daemon.ping":
@@ -359,7 +372,7 @@ class CommandService:
                     request.method,
                     lambda session_service: self._run_cw_mutation(request, service=session_service),
                     handler_persisted_state=True,
-                    response_builder=success,
+                    response_builder=lambda payload: payload,
                     enforce_cw_tainted=bool(isinstance(session_id, str) and session_id),
                     tainted_session_id=session_id if isinstance(session_id, str) and session_id else None,
                 )
@@ -393,26 +406,48 @@ class CommandService:
 
     def _handle_guide_list(self, request):
         self._guide_scene(request.method, "guide.list.")
-        from trail.scenes.cw.guide import fetch_cw_guide_list
+        from trail.scenes.cw.guide import GuidePortalLookupError, fetch_cw_guide_list
+
+        kwargs = {
+            "page": request.payload["page"],
+            "limit": request.payload["limit"],
+            "trait_id": request.payload.get("trait_id"),
+            "order": request.payload.get("order"),
+            "next_page_token": request.payload.get("next_page_token"),
+            "match_change_job": _parse_optional_bool(
+                request.payload.get("match_change_job"),
+                option_name="match-change-job",
+            ),
+            "match_hard": _parse_optional_bool(
+                request.payload.get("match_hard"),
+                option_name="match-hard",
+            ),
+        }
+        if request.payload.get("portal") is not None:
+            kwargs["portal"] = request.payload.get("portal")
+        if request.payload.get("portal_id") is not None:
+            kwargs["portal_id"] = request.payload.get("portal_id")
+
+        try:
+            payload = fetch_cw_guide_list(**kwargs)
+        except GuidePortalLookupError as error:
+            return {
+                "request_id": request.request_id,
+                "ok": False,
+                "data": {},
+                "screenshot": None,
+                "timing": {},
+                "warnings": [
+                    {"portal": candidate["title"], "score": candidate["score"]}
+                    for candidate in error.candidates
+                ],
+                "references": [],
+                "debug": None,
+                "error": {"code": error.code, "message": str(error)},
+            }
 
         return success(
-            to_jsonable(
-                fetch_cw_guide_list(
-                    page=request.payload["page"],
-                    limit=request.payload["limit"],
-                    trait_id=request.payload.get("trait_id"),
-                    order=request.payload.get("order"),
-                    next_page_token=request.payload.get("next_page_token"),
-                    match_change_job=_parse_optional_bool(
-                        request.payload.get("match_change_job"),
-                        option_name="match-change-job",
-                    ),
-                    match_hard=_parse_optional_bool(
-                        request.payload.get("match_hard"),
-                        option_name="match-hard",
-                    ),
-                )
-            ),
+            to_jsonable(payload),
             request_id=request.request_id,
         )
 
@@ -573,9 +608,10 @@ class CommandService:
         else:
             code = type(error).__name__
             message = str(error) or type(error).__name__
+        data = getattr(error, "data", None)
         return {
             "ok": False,
-            "data": {},
+            "data": deepcopy(data) if isinstance(data, dict) else {},
             "screenshot": None,
             "timing": {},
             "warnings": [],
@@ -650,6 +686,14 @@ class CommandService:
             last_known_stage = "state_persisted" if handler_persisted_state else "handler_completed"
             response = response_builder(handler_result)
             result = self._response_with_request_id(request.request_id, response)
+        except CompletedKnownFailure as error:
+            return self._persist_terminal_envelope(
+                service=service,
+                request=request,
+                command_name=command_name,
+                final_state="completed",
+                envelope=error.envelope,
+            )
         except FailedBeforeSideEffect as error:
             return self._persist_terminal_envelope(
                 service=service,
@@ -819,4 +863,10 @@ class PersistedButResponseUnknown(Exception):
 class FailedBeforeSideEffect(Exception):
     def __init__(self, envelope: dict[str, Any]):
         super().__init__("failed before side effect")
+        self.envelope = deepcopy(envelope)
+
+
+class CompletedKnownFailure(Exception):
+    def __init__(self, envelope: dict[str, Any]):
+        super().__init__("completed with known business failure")
         self.envelope = deepcopy(envelope)

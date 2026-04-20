@@ -60,6 +60,11 @@ def _append_warnings(lines: list[str], payload: dict[str, Any]) -> None:
     for warning in warnings:
         if not isinstance(warning, dict):
             continue
+        if warning.get("portal") is not None:
+            lines.append(
+                f"warn portal={_encode_value(warning.get('portal'))} score={_encode_value(warning.get('score'))}"
+            )
+            continue
         lines.append(
             f"warn code={_encode_value(warning.get('code'))} msg={_encode_value(warning.get('message'))}"
         )
@@ -245,13 +250,81 @@ def _render_cw_stage(command: str, payload: dict[str, Any]) -> list[str]:
 
 def _render_cw_entry(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
-    return _render_success_summary(
-        command,
-        payload,
-        ("mode", data.get("mode")),
-        ("difficulty", data.get("difficulty")),
-        ("battle", data.get("battle_mode") or data.get("battle")),
-    )
+    lines = [f"ok {command} page=home"]
+    _append_shot(lines, payload)
+    if data.get("already_home") is True:
+        lines.append("info already_home=1")
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
+
+
+def _render_cw_portal_cards(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    cards = _as_list(data.get("cards"))
+    lines = [f"ok {command} cards={_encode_value(len(cards))}"]
+    _append_shot(lines, payload)
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        card_idx = card.get("card_idx")
+        lines.append(
+            "opt "
+            + _format_fact_sequence(
+                ("idx", card_idx),
+                ("title", card.get("portal_title")),
+                ("score", card.get("score")),
+                ("new", 1 if card.get("new") else None),
+            )
+        )
+        lines.append(
+            "opt "
+            + _format_fact_sequence(
+                ("idx", card_idx),
+                ("desc", card.get("portal_description")),
+            )
+        )
+        for guide_index, guide in enumerate(_as_list(card.get("guides")), start=1):
+            if not isinstance(guide, dict):
+                continue
+            lines.append(
+                "guide "
+                + _format_fact_sequence(
+                    ("idx", card_idx),
+                    ("gid", guide_index),
+                    ("id", _guide_id(guide)),
+                    ("title", guide.get("title")),
+                    ("carry", _first_carry_role(guide)),
+                    ("hard", bool(guide.get("support_hard"))),
+                    ("change_equip", bool(guide.get("has_change_equip"))),
+                    ("expert", bool(guide.get("has_expert"))),
+                    ("like", guide.get("like")),
+                    ("favour", guide.get("favour")),
+                )
+            )
+            final_roles = _compact_role_cards(guide.get("final_role_cards"))
+            if final_roles is not None:
+                _append_fact_line(lines, "guide", ("idx", card_idx), ("gid", guide_index), ("final_roles", final_roles))
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
+
+
+def _render_cw_portal_select(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    lines = [
+        "ok "
+        + command
+        + " "
+        + _format_fact_sequence(
+            ("idx", data.get("card_idx")),
+            ("title", data.get("portal_title")),
+        )
+    ]
+    _append_shot(lines, payload)
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
 
 
 def _render_cw_guide_summary(command: str, payload: dict[str, Any]) -> list[str]:
@@ -534,6 +607,55 @@ def _render_guide_fetch(command: str, payload: dict[str, Any]) -> list[str]:
 
 def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
+    portal_groups = _as_list(data.get("portals"))
+    if portal_groups:
+        total_count = data.get("count")
+        if not isinstance(total_count, int):
+            total_count = sum(len(_as_list(group.get("list")) if isinstance(group, dict) else []) for group in portal_groups)
+        summary = _format_fact_sequence(
+            ("groups", len(portal_groups)),
+            ("count", total_count),
+            ("more", bool(data.get("more"))),
+        )
+        lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
+        _append_shot(lines, payload)
+        for group in portal_groups:
+            if not isinstance(group, dict):
+                continue
+            items = _as_list(group.get("list"))
+            _append_fact_line(
+                lines,
+                "guide",
+                ("portal", group.get("portal_title")),
+                ("count", len(items)),
+                ("more", bool(group.get("more"))),
+                ("next", group.get("next_page_token") if group.get("next_page_token") else None),
+            )
+            for index, item in enumerate(items, start=1):
+                if not isinstance(item, dict):
+                    continue
+                final_roles = _compact_role_cards(item.get("final_role_cards"))
+                lines.append(
+                    "guide "
+                    + _format_fact_sequence(
+                        ("portal", group.get("portal_title")),
+                        ("id", _guide_id(item)),
+                        ("title", item.get("title")),
+                        ("idx", index),
+                        ("carry", _first_carry_role(item)),
+                        ("hard", bool(item.get("support_hard"))),
+                        ("change_equip", bool(item.get("has_change_equip"))),
+                        ("expert", bool(item.get("has_expert"))),
+                        ("like", item.get("like")),
+                        ("favour", item.get("favour")),
+                    )
+                )
+                if final_roles is not None:
+                    _append_fact_line(lines, "guide", ("portal", group.get("portal_title")), ("idx", index), ("final_roles", final_roles))
+        _append_warnings(lines, payload)
+        _append_references(lines, payload)
+        return lines
+
     items = _as_list(data.get("list"))
     next_page_token = data.get("next_page_token")
     summary = _format_fact_sequence(
@@ -551,11 +673,14 @@ def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:
             "guide "
             + _format_fact_sequence(
                 ("id", _guide_id(item)),
+                ("title", item.get("title")),
                 ("idx", index),
                 ("carry", _first_carry_role(item)),
                 ("hard", bool(item.get("support_hard"))),
                 ("change_equip", bool(item.get("has_change_equip"))),
                 ("expert", bool(item.get("has_expert"))),
+                ("like", item.get("like")),
+                ("favour", item.get("favour")),
             )
         )
         if final_roles is not None:
@@ -763,6 +888,7 @@ def _render_guide_config(command: str, payload: dict[str, Any]) -> list[str]:
             ("traits", len(data.get("traits") or [])),
             ("roles", len(data.get("roles") or [])),
             ("role_tags", len(data.get("role_tags") or [])),
+            ("portal_list", len(data.get("portal_list") or [])),
         )
     )
     return _append_common_success_lines(lines, payload)
@@ -774,6 +900,10 @@ def _render_generic_success(command: str, payload: dict[str, Any]) -> list[str]:
 
 TEXT_RENDERERS = {
     "cw.enter": _render_cw_entry,
+    "cw.start": _render_cw_portal_cards,
+    "cw.portal.select": _render_cw_portal_select,
+    "cw.portal.refresh": _render_cw_portal_cards,
+    "cw.portal.restart": _render_cw_portal_cards,
     "cw.guide.apply": _render_cw_guide_summary,
     "cw.guide.current": _render_cw_guide_summary,
     "cw.stage.detect": _render_cw_stage,

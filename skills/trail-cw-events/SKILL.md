@@ -14,6 +14,7 @@ description: Use when an agent needs to handle boss preview, special events, bat
 - 处理 Boss 预览、特殊事件、结算翻页与战斗继续
 - 不负责商店、补给和整局循环
 - 依赖主 skill 结合截图判断当前是不是该调用这里的命令，不假设 CLI 已内建穷尽识别
+- 默认假设首页与投资环境选择已经完成；这里不负责 `trail cw start` 或 `trail cw portal.*`
 
 ## 标准流程
 

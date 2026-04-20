@@ -1497,16 +1497,14 @@ def test_cw_help_exposes_scene_command_groups(cli_runner):
     assert "event" in result.stdout
 
 
-def test_cw_enter_help_exposes_enum_contract(cli_runner):
+def test_cw_enter_help_exposes_home_only_contract(cli_runner):
     result = cli_runner.invoke(app, ["cw", "enter", "--help"])
 
     assert result.exit_code == 0
-    assert "--mode" in result.stdout
-    assert "[new|continue]" in result.stdout
-    assert "--difficulty" in result.stdout
-    assert "[lowest|current|highest]" in result.stdout
-    assert "--battle-mode" in result.stdout
-    assert "[standard|overclock]" in result.stdout
+    assert "--session" in result.stdout
+    assert "--mode" not in result.stdout
+    assert "--difficulty" not in result.stdout
+    assert "--battle-mode" not in result.stdout
 
 
 def test_window_help_exposes_launch_command(cli_runner):

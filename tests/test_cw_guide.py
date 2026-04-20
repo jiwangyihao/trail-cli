@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -148,6 +149,20 @@ def fake_cw_config_response() -> dict:
                 {"id": 3, "name": "减防"},
                 {"id": 4, "name": "量子"},
             ],
+            "portal_list": [
+                {
+                    "id": "shop",
+                    "name": "购物区",
+                    "description": "花金币买角色和升级",
+                    "icon": "shop.png",
+                },
+                {
+                    "id": "event",
+                    "name": "事件区",
+                    "description": "处理事件、补给与遭遇",
+                    "icon": "event.png",
+                },
+            ],
         },
     }
 
@@ -214,6 +229,14 @@ def fake_lineup_index_response() -> dict:
             "next_page_token": "next-token-demo",
         },
     }
+
+
+def fake_lineup_index_item(*, lineup_id: str, title: str, summary_portals: list[str] | None = None) -> dict:
+    payload = deepcopy(fake_lineup_index_response()["data"]["list"][0])
+    payload["id"] = lineup_id
+    payload["title"] = title
+    payload["tourn_detail"]["portals"] = [{"name": name} for name in (summary_portals or [])]
+    return payload
 
 
 def load_cw_guide_module():
@@ -433,6 +456,10 @@ def test_fetch_cw_guide_config_returns_minimal_catalog(monkeypatch):
             {"id": 1003, "name": "布洛妮娅", "front_back_type": "back", "trait_ids": [2001]},
         ],
         "role_tags": ["输出", "辅助", "减防", "量子"],
+        "portal_list": [
+            {"portal_id": "shop", "title": "购物区", "description": "花金币买角色和升级"},
+            {"portal_id": "event", "title": "事件区", "description": "处理事件、补给与遭遇"},
+        ],
     }
 
 
@@ -503,16 +530,106 @@ def test_fetch_cw_guide_list_posts_filters_and_normalizes_response(monkeypatch):
                 "has_change_equip": True,
                 "has_expert": True,
                 "version": "3.1",
-                "created_at": 1734691200,
-                "last_edit": 1734777600,
-                "carry_roles": ["希儿", "布洛妮娅"],
-                "interact": {"like": 123, "favour": 45, "view": 6789, "use": 321},
-                "recent_interact": {"like": 12, "favour": 4, "view": 345, "use": 22},
-                "support_hard": True,
+            "created_at": 1734691200,
+            "last_edit": 1734777600,
+            "carry_roles": ["希儿", "布洛妮娅"],
+            "like": 123,
+            "favour": 45,
+            "interact": {"like": 123, "favour": 45, "view": 6789, "use": 321},
+            "recent_interact": {"like": 12, "favour": 4, "view": 345, "use": 22},
+            "support_hard": True,
             }
         ],
         "next_page_token": "next-token-demo",
     }
+
+
+def test_fetch_cw_guide_list_filters_by_portal_id_using_detail_fanout(monkeypatch):
+    guide_module = load_cw_guide_module()
+    fetch_cw_guide_list = getattr(guide_module, "fetch_cw_guide_list", None)
+    assert fetch_cw_guide_list is not None
+
+    raw_items = [
+        fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["错误摘要"]),
+        fake_lineup_index_item(lineup_id="lineup-event", title="事件阵容", summary_portals=["购物区"]),
+    ]
+    captured_list_request: dict[str, object] = {}
+    detail_calls: list[str] = []
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+
+    def fake_fetch_list_data(**kwargs):
+        captured_list_request.update(kwargs)
+        return {"list": raw_items, "next_page_token": "raw-next-token"}
+
+    def fake_fetch_lineup_detail(lineup_id: str, *, timeout: int = 10):
+        detail_calls.append(lineup_id)
+        portal_name = "购物区" if lineup_id == "lineup-shop" else "事件区"
+        return lineup_id, fake_lineup_url(lineup_id), {
+            "id": lineup_id,
+            "tourn_detail": {
+                "portals": [
+                    {
+                        "id": "shop" if portal_name == "购物区" else "event",
+                        "name": portal_name,
+                        "description": "detail-desc",
+                    }
+                ]
+            },
+        }
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_guide_list_data", fake_fetch_list_data, raising=False)
+    monkeypatch.setattr(guide_module, "_fetch_lineup_detail", fake_fetch_lineup_detail, raising=False)
+
+    payload = fetch_cw_guide_list(
+        page=1,
+        limit=1,
+        trait_id=321,
+        order="Recent",
+        next_page_token=None,
+        match_change_job=True,
+        match_hard=False,
+        portal_id="shop",
+    )
+
+    assert captured_list_request == {
+        "page": 1,
+        "limit": 10,
+        "trait_id": 321,
+        "order": "Recent",
+        "next_page_token": None,
+        "match_change_job": True,
+        "match_hard": False,
+        "timeout": 10,
+    }
+    assert detail_calls == ["lineup-shop", "lineup-event"]
+    assert payload["list"] == [
+        {
+            "id": "lineup-shop",
+            "title": "购物阵容",
+            "nickname": "测试作者",
+            "description": "高分稳定上分阵容",
+            "labels": ["9级搜牌", "银河学者"],
+            "final_traits": ["巡猎", "量子"],
+            "final_role_cards": [
+                {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
+                {"name": "布洛妮娅", "star": 5, "rarity": 3, "is_carry": False},
+                {"name": "佩拉", "star": 4, "rarity": 2, "is_carry": False},
+            ],
+            "has_change_equip": True,
+            "has_expert": True,
+            "version": "3.1",
+            "created_at": 1734691200,
+            "last_edit": 1734777600,
+            "carry_roles": ["希儿", "布洛妮娅"],
+            "like": 123,
+            "favour": 45,
+            "interact": {"like": 123, "favour": 45, "view": 6789, "use": 321},
+            "recent_interact": {"like": 12, "favour": 4, "view": 345, "use": 22},
+            "support_hard": True,
+        }
+    ]
+    assert payload["next_page_token"] == "raw-next-token"
 
 
 def test_fetch_cw_guide_payload_rejects_article_url(monkeypatch):
@@ -762,7 +879,8 @@ def test_cw_guide_apply_marks_persisted_but_response_unknown_when_response_build
         lambda runtime, share_code: applied_share_codes.append(share_code),
     )
     monkeypatch.setattr(
-        "trail.daemon.command_service.success",
+        command_service,
+        "_response_with_request_id",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("response build failed")),
     )
 

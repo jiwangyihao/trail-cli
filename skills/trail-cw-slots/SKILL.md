@@ -15,6 +15,7 @@ description: Use when an agent needs to inspect or mutate Currency Wars field, r
 - 执行 `swap`、`place-one`、`collect`、`sell`
 - 不决定整体阵容策略，只执行显式动作
 - `slots read` 的结果是对当前界面的辅助结构化快照，agent 仍应结合截图本身判断阵容与站位
+- 默认假设主 skill 已经完成 `trail cw start` 和 `trail cw portal.select`，当前已经进入局内编队/备战阶段
 
 ## 标准流程
 

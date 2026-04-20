@@ -50,24 +50,41 @@ def guide_list(
     next_page_token: str | None = typer.Option(None, "--next-page-token"),
     match_change_job: str | None = typer.Option(None, "--match-change-job"),
     match_hard: str | None = typer.Option(None, "--match-hard"),
+    portal: list[str] | None = typer.Option(None, "--portal"),
+    portal_id: list[str] | None = typer.Option(None, "--portal-id"),
 ) -> None:
     """列出可选攻略。默认字段面向“选攻略”，会保留 has_change_equip / has_expert / support_hard / final_role_cards 等高价值信息。"""
 
     if not _require_cw_scene(scene):
         print_output(f"guide.list.{scene}", _unsupported_scene_response(scene))
         return
+    portal_values = list(portal or [])
+    portal_id_values = list(portal_id or [])
+    if portal_values and portal_id_values:
+        print_output(
+            f"guide.list.{scene}",
+            with_auto_capture(
+                None,
+                lambda: (_ for _ in ()).throw(
+                    TrailError("GUIDE_INPUT_INVALID", "guide options '--portal' and '--portal-id' are mutually exclusive")
+                ),
+            ),
+        )
+        return
+    payload = {
+        "page": page,
+        "limit": limit,
+        "trait_id": trait_id,
+        "order": order,
+        "next_page_token": next_page_token,
+        "match_change_job": match_change_job,
+        "match_hard": match_hard,
+    }
+    if portal_values:
+        payload["portal"] = portal_values[0] if len(portal_values) == 1 else portal_values
+    if portal_id_values:
+        payload["portal_id"] = portal_id_values[0] if len(portal_id_values) == 1 else portal_id_values
     print_output(
         f"guide.list.{scene}",
-        call_daemon(
-            f"guide.list.{scene}",
-            {
-                "page": page,
-                "limit": limit,
-                "trait_id": trait_id,
-                "order": order,
-                "next_page_token": next_page_token,
-                "match_change_job": match_change_job,
-                "match_hard": match_hard,
-            },
-        )
+        call_daemon(f"guide.list.{scene}", payload)
     )

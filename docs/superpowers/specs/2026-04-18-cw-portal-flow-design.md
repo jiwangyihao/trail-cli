@@ -56,15 +56,39 @@
 - 返回结构化的环境摘要结果
 - 接收并持久化本局的 `mode / difficulty / battle_mode`
 
+这里的 `mode=continue` 语义需要明确收紧：
+
+- 它表示“**上一局已经打完，但还停在整局结算链上时，再来一局**”
+- 它**不表示**“继续当前仍在进行中的对局”
+- 它**也不表示**“已经回到首页后，再开一局”；在首页上重新开一局应使用 `mode=new`
+- 首页上出现 `继续进度` / `结束并结算` 这类未收尾进度时，`cw start` 不论 `mode=new` 还是 `mode=continue`，都不应自动继续；应稳定报错，把决策权交给 Agent 去先问用户
+- 当 `mode=continue` 在整局结算链上成功收尾并重新开出下一局后，session 中持久化的 `entry.mode` / `portal.mode` 应写成 `new`，因为此时已经进入了一局新的开局链，而不是继续中的旧局
+
 具体行为：
 
-1. 若当前在货币战争首页，则根据传入的 `mode / difficulty / battle_mode` 执行开局流程，推进到投资环境页。
-2. 若当前处于以下“首页之后、投资环境之前”的中间态，则继续向前推进，而不是回退：
+1. 若当前在**真正的货币战争首页**：
+   - `mode=new`：根据传入的 `difficulty / battle_mode` 执行开局流程，推进到投资环境页。
+   - `mode=continue`：稳定报错，提示 Agent 这里应该改用 `new`，而不是 `continue`。
+   - 若首页仍显示未结算/未收尾的当前进度（例如 `继续进度` / `结束并结算`），则不论 `mode=new` 还是 `mode=continue` 都直接稳定报错，不自动继续、不自动结算。
+   - 如果首页表面上看是“干净首页”，但在点击 `开始「货币战争」` 之后才确定性暴露出 `继续进度` / `结束并结算`，则允许这一次点击发生，并把它视为一个**已知、可解释的停点**：命令应稳定返回同一个 `CW_START_PROGRESS_PENDING` 业务错误，但不把 session 标为 `tainted`。
+2. 若当前处于以下“整局结算链”页面，则只允许 `mode=continue`：
+    - `挑战成功/挑战失败 -> 下一步`
+    - 整局奖励/对局评价的后续分页
+    - `返回货币战争`
+   在这些页面上，`cw start --mode continue` 的职责是：把整局结算链走完，回到首页，然后立即按一次新的开局链进入投资环境页。
+3. 若当前处于以下“首页之后、投资环境之前”的中间态，则只允许 `mode=new` 继续向前推进，而不是回退：
    - `entry.new`
    - `entry.continue`
    - `stage.boss_preview`
-3. 若当前已经在投资环境页，则 no-op 成功返回当前识别结果。
-4. 若当前已经进入游戏内阶段（补给/备战/商店等），直接报错，不做回推。
+4. 若当前已经在投资环境页，则 no-op 成功返回当前识别结果；此时 `mode=new/continue` 都不再触发新的开局动作。
+5. 若当前已经进入游戏内普通阶段（补给/备战/商店等），直接报错，不做回推。
+
+当首页存在未收尾进度时，`cw start` 的错误语义固定为：
+
+- 命令稳定失败
+- 错误信息必须足够让 Agent 明确知道：需要先问用户是要 `继续进度`、`结束并结算`，还是稍后再开新局
+- 第一版不在 `cw start` 内自动代做这些动作
+- 如果这条错误是在点击 `开始「货币战争」` 之后才被确定性识别出来，`request-status` 仍记为一次**已完成且可解释**的请求，不进入 unknown-result / tainted 语义
 
 `cw start` 的返回不再是“开局成功”，而是“当前投资环境页的三张卡摘要”。
 
@@ -100,6 +124,22 @@
 - `portal_description`
 - `score`
 
+可选字段：
+
+- `new`
+  - 仅当该卡命中“未收集”标志时才输出
+  - 第一版固定编码为 `new=1`
+- `guides`
+  - 可选字段
+  - 最多 3 条
+  - 每条 guide 的字段与增强后的 `guide list cw` 单条摘要一致
+  - 额外包含核心互动数据：`like`、`favour`
+
+另外：
+
+- 若该卡命中“未收集”标志（基于 `collection.png` 模板匹配），则额外输出 `new=1`
+- 若未命中，则不输出这个字段
+
 不返回：
 
 - `portal_id`
@@ -119,12 +159,16 @@
    - `title` 相似度
    - `title + description` 相似度
 8. 取两者较高者作为该 portal 的得分，并选择得分最高的 1 个 portal 作为结果；若并列，则先取 `title` 相似度更高者，再按 `portal_id` 字典序打破平局。
+9. 在 portal OCR 之外，再额外做一次 `collection.png` 模板匹配；按当前窗口内 `1920x1080` 坐标系把命中的标志归入对应卡片 lane，并仅对命中的卡追加 `new=1`。
+9. 在 OCR/portal 匹配之外，再额外做一次 `collection.png` 找图；按当前窗口内 `1920x1080` 坐标系把命中的 collection 图标归到对应 card lane，并仅对命中的卡追加 `new=1`。
 
 返回给 Agent 的结果是：
 
 - 第 1/2/3 张卡分别最可能是什么 portal
 - 该 portal 的官方标题与完整描述
 - 以及匹配分数
+- 若命中“未收集”标志，则附带 `new=1`
+- 若当前能按该 portal 找到攻略，则额外附带最多 3 条推荐攻略摘要
 
 ## 投资环境操作命令
 
@@ -157,6 +201,12 @@
 - 等刷新完成
 - 重新 OCR/合并/匹配
 - 返回刷新后的三张卡摘要
+
+第一版实现要求：
+
+- 不再使用硬编码 refresh 点作为主路径
+- 优先使用 `invest_env_refresh.png` 模板定位刷新按钮
+- 用户已在实机上确认：刷新按钮位于“剩余次数”文字左侧一点；这条观测只作为模板定位失败时的调试线索，不作为对外契约
 
 错误语义：
 
@@ -221,13 +271,33 @@
     - 返回稳定错误
     - 同时给出最接近的 3 个候选
 4. 若存在：
-   - 第一版 portal 过滤只允许无分页模式：若同时传 `page > 1` 或 `next_page_token`，直接稳定报错
-   - 在本地做**有界**过滤：固定抓取首页前 60 条原始 list 结果
-   - 第一版 portal 过滤明确**不依赖 list summary 自带 portal 字段**；实现层允许对这 60 条候选逐条拉取 guide detail，并以 detail 中的 portal 元数据做本地过滤
-   - 过滤后返回最多 `limit` 条命中结果
-   - 第一版 portal 过滤模式下，统一 `more=0`、不输出 `next`
-5. 若同时传入 `--portal` 和 `--portal-id`：
-   - 第一版直接稳定报错，不允许双重指定
+   - `--portal` / `--portal-id` 第一版都允许**重复传入多个值**，用于一次请求同时为多个投资环境做过滤
+   - 第一版 portal 过滤只允许从首页起步：若同时传 `page > 1` 或 `next_page_token`，直接稳定报错
+   - 上游原始 `guide list` 当前每页实际最多返回 10 条；实现必须按真实分页不断往后抓，而不是假设传更大的 `limit` 就能一次拿到更多结果
+   - 第一版 portal 过滤明确**不依赖 list summary 自带 portal 字段**；实现层允许对每页候选逐条拉取 guide detail，并以 detail 中的 portal 元数据做本地过滤
+   - 对于每个被请求的 portal，若当前累计命中仍不到用户的 `limit`，且上游还有更多结果，则继续翻下一页
+   - 停止条件固定为：
+     - 该 portal 的累计命中数达到用户的 `limit`，或
+     - 上游 exhausted，或
+     - 已扫描到保护上限 `30 页`
+   - 这里的 `limit` 继续保持原有语义：表示**最多返回多少条攻略**；实现层负责按真实分页尽量补足到这个上限
+   - 这是开发期优化目标的一部分：在当前真实 API 上，期望把最多 30 页的 portal 过滤链压到 5 秒内，但这一条不是用户面硬错误语义
+   - 对每个 portal 都返回最多 `limit` 条命中结果
+   - `more / next` 语义改为：只有在 portal 过滤模式下**确实还有未扫描的上游页**且尚未 hit 30 页上限时，才返回 `more=1` 与对应 `next`；否则才是 `more=0`
+ 5. 若同时传入 `--portal` 和 `--portal-id`：
+    - 第一版继续稳定报错，不允许混用“按标题”和“按 id”两种指定方式
+
+输出形态：
+
+- 当 `guide list cw` 传入多个 `--portal` / `--portal-id` 时，结果按环境分组返回，而不是把不同环境的攻略扁平混在一起
+- 每个环境分组只需要最小标识它适配哪个环境：
+  - `portal_title`
+  - `list`：最多 `limit` 条攻略摘要
+  - `more`
+  - 可选 `next`
+- 单条 guide 摘要在现有字段基础上，新增核心互动数据：
+  - `like`
+  - `favour`
 
 因为官方接口本身不支持按投资环境筛攻略，所以这里的 portal 过滤属于命令层补充能力。
 
@@ -303,7 +373,7 @@
 
 - `cw.start`
   - 首行：`ok cw.start cards=<n>`
-  - 正文：每张卡使用 `opt` 行输出 `idx / title / score`，再用第二条 `opt` 行输出 `idx / desc`
+  - 正文：每张卡使用 `opt` 行输出 `idx / title / score`，若命中未收集标志则在同一行追加 `new=1`；再用第二条 `opt` 行输出 `idx / desc`
 - `cw.enter`
   - 首行：`ok cw.enter page=home`
   - 若是 no-op，可追加 `info already_home=1`
@@ -311,6 +381,7 @@
   - 与 `cw.start` 同一家族，输出同样的三卡摘要
 - `cw.portal.restart`
   - 与 `cw.start` 同一家族，输出同样的三卡摘要
+  - 若某张卡命中 collection 图标，则对应的 `opt idx=<n> title=... score=...` 行追加 `new=1`
 - `cw.portal.select`
   - 首行：`ok cw.portal.select idx=<card_idx> title=<portal_title>`
   - `title` 明确来自当前 session 中最近一次 `cw start` / `cw.portal.refresh` / `cw.portal.restart` 产出的三卡摘要缓存，不在 `select` 内重跑 OCR

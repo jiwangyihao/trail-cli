@@ -12,6 +12,7 @@ DEFAULT_CW_STAGE_WAIT_TIMEOUT = 120
 
 cw_app = typer.Typer(no_args_is_help=True)
 cw_guide_app = typer.Typer(no_args_is_help=True)
+portal_app = typer.Typer(no_args_is_help=True)
 stage_app = typer.Typer(no_args_is_help=True)
 slots_app = typer.Typer(no_args_is_help=True)
 shop_app = typer.Typer(no_args_is_help=True)
@@ -44,6 +45,7 @@ class BattleMode(StrEnum):
 
 
 cw_app.add_typer(cw_guide_app, name="guide")
+cw_app.add_typer(portal_app, name="portal")
 cw_app.add_typer(stage_app, name="stage")
 cw_app.add_typer(slots_app, name="slots")
 cw_app.add_typer(shop_app, name="shop")
@@ -68,14 +70,19 @@ def _print_cw(method: str, *, session_id: str, payload: dict | None = None) -> N
 
 
 @cw_app.command("enter")
-def cw_enter(
+def cw_enter(session: str = typer.Option(..., "--session")) -> None:
+    _print_cw("cw.enter", session_id=session)
+
+
+@cw_app.command("start")
+def cw_start(
     session: str = typer.Option(..., "--session"),
     mode: EnterMode = typer.Option(..., "--mode"),
     difficulty: EnterDifficulty = typer.Option(EnterDifficulty.CURRENT, "--difficulty"),
     battle_mode: BattleMode = typer.Option(BattleMode.STANDARD, "--battle-mode"),
 ) -> None:
     _print_cw(
-        "cw.enter",
+        "cw.start",
         session_id=session,
         payload={
             "mode": mode.value,
@@ -83,6 +90,24 @@ def cw_enter(
             "battle_mode": battle_mode.value,
         },
     )
+
+
+@portal_app.command("select")
+def cw_portal_select(
+    session: str = typer.Option(..., "--session"),
+    card_idx: int = typer.Option(..., "--card-idx"),
+) -> None:
+    _print_cw("cw.portal.select", session_id=session, payload={"card_idx": card_idx})
+
+
+@portal_app.command("refresh")
+def cw_portal_refresh(session: str = typer.Option(..., "--session")) -> None:
+    _print_cw("cw.portal.refresh", session_id=session)
+
+
+@portal_app.command("restart")
+def cw_portal_restart(session: str = typer.Option(..., "--session")) -> None:
+    _print_cw("cw.portal.restart", session_id=session)
 
 
 @cw_guide_app.command("apply")

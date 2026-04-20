@@ -15,6 +15,9 @@
 ### Create
 - `trail/scenes/cw/portal.py`
   - 投资环境页 OCR 合并、portal 匹配、结果缓存 helper。
+- `trail/scenes/cw/assets/collection.png`
+- `trail/scenes/cw/assets/invest_env_refresh.png`
+  - 复用“未收集标志”和“刷新按钮”的模板资源，减少继续依赖硬编码点位的风险。
 - `tests/test_cw_portal.py`
   - daemon-side `cw start` / `cw portal.select|refresh|restart` 与 portal matching 测试。
 - `tests/test_guide_portal_filter.py`
@@ -84,15 +87,25 @@
   - 双传时报错
   - `page > 1` 或 `next_page_token` 同传时报错
   - 非法 portal 返回最接近 3 个候选
-  - portal 过滤基于首页前 60 条候选的 detail fan-out，本地返回最多 `limit` 条
+  - `--portal` / `--portal-id` 可重复传入多个值
+  - portal 过滤按真实上游分页不断往后抓，而不是假设 `limit=60` 就等于拿到 60 条候选
+  - 上游单页实际最多返回 10 条时，也必须继续翻页直到为每个 portal 凑够 `limit`、上游 exhausted、或 hit `30 页` 保护上限
+  - portal 过滤基于逐页候选的 detail fan-out，本地对每个 portal 返回最多 `limit` 条
+  - guide 单条摘要要新增核心互动数据：`like`、`favour`
+  - portal 模式下的 `more / next` 要反映“是否还有未扫描上游页”，不能再固定 `more=0`
+  - 多 portal 请求结果按环境分组返回，不做扁平合并
 - [ ] 写失败测试，冻结 daemon / CLI 转发链：
   - `trail/daemon/command_service.py` 必须把 `portal / portal_id` 透传到 guide list 过滤逻辑
   - `tests/test_guide_rpc_contracts.py` 必须覆盖 `--portal` / `--portal-id` payload 映射与互斥错误
 - [ ] 写失败测试，冻结非法 portal 的默认文本失败输出：
   - `why msg=...`
   - 最多 3 条 `warn portal=<title> score=<score>`
+- [ ] 写失败测试，冻结多 portal 成功输出：
+  - 结果按环境分组
+  - 每组都带 `portal_title / list / more / next?`
+  - 单条 guide 摘要新增 `like / favour`
 - [ ] 跑红灯，确认当前 `guide list` 不支持这些语义。
-- [ ] 最小实现 `guide list cw` portal 过滤。
+- [ ] 最小实现 `guide list cw` portal 过滤，并把停止条件锁成：`limit` / exhausted / 30 页上限；把 `<5s` 记成开发期性能目标而不是用户面硬错误。
 - [ ] 运行：
    - `uv run pytest tests/test_guide_portal_filter.py tests/test_cw_guide.py tests/test_guide_rpc_contracts.py tests/test_output_rendering.py -q --basetemp .trail/pytest-temp-cw-portal-guide -p no:cacheprovider`
 - [ ] 提交：`feat(cw): 增加攻略投资环境过滤`
@@ -104,13 +117,14 @@
 - Create: `tests/test_cw_portal.py`
 
 - [ ] 写失败测试，冻结三卡 lane 分配、y 中心差 `<= 32` 的行合并、文本归一化、portal top1 选择和 tie-break。
-- [ ] 在测试里把 helper 输入形状写死为：`ocr pieces + portal_list -> [{card_idx, portal_title, portal_description, score}]`，避免执行者临场设计输入/输出格式。
+- [ ] 在测试里把 helper 输入形状写死为：`ocr pieces + portal_list + collection matches -> [{card_idx, portal_title, portal_description, score, new?}]`，其中 `new` 仅在命中未收集标志时出现，避免执行者临场设计输入/输出格式。
 - [ ] 跑红灯，确认 helper 尚不存在。
 - [ ] 最小实现 `portal.py`：
   - OCR piece -> lane
   - lane 内行合并
   - 基于 `SequenceMatcher` 的 `title` / `title+description` 相似度计算
-  - 产出三卡摘要：`card_idx / portal_title / portal_description / score`
+  - 基于 `collection.png` 模板匹配，把“未收集”标志归到对应卡片 lane
+  - 产出三卡摘要：`card_idx / portal_title / portal_description / score`，命中未收集标志时额外带 `new=1`
 - [ ] 跑绿灯：
   - `uv run pytest tests/test_cw_portal.py -q --basetemp .trail/pytest-temp-cw-portal-match -p no:cacheprovider`
 - [ ] 提交：`feat(cw): 增加投资环境识别与匹配`
@@ -146,8 +160,14 @@
 - Modify: `tests/test_daemon_protocol.py`
 
 - [ ] 写失败测试，冻结 `cw start`：
-  - 首页 -> 推进到投资环境页并返回三卡摘要
-  - `entry.new / entry.continue / stage.boss_preview` -> 继续推进
+  - 干净首页 + `mode=new` -> 推进到投资环境页并返回三卡摘要
+  - 干净首页 + `mode=continue` -> 稳定报错，提示这里应改用 `new`
+  - 首页若仍有未收尾的当前进度（`继续进度` / `结束并结算`）-> 稳定报错，并要求 Agent 先问用户
+  - 首页若在点击 `开始「货币战争」` 后才确定性暴露未收尾进度 -> 仍稳定报同一错误，但 request-status 记为 `completed` 且 `tainted=0`
+  - 整局结算链页面 + `mode=continue` -> 收完结算链后直接再开一局，停在投资环境页
+  - 整局结算链页面 + `mode=new` -> 稳定报错
+  - 整局结算链页面 + `mode=continue` 成功后，持久化到 `scene_state["cw"]["entry"]` / `scene_state["cw"]["portal"]` 的 `mode` 应写成 `new`
+  - `entry.new / entry.continue / stage.boss_preview` -> 仅 `mode=new` 继续推进
   - invest -> no-op 返回三卡摘要
   - in-game -> 稳定报错
   - 在 no-op 分支上，若 session 尚无 `mode/difficulty/battle_mode` 则补写；若已存在且冲突则报错
@@ -155,6 +175,10 @@
 - [ ] 跑红灯，确认当前不存在 `cw.start`。
 - [ ] 在 `trail/scenes/cw/entry.py` 中抽出“从首页之后继续推进到投资环境页”的 scene helper，避免执行者在 `cw_service.py` 里复制旧入口链。
 - [ ] 最小实现 `cw start`，并把 entry 参数持久化到 session 真相源。
+  - `mode=continue` 明确表示“上一局打完、仍停在整局结算链上时，再来一局”，不是继续当前未收尾对局，也不是首页上的普通开新局。
+  - 若已经回到首页，则 `mode=continue` 必须稳定报错，提示改用 `new`。
+  - 若首页仍显示 `继续进度` / `结束并结算`，不论 `mode=new/continue` 都必须稳定报错。
+  - 若是在点击 `开始「货币战争」` 之后才暴露出未收尾进度，按稳定业务错误处理，不进入 unknown-result / tainted。
 - [ ] 运行：
   - `uv run pytest tests/test_cw_portal.py tests/test_daemon_protocol.py -q --basetemp .trail/pytest-temp-cw-start -p no:cacheprovider`
 - [ ] 提交：`feat(cw): 增加 start 到投资环境语义`
@@ -173,6 +197,7 @@
   - `cw portal.select` 只接受 `card_idx=1|2|3`
   - session 没有最近一次三卡摘要缓存时稳定报错
   - `cw portal.refresh` 点击刷新并返回新三卡摘要
+  - `cw portal.refresh` 优先使用 `invest_env_refresh.png` 模板定位刷新按钮，而不是继续依赖固定点位
   - `cw portal.restart` 依赖 session 中 entry 参数，能经由内部 helper 退局回首页后再回到投资环境页
 - [ ] 明确保持现有 `cw.invest.read|choose` 不变；它们继续代表局内 invest 事件，不迁移成首页投资环境页命令。
 - [ ] 先在 `trail/scenes/cw/portal.py` 明确实现并测试内部 `restart-to-homepage` helper，再在 `cw_service.py` 组合它，避免 Task 5 同时发明 helper 和 RPC 语义。
@@ -210,6 +235,7 @@
 - [ ] 在 `tests/test_output_rendering.py` 里显式冻结：
   - `cw.enter -> ok cw.enter page=home`
   - `cw.start` / `cw.portal.refresh` / `cw.portal.restart` -> `opt` 三卡摘要家族
+  - 命中 collection 图标的卡，在第一条 `opt idx=... title=... score=...` 上追加 `new=1`
   - `cw.portal.select` -> `ok cw.portal.select idx=... title=...`
 - [ ] 最小实现 CLI cutover 和文本 renderer；必要时同步收紧 daemon-side `cw.enter` 参数校验。
 - [ ] 运行：
@@ -231,6 +257,7 @@
   - `cw enter` 到首页
   - 首页询问偏好
   - `cw start`
+  - 若首页仍有未收尾进度，先问用户是 `继续进度`、`结束并结算`，还是稍后再开新局
   - `cw portal.refresh|restart`
   - `cw portal.select`
   - `guide list cw --portal|--portal-id ...`
@@ -249,8 +276,11 @@
   - `uv run pytest -q --basetemp .trail/pytest-temp-cw-portal-full -p no:cacheprovider`
 - [ ] 手工 / 实机 smoke：
   - `cw enter` 到首页
+  - 干净首页上 `cw start --mode continue` 稳定报错
   - 首页不再继续开局
-  - `cw start` 到投资环境页并返回三卡摘要
+  - `cw start --mode new` 到投资环境页并返回三卡摘要
+  - 整局结算链上 `cw start --mode continue` 能收尾并重新开一局到投资环境页
+  - 若当前页存在 collection 标志，返回摘要里对应卡应带 `new=1`
   - `cw portal.select` 可完成选卡+确认
   - `cw portal.refresh` 可刷新并返回新三卡
   - `guide list cw --portal ...` 可过滤

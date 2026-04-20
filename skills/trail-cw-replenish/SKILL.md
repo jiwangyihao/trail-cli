@@ -15,6 +15,7 @@ description: Use when an agent needs to read or choose replenish, invest, encoun
 - 一次只处理当前阶段
 - 不负责阶段切换和整局循环
 - `read` 命令返回的是辅助信息，不应替代 agent 对截图本身的判断
+- 这里的 `trail cw invest.read|choose` 继续只表示局内 invest 事件，不是开局投资环境页命令
 
 ## 标准流程
 

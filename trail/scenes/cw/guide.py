@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
+from difflib import SequenceMatcher
 import json
 import re
 from pathlib import Path
@@ -33,6 +35,9 @@ PURCHASE_COUNT_BY_STAR = {
     2: 3,
     3: 9,
 }
+CW_GUIDE_UPSTREAM_PAGE_SIZE = 10
+CW_GUIDE_PORTAL_MAX_PAGES = 30
+CW_GUIDE_PORTAL_DETAIL_WORKERS = 8
 
 CW_WIDTH = 1920
 CW_HEIGHT = 1080
@@ -44,6 +49,12 @@ GUIDE_INPUT_FOCUS_DELAY = 0.2
 GUIDE_TEXT_SETTLE_DELAY = 0.2
 GUIDE_APPLY_SETTLE_TIMEOUT = 1.5
 GUIDE_APPLY_SETTLE_INTERVAL = 0.2
+
+
+class GuidePortalLookupError(TrailError):
+    def __init__(self, portal: str, *, candidates: list[dict[str, object]]):
+        super().__init__("GUIDE_PORTAL_INVALID", f"guide portal invalid: {portal}")
+        self.candidates = candidates
 
 
 def _guide_artifact_invalid(target: str) -> TrailError:
@@ -357,6 +368,86 @@ def _normalize_role_tags(data: Mapping) -> list[object]:
     return tags
 
 
+def _normalize_portal_list(portal_list: object, *, require_id: bool = True) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    if not isinstance(portal_list, list):
+        return result
+    for item in portal_list:
+        if not isinstance(item, Mapping):
+            continue
+        portal_id = str(item.get("portal_id") or item.get("id") or "")
+        title = str(item.get("title") or item.get("name") or "")
+        description = str(item.get("description") or item.get("desc") or "")
+        if not title:
+            continue
+        if require_id and not portal_id:
+            continue
+        result.append(
+            {
+                "portal_id": portal_id,
+                "title": title,
+                "description": description,
+            }
+        )
+    return result
+
+
+def _portal_similarity(query: str, *, portal: Mapping[str, str]) -> float:
+    normalized_query = query.strip().lower()
+    title = str(portal.get("title") or "").strip().lower()
+    portal_id = str(portal.get("portal_id") or "").strip().lower()
+    title_score = SequenceMatcher(a=normalized_query, b=title).ratio() if title else 0.0
+    id_score = SequenceMatcher(a=normalized_query, b=portal_id).ratio() if portal_id else 0.0
+    return max(title_score, id_score)
+
+
+def _portal_candidates(query: str, portal_list: list[dict[str, str]]) -> list[dict[str, object]]:
+    ranked = [
+        {
+            "title": portal["title"],
+            "score": round(_portal_similarity(query, portal=portal), 2),
+        }
+        for portal in portal_list
+    ]
+    ranked.sort(key=lambda item: (-float(item["score"]), str(item["title"])))
+    return ranked[:3]
+
+
+def _resolve_guide_portal_filter(
+    *,
+    portal_list: list[dict[str, str]],
+    portal: str | None,
+    portal_id: str | None,
+) -> dict[str, str] | None:
+    if portal is not None and portal_id is not None:
+        raise TrailError("GUIDE_INPUT_INVALID", "guide options '--portal' and '--portal-id' are mutually exclusive")
+
+    if portal is None and portal_id is None:
+        return None
+
+    if portal is not None:
+        for item in portal_list:
+            if item["title"] == portal:
+                return item
+        raise GuidePortalLookupError(portal, candidates=_portal_candidates(portal, portal_list))
+
+    for item in portal_list:
+        if item["portal_id"] == portal_id:
+            return item
+    raise GuidePortalLookupError(str(portal_id), candidates=_portal_candidates(str(portal_id), portal_list))
+
+
+def _matches_lineup_portal(lineup: Mapping[str, object], *, portal: Mapping[str, str]) -> bool:
+    tourn_detail = lineup.get("tourn_detail")
+    if not isinstance(tourn_detail, Mapping):
+        return False
+    detail_portals = _normalize_portal_list(tourn_detail.get("portals"), require_id=False)
+    for item in detail_portals:
+        if item["portal_id"] == portal["portal_id"] or item["title"] == portal["title"]:
+            return True
+    return False
+
+
 def _normalize_lineup_labels(labels: object) -> list[str]:
     result: list[str] = []
     if not isinstance(labels, list):
@@ -416,6 +507,14 @@ def _normalize_interact(payload: object) -> dict[str, int]:
         "favour": _read_interact_value(payload, "favour", "favour_num", "favour_count"),
         "view": _read_interact_value(payload, "view", "view_num", "view_count"),
         "use": _read_interact_value(payload, "use", "use_num", "use_count"),
+    }
+
+
+def _core_interact(summary: Mapping[str, object]) -> dict[str, int]:
+    interact = summary.get("interact") if isinstance(summary.get("interact"), Mapping) else {}
+    return {
+        "like": int(interact.get("like") or 0),
+        "favour": int(interact.get("favour") or 0),
     }
 
 
@@ -497,6 +596,8 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
             "created_at": None,
             "last_edit": None,
             "carry_roles": [],
+            "like": 0,
+            "favour": 0,
             "interact": _normalize_interact(None),
             "recent_interact": _normalize_interact(None),
             "support_hard": False,
@@ -512,6 +613,9 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
         _append_role_cards(final_role_cards, final_stage.get("front_roles"))
         _append_role_cards(final_role_cards, final_stage.get("back_roles"))
 
+    interact = _normalize_interact(game_data.get("interact"))
+    recent_interact = _normalize_interact(game_data.get("recent_interact"))
+
     return {
         "id": lineup.get("id"),
         "title": str(lineup.get("title") or ""),
@@ -526,8 +630,10 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
         "created_at": lineup.get("created_at"),
         "last_edit": lineup.get("last_edit"),
         "carry_roles": _normalize_named_list(tourn_detail.get("carry_list")),
-        "interact": _normalize_interact(game_data.get("interact")),
-        "recent_interact": _normalize_interact(game_data.get("recent_interact")),
+        "interact": interact,
+        "recent_interact": recent_interact,
+        "like": interact.get("like", 0),
+        "favour": interact.get("favour", 0),
         "support_hard": bool(tourn_detail.get("support_hard")),
     }
 
@@ -546,6 +652,7 @@ def fetch_cw_guide_config(*, timeout: int = 10) -> dict:
         "traits": _normalize_traits(data.get("trait_info_list")),
         "roles": _normalize_roles(data.get("role_list")),
         "role_tags": _normalize_role_tags(data),
+        "portal_list": _normalize_portal_list(data.get("portal_list")),
     }
 
 
@@ -558,8 +665,36 @@ def fetch_cw_guide_list(
     next_page_token: str | None,
     match_change_job: bool | None,
     match_hard: bool | None,
+    portal: str | list[str] | None = None,
+    portal_id: str | list[str] | None = None,
     timeout: int = 10,
 ) -> dict:
+    has_portal_filter = portal is not None or portal_id is not None
+    if has_portal_filter and (page > 1 or next_page_token):
+        raise TrailError(
+            "GUIDE_PORTAL_PAGINATION_UNSUPPORTED",
+            "guide portal filter only supports first page without next_page_token",
+        )
+
+    portal_filters: list[dict[str, str]] = []
+    if has_portal_filter:
+        portal_filters = _resolve_guide_portal_filters(
+            portal_list=fetch_cw_guide_config(timeout=timeout).get("portal_list", []),
+            portal=portal,
+            portal_id=portal_id,
+        )
+
+    if portal_filters:
+        return _fetch_cw_guide_list_for_portals(
+            portal_filters=portal_filters,
+            limit=limit,
+            trait_id=trait_id,
+            order=order,
+            match_change_job=match_change_job,
+            match_hard=match_hard,
+            timeout=timeout,
+        )
+
     data = _fetch_cw_guide_list_data(
         page=page,
         limit=limit,
@@ -575,6 +710,158 @@ def fetch_cw_guide_list(
         "list": [_normalize_lineup_summary(item) for item in lineup_list] if isinstance(lineup_list, list) else [],
         "next_page_token": data.get("next_page_token"),
     }
+
+
+def _normalize_portal_values(value: str | list[str] | None) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list):
+        raise TrailError("GUIDE_INPUT_INVALID", "guide portal filter must be a string or list of strings")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise TrailError("GUIDE_INPUT_INVALID", "guide portal filter must be a string or list of strings")
+        result.append(item)
+    return result
+
+
+def _resolve_guide_portal_filters(
+    *,
+    portal_list: list[dict[str, str]],
+    portal: str | list[str] | None,
+    portal_id: str | list[str] | None,
+) -> list[dict[str, str]]:
+    portal_values = _normalize_portal_values(portal)
+    portal_id_values = _normalize_portal_values(portal_id)
+    if portal_values and portal_id_values:
+        raise TrailError("GUIDE_INPUT_INVALID", "guide options '--portal' and '--portal-id' are mutually exclusive")
+
+    resolved: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    if portal_values:
+        for value in portal_values:
+            item = _resolve_guide_portal_filter(portal_list=portal_list, portal=value, portal_id=None)
+            if item["portal_id"] in seen_ids:
+                continue
+            resolved.append(item)
+            seen_ids.add(item["portal_id"])
+    else:
+        for value in portal_id_values:
+            item = _resolve_guide_portal_filter(portal_list=portal_list, portal=None, portal_id=value)
+            if item["portal_id"] in seen_ids:
+                continue
+            resolved.append(item)
+            seen_ids.add(item["portal_id"])
+    return resolved
+
+
+def _fetch_cw_guide_list_for_portals(
+    *,
+    portal_filters: list[dict[str, str]],
+    limit: int,
+    trait_id: int | None,
+    order: str | None,
+    match_change_job: bool | None,
+    match_hard: bool | None,
+    timeout: int,
+) -> dict:
+    grouped = {
+        portal["portal_id"]: {
+            "portal_title": portal["title"],
+            "list": [],
+            "more": False,
+            "next_page_token": None,
+        }
+        for portal in portal_filters
+    }
+    next_page_token: str | None = None
+    pages_scanned = 0
+
+    while pages_scanned < CW_GUIDE_PORTAL_MAX_PAGES:
+        data = _fetch_cw_guide_list_data(
+            page=1,
+            limit=CW_GUIDE_UPSTREAM_PAGE_SIZE,
+            trait_id=trait_id,
+            order=order,
+            next_page_token=next_page_token,
+            match_change_job=match_change_job,
+            match_hard=match_hard,
+            timeout=timeout,
+        )
+        lineup_list = data.get("list") if isinstance(data.get("list"), list) else []
+        if not lineup_list:
+            next_page_token = None
+            break
+
+        normalized_items = [item for item in lineup_list if isinstance(item, Mapping)]
+        details = _fetch_lineup_details_for_portal_filter(normalized_items, timeout=timeout)
+        for item, lineup_detail in details:
+            normalized = _normalize_lineup_summary(item)
+            for portal_filter in portal_filters:
+                bucket = grouped[portal_filter["portal_id"]]["list"]
+                if len(bucket) >= limit:
+                    continue
+                if _matches_lineup_portal(lineup_detail, portal=portal_filter):
+                    bucket.append(normalized)
+
+        pages_scanned += 1
+        next_page_token = data.get("next_page_token")
+        if not next_page_token:
+            break
+        if all(len(grouped[portal["portal_id"]]["list"]) >= limit for portal in portal_filters):
+            break
+
+    has_more = bool(next_page_token) and pages_scanned < CW_GUIDE_PORTAL_MAX_PAGES
+    result_groups = []
+    total_count = 0
+    for portal_filter in portal_filters:
+        group = grouped[portal_filter["portal_id"]]
+        items = group["list"][:limit]
+        total_count += len(items)
+        result_groups.append(
+            {
+                "portal_title": group["portal_title"],
+                "list": items,
+                "more": has_more,
+                "next_page_token": next_page_token if has_more else None,
+            }
+        )
+
+    if len(result_groups) == 1:
+        only = result_groups[0]
+        return {
+            "list": only["list"],
+            "next_page_token": only["next_page_token"],
+        }
+
+    return {
+        "portals": result_groups,
+        "count": total_count,
+        "more": has_more,
+    }
+
+
+def _fetch_lineup_details_for_portal_filter(
+    lineup_items: list[Mapping[str, object]],
+    *,
+    timeout: int,
+) -> list[tuple[Mapping[str, object], Mapping[str, object]]]:
+    jobs: list[tuple[Mapping[str, object], str]] = []
+    for item in lineup_items:
+        lineup_id = item.get("id") or item.get("lineup_id")
+        if lineup_id is None:
+            continue
+        jobs.append((item, str(lineup_id)))
+
+    def fetch(job: tuple[Mapping[str, object], str]) -> tuple[Mapping[str, object], Mapping[str, object]]:
+        item, lineup_id = job
+        _, _, lineup_detail = _fetch_lineup_detail(lineup_id, timeout=timeout)
+        return item, lineup_detail
+
+    with ThreadPoolExecutor(max_workers=min(CW_GUIDE_PORTAL_DETAIL_WORKERS, max(1, len(jobs)))) as executor:
+        return list(executor.map(fetch, jobs))
 
 
 def _wrap_share_code(share_code: object, *, source_url: str) -> str:

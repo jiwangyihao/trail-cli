@@ -482,6 +482,7 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
             "list": [
                 {
                     "lineup_id": "abc",
+                    "title": "购物阵容",
                     "carry_roles": ["希儿", "停云"],
                     "final_role_cards": [
                         {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
@@ -491,13 +492,18 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
                     "support_hard": True,
                     "has_change_equip": False,
                     "has_expert": True,
+                    "like": 123,
+                    "favour": 45,
                 },
                 {
                     "lineup_id": "def",
+                    "title": "事件阵容",
                     "carry_roles": [],
                     "support_hard": False,
                     "has_change_equip": True,
                     "has_expert": False,
+                    "like": 22,
+                    "favour": 9,
                 },
             ],
             "next_page_token": "token-2",
@@ -513,9 +519,9 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
     assert render_output("guide.list.cw", payload).splitlines() == [
         "ok guide.list.cw count=2 more=1 next=token-2",
         "shot path=.trail/shots/req-guide-list.png",
-        "guide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1",
+        "guide id=abc title=购物阵容 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
         "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3|佩拉/star:4/rarity:2",
-        "guide id=def idx=2 hard=0 change_equip=1 expert=0",
+        "guide id=def title=事件阵容 idx=2 hard=0 change_equip=1 expert=0 like=22 favour=9",
     ]
 
 
@@ -526,10 +532,13 @@ def test_render_output_guide_list_omits_next_when_not_paginated():
             "list": [
                 {
                     "lineup_id": "abc",
+                    "title": "购物阵容",
                     "carry_roles": ["希儿"],
                     "support_hard": False,
                     "has_change_equip": False,
                     "has_expert": False,
+                    "like": 7,
+                    "favour": 3,
                 }
             ],
             "next_page_token": None,
@@ -546,9 +555,73 @@ def test_render_output_guide_list_omits_next_when_not_paginated():
 
     assert lines == [
         "ok guide.list.cw count=1 more=0",
-        "guide id=abc idx=1 carry=希儿 hard=0 change_equip=0 expert=0",
+        "guide id=abc title=购物阵容 idx=1 carry=希儿 hard=0 change_equip=0 expert=0 like=7 favour=3",
     ]
     assert all("final_roles=" not in line for line in lines)
+
+
+def test_render_output_renders_grouped_portal_guide_lists():
+    payload = {
+        "ok": True,
+        "data": {
+            "portals": [
+                {
+                    "portal_title": "购物区",
+                    "list": [
+                        {
+                            "lineup_id": "shop-guide",
+                            "title": "购物区优选阵容",
+                            "carry_roles": ["希儿"],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": True,
+                            "like": 123,
+                            "favour": 45,
+                            "final_role_cards": [{"name": "希儿", "star": 5, "rarity": 3, "is_carry": True}],
+                        }
+                    ],
+                    "more": False,
+                    "next_page_token": None,
+                },
+                {
+                    "portal_title": "事件区",
+                    "list": [
+                        {
+                            "lineup_id": "event-guide",
+                            "title": "事件区优选阵容",
+                            "carry_roles": ["停云"],
+                            "support_hard": False,
+                            "has_change_equip": True,
+                            "has_expert": False,
+                            "like": 22,
+                            "favour": 9,
+                            "final_role_cards": [{"name": "停云", "star": 4, "rarity": 2, "is_carry": True}],
+                        }
+                    ],
+                    "more": False,
+                    "next_page_token": None,
+                },
+            ],
+            "count": 2,
+            "more": False,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "ok guide.list.cw groups=2 count=2 more=0",
+        "guide portal=购物区 count=1 more=0",
+        "guide portal=购物区 id=shop-guide title=购物区优选阵容 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
+        "guide portal=购物区 idx=1 final_roles=希儿/carry:1/star:5/rarity:3",
+        "guide portal=事件区 count=1 more=0",
+        "guide portal=事件区 id=event-guide title=事件区优选阵容 idx=1 carry=停云 hard=0 change_equip=1 expert=0 like=22 favour=9",
+        "guide portal=事件区 idx=1 final_roles=停云/carry:1/star:4/rarity:2",
+    ]
 
 
 def test_render_output_renders_guide_fetch_summary_text():
@@ -588,10 +661,10 @@ def test_render_output_renders_guide_fetch_summary_text():
     ]
 
 
-def test_render_output_renders_cw_enter_summary_text():
+def test_render_output_renders_cw_enter_home_text():
     payload = {
         "ok": True,
-        "data": {"mode": "new", "difficulty": "current", "battle_mode": "standard"},
+        "data": {"page": "home"},
         "screenshot": ".trail/shots/req-enter.png",
         "timing": {},
         "warnings": [],
@@ -601,8 +674,144 @@ def test_render_output_renders_cw_enter_summary_text():
     }
 
     assert render_output("cw.enter", payload).splitlines() == [
-        "ok cw.enter mode=new difficulty=current battle=standard",
+        "ok cw.enter page=home",
         "shot path=.trail/shots/req-enter.png",
+    ]
+
+
+def test_render_output_renders_cw_enter_already_home_info():
+    payload = {
+        "ok": True,
+        "data": {"page": "home", "already_home": True},
+        "screenshot": ".trail/shots/req-enter-home.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.enter", payload).splitlines() == [
+        "ok cw.enter page=home",
+        "shot path=.trail/shots/req-enter-home.png",
+        "info already_home=1",
+    ]
+
+
+def test_render_output_renders_cw_start_portal_cards_family():
+    payload = {
+        "ok": True,
+        "data": {
+            "cards": [
+                {
+                    "card_idx": 1,
+                    "portal_title": "Alpha Portal",
+                    "portal_description": "Alpha Desc",
+                    "score": 0.99,
+                    "new": 1,
+                    "guides": [
+                        {
+                            "lineup_id": "alpha-guide",
+                            "title": "Alpha攻略",
+                            "carry_roles": ["希儿"],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": True,
+                            "like": 123,
+                            "favour": 45,
+                            "final_role_cards": [{"name": "希儿", "star": 5, "rarity": 3, "is_carry": True}],
+                        }
+                    ],
+                },
+                {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
+            ],
+            "mode": "continue",
+            "difficulty": "current",
+            "battle_mode": "standard",
+            "stale": False,
+        },
+        "screenshot": ".trail/shots/req-start.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.start", payload).splitlines() == [
+        "ok cw.start cards=2",
+        "shot path=.trail/shots/req-start.png",
+        'opt idx=1 title="Alpha Portal" score=0.99 new=1',
+        'opt idx=1 desc="Alpha Desc"',
+        'guide idx=1 gid=1 id=alpha-guide title=Alpha攻略 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45',
+        'guide idx=1 gid=1 final_roles=希儿/carry:1/star:5/rarity:3',
+        'opt idx=2 title="Beta Portal" score=0.88',
+        'opt idx=2 desc="Beta Desc"',
+    ]
+
+
+@pytest.mark.parametrize("command", ["cw.portal.refresh", "cw.portal.restart"])
+def test_render_output_renders_cw_portal_refresh_family(command: str):
+    payload = {
+        "ok": True,
+        "data": {
+            "cards": [
+                {
+                    "card_idx": 1,
+                    "portal_title": "Alpha Portal",
+                    "portal_description": "Alpha Desc",
+                    "score": 0.99,
+                    "new": 1,
+                    "guides": [
+                        {
+                            "lineup_id": "alpha-guide",
+                            "title": "Alpha攻略",
+                            "carry_roles": ["希儿"],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": True,
+                            "like": 123,
+                            "favour": 45,
+                        }
+                    ],
+                },
+            ],
+            "mode": "continue",
+            "difficulty": "current",
+            "battle_mode": "standard",
+            "stale": False,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output(command, payload).splitlines() == [
+        f"ok {command} cards=1",
+        'opt idx=1 title="Alpha Portal" score=0.99 new=1',
+        'opt idx=1 desc="Alpha Desc"',
+        'guide idx=1 gid=1 id=alpha-guide title=Alpha攻略 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45',
+    ]
+
+
+def test_render_output_renders_cw_portal_select_summary_text():
+    payload = {
+        "ok": True,
+        "data": {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
+        "screenshot": ".trail/shots/req-portal-select.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.portal.select", payload).splitlines() == [
+        'ok cw.portal.select idx=2 title="Beta Portal"',
+        "shot path=.trail/shots/req-portal-select.png",
     ]
 
 
@@ -1016,7 +1225,33 @@ def test_render_output_guide_config_tolerates_non_mapping_data():
 
     assert render_output("guide.config.cw", payload).splitlines() == [
         "ok guide.config.cw",
-        "info lineup_levels=0 traits=0 roles=0 role_tags=0",
+        "info lineup_levels=0 traits=0 roles=0 role_tags=0 portal_list=0",
+    ]
+
+
+def test_render_output_guide_list_failure_renders_portal_candidates_as_warn_lines():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [
+            {"portal": "购物区", "score": 0.98},
+            {"portal": "事件区", "score": 0.81},
+            {"portal": "补给区", "score": 0.74},
+        ],
+        "references": [],
+        "debug": {"request_id": "req-portal-invalid"},
+        "error": {"code": "GUIDE_PORTAL_INVALID", "message": "guide portal invalid: 购物曲"},
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "fail guide.list.cw code=GUIDE_PORTAL_INVALID",
+        "request id=req-portal-invalid",
+        'why msg="guide portal invalid: 购物曲"',
+        "warn portal=购物区 score=0.98",
+        "warn portal=事件区 score=0.81",
+        "warn portal=补给区 score=0.74",
     ]
 
 

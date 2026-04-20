@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from time import sleep
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
 from trail.daemon.command_service import SideEffectAppliedButStateNotPersisted
-from trail.scenes.cw.entry import enter_cw
+from trail.output.capture import with_auto_capture
+from trail.scenes.cw.entry import enter_cw, start_cw
 from trail.scenes.cw.events import (
     build_cw_battle_continuer,
     build_cw_battle_starter,
@@ -30,7 +32,17 @@ from trail.scenes.cw.events import (
     settle_cw_next,
     start_cw_battle,
 )
-from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, fetch_cw_guide, fetch_cw_guide_payload
+from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, fetch_cw_guide, fetch_cw_guide_list, fetch_cw_guide_payload
+from trail.scenes.cw.guide import fetch_cw_guide_config
+from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.portal import (
+    detect_portal_collection_matches,
+    refresh_cw_portal,
+    restart_cw_portal_to_settlement_entry,
+    select_cw_portal,
+    summarize_portal_cards,
+    wait_cw_portal_in_game,
+)
 from trail.scenes.cw.shop import (
     build_cw_shop_buyer,
     build_cw_shop_closer,
@@ -81,6 +93,7 @@ battle_continuer_factory = build_cw_battle_continuer
 settle_continuer_factory = build_cw_settle_continuer
 DEFAULT_CW_STAGE_WAIT_TIMEOUT = 120
 SIDE_EFFECT_RUNTIME_METHODS = {"click_point", "drag_to", "press_key", "type_text"}
+PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS = 2.0
 
 
 class _RuntimeSideEffectTracker:
@@ -109,6 +122,21 @@ class _SideEffectTrackingRuntime:
         return wrapped
 
 
+class _RequestScopedCaptureRuntime:
+    def __init__(self, runtime, request_id: str, *, extra_delay_seconds: float = 0.0):
+        self._runtime = runtime
+        self._request_id = request_id
+        self._extra_delay_seconds = extra_delay_seconds
+
+    def capture_after_action(self, optional: bool = False):
+        if self._extra_delay_seconds > 0:
+            sleep(self._extra_delay_seconds)
+        return self._runtime.capture_after_action(optional=optional, request_id=self._request_id)
+
+    def __getattr__(self, name: str):
+        return getattr(self._runtime, name)
+
+
 class CwService:
     def __init__(self, *, runtime_service):
         self.runtime_service = runtime_service
@@ -125,8 +153,17 @@ class CwService:
         session_service.save_session(session)
         return result
 
-    def handle_mutation(self, *, method: str, payload: dict, workspace_root: str, session_service) -> dict | None:
-        session, _, _, handlers, tracker = self._context(
+    def handle_mutation(
+        self,
+        *,
+        method: str,
+        payload: dict,
+        workspace_root: str,
+        session_service,
+        request_id: str,
+        verbose: bool = False,
+    ) -> dict | None:
+        session, _, runtime, handlers, tracker = self._context(
             method=method,
             payload=payload,
             workspace_root=workspace_root,
@@ -139,6 +176,8 @@ class CwService:
         except CwSideEffectAppliedError as error:
             raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
         except Exception as error:
+            if getattr(error, "completed_after_side_effect", False):
+                raise
             if tracker.side_effect_applied:
                 raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
             raise
@@ -148,7 +187,9 @@ class CwService:
         except Exception as error:
             raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
 
-        return result
+        extra_delay_seconds = PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS if method == "cw.portal.select" else 0.0
+        capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id, extra_delay_seconds=extra_delay_seconds)
+        return with_auto_capture(capture_runtime, lambda: result, verbose=verbose)
 
     def _context(self, *, method: str, payload: dict, workspace_root: str, session_service, track_side_effects: bool = False):
         session_id = payload.get("session_id")
@@ -171,14 +212,55 @@ class CwService:
                 runtime_holder["runtime"] = resolved_runtime
             return runtime_holder["runtime"]
 
-        handlers = {
-            "cw.enter": lambda: enter_cw(
+        def validated_enter_payload() -> dict:
+            if any(key in payload for key in ("mode", "difficulty", "battle_mode")):
+                raise TrailError(
+                    "CW_ENTER_ARGS_NOT_SUPPORTED",
+                    "cw enter no longer accepts mode/difficulty/battle_mode; use cw start",
+                )
+            return payload
+
+        def validated_start_payload() -> tuple[str, str, str]:
+            mode = payload.get("mode")
+            difficulty = payload.get("difficulty")
+            battle_mode = payload.get("battle_mode")
+            if not isinstance(mode, str) or not isinstance(difficulty, str) or not isinstance(battle_mode, str):
+                raise TrailError("CW_START_ARGS_REQUIRED", "cw start requires mode/difficulty/battle_mode")
+            if mode not in {"new", "continue"}:
+                raise TrailError("CW_START_MODE_INVALID", f"unsupported cw start mode: {mode}")
+            if difficulty not in {"lowest", "current", "highest"}:
+                raise TrailError("CW_START_DIFFICULTY_INVALID", f"unsupported cw start difficulty: {difficulty}")
+            if battle_mode not in {"standard", "overclock"}:
+                raise TrailError("CW_START_BATTLE_MODE_INVALID", f"unsupported cw start battle_mode: {battle_mode}")
+            return mode, difficulty, battle_mode
+
+        def run_start() -> dict:
+            mode, difficulty, battle_mode = validated_start_payload()
+            return _start_cw(
                 session,
-                mode=payload["mode"],
-                difficulty=payload.get("difficulty", "current"),
-                battle_mode=payload.get("battle_mode", "standard"),
                 runtime=runtime(),
-            ).scene_state["cw"]["entry"],
+                mode=mode,
+                difficulty=difficulty,
+                battle_mode=battle_mode,
+            )
+
+        handlers = {
+            "cw.enter": lambda: validated_enter_payload() and enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
+            "cw.start": run_start,
+            "cw.portal.select": lambda: select_cw_portal(
+                session,
+                card_idx=payload["card_idx"],
+                runtime=runtime(),
+            ),
+            "cw.portal.refresh": lambda: _attach_guides_to_portal_snapshot(
+                session,
+                refresh_cw_portal(
+                    session,
+                    runtime=runtime(),
+                    portal_list=fetch_cw_guide_config().get("portal_list", []),
+                ),
+            ),
+            "cw.portal.restart": lambda: _restart_cw(session, runtime=runtime()),
             "cw.stage.detect": lambda: detect_cw_stage(
                 session,
                 detector=stage_detector_factory(runtime()),
@@ -311,6 +393,110 @@ def _apply_guide(session, *, runtime, artifact_store: ArtifactStore, lineup_id: 
     except Exception as error:
         raise CwSideEffectAppliedError("cw.guide.apply side effect already ran") from error
     return refreshed.scene_state["cw"]["guide"]
+
+
+def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str) -> dict:
+    refreshed = start_cw(
+        session,
+        mode=mode,
+        difficulty=difficulty,
+        battle_mode=battle_mode,
+        runtime=runtime,
+    )
+    entry_state = ensure_cw_state(refreshed).get("entry")
+    cards = summarize_portal_cards(
+        runtime.ocr(),
+        fetch_cw_guide_config().get("portal_list", []),
+        collection_matches=detect_portal_collection_matches(runtime),
+    )
+    portal_snapshot = {
+        "cards": _attach_guides_to_cards(cards),
+        "mode": entry_state.get("mode") if isinstance(entry_state, dict) else None,
+        "difficulty": entry_state.get("difficulty") if isinstance(entry_state, dict) else None,
+        "battle_mode": entry_state.get("battle_mode") if isinstance(entry_state, dict) else None,
+        "stale": False,
+    }
+    ensure_cw_state(refreshed)["portal"] = portal_snapshot
+    return portal_snapshot
+
+
+def _restart_cw(session, *, runtime) -> dict:
+    entry_state = ensure_cw_state(session).get("entry") if isinstance(ensure_cw_state(session).get("entry"), dict) else {}
+    portal_state = ensure_cw_state(session).get("portal") if isinstance(ensure_cw_state(session).get("portal"), dict) else {}
+    mode = entry_state.get("mode") if entry_state.get("mode") is not None else portal_state.get("mode")
+    difficulty = entry_state.get("difficulty") if entry_state.get("difficulty") is not None else portal_state.get("difficulty")
+    battle_mode = entry_state.get("battle_mode") if entry_state.get("battle_mode") is not None else portal_state.get("battle_mode")
+    if not isinstance(mode, str) or not isinstance(difficulty, str) or not isinstance(battle_mode, str):
+        raise TrailError("CW_PORTAL_ENTRY_TRUTH_REQUIRED", "cw portal.restart requires recorded mode/difficulty/battle_mode")
+
+    select_cw_portal(session, card_idx=1, runtime=runtime)
+    wait_cw_portal_in_game(session, runtime=runtime)
+    restart_cw_portal_to_settlement_entry(session, runtime=runtime)
+    return _start_cw(session, runtime=runtime, mode="continue", difficulty=difficulty, battle_mode=battle_mode)
+
+
+def _attach_guides_to_cards(cards: list[dict[str, object]], *, timeout: int = 10) -> list[dict[str, object]]:
+    portal_titles: list[str] = []
+    seen_titles: set[str] = set()
+    for card in cards:
+        title = card.get("portal_title")
+        if not isinstance(title, str) or not title or title in seen_titles:
+            continue
+        seen_titles.add(title)
+        portal_titles.append(title)
+
+    if not portal_titles:
+        return cards
+
+    try:
+        guide_payload = fetch_cw_guide_list(
+            page=1,
+            limit=3,
+            trait_id=None,
+            order=None,
+            next_page_token=None,
+            match_change_job=None,
+            match_hard=None,
+            portal=portal_titles if len(portal_titles) > 1 else portal_titles[0],
+            timeout=timeout,
+        )
+    except TrailError:
+        return cards
+
+    guides_by_portal: dict[str, list[dict[str, object]]] = {}
+    portal_groups = guide_payload.get("portals")
+    if isinstance(portal_groups, list):
+        for group in portal_groups:
+            if not isinstance(group, dict):
+                continue
+            title = group.get("portal_title")
+            guides = group.get("list")
+            if isinstance(title, str) and isinstance(guides, list):
+                guides_by_portal[title] = guides[:3]
+    else:
+        title = portal_titles[0]
+        guides = guide_payload.get("list")
+        if isinstance(guides, list):
+            guides_by_portal[title] = guides[:3]
+
+    enriched: list[dict[str, object]] = []
+    for card in cards:
+        enriched_card = dict(card)
+        title = card.get("portal_title")
+        guides = guides_by_portal.get(title) if isinstance(title, str) else None
+        if guides:
+            enriched_card["guides"] = guides
+        enriched.append(enriched_card)
+    return enriched
+
+
+def _attach_guides_to_portal_snapshot(session, snapshot: dict[str, object], *, timeout: int = 10) -> dict[str, object]:
+    enriched = {
+        **snapshot,
+        "cards": _attach_guides_to_cards(snapshot.get("cards", []), timeout=timeout),
+    }
+    ensure_cw_state(session)["portal"] = enriched
+    return enriched
 
 
 def _unknown_result_envelope(error: Exception) -> dict:

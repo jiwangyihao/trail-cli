@@ -14,6 +14,7 @@ description: Use when an agent is in the Currency Wars shop stage and needs to s
 - 调用 `trail cw shop *` 命令
 - 执行显式购买、刷新、开关商店
 - 不做整局调度，也不决定长期阵容策略
+- 默认假设主 skill 已经完成 `trail cw start` 和 `trail cw portal.select`，当前已经进入局内商店阶段
 
 ## 标准流程
 
