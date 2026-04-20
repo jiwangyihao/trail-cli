@@ -205,6 +205,57 @@ def test_cw_portal_select_renders_selected_card_summary(cli_runner, fake_daemon_
     _assert_single_call(client, method="cw.portal.select", payload={"card_idx": 2}, tmp_path=tmp_path)
 
 
+def test_cw_portal_detect_renders_portal_cards_family(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.portal.detect": build_success_response(
+                request_id="req-cw-portal-detect",
+                data={
+                    "cards": [
+                        {
+                            "card_idx": 1,
+                            "portal_title": "Alpha Portal",
+                            "portal_description": "Alpha Desc",
+                            "score": 0.99,
+                            "guides": [
+                                {
+                                    "lineup_id": "alpha-guide",
+                                    "title": "Alpha攻略",
+                                    "carry_roles": ["希儿"],
+                                    "support_hard": True,
+                                    "has_change_equip": False,
+                                    "has_expert": True,
+                                    "like": 123,
+                                    "favour": 45,
+                                }
+                            ],
+                        }
+                    ],
+                    "mode": None,
+                    "difficulty": None,
+                    "battle_mode": None,
+                    "stale": False,
+                },
+                screenshot=".trail/shots/req-cw-portal-detect.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "portal", "detect", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.portal.detect cards=1",
+        screenshot=".trail/shots/req-cw-portal-detect.png",
+        body=[
+            'opt idx=1 title="Alpha Portal" score=0.99',
+            'opt idx=1 desc="Alpha Desc"',
+            'guide idx=1 gid=1 id=alpha-guide title=Alpha攻略 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45',
+        ],
+    )
+    _assert_single_call(client, method="cw.portal.detect", payload={}, tmp_path=tmp_path)
+
+
 @pytest.mark.parametrize(
     ("args", "method", "screenshot"),
     [

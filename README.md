@@ -41,19 +41,25 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 到首页后先确认本局偏好：
   - `攻略优先` / `环境优先`
   - `standard` / `overclock`
-  - 是否接受刷开局（后续是否允许 `trail cw portal.refresh` / `trail cw portal.restart`）
+  - 是否接受刷开局（后续是否允许 `trail cw portal refresh` / `trail cw portal restart`）
 - `trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest --battle-mode standard|overclock` 负责把首页推进到投资环境页
+- 如果已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot，使用 `trail cw portal detect --session <id>`；不要重复执行 `trail cw start`
+- `detect = 重识别当前三张卡，不点击`
+- detect 后可直接 `select`
+- `refresh = 点击刷新后生成新的三张卡`
+- `restart` 依旧要求已有开局真值；detect 不会补录 `mode/difficulty/battle_mode`
 - 如果先按环境选攻略，再用：`trail guide list cw --portal <title>` 或 `trail guide list cw --portal-id <id>`
 - 如需免查 config 直接筛攻略，也可以在 list 阶段使用：`trail guide list cw --trait <name>`、`trail guide list cw --role <name>`；需要脚本固化或精确复现时，再切到 `--trait-id` / `--role-id`
 - `guide list cw` 列表结果现在会直接返回 `version`，list 阶段就应把版本兼容性纳入筛选判断
 - 查看返回的三卡摘要后，根据需要执行：
-  - `trail cw portal.select --session <id> --card-idx <n>`
-  - `trail cw portal.refresh --session <id>`
-  - `trail cw portal.restart --session <id>`
+  - `trail cw portal select --session <id> --card-idx <n>`
+  - `trail cw portal detect --session <id>`
+  - `trail cw portal refresh --session <id>`
+  - `trail cw portal restart --session <id>`
 - 在进入游戏并完成投资环境选择后，再执行：`trail cw guide apply --session <id> --lineup-id <lineup_id>`
 - 如需回顾当前已应用攻略：`trail cw guide current --session <id>`
 - `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
-- `trail cw invest.read|choose` 继续只表示局内 invest 事件，不是开局投资环境页命令
+- `trail cw invest read|choose` 继续只表示局内 invest 事件，不是开局投资环境页命令
 
 ## 命令面概览
 
@@ -68,7 +74,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `image`：进阶模板识别与等待
 - `input`：点击、拖拽、按键
 - `state`：进阶读取 session 与 scene state
-- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；其余分组处理局内阶段与资源，包含 `portal`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
+- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`portal` 负责投资环境页的识别/选择/刷新/重开；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；其余分组处理局内阶段与资源，包含 `portal`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
 ## Window Launch
 
@@ -213,8 +219,8 @@ recover action=daemon.request_status request=req-42
 - `trail cw enter` 只负责把页面带到货币战争首页；真正进入投资环境页要用 `trail cw start`
 - `trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断
 - `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
-- `trail cw portal.select|refresh|restart` 只用于首页之后的投资环境选择页
-- `trail cw invest.read|choose` 继续表示局内 invest 事件，不是开局投资环境页命令
+- `trail cw portal select|detect|refresh|restart` 只用于首页之后的投资环境选择页；`detect = 重识别当前三张卡，不点击`，`refresh = 点击刷新后生成新的三张卡`
+- `trail cw invest read|choose` 继续表示局内 invest 事件，不是开局投资环境页命令
 - `skills/trail-hsr` 负责 session、窗口检查与场景切换
 - `skills/trail-cw` 负责整局货币战争循环
 - `skills/trail-cw-*` 负责攻略、商店、补给、编队、事件等子流程

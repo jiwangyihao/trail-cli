@@ -20,7 +20,7 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 - 开局模式：`new` 或 `continue`
 - 首页偏好：`攻略优先` / `环境优先`
 - 对局模式：`standard` / `overclock`
-- 是否接受刷开局（允许使用 `trail cw portal.refresh` / `trail cw portal.restart`）
+- 是否接受刷开局（允许使用 `trail cw portal refresh` / `trail cw portal restart`）
 
 ## 验收清单
 
@@ -40,16 +40,20 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 4. 在首页先问清并记录：
    - 这局是 `攻略优先` 还是 `环境优先`
    - 使用 `standard` 还是 `overclock`
-   - 是否接受刷开局（后续是否允许 `trail cw portal.refresh` / `trail cw portal.restart`）
+   - 是否接受刷开局（后续是否允许 `trail cw portal refresh` / `trail cw portal restart`）
 5. 如果是 `攻略优先`：
    - 先切到 `trail-cw-guide` 选择或拉取攻略
    - 再运行 `trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest --battle-mode standard|overclock`
-   - 根据三卡摘要判断是否直接 `trail cw portal.select --session <id> --card-idx <n>`，或在用户允许时执行 `trail cw portal.refresh --session <id>` / `trail cw portal.restart --session <id>`
+   - 如果已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot，运行 `trail cw portal detect --session <id>`；不要回退到 `trail cw start`
+   - detect 后可直接 `select`；`refresh` 仍是点击刷新后生成新的三张卡；`restart` 依旧要求已有开局真值，detect 不会补录 `mode/difficulty/battle_mode`
+   - 根据三卡摘要判断是否直接 `trail cw portal select --session <id> --card-idx <n>`，或在用户允许时执行 `trail cw portal refresh --session <id>` / `trail cw portal restart --session <id>`
 6. 如果是 `环境优先`：
    - 先运行 `trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest --battle-mode standard|overclock`
-   - 读取返回的三卡摘要，必要时在用户允许下执行 `trail cw portal.refresh --session <id>` / `trail cw portal.restart --session <id>`
+   - 如果已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot，运行 `trail cw portal detect --session <id>`；不要回退到 `trail cw start`
+   - detect 后可直接 `select`；`refresh` 仍是点击刷新后生成新的三张卡；`restart` 依旧要求已有开局真值，detect 不会补录 `mode/difficulty/battle_mode`
+   - 读取返回的三卡摘要，必要时在用户允许下执行 `trail cw portal refresh --session <id>` / `trail cw portal restart --session <id>`
     - 若需要按环境 / 羁绊 / 角色反查攻略，切到 `trail-cw-guide`，使用 `trail guide list cw --portal <title>`、`trail guide list cw --portal-id <id>`、`trail guide list cw --trait <name>` 或 `trail guide list cw --role <name>`
-   - 再执行 `trail cw portal.select --session <id> --card-idx <n>` 进入游戏
+   - 再执行 `trail cw portal select --session <id> --card-idx <n>` 进入游戏
 7. 进入游戏后，如果当前 session 还没有已加载的攻略，则切到 `trail-cw-guide`，执行：
     - `trail guide fetch cw <lineup_url|lineup_id>`
       返回后先核对 `攻略标题` / `攻略标签` / `羁绊列表` / `攻略码` / `最低金币` / `投资环境` / `投资策略` / `运营思路`；其中布尔类攻略特征会作为 `#标签` 并入 `攻略标签`
@@ -76,13 +80,13 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 - `trail cw start` 负责把首页推进到投资环境页，并把 `mode / difficulty / battle_mode` 固化到当前 session
 - `trail cw guide` 只负责当前对局攻略的 apply/current；攻略查询与拉取继续使用 `trail guide ... cw`
 - 在 list 阶段选攻略时，同时读取 `version`，不要只看 portal / hard / change_equip / expert
-- `trail cw portal.select|refresh|restart` 只在投资环境页可用；`refresh/restart` 是否允许，先看用户在首页给出的偏好
+- `trail cw portal select|detect|refresh|restart` 只在投资环境页可用；`detect` 只重建当前三张卡识别结果，不点击、不刷新、不重开，且 detect 后可直接 `select`；`refresh` 才会点击刷新后生成新的三张卡；`restart` 依旧要求已有开局真值，detect 不会补录 `mode/difficulty/battle_mode`；`refresh/restart` 是否允许，先看用户在首页给出的偏好
 - 如果当前动作让 `stage` 失效，立刻回到 `trail cw stage detect --session <id>`
 - `continue` 模式表示“继续当前 UI 进度”，不是重新创建 session；只有当 session 中缺少 guide 状态时，才重新走攻略子 skill
 - 不要假设 `read_*` 命令已经穷尽了所有 UI 语义；必要时直接根据 screenshot 做多模态判断后，再调用显式动作命令
 - 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补额外截图命令
 - `trail ocr read` 默认是 `ocr_mode=fast`（`1280x720`）；当你怀疑快档漏字、需要更稳的 box，或要人工复核关键文字时，再显式加 `--ocr-mode high`。如需固定做高精度补跑对照，可加 `--retry-high always`；常规情况下保持默认 `--retry-high auto`
 - 如果 `detect/read` 与截图观感冲突，以截图为准；guide 相关元数据（如 `support_hard`、`has_change_equip`、`has_expert`）主要用于选攻略，不用于替代实屏判断
-- `trail cw invest.read|choose` 继续只表示局内 invest 事件，不要把它们当成开局投资环境页命令
+- `trail cw invest read|choose` 继续只表示局内 invest 事件，不要把它们当成开局投资环境页命令
 - 开发期调试场景命令时，可给 CLI 加顶层 `--verbose` 查看中间 trace
 - 如果结果未知、当前 session 不可继续使用，或你需要手工恢复运行态，停止自动重放并切回 `trail-hsr-advanced`

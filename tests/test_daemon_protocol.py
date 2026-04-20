@@ -185,6 +185,14 @@ def _box(alias: str, *, left: int, top: int, width: int = 40, height: int = 20) 
     return {"left": left, "top": top, "width": width, "height": height, "source": alias}
 
 
+def _portal_cards() -> list[dict[str, object]]:
+    return [
+        {"card_idx": 1, "portal_title": "Alpha Portal", "portal_description": "Alpha Desc", "score": 0.99},
+        {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
+        {"card_idx": 3, "portal_title": "Gamma Portal", "portal_description": "Gamma Desc", "score": 0.77},
+    ]
+
+
 def test_protocol_version_is_fixed():
     assert PROTOCOL_VERSION == 1
 
@@ -1482,6 +1490,165 @@ def test_command_service_handles_cw_start_rejects_invalid_enums(
     }
     assert start_calls == []
     assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
+
+
+def _build_cw_portal_detect_harness(tmp_path: Path, monkeypatch, *, detect_impl, guide_fetcher):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-portal-detect.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.detect_cw_portal", detect_impl, raising=False)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_list", guide_fetcher)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-portal-detect",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.portal.detect",
+        payload={"session_id": session.session_id},
+    )
+    return service, session, runtime, command_service, request
+
+
+def test_command_service_handles_cw_portal_detect_and_updates_snapshot(tmp_path: Path, monkeypatch):
+    snapshot = {
+        "cards": _portal_cards(),
+        "mode": None,
+        "difficulty": None,
+        "battle_mode": None,
+        "stale": False,
+    }
+    service, session, runtime, command_service, request = _build_cw_portal_detect_harness(
+        tmp_path,
+        monkeypatch,
+        detect_impl=lambda session, runtime, portal_list: session.scene_state.setdefault("cw", {}).__setitem__("portal", snapshot) or snapshot,
+        guide_fetcher=lambda **kwargs: {
+            "portals": [
+                {
+                    "portal_title": "Alpha Portal",
+                    "list": [
+                        {
+                            "lineup_id": "alpha-guide",
+                            "title": "Alpha攻略",
+                            "carry_roles": ["希儿"],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": True,
+                            "like": 123,
+                            "favour": 45,
+                        }
+                    ],
+                }
+            ],
+            "count": 1,
+            "more": False,
+        },
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["screenshot"] == ".trail/shots/req-cw-portal-detect.png"
+    assert payload["data"] == {
+        **snapshot,
+        "cards": [
+            {
+                **snapshot["cards"][0],
+                "guides": [
+                    {
+                        "lineup_id": "alpha-guide",
+                        "title": "Alpha攻略",
+                        "carry_roles": ["希儿"],
+                        "support_hard": True,
+                        "has_change_equip": False,
+                        "has_expert": True,
+                        "like": 123,
+                        "favour": 45,
+                    }
+                ],
+            },
+            snapshot["cards"][1],
+            snapshot["cards"][2],
+        ],
+    }
+    assert runtime.capture_requests == [(False, "req-cw-portal-detect")]
+    assert service.load_session(session.session_id).scene_state["cw"]["portal"] == payload["data"]
+
+
+def test_command_service_cw_portal_detect_guide_lookup_failure_returns_raw_cards(tmp_path: Path, monkeypatch):
+    snapshot = {
+        "cards": _portal_cards(),
+        "mode": None,
+        "difficulty": None,
+        "battle_mode": None,
+        "stale": False,
+    }
+    service, session, runtime, command_service, request = _build_cw_portal_detect_harness(
+        tmp_path,
+        monkeypatch,
+        detect_impl=lambda session, runtime, portal_list: session.scene_state.setdefault("cw", {}).__setitem__("portal", snapshot) or snapshot,
+        guide_fetcher=lambda **kwargs: (_ for _ in ()).throw(TrailError("GUIDE_FETCH_FAILED", "boom")),
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"] == snapshot
+    assert payload["screenshot"] == ".trail/shots/req-cw-portal-detect.png"
+    assert runtime.capture_requests == [(False, "req-cw-portal-detect")]
+    assert service.load_session(session.session_id).scene_state["cw"]["portal"] == snapshot
+
+
+def test_command_service_cw_portal_detect_failure_returns_capture_envelope(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CW_MUTATING_METHODS
+
+    service, _, runtime, command_service, request = _build_cw_portal_detect_harness(
+        tmp_path,
+        monkeypatch,
+        detect_impl=lambda session, runtime, portal_list: (_ for _ in ()).throw(
+            TrailError("CW_PORTAL_PAGE_INVALID", "cw portal action only supports invest, current page: home")
+        ),
+        guide_fetcher=lambda **kwargs: {"portals": [], "count": 0, "more": False},
+    )
+
+    payload = command_service.handle(request)
+
+    assert "cw.portal.detect" not in CW_MUTATING_METHODS
+    assert payload["ok"] is False
+    assert payload["request_id"] == "req-cw-portal-detect"
+    assert payload["data"] == {}
+    assert payload["error"] == {
+        "code": "CW_PORTAL_PAGE_INVALID",
+        "message": "cw portal action only supports invest, current page: home",
+    }
+    assert payload["screenshot"] == ".trail/shots/req-cw-portal-detect.png"
+    assert runtime.capture_requests == [(True, "req-cw-portal-detect")]
+    with pytest.raises(TrailError) as exc_info:
+        service.request_status(request.request_id)
+    assert exc_info.value.code == "REQUEST_NOT_FOUND"
 
 
 def test_command_service_handles_cw_portal_select_and_marks_snapshot_stale(tmp_path: Path, monkeypatch):

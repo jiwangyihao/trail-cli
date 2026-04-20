@@ -1611,12 +1611,15 @@ def test_cw_help_exposes_scene_command_groups(cli_runner):
     assert "货币战争固定流程命令" in normalized
     assert "enter 到首页" in normalized
     assert "start 从首页进入投资环境页" in normalized
+    assert "投资环境页的识别/选择/刷新/重开" in normalized
+    assert "detect 只重识别当前三张卡" in normalized
+    assert "refresh 点击刷新后生成新的三张卡" in normalized
     assert "enter" in _extract_help_command_block(result.output, "enter")
     assert "start" in _extract_help_command_block(result.output, "start")
 
     expected_blocks = {
         "guide": ("应用", "回顾", "当前对局", "已选攻略"),
-        "portal": ("投资环境页", "选择", "刷新", "重开"),
+        "portal": ("投资环境页", "识别", "选择", "刷新", "重开"),
         "stage": ("检测", "等待", "阶段"),
         "slots": ("编队",),
         "shop": ("商店",),
@@ -1642,7 +1645,7 @@ def test_cw_help_exposes_scene_command_groups(cli_runner):
 @pytest.mark.parametrize(
     ("group_name", "expected_anchors"),
     [
-        ("portal", ("投资环境页", "选择", "刷新", "重开")),
+        ("portal", ("投资环境页", "detect", "识别", "选择", "refresh", "刷新", "重开")),
         ("invest", ("局内", "invest", "事件")),
         ("stage", ("货币战争内部", "检测", "等待", "登录页", "大世界", "非 CW")),
         ("guide", ("应用", "回顾", "当前对局", "已选攻略")),
@@ -1675,6 +1678,29 @@ def test_cw_group_help_avoids_forbidden_phrases(cli_runner, group_name, forbidde
 
     assert result.exit_code == 0
     assert forbidden_phrase not in normalized
+
+
+def test_cw_portal_help_distinguishes_detect_and_refresh(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "portal", "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    assert "detect" in result.output
+    assert "refresh" in result.output
+    assert "重新识别并保存当前三张卡" in normalized
+    assert "点击刷新后生成新的三张卡" in normalized
+
+
+def test_cw_portal_detect_help_exposes_snapshot_only_contract(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "portal", "detect", "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    assert "--session" in result.output
+    assert "当前已在投资环境页时重新识别并保存 portal snapshot" in normalized
+    assert "只重建当前三张卡识别结果" in normalized
+    assert "不点击、不刷新、不重开" in normalized
+    assert "推进流程" not in normalized
 
 
 def test_cw_enter_help_exposes_home_only_contract(cli_runner):
