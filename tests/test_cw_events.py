@@ -22,6 +22,13 @@ def load_cw_events_module():
         pytest.fail(f"missing trail.scenes.cw.events: {exc}")
 
 
+def _ocr_piece(text: str, *, left: int = 400, top: int = 500, width: int = 120, height: int = 36) -> dict:
+    return {
+        "text": text,
+        "box": {"left": left, "top": top, "width": width, "height": height},
+    }
+
+
 @pytest.mark.parametrize(
     ("method_name", "expected_options"),
     [
@@ -114,6 +121,122 @@ def test_boss_preview_settle_and_battle_actions_invalidate_stage_snapshot(tmp_pa
     assert refreshed.scene_state["cw"]["stage"] == {"stale": True}
     assert refreshed.last_stage is None
     assert calls == ["called"]
+
+
+def test_build_cw_battle_starter_waits_for_template_before_clicking_center(monkeypatch, fake_runtime):
+    events_module = load_cw_events_module()
+    monkeypatch.setattr(events_module, "_asset", lambda alias: alias, raising=False)
+    fake_runtime.wait_result = {"left": 100, "top": 200, "width": 60, "height": 20}
+
+    events_module.build_cw_battle_starter(fake_runtime)()
+
+    assert fake_runtime.wait_calls == ["action.battle_start"]
+    assert fake_runtime.locate_calls == []
+    assert fake_runtime.clicks == [(130, 210)]
+
+
+@pytest.mark.parametrize(
+    ("builder_name", "expected_wait_calls", "expected_locate_calls", "ocr_text", "expected_click"),
+    [
+        (
+            "build_cw_battle_starter",
+            ["action.battle_start"],
+            [],
+            "开始挑战",
+            (460, 518),
+        ),
+        (
+            "build_cw_battle_continuer",
+            [],
+            ["action.battle_continue"],
+            "继续挑战",
+            (460, 518),
+        ),
+        (
+            "build_cw_settle_continuer",
+            [],
+            ["stage.settle", "action.settle_next_page"],
+            "下一页",
+            (460, 518),
+        ),
+    ],
+)
+def test_cw_action_buttons_use_ocr_box_when_template_misses(
+    monkeypatch,
+    fake_runtime,
+    builder_name,
+    expected_wait_calls,
+    expected_locate_calls,
+    ocr_text,
+    expected_click,
+):
+    events_module = load_cw_events_module()
+    monkeypatch.setattr(events_module, "_asset", lambda alias: alias, raising=False)
+    ocr_calls: list[dict] = []
+
+    def fake_ocr(**kwargs):
+        ocr_calls.append(kwargs)
+        return [_ocr_piece(ocr_text)]
+
+    fake_runtime.wait_result = None
+    fake_runtime.locate_result = None
+    monkeypatch.setattr(fake_runtime, "ocr", fake_ocr)
+
+    getattr(events_module, builder_name)(fake_runtime)()
+
+    assert fake_runtime.wait_calls == expected_wait_calls
+    assert fake_runtime.locate_calls == expected_locate_calls
+    assert ocr_calls == [{"capture": events_module.CW_ACTION_OCR_REGION}]
+    assert fake_runtime.clicks == [expected_click]
+
+
+@pytest.mark.parametrize(
+    ("builder_name", "point_name"),
+    [
+        ("build_cw_battle_starter", "BATTLE_START_POINT"),
+        ("build_cw_battle_continuer", "BATTLE_CONTINUE_POINT"),
+        ("build_cw_settle_continuer", "SETTLE_NEXT_POINT"),
+    ],
+)
+def test_cw_action_buttons_fall_back_to_existing_points_when_template_and_ocr_miss(
+    monkeypatch,
+    fake_runtime,
+    builder_name,
+    point_name,
+):
+    events_module = load_cw_events_module()
+    monkeypatch.setattr(events_module, "_asset", lambda alias: alias, raising=False)
+    fake_runtime.wait_result = None
+    fake_runtime.locate_result = None
+    fake_runtime.ocr_result = []
+
+    getattr(events_module, builder_name)(fake_runtime)()
+
+    assert fake_runtime.clicks == [getattr(events_module, point_name)]
+
+
+def test_cw_action_buttons_fall_back_to_existing_points_when_ocr_raises(monkeypatch, fake_runtime):
+    events_module = load_cw_events_module()
+    monkeypatch.setattr(events_module, "_asset", lambda alias: alias, raising=False)
+    fake_runtime.wait_result = None
+    fake_runtime.locate_result = None
+    monkeypatch.setattr(fake_runtime, "ocr", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("ocr boom")))
+
+    events_module.build_cw_battle_continuer(fake_runtime)()
+
+    assert fake_runtime.clicks == [events_module.BATTLE_CONTINUE_POINT]
+
+
+def test_cw_action_buttons_accept_tuple_ocr_piece(monkeypatch, fake_runtime):
+    events_module = load_cw_events_module()
+    monkeypatch.setattr(events_module, "_asset", lambda alias: alias, raising=False)
+    fake_runtime.wait_result = None
+    fake_runtime.locate_result = None
+    fake_runtime.ocr_result = [([(400, 500), (520, 500), (520, 536), (400, 536)], "下一页", 0.99)]
+
+    events_module.build_cw_settle_continuer(fake_runtime)()
+
+    assert fake_runtime.clicks == [(460, 518)]
 
 
 def _build_cw_harness(tmp_path: Path):

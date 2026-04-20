@@ -15,6 +15,7 @@ OCR_VERBOSE_ONLY_KEYS = (
     "ocr_retry_high",
     "ocr_retry_reason",
 )
+CW_ACTION_STAGE_COMMANDS = ("cw.battle.start", "cw.battle.continue", "cw.settle.next")
 
 
 def _stage_payload() -> dict:
@@ -184,6 +185,37 @@ def test_render_output_renders_canonical_stage_wait_text():
     assert render_output("cw.stage.wait", payload).splitlines() == [
         "ok cw.stage.wait stage=shop stale=0",
         "shot path=.trail/shots/req-stage.png",
+    ]
+
+
+@pytest.mark.parametrize("command", CW_ACTION_STAGE_COMMANDS)
+def test_render_output_renders_cw_action_stage_commands_with_shot(command: str):
+    assert render_output(command, _stage_payload()).splitlines() == [
+        f"ok {command} stage=shop stale=0",
+        "shot path=.trail/shots/req-stage.png",
+    ]
+
+
+@pytest.mark.parametrize("command", CW_ACTION_STAGE_COMMANDS)
+def test_render_output_cw_action_stage_commands_reject_yaml_output(command: str):
+    assert render_output(command, _stage_payload(), output_format="yaml").splitlines() == [
+        f"fail {command} code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        "shot path=.trail/shots/req-stage.png",
+        f'why msg="yaml not supported for {command}"',
+    ]
+
+
+@pytest.mark.parametrize("command", CW_ACTION_STAGE_COMMANDS)
+def test_render_output_renders_cw_action_stage_commands_stale_only_payload_without_stage(command: str):
+    payload = {
+        **_stage_payload(),
+        "data": {"stale": True},
+        "screenshot": ".trail/shots/req-stage-stale.png",
+    }
+
+    assert render_output(command, payload).splitlines() == [
+        f"ok {command} stale=1",
+        "shot path=.trail/shots/req-stage-stale.png",
     ]
 
 

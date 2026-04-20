@@ -684,16 +684,22 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
             "cw.battle.start",
             {},
             {"value": "battle", "stale": False},
-            None,
-            ["ok cw.battle.start stage=battle stale=0"],
+            ".trail/shots/req-cw-battle-start.png",
+            _expected_lines(
+                "ok cw.battle.start stage=battle stale=0",
+                screenshot=".trail/shots/req-cw-battle-start.png",
+            ),
         ),
         (
             ["cw", "settle", "next", "--session", SESSION_ID],
             "cw.settle.next",
             {},
             {"value": "shop", "stale": False},
-            None,
-            ["ok cw.settle.next stage=shop stale=0"],
+            ".trail/shots/req-cw-settle-next.png",
+            _expected_lines(
+                "ok cw.settle.next stage=shop stale=0",
+                screenshot=".trail/shots/req-cw-settle-next.png",
+            ),
         ),
     ],
 )

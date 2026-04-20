@@ -26,4 +26,7 @@ CW_RESOURCE_ALIASES = {
     "stage.event": "collect.png",
     "stage.settle": "next_step.png",
     "stage.game_over": "start_currency_wars.png",
+    "action.battle_start": "battle.png",
+    "action.battle_continue": "continue.png",
+    "action.settle_next_page": "next_page.png",
 }
