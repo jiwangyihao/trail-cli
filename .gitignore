@@ -2,3 +2,5 @@
 uv.lock
 **/__pycache__/
 .worktrees/
+.pytest-tmp/
+.pytest_tmp/
