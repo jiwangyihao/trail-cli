@@ -19,6 +19,7 @@
 - 失败结果只要带 `request_id`，就必须输出 `request id=<id>` 供恢复或排障使用。
 - 只有结果未知或当前失败显式可恢复时，才输出 `recover action=daemon.request_status request=<id>`。
 - 会影响下一步决策的 `0`、`false`、`count`、`more`、`tainted` 不能因为“看起来为空”而省略。
+- `guide.fetch.cw` 默认首行至少保留 `攻略标题`、`攻略码`、`版本`、`最低金币`、`最低等级`、`中期等级`；`适用超频博弈`、`星徽攻略`、`专家顾问` 改以 `#标签` 形式并入 `guide 攻略标签=...` 同一行。
 
 ## 正文顺序约束
 
@@ -45,7 +46,7 @@
 
 - `--format yaml` 是结构化兜底，不是默认主通道。
 - 只有进入 YAML allowlist 的命令才允许输出 YAML；新增命令前先确认是否真的存在结构化兜底需求。
-- 当前 YAML allowlist 是 `daemon.status`、`state.dump`、`guide.config.cw`。
+- 当前 YAML allowlist 是 `daemon.status`、`state.dump`、`guide.fetch.cw`、`guide.config.cw`。
 - 非 allowlist 命令不要回退到旧式结构化 envelope；保持默认文本协议，并在不支持时显式返回格式不支持错误。
 
 ## 文档与测试同步要求
@@ -55,3 +56,9 @@
 - 新命令至少要补 renderer 单测，以及受影响的 CLI stdout 测试或 RPC/契约测试增量。
 - 如果新增前缀词、冻结字段、恢复语义或 `--verbose` 事件类型，必须同步更新本文件与 README。
 - 评审输出变更时，优先检查：renderer 家族是否明确、默认模式必出事实是否稳定、YAML allowlist 是否合理、README 与测试是否已同步。
+
+## guide.fetch.cw 约束
+
+- `guide.fetch.cw` 默认首行按中文字段返回攻略核心事实，至少保留：`攻略标题`、`攻略码`、`版本`、`最低金币`、`最低等级`、`中期等级`。
+- `guide.fetch.cw` 正文继续使用 `guide` 行补充：`攻略标签`、`羁绊列表`、`投资环境`、`优选投资策略`、`次选投资策略`、`简易装备优先度`、`进阶装备优先度`、`运营思路`，以及按阶段展开的阵容摘要与角色推荐装备；`适用超频博弈`、`星徽攻略`、`专家顾问` 折叠成 `#标签` 并入 `攻略标签` 同一行，`羁绊列表` 与阶段 `羁绊` 在上游提供层数时要保留成 `6贝洛伯格` 这类形式。
+- `guide.fetch.cw` 允许 `--format yaml`，用于在默认文本之外回落到完整结构化 `data`。

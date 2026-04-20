@@ -111,14 +111,14 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert (
-        "```text\nok guide.fetch.cw 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2 最低金币=40 最低等级=7 中期等级=8\nguide 攻略标签=#7级搜牌|#银河学者|#适用超频博弈|#专家顾问\nguide 投资环境=商店|事件 优选投资策略=快攻|回蓝 次选投资策略=暴击|连携\nguide 简易装备优先度=升级|买卡|打精英 进阶装备优先度=希儿|停云\nguide 阶段=前期阵容 前台=黑塔/star:1/rarity:1 后台=艾丝妲/star:1/rarity:1 羁绊=智识\nguide 阶段=最终阵容 前台=希儿/carry:1/star:3/rarity:3 后台=佩拉/star:2/rarity:2 羁绊=巡猎|量子\n```"
+        "```text\nok guide.fetch.cw 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2 最低金币=40 最低等级=7 中期等级=8\nguide 攻略标签=#7级搜牌|#银河学者|#适用超频博弈|#专家顾问\nguide 羁绊列表=1智识|1巡猎|2量子\nguide 投资环境=商店|事件 优选投资策略=快攻|回蓝 次选投资策略=暴击|连携\nguide 简易装备优先度=升级|买卡|打精英 进阶装备优先度=希儿|停云\nguide 阶段=前期阵容 前台=黑塔/star:1/rarity:1 后台=艾丝妲/star:1/rarity:1 羁绊=1智识\nguide 阶段=最终阵容 前台=希儿/carry:1/star:3/rarity:3 后台=佩拉/star:2/rarity:2 羁绊=1巡猎|2量子\nguide 阶段=最终阵容 角色=希儿 优选装备=高周波电锯|战场进化手册 次选装备=胜利之旗\nguide 运营思路=\"前期：过渡\\n中期：D牌\\n后期：补强\"\n```"
         in readme
     )
     assert (
         "```text\nok guide.list.cw count=2 more=1 next=token-2\nguide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1\nguide id=def idx=2 hard=0 change_equip=1 expert=0\n```"
         in readme
     )
-    assert "`trail guide fetch cw` 默认文本会直接返回你选中的完整攻略字段，字段名尽量使用货币战争页面里的中文文案" in readme
+    assert "`trail guide fetch cw` 默认文本会直接返回你选中的完整攻略字段，字段名尽量使用货币战争页面里的中文文案；现在还会补充 `羁绊列表`、`运营思路`" in readme
     assert (
         "```text\nok ocr.read hits=2\nshot path=.trail/shots/req-ocr.png\ntext value=点击进入 box=122,88,74,20 center=159,98\ntext value=开始挑战 box=410,502,120,36 center=470,520\n```"
         in readme
@@ -129,6 +129,9 @@ def test_readme_mentions_text_output_protocol() -> None:
     )
     assert "商店快照里的 `coins` / `level` / `reserve_full` / `max_team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" in readme
     assert "`guide.fetch.cw` 现在也进入 YAML allowlist" in readme
+    assert "`羁绊列表`：按当前攻略各阶段阵容里出现过的羁绊去重汇总，并尽量保留层数" in readme
+    assert "`优选装备` / `次选装备`：按角色展开的推荐装备列表" in readme
+    assert "`运营思路`：取自攻略详情原始 `description` 文本" in readme
     assert "`最低金币`：这套攻略默认要求保留的最低金币阈值" in readme
     assert (
         "```text\nfail input.click code=INPUT_BACKEND_MISSING tainted=1\nrequest id=req-42\nwhy msg=\"input backend missing\"\nrecover action=daemon.request_status request=req-42\n```"
@@ -720,6 +723,7 @@ def test_render_output_renders_guide_fetch_summary_text():
             "support_hard": True,
             "has_change_equip": False,
             "has_expert": True,
+            "operation_guide": "前期：过渡\n中期：D牌\n后期：补强",
             "portals": ["商店", "事件"],
             "first_fight_augments": ["快攻", "回蓝"],
             "second_fight_augments": ["暴击", "连携"],
@@ -730,13 +734,22 @@ def test_render_output_renders_guide_fetch_summary_text():
                     "stage": "Opening",
                     "front_roles": [{"name": "黑塔", "star": 1, "rarity": 1, "is_carry": False}],
                     "back_roles": [{"name": "艾丝妲", "star": 1, "rarity": 1, "is_carry": False}],
-                    "traits": ["智识"],
+                    "traits": ["1智识"],
                 },
                 {
                     "stage": "Final",
-                    "front_roles": [{"name": "希儿", "star": 3, "rarity": 3, "is_carry": True}],
+                    "front_roles": [
+                        {
+                            "name": "希儿",
+                            "star": 3,
+                            "rarity": 3,
+                            "is_carry": True,
+                            "first_equipments": ["高周波电锯", "战场进化手册"],
+                            "second_equipments": ["胜利之旗"],
+                        }
+                    ],
                     "back_roles": [{"name": "佩拉", "star": 2, "rarity": 2, "is_carry": False}],
-                    "traits": ["巡猎", "量子"],
+                    "traits": ["1巡猎", "2量子"],
                 },
             ],
         },
@@ -751,10 +764,13 @@ def test_render_output_renders_guide_fetch_summary_text():
     assert render_output("guide.fetch.cw", payload).splitlines() == [
         "ok guide.fetch.cw 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2 最低金币=40 最低等级=7 中期等级=8",
         "guide 攻略标签=#7级搜牌|#银河学者|#适用超频博弈|#专家顾问",
+        "guide 羁绊列表=1智识|1巡猎|2量子",
         "guide 投资环境=商店|事件 优选投资策略=快攻|回蓝 次选投资策略=暴击|连携",
         "guide 简易装备优先度=升级|买卡|打精英 进阶装备优先度=希儿|停云",
-        "guide 阶段=前期阵容 前台=黑塔/star:1/rarity:1 后台=艾丝妲/star:1/rarity:1 羁绊=智识",
-        "guide 阶段=最终阵容 前台=希儿/carry:1/star:3/rarity:3 后台=佩拉/star:2/rarity:2 羁绊=巡猎|量子",
+        "guide 阶段=前期阵容 前台=黑塔/star:1/rarity:1 后台=艾丝妲/star:1/rarity:1 羁绊=1智识",
+        "guide 阶段=最终阵容 前台=希儿/carry:1/star:3/rarity:3 后台=佩拉/star:2/rarity:2 羁绊=1巡猎|2量子",
+        "guide 阶段=最终阵容 角色=希儿 优选装备=高周波电锯|战场进化手册 次选装备=胜利之旗",
+        'guide 运营思路="前期：过渡\\n中期：D牌\\n后期：补强"',
     ]
 
 
@@ -773,12 +789,29 @@ def test_render_output_allows_yaml_for_guide_fetch():
             "support_hard": True,
             "has_change_equip": False,
             "has_expert": True,
+            "operation_guide": "前期：过渡\n中期：D牌\n后期：补强",
             "portals": ["商店", "事件"],
             "first_fight_augments": ["快攻", "回蓝"],
             "second_fight_augments": ["暴击", "连携"],
             "order_basic": ["升级", "买卡", "打精英"],
             "order_compose": ["希儿", "停云"],
-            "role_stages": [],
+            "role_stages": [
+                {
+                    "stage": "Final",
+                    "front_roles": [
+                        {
+                            "name": "希儿",
+                            "star": 3,
+                            "rarity": 3,
+                            "is_carry": True,
+                            "first_equipments": ["高周波电锯"],
+                            "second_equipments": [],
+                        }
+                    ],
+                    "back_roles": [],
+                    "traits": ["1巡猎"],
+                }
+            ],
         },
         "screenshot": None,
         "timing": {},
@@ -790,14 +823,50 @@ def test_render_output_allows_yaml_for_guide_fetch():
 
     lines = render_output("guide.fetch.cw", payload, output_format="yaml").splitlines()
 
-    assert lines[0:4] == [
+    assert lines[0:8] == [
         "ok guide.fetch.cw 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2 最低金币=40 最低等级=7 中期等级=8",
         "guide 攻略标签=#7级搜牌|#银河学者|#适用超频博弈|#专家顾问",
+        "guide 羁绊列表=1巡猎",
         "guide 投资环境=商店|事件 优选投资策略=快攻|回蓝 次选投资策略=暴击|连携",
         "guide 简易装备优先度=升级|买卡|打精英 进阶装备优先度=希儿|停云",
+        "guide 阶段=最终阵容 前台=希儿/carry:1/star:3/rarity:3 羁绊=1巡猎",
+        "guide 阶段=最终阵容 角色=希儿 优选装备=高周波电锯",
+        'guide 运营思路="前期：过渡\\n中期：D牌\\n后期：补强"',
     ]
     assert "lineup_id: abc" in lines
+    assert "operation_guide: '前期：过渡" in lines
+    assert any("first_equipments:" in line for line in lines)
     assert "title: 7群攻2银河学者" in lines
+
+
+def test_render_output_guide_fetch_trait_list_keeps_highest_count_per_trait():
+    payload = {
+        "ok": True,
+        "data": {
+            "title": "测试攻略",
+            "share_code": "##demo##",
+            "version": "3.2",
+            "min_coins": 40,
+            "min_level": 7,
+            "mid_level": 8,
+            "labels": [],
+            "role_stages": [
+                {"stage": "Opening", "traits": ["2贝洛伯格", "1星间旅人"]},
+                {"stage": "Middle", "traits": ["4贝洛伯格", "2量子同频"]},
+                {"stage": "Final", "traits": ["6贝洛伯格", "3量子同频"]},
+            ],
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("guide.fetch.cw", payload).splitlines()
+
+    assert "guide 羁绊列表=6贝洛伯格|1星间旅人|3量子同频" in lines
 
 
 def test_render_output_renders_cw_enter_home_text():

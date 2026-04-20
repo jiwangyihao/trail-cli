@@ -52,7 +52,7 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
    - 再执行 `trail cw portal.select --session <id> --card-idx <n>` 进入游戏
 7. 进入游戏后，如果当前 session 还没有已加载的攻略，则切到 `trail-cw-guide`，执行：
     - `trail guide fetch cw <lineup_url|lineup_id>`
-      返回后先核对 `攻略标题` / `攻略标签` / `攻略码` / `最低金币` / `投资环境` / `投资策略`；其中布尔类攻略特征会作为 `#标签` 并入 `攻略标签`
+      返回后先核对 `攻略标题` / `攻略标签` / `羁绊列表` / `攻略码` / `最低金币` / `投资环境` / `投资策略` / `运营思路`；其中布尔类攻略特征会作为 `#标签` 并入 `攻略标签`
     - `trail cw guide apply --session <id> --lineup-id <lineup_id>`
 8. 如果是 `continue` 模式，且 session 中已经有可用的 guide 状态，则跳过重新 apply
 9. 循环执行：

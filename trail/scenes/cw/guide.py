@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 import json
+import math
 import re
 from pathlib import Path
 from time import monotonic, sleep
@@ -49,6 +50,7 @@ GUIDE_UI_WAIT_TIMEOUT = 10
 GUIDE_INPUT_FOCUS_DELAY = 0.2
 GUIDE_TEXT_SETTLE_DELAY = 0.2
 GUIDE_CONFIRM_SETTLE_DELAY = 1.0
+GUIDE_APPLY_READY_DELAY = 1.0
 GUIDE_APPLY_SETTLE_TIMEOUT = 1.5
 GUIDE_APPLY_SETTLE_INTERVAL = 0.2
 GUIDE_POST_APPLY_SETTLE_DELAY = 1.0
@@ -117,11 +119,39 @@ def _box_center(box: object) -> tuple[int, int]:
 
 
 def _click_required_template(runtime, *, alias: str) -> None:
+    box = _wait_required_template(runtime, alias=alias)
+    runtime.click_point(*_box_center(box))
+
+
+def _wait_required_template(runtime, *, alias: str):
     template = str(resolve_scene_asset("cw", alias))
     box = runtime.wait_img(template, timeout=GUIDE_UI_WAIT_TIMEOUT)
     if box is None:
         raise TrailError("GUIDE_UI_NOT_FOUND", f"guide ui element not found: {alias}")
-    runtime.click_point(*_box_center(box))
+    return box
+
+
+def _wait_for_template_to_stabilize(runtime, *, alias: str, settle_delay: float, interval: float):
+    if settle_delay <= 0:
+        raise AssertionError(f"{alias} settle delay must stay > 0")
+    if interval <= 0:
+        raise AssertionError(f"{alias} settle interval must stay > 0")
+
+    template = str(resolve_scene_asset("cw", alias))
+    stable_checks = max(1, math.ceil(settle_delay / interval))
+    box = _wait_required_template(runtime, alias=alias)
+    stable_count = 0
+    while stable_count < stable_checks:
+        sleep(interval)
+        current = runtime.locate(template)
+        if current is None:
+            raise TrailError("GUIDE_UI_NOT_FOUND", f"guide ui element not found: {alias}")
+        if _box_center(current) == _box_center(box):
+            stable_count += 1
+        else:
+            stable_count = 0
+        box = current
+    return box
 
 
 def _is_template_visible(runtime, *, alias: str):
@@ -148,7 +178,14 @@ def apply_cw_guide_via_ui(runtime, *, share_code: str) -> None:
     sleep(GUIDE_TEXT_SETTLE_DELAY)
     _click_required_template(runtime, alias="guide.confirm")
     sleep(GUIDE_CONFIRM_SETTLE_DELAY)
-    _click_required_template(runtime, alias="guide.apply")
+    # Wait until the apply button stops shifting while the fetched lineup details settle.
+    apply_box = _wait_for_template_to_stabilize(
+        runtime,
+        alias="guide.apply",
+        settle_delay=GUIDE_APPLY_READY_DELAY,
+        interval=GUIDE_APPLY_SETTLE_INTERVAL,
+    )
+    runtime.click_point(*_box_center(apply_box))
     _wait_for_template_to_clear(
         runtime,
         alias="guide.apply",
@@ -483,9 +520,7 @@ def _append_unique_names(target: list[str], values: object) -> None:
         return
     seen = set(target)
     for item in values:
-        if not isinstance(item, Mapping):
-            continue
-        name = item.get("name")
+        name = _extract_named_text(item)
         if not isinstance(name, str) or not name or name in seen:
             continue
         seen.add(name)
@@ -529,15 +564,46 @@ def _normalize_named_list(values: object) -> list[str]:
         return result
     seen: set[str] = set()
     for item in values:
-        if isinstance(item, Mapping):
-            name = item.get("name")
-        else:
-            name = item
+        name = _extract_named_text(item)
         if not isinstance(name, str) or not name or name in seen:
             continue
         seen.add(name)
         result.append(name)
     return result
+
+
+def _normalize_trait_list(values: object) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    if not isinstance(values, list):
+        return result
+    for item in values:
+        name = _extract_named_text(item)
+        if not isinstance(name, str) or not name:
+            continue
+        count = None
+        if isinstance(item, Mapping):
+            raw_count = item.get("current_role_count")
+            if isinstance(raw_count, int) and not isinstance(raw_count, bool) and raw_count > 0:
+                count = raw_count
+            elif isinstance(raw_count, str) and raw_count.isdigit() and int(raw_count) > 0:
+                count = int(raw_count)
+        normalized = f"{count}{name}" if count is not None else name
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def _extract_named_text(item: object) -> str | None:
+    if isinstance(item, Mapping):
+        for key in ("name", "title", "text", "trait_name"):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None
+    return item if isinstance(item, str) and item else None
 
 
 def _append_role_cards(target: list[dict[str, object]], values: object) -> None:
@@ -551,14 +617,19 @@ def _append_role_cards(target: list[dict[str, object]], values: object) -> None:
         if not isinstance(name, str) or not name or name in seen:
             continue
         seen.add(name)
-        target.append(
-            {
-                "name": name,
-                "star": item.get("star"),
-                "rarity": item.get("rarity"),
-                "is_carry": bool(item.get("is_carry")),
-            }
-        )
+        role = {
+            "name": name,
+            "star": item.get("star"),
+            "rarity": item.get("rarity"),
+            "is_carry": bool(item.get("is_carry")),
+        }
+        first_equipments = _normalize_named_list(item.get("first_equipments"))
+        second_equipments = _normalize_named_list(item.get("second_equipments"))
+        if first_equipments:
+            role["first_equipments"] = first_equipments
+        if second_equipments:
+            role["second_equipments"] = second_equipments
+        target.append(role)
 
 
 def _normalize_role_stage_list(role_stages: object) -> list[dict[str, object]]:
@@ -570,16 +641,14 @@ def _normalize_role_stage_list(role_stages: object) -> list[dict[str, object]]:
             continue
         front_roles: list[dict[str, object]] = []
         back_roles: list[dict[str, object]] = []
-        traits: list[str] = []
         _append_role_cards(front_roles, stage.get("front_roles"))
         _append_role_cards(back_roles, stage.get("back_roles"))
-        _append_unique_names(traits, stage.get("traits"))
         result.append(
             {
                 "stage": str(stage.get("stage") or ""),
                 "front_roles": front_roles,
                 "back_roles": back_roles,
-                "traits": traits,
+                "traits": _normalize_trait_list(stage.get("traits")),
             }
         )
     return result
@@ -965,6 +1034,7 @@ def fetch_cw_guide_payload(url: str) -> dict:
         "support_hard": bool(tourn_detail.get("support_hard")),
         "has_change_equip": bool(lineup.get("has_change_equip")),
         "has_expert": bool(lineup.get("has_expert")),
+        "operation_guide": str(lineup.get("description") or ""),
         "version": str(tourn_detail.get("rpg_game_big_version") or ""),
         "min_coins": 40,
         "min_level": min_level,

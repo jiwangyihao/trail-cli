@@ -14,7 +14,7 @@ class OutputFormat(StrEnum):
 
 
 _OUTPUT_OPTIONS = {"format": OutputFormat.TEXT, "verbose": False}
-YAML_ALLOWLIST = {"daemon.status", "state.dump", "guide.config.cw"}
+YAML_ALLOWLIST = {"daemon.status", "state.dump", "guide.fetch.cw", "guide.config.cw"}
 
 
 def _normalize_output_format(output_format: str | OutputFormat) -> OutputFormat:
@@ -583,40 +583,143 @@ def _normalize_ocr_item(item: Any) -> dict[str, Any] | None:
 def _render_guide_fetch(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     summary = _format_fact_sequence(
-        ("id", data.get("lineup_id") or data.get("id")),
-        ("share_code", data.get("share_code")),
-        ("version", data.get("version")),
-        ("min_level", data.get("min_level")),
-        ("mid_level", data.get("mid_level")),
-        ("hard", bool(data.get("support_hard"))),
-        ("change_equip", bool(data.get("has_change_equip"))),
-        ("expert", bool(data.get("has_expert"))),
+        ("攻略标题", data.get("title")),
+        ("攻略码", data.get("share_code")),
+        ("版本", data.get("version")),
+        ("最低金币", data.get("min_coins")),
+        ("最低等级", data.get("min_level")),
+        ("中期等级", data.get("mid_level")),
     )
     lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
     _append_shot(lines, payload)
     _append_fact_line(
         lines,
         "guide",
-        ("on_field", _compact_mapping(data.get("on_field"))),
-        ("off_field", _compact_mapping(data.get("off_field"))),
+        ("攻略标签", _guide_fetch_tags(data)),
     )
     _append_fact_line(
         lines,
         "guide",
-        ("portals", _compact_sequence(data.get("portals"))),
-        ("first_augments", _compact_sequence(data.get("first_fight_augments"))),
-        ("second_augments", _compact_sequence(data.get("second_fight_augments"))),
+        ("羁绊列表", _guide_fetch_traits(data)),
     )
     _append_fact_line(
         lines,
         "guide",
-        ("order_basic", _compact_sequence(data.get("order_basic"))),
-        ("order_compose", _compact_sequence(data.get("order_compose"))),
-        ("role_stages", _compact_sequence(data.get("role_stages"))),
+        ("投资环境", _compact_sequence(data.get("portals"))),
+        ("优选投资策略", _compact_sequence(data.get("first_fight_augments"))),
+        ("次选投资策略", _compact_sequence(data.get("second_fight_augments"))),
+    )
+    _append_fact_line(
+        lines,
+        "guide",
+        ("简易装备优先度", _compact_sequence(data.get("order_basic"))),
+        ("进阶装备优先度", _compact_sequence(data.get("order_compose"))),
+    )
+    for stage in _as_list(data.get("role_stages")):
+        if not isinstance(stage, dict):
+            continue
+        stage_name = _guide_fetch_stage_name(stage.get("stage"))
+        _append_fact_line(
+            lines,
+            "guide",
+            ("阶段", stage_name),
+            ("前台", _compact_role_cards(stage.get("front_roles"))),
+            ("后台", _compact_role_cards(stage.get("back_roles"))),
+            ("羁绊", _compact_sequence(stage.get("traits"))),
+        )
+        for role in _as_list(stage.get("front_roles")) + _as_list(stage.get("back_roles")):
+            if not isinstance(role, dict):
+                continue
+            first_equipments = _compact_sequence(role.get("first_equipments"))
+            second_equipments = _compact_sequence(role.get("second_equipments"))
+            if first_equipments is None and second_equipments is None:
+                continue
+            _append_fact_line(
+                lines,
+                "guide",
+                ("阶段", stage_name),
+                ("角色", role.get("name")),
+                ("优选装备", first_equipments),
+                ("次选装备", second_equipments),
+            )
+    _append_fact_line(
+        lines,
+        "guide",
+        ("运营思路", data.get("operation_guide")),
     )
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
+
+
+def _guide_fetch_stage_name(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    mapping = {
+        "Opening": "前期阵容",
+        "Early": "前期阵容",
+        "Middle": "中期阵容",
+        "Mid": "中期阵容",
+        "Final": "最终阵容",
+    }
+    return mapping.get(value, value)
+
+
+def _guide_fetch_tags(data: dict[str, Any]) -> str | None:
+    tags: list[str] = []
+
+    for item in _as_list(data.get("labels")):
+        if isinstance(item, str) and item:
+            tags.append(f"#{item}")
+
+    if bool(data.get("support_hard")):
+        tags.append("#适用超频博弈")
+    if bool(data.get("has_change_equip")):
+        tags.append("#星徽攻略")
+    if bool(data.get("has_expert")):
+        tags.append("#专家顾问")
+
+    if not tags:
+        return None
+    return "|".join(tags)
+
+
+def _guide_fetch_traits(data: dict[str, Any]) -> str | None:
+    order: list[str] = []
+    counts: dict[str, int | None] = {}
+
+    for stage in _as_list(data.get("role_stages")):
+        if not isinstance(stage, dict):
+            continue
+        for trait in _as_list(stage.get("traits")):
+            if not isinstance(trait, str) or not trait:
+                continue
+            count, name = _split_trait_count(trait)
+            key = name or trait
+            if key not in counts:
+                counts[key] = count
+                order.append(key)
+                continue
+            existing = counts[key]
+            if count is not None and (existing is None or count > existing):
+                counts[key] = count
+
+    if not order:
+        return None
+    rendered: list[str] = []
+    for key in order:
+        count = counts[key]
+        rendered.append(f"{count}{key}" if count is not None else key)
+    return "|".join(rendered)
+
+
+def _split_trait_count(value: str) -> tuple[int | None, str]:
+    index = 0
+    while index < len(value) and value[index].isdigit():
+        index += 1
+    if index == 0:
+        return None, value
+    return int(value[:index]), value[index:]
 
 
 def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:

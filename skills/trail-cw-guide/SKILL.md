@@ -22,7 +22,7 @@ description: Use when an agent needs to fetch or apply a Currency Wars guide art
 1. 默认假设当前工作区已经通过 `trail start` 获得可用 `session_id`
 2. 如需先按环境筛攻略，可使用：`trail guide list cw --portal <title>` 或 `trail guide list cw --portal-id <id>`
 3. 拉取攻略内容：`trail guide fetch cw <lineup_url|lineup_id>`
-4. 由 Agent 读取返回内容，确认这是要执行的攻略
+4. 由 Agent 读取返回内容，至少确认 `攻略标题`、`攻略标签`、`羁绊列表`、`攻略码`、`最低金币`、`投资环境`、`投资策略`、`运营思路` 与当前目标一致，再决定是否执行 apply
 5. `trail cw guide apply --session <id> --lineup-id <lineup_id>` 只应在 `trail cw portal.select` 已完成、真正进入游戏后执行
 6. 如需回顾当前攻略：`trail cw guide current --session <id>`
 7. 确认返回的 `data` 已写入攻略引用、购买限制和约束快照
@@ -30,6 +30,7 @@ description: Use when an agent needs to fetch or apply a Currency Wars guide art
 ## 执行规则
 
 - `trail guide fetch cw` 直接返回攻略内容，不自动修改 session，也不把 artifact 当主要产出
+- `trail guide fetch cw` 的默认文本会直接暴露中文字段名的完整攻略摘要；其中 `适用超频博弈` / `星徽攻略` / `专家顾问` 会折叠进 `攻略标签` 同一行，`羁绊列表`、`运营思路` 与按角色展开的推荐装备也会直接给出；不够时可直接用 `--format yaml` 获取完整结构化 `data`
 - `trail guide list cw --portal ...` / `--portal-id ...` 适合在“环境优先”流程里，根据投资环境页三卡摘要反查更合适的攻略
 - `trail cw guide apply/current` 只面向当前对局已选攻略；攻略查询与拉取继续使用顶层 `trail guide ... cw`
 - `trail cw guide apply` 必须显式传入 `--lineup-id`（兼容旧 `--guide` 别名时，也应优先把它理解成 lineup_id）

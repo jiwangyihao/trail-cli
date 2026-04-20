@@ -33,7 +33,7 @@ def _expected_lines(summary: str, *, screenshot: str | None = None, body: list[s
     return lines
 
 
-def test_guide_fetch_renders_summary_and_uses_daemon_client(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
+def test_guide_fetch_renders_summary_and_yaml(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "trail.commands.guide.fetch_cw_guide",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide fetch path used")),
@@ -45,38 +45,92 @@ def test_guide_fetch_renders_summary_and_uses_daemon_client(cli_runner, fake_dae
                 request_id="req-guide-fetch",
                 data={
                     "lineup_id": "abc",
+                    "title": "7群攻2银河学者",
                     "share_code": "##demo##",
+                    "labels": ["7级搜牌", "银河学者"],
                     "version": "3.2",
+                    "min_coins": 40,
                     "min_level": 7,
                     "mid_level": 8,
                     "support_hard": True,
                     "has_change_equip": False,
                     "has_expert": True,
-                    "on_field": {"希儿": 9, "停云": 3},
-                    "off_field": {"佩拉": 1},
+                    "operation_guide": "前期：过渡\n中期：D牌\n后期：补强",
                     "portals": ["商店", "事件"],
                     "first_fight_augments": ["快攻", "回蓝"],
                     "second_fight_augments": ["暴击", "连携"],
                     "order_basic": ["升级", "买卡", "打精英"],
                     "order_compose": ["希儿", "停云"],
-                    "role_stages": [{"name": "希儿", "stage": 1}, {"name": "停云", "stage": 2}],
+                    "role_stages": [
+                        {
+                            "stage": "Opening",
+                            "front_roles": [{"name": "黑塔", "star": 1, "rarity": 1, "is_carry": False}],
+                            "back_roles": [{"name": "艾丝妲", "star": 1, "rarity": 1, "is_carry": False}],
+                                "traits": ["1智识"],
+                        },
+                        {
+                            "stage": "Final",
+                            "front_roles": [
+                                {
+                                    "name": "希儿",
+                                    "star": 3,
+                                    "rarity": 3,
+                                    "is_carry": True,
+                                    "first_equipments": ["高周波电锯", "战场进化手册"],
+                                    "second_equipments": ["胜利之旗"],
+                                }
+                            ],
+                            "back_roles": [{"name": "佩拉", "star": 2, "rarity": 2, "is_carry": False}],
+                                "traits": ["1巡猎", "2量子"],
+                        },
+                    ],
                 },
             )
         }
     )
 
-    result = cli_runner.invoke(app, ["guide", "fetch", "cw", "abc"])
+    text_result = cli_runner.invoke(app, ["guide", "fetch", "cw", "abc"])
+    yaml_result = cli_runner.invoke(app, ["--format", "yaml", "guide", "fetch", "cw", "abc"])
 
-    assert result.exit_code == 0
-    assert result.stdout.splitlines() == _expected_lines(
-        "ok guide.fetch.cw id=abc share_code=##demo## version=3.2 min_level=7 mid_level=8 hard=1 change_equip=0 expert=1",
+    assert text_result.exit_code == 0
+    assert yaml_result.exit_code == 0
+    assert text_result.stdout.splitlines() == _expected_lines(
+        "ok guide.fetch.cw 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2 最低金币=40 最低等级=7 中期等级=8",
         body=[
-            "guide on_field=希儿:9|停云:3 off_field=佩拉:1",
-            "guide portals=商店|事件 first_augments=快攻|回蓝 second_augments=暴击|连携",
-            "guide order_basic=升级|买卡|打精英 order_compose=希儿|停云 role_stages=name:希儿/stage:1|name:停云/stage:2",
+            "guide 攻略标签=#7级搜牌|#银河学者|#适用超频博弈|#专家顾问",
+                "guide 羁绊列表=1智识|1巡猎|2量子",
+            "guide 投资环境=商店|事件 优选投资策略=快攻|回蓝 次选投资策略=暴击|连携",
+            "guide 简易装备优先度=升级|买卡|打精英 进阶装备优先度=希儿|停云",
+                "guide 阶段=前期阵容 前台=黑塔/star:1/rarity:1 后台=艾丝妲/star:1/rarity:1 羁绊=1智识",
+                "guide 阶段=最终阵容 前台=希儿/carry:1/star:3/rarity:3 后台=佩拉/star:2/rarity:2 羁绊=1巡猎|2量子",
+            "guide 阶段=最终阵容 角色=希儿 优选装备=高周波电锯|战场进化手册 次选装备=胜利之旗",
+            'guide 运营思路="前期：过渡\\n中期：D牌\\n后期：补强"',
         ],
     )
+    assert yaml_result.stdout.splitlines()[0:9] == _expected_lines(
+        "ok guide.fetch.cw 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2 最低金币=40 最低等级=7 中期等级=8",
+        body=[
+            "guide 攻略标签=#7级搜牌|#银河学者|#适用超频博弈|#专家顾问",
+            "guide 羁绊列表=1智识|1巡猎|2量子",
+            "guide 投资环境=商店|事件 优选投资策略=快攻|回蓝 次选投资策略=暴击|连携",
+            "guide 简易装备优先度=升级|买卡|打精英 进阶装备优先度=希儿|停云",
+            "guide 阶段=前期阵容 前台=黑塔/star:1/rarity:1 后台=艾丝妲/star:1/rarity:1 羁绊=1智识",
+            "guide 阶段=最终阵容 前台=希儿/carry:1/star:3/rarity:3 后台=佩拉/star:2/rarity:2 羁绊=1巡猎|2量子",
+            "guide 阶段=最终阵容 角色=希儿 优选装备=高周波电锯|战场进化手册 次选装备=胜利之旗",
+            'guide 运营思路="前期：过渡\\n中期：D牌\\n后期：补强"',
+        ],
+    )
+    assert "lineup_id: abc" in yaml_result.stdout
+    assert "operation_guide: '前期：过渡" in yaml_result.stdout
+    assert "role_stages:" in yaml_result.stdout
     assert client.calls == [
+        {
+            "method": "guide.fetch.cw",
+            "payload": {"url": "abc"},
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        },
         {
             "method": "guide.fetch.cw",
             "payload": {"url": "abc"},

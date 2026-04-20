@@ -260,7 +260,7 @@ def test_project_agents_declares_renderer_contracts() -> None:
     )
     assert "trail.output.debug.collect_debug_events" in agents
     assert "trail.output.debug.render_debug_lines" in agents
-    assert "当前 YAML allowlist 是 `daemon.status`、`state.dump`、`guide.config.cw`。" in agents
+    assert "当前 YAML allowlist 是 `daemon.status`、`state.dump`、`guide.fetch.cw`、`guide.config.cw`。" in agents
     assert "README.md` 示例与说明" in agents
     assert "renderer 单测" in agents
     assert "CLI stdout 测试或 RPC/契约测试增量" in agents

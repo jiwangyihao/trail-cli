@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import math
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -62,7 +63,7 @@ def fake_lineup_detail_response(share_code: str = "REAL-CODE", lineup_id: str = 
             "lineup": {
                 "id": lineup_id,
                 "title": "7群攻2银河学者",
-                "description": "9级搜牌",
+                "description": "前期：过渡\n中期：D牌\n后期：补强",
                 "nickname": "测试作者",
                 "has_change_equip": True,
                 "has_expert": True,
@@ -80,7 +81,7 @@ def fake_lineup_detail_response(share_code: str = "REAL-CODE", lineup_id: str = 
                     "rpg_game_big_version": "3.1",
                     "first_fight_augments": [{"name": "银河大乐透"}, {"name": "超距遥感"}],
                     "second_fight_augments": [{"name": "折射棱镜"}],
-                    "portals": [{"name": "购物区"}, {"name": "事件区"}],
+                    "portals": [{"title": "购物区"}, {"title": "事件区"}],
                     "order_basic": [{"name": "抢前排输出"}, {"name": "补减防"}],
                     "order_compose": [{"name": "推进器"}],
                     "role_stages": [
@@ -88,13 +89,25 @@ def fake_lineup_detail_response(share_code: str = "REAL-CODE", lineup_id: str = 
                             "stage": "Opening",
                             "front_roles": [{"name": "黑塔", "star": 1, "rarity": 1, "is_carry": False}],
                             "back_roles": [{"name": "艾丝妲", "star": 1, "rarity": 1, "is_carry": False}],
-                            "traits": [{"name": "智识"}],
+                            "traits": [{"trait_name": "智识", "current_role_count": 1}],
                         },
                         {
                             "stage": "Final",
-                            "front_roles": [{"name": "希儿", "star": 3, "rarity": 3, "is_carry": True}],
+                            "front_roles": [
+                                {
+                                    "name": "希儿",
+                                    "star": 3,
+                                    "rarity": 3,
+                                    "is_carry": True,
+                                    "first_equipments": [{"name": "高周波电锯"}, {"name": "战场进化手册"}],
+                                    "second_equipments": [{"name": "胜利之旗"}],
+                                }
+                            ],
                             "back_roles": [{"name": "佩拉", "star": 2, "rarity": 2, "is_carry": False}],
-                            "traits": [{"name": "巡猎"}, {"name": "量子"}],
+                            "traits": [
+                                {"trait_name": "巡猎", "current_role_count": 1},
+                                {"trait_name": "量子", "current_role_count": 2},
+                            ],
                         },
                     ],
                 },
@@ -360,6 +373,7 @@ def test_fetch_cw_guide_payload_builds_payload_from_lineup_detail(monkeypatch):
         "support_hard": True,
         "has_change_equip": True,
         "has_expert": True,
+        "operation_guide": "前期：过渡\n中期：D牌\n后期：补强",
         "version": "3.1",
         "min_coins": 40,
         "min_level": 9,
@@ -371,13 +385,22 @@ def test_fetch_cw_guide_payload_builds_payload_from_lineup_detail(monkeypatch):
                 "stage": "Opening",
                 "front_roles": [{"name": "黑塔", "star": 1, "rarity": 1, "is_carry": False}],
                 "back_roles": [{"name": "艾丝妲", "star": 1, "rarity": 1, "is_carry": False}],
-                "traits": ["智识"],
+                    "traits": ["1智识"],
             },
             {
                 "stage": "Final",
-                "front_roles": [{"name": "希儿", "star": 3, "rarity": 3, "is_carry": True}],
+                "front_roles": [
+                    {
+                        "name": "希儿",
+                        "star": 3,
+                        "rarity": 3,
+                        "is_carry": True,
+                        "first_equipments": ["高周波电锯", "战场进化手册"],
+                        "second_equipments": ["胜利之旗"],
+                    }
+                ],
                 "back_roles": [{"name": "佩拉", "star": 2, "rarity": 2, "is_carry": False}],
-                "traits": ["巡猎", "量子"],
+                    "traits": ["1巡猎", "2量子"],
             },
         ],
         "first_fight_augments": ["银河大乐透", "超距遥感"],
@@ -1174,9 +1197,14 @@ def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit():
     texts: list[str] = []
     keys: list[tuple[str, int, float]] = []
 
+    def apply_locate_results() -> list[Box | None]:
+        stable_checks = max(1, math.ceil(guide_module.GUIDE_APPLY_READY_DELAY / guide_module.GUIDE_APPLY_SETTLE_INTERVAL))
+        apply_box = Box(left=10, top=20, width=40, height=20, source=apply_template)
+        return [apply_box] * stable_checks + [None]
+
     class RuntimeStub:
         def __init__(self):
-            self._locate_results = [Box(left=10, top=20, width=40, height=20, source=apply_template), None]
+            self._locate_results = apply_locate_results()
 
         def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
             wait_calls.append(template)
@@ -1203,11 +1231,8 @@ def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit():
 
     assert confirm_template in wait_calls
     assert texts == ["##demo##"]
-    assert locate_calls == [
-        str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve()),
-        apply_template,
-        apply_template,
-    ]
+    assert locate_calls[0] == str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve())
+    assert locate_calls[1:] == [apply_template] * (len(apply_locate_results()))
     assert keys == [("esc", 3, 1)]
 
 
@@ -1236,7 +1261,7 @@ def _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch) -> dict[s
 
     class RuntimeStub:
         def __init__(self):
-            self._apply_locate_results = [apply_box, None]
+            self._apply_locate_results = _guide_apply_ready_locate_results(guide_module, apply_box)
 
         def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
             if template == enter_code_template:
@@ -1274,6 +1299,11 @@ def _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch) -> dict[s
     return {"sleep_calls": sleep_calls, "events": events}
 
 
+def _guide_apply_ready_locate_results(guide_module, apply_box: Box) -> list[Box | None]:
+    stable_checks = max(1, math.ceil(guide_module.GUIDE_APPLY_READY_DELAY / guide_module.GUIDE_APPLY_SETTLE_INTERVAL))
+    return [apply_box] * stable_checks + [None]
+
+
 def test_apply_cw_guide_via_ui_waits_for_confirm_result_to_settle_before_clicking_apply(monkeypatch):
     guide_module = load_cw_guide_module()
     result = _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch)
@@ -1299,6 +1329,121 @@ def test_apply_cw_guide_via_ui_confirm_settle_test_rejects_zero_delay(monkeypatc
         _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch)
 
 
+def _exercise_apply_cw_guide_apply_ready_settle(guide_module, monkeypatch, *, shift_apply_box: bool = False) -> dict[str, object]:
+    apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
+    assert apply_cw_guide_via_ui is not None
+    assert guide_module.GUIDE_APPLY_READY_DELAY > 0, "GUIDE_APPLY_READY_DELAY must stay > 0"
+    expected_stable_checks = max(
+        1,
+        math.ceil(guide_module.GUIDE_APPLY_READY_DELAY / guide_module.GUIDE_APPLY_SETTLE_INTERVAL),
+    )
+
+    enter_code_template = str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve())
+    apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
+    sleep_calls: list[float] = []
+    events: list[object] = []
+    state = {"apply_visible": False, "stable_checks": 0, "apply_clicked": False}
+
+    def fake_sleep(seconds: float):
+        sleep_calls.append(seconds)
+        events.append(("sleep", seconds))
+
+    monkeypatch.setattr(guide_module, "sleep", fake_sleep)
+
+    initial_apply_box = Box(left=200, top=20, width=40, height=20, source=apply_template)
+    shifted_apply_box = Box(left=260, top=20, width=40, height=20, source=apply_template)
+
+    class RuntimeStub:
+        def __init__(self):
+            self._current_apply_box = initial_apply_box
+            self._stable_checks_remaining = expected_stable_checks
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            if template == apply_template:
+                state["apply_visible"] = True
+                events.append("wait_apply")
+                return self._current_apply_box
+            return Box(left=10, top=20, width=40, height=20, source=template)
+
+        def click_point(self, x: float, y: float, **kwargs):
+            if (x, y) == self._current_apply_box.center:
+                assert state["stable_checks"] >= expected_stable_checks, "guide.apply clicked before guide load settle"
+                state["apply_clicked"] = True
+                events.append("apply_click")
+
+        def type_text(self, text: str):
+            return None
+
+        def locate(self, template: str, **kwargs):
+            if template == enter_code_template:
+                return Box(left=10, top=20, width=40, height=20, source=template)
+            if template == apply_template:
+                if shift_apply_box and self._current_apply_box is initial_apply_box:
+                    self._current_apply_box = shifted_apply_box
+                    state["stable_checks"] = 0
+                    self._stable_checks_remaining = expected_stable_checks
+                    events.append("apply_shift")
+                    return self._current_apply_box
+                if self._stable_checks_remaining > 0:
+                    self._stable_checks_remaining -= 1
+                    state["stable_checks"] += 1
+                    events.append(("apply_locate", self._current_apply_box.center))
+                    return self._current_apply_box
+                return None
+            return None
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            return None
+
+    apply_cw_guide_via_ui(RuntimeStub(), share_code="##demo##")
+
+    return {
+        "expected_stable_checks": expected_stable_checks,
+        "sleep_calls": sleep_calls,
+        "events": events,
+        "final_apply_center": shifted_apply_box.center if shift_apply_box else initial_apply_box.center,
+    }
+
+
+def test_apply_cw_guide_via_ui_waits_for_guide_load_settle_before_clicking_apply(monkeypatch):
+    guide_module = load_cw_guide_module()
+    result = _exercise_apply_cw_guide_apply_ready_settle(guide_module, monkeypatch)
+
+    locate_events_before_click = []
+    post_wait_sleep_events = []
+    wait_apply_seen = False
+    for event in result["events"]:
+        if event == "wait_apply":
+            wait_apply_seen = True
+            continue
+        if event == "apply_click":
+            break
+        if isinstance(event, tuple) and event[:1] == ("apply_locate",):
+            locate_events_before_click.append(event)
+        if wait_apply_seen and event == ("sleep", guide_module.GUIDE_APPLY_SETTLE_INTERVAL):
+            post_wait_sleep_events.append(event)
+
+    assert len(locate_events_before_click) == result["expected_stable_checks"]
+    assert len(post_wait_sleep_events) == result["expected_stable_checks"]
+
+
+def test_apply_cw_guide_via_ui_relocates_apply_button_after_settle_shift(monkeypatch):
+    guide_module = load_cw_guide_module()
+    result = _exercise_apply_cw_guide_apply_ready_settle(guide_module, monkeypatch, shift_apply_box=True)
+
+    assert "apply_shift" in result["events"]
+    assert ("apply_locate", result["final_apply_center"]) in result["events"]
+    assert result["events"].index("apply_shift") < result["events"].index("apply_click")
+
+
+def test_apply_cw_guide_via_ui_apply_ready_test_rejects_zero_delay(monkeypatch):
+    guide_module = load_cw_guide_module()
+    monkeypatch.setattr(guide_module, "GUIDE_APPLY_READY_DELAY", 0.0)
+
+    with pytest.raises(AssertionError, match="GUIDE_APPLY_READY_DELAY"):
+        _exercise_apply_cw_guide_apply_ready_settle(guide_module, monkeypatch)
+
+
 def _exercise_apply_cw_guide_post_apply_settle(guide_module, monkeypatch) -> dict[str, object]:
     apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
     assert apply_cw_guide_via_ui is not None
@@ -1320,7 +1465,8 @@ def _exercise_apply_cw_guide_post_apply_settle(guide_module, monkeypatch) -> dic
 
     class RuntimeStub:
         def __init__(self):
-            self._apply_locate_results = [Box(left=10, top=20, width=40, height=20, source=apply_template), None]
+            apply_box = Box(left=10, top=20, width=40, height=20, source=apply_template)
+            self._apply_locate_results = _guide_apply_ready_locate_results(guide_module, apply_box)
 
         def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
             return Box(left=10, top=20, width=40, height=20, source=template)
@@ -1425,7 +1571,8 @@ def test_apply_cw_guide_via_ui_skips_strategy_click_when_guide_page_already_open
 
     class RuntimeStub:
         def __init__(self):
-            self._apply_locate_results = [Box(left=10, top=20, width=40, height=20, source=apply_template), None]
+            apply_box = Box(left=10, top=20, width=40, height=20, source=apply_template)
+            self._apply_locate_results = _guide_apply_ready_locate_results(guide_module, apply_box)
 
         def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
             wait_calls.append(template)
