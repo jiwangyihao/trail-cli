@@ -5,6 +5,7 @@
 当前约定：
 - 每张图都用顺序号命名，便于后续持续追加。
 - 所有纳入仓库的截图都要先做隐私脱敏；当前图片已把左下角 UID 区域遮盖。
+- 推荐统一使用脚本：`python docs/cw-stage-reference/sanitize_stage_reference.py <input> --box 27,1050,123,25 --output <output>`
 - 说明里要明确：
   - 这张图对应的页面/阶段
   - 识别这个阶段时最可靠的视觉特征
@@ -58,3 +59,30 @@
 - 额外说明：
   - 这页之所以要单独存档，是因为它很容易被误认成普通首页或 `entry.continue` 中间页
   - 当前 feature 的关键语义之一就是：在这页上 `cw start` 要稳定报 `CW_START_PROGRESS_PENDING`，把决策权交给 Agent 去问用户
+
+## 03-cw-invest-portal-page.jpg
+
+- 文件：`docs/cw-stage-reference/03-cw-invest-portal-page.jpg`
+- 阶段名称：`投资环境选择页`
+- 关键视觉特征：
+  - 左上角是 `图例 / 投资环境 / 攻略`
+  - 中间横向摆放三张投资环境卡，例如当前这张图里是：
+    - `劳务派遣合同`
+    - `联席决策`
+    - `银河学者概念股`
+  - 每张卡下方有简短描述文案
+  - 底部中间主按钮是 `确认`
+  - 左下能看到 `剩余次数：1`
+- 对应命令语义：
+  - 这是 `trail cw start --session <id> --mode new --difficulty ... --battle-mode ...` 的目标页面
+  - 也是 `trail cw portal.refresh --session <id>` 和 `trail cw portal.restart --session <id>` 成功后应回到的页面
+- 到达该页面后的推荐下一步：
+  1. 如果要接受当前三张卡之一，运行：
+     - `trail cw portal.select --session <id> --card-idx <1|2|3>`
+  2. 如果想刷新重看三张卡，运行：
+     - `trail cw portal.refresh --session <id>`
+  3. 如果要按当前环境反查攻略，运行：
+     - `trail guide list cw --portal <portal_title> --limit 3`
+- 额外说明：
+  - 这页和首页最重要的区别是：已经没有 `开始「货币战争」`，而是明确出现三张投资环境卡和底部 `确认`
+  - 这张图已按左下 UID OCR 框做马赛克脱敏
