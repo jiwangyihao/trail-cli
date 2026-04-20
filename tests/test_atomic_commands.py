@@ -425,6 +425,75 @@ def test_window_launch_help_describes_game_path_option_resolution_contract(cli_r
     assert "GAME_PATH_PERSIST_FAILED" in result.output
 
 
+def test_guide_list_help_mentions_trait_and_role_filters(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
+    trait_help = _extract_help_option_block(result.output, "--trait")
+    role_help = _extract_help_option_block(result.output, "--role")
+    portal_help = _extract_help_option_block(result.output, "--portal")
+    portal_id_help = _extract_help_option_block(result.output, "--portal-id")
+
+    assert result.exit_code == 0
+    assert "--trait" in trait_help
+    assert "按羁绊名称筛选" in trait_help
+    assert "免查 config" in trait_help
+    assert "--role" in role_help
+    assert "按角色名称筛选" in role_help
+    assert "--portal" in portal_help
+    assert "按投资环境筛选" in portal_help
+    assert "--portal-id" in portal_id_help
+    assert "按投资环境筛选" in portal_id_help
+
+
+def test_guide_list_help_mentions_repeatable_role_values(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
+    role_help = _extract_help_option_block(result.output, "--role")
+    role_id_help = _extract_help_option_block(result.output, "--role-id")
+
+    assert result.exit_code == 0
+    assert "可重复传入多个值" in role_help
+    assert "可重复传入多个值" in role_id_help
+
+
+def test_guide_list_help_mentions_exact_id_filters(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
+    trait_id_help = _extract_help_option_block(result.output, "--trait-id")
+    role_id_help = _extract_help_option_block(result.output, "--role-id")
+
+    assert result.exit_code == 0
+    assert "按羁绊 id 精确筛选" in trait_id_help
+    assert "按角色 id 精确筛选" in role_id_help
+
+
+def test_guide_list_help_mentions_mutually_exclusive_filters(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
+    trait_help = _extract_help_option_block(result.output, "--trait")
+    trait_id_help = _extract_help_option_block(result.output, "--trait-id")
+    role_help = _extract_help_option_block(result.output, "--role")
+    role_id_help = _extract_help_option_block(result.output, "--role-id")
+    portal_help = _extract_help_option_block(result.output, "--portal")
+    portal_id_help = _extract_help_option_block(result.output, "--portal-id")
+
+    assert result.exit_code == 0
+    assert "--trait-id" in trait_help and "互斥" in trait_help
+    assert "--trait" in trait_id_help and "互斥" in trait_id_help
+    assert "--role-id" in role_help and "互斥" in role_help
+    assert "--role" in role_id_help and "互斥" in role_id_help
+    assert "--portal-id" in portal_help and "互斥" in portal_help
+    assert "--portal" in portal_id_help and "互斥" in portal_id_help
+
+
+def test_guide_list_help_mentions_boolean_filter_semantics(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
+    match_change_job_help = _extract_help_option_block(result.output, "--match-change-job")
+    match_hard_help = _extract_help_option_block(result.output, "--match-hard")
+
+    assert result.exit_code == 0
+    assert "保留当前布尔筛选语义" in match_change_job_help
+    assert "true/false" in match_change_job_help
+    assert "保留当前布尔筛选语义" in match_hard_help
+    assert "true/false" in match_hard_help
+
+
 def test_screen_shot_returns_envelope_and_screenshot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {

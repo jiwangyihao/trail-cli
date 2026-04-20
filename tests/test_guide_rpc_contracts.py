@@ -9,6 +9,7 @@ from trail.cli import app
 from trail.core.errors import TrailError
 from trail.daemon.models import DaemonRequest
 from trail.daemon.protocol import PROTOCOL_VERSION
+from trail.output.rendering import render_output
 from tests.support.fake_daemon import build_success_response
 
 
@@ -268,11 +269,68 @@ def test_guide_list_renders_paging_and_facts(cli_runner, fake_daemon_client, tmp
             "payload": {
                 "page": 2,
                 "limit": 10,
+                "trait": None,
                 "trait_id": 1005,
+                "role": None,
+                "role_id": None,
                 "order": "Recent",
                 "next_page_token": "token-2",
                 "match_change_job": "true",
                 "match_hard": "false",
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_guide_list_trait_and_role_payload_mapping(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "trail.commands.guide.fetch_cw_guide_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide list path used")),
+        raising=False,
+    )
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": build_success_response(
+                request_id="req-guide-list-trait-role",
+                data={"list": [], "next_page_token": None},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "guide",
+            "list",
+            "cw",
+            "--trait",
+            "巡猎",
+            "--role",
+            "黑塔",
+            "--role",
+            "大黑塔",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok guide.list.cw count=0 more=0"]
+    assert client.calls == [
+        {
+            "method": "guide.list.cw",
+            "payload": {
+                "page": 1,
+                "limit": 20,
+                "trait": "巡猎",
+                "trait_id": None,
+                "role": ["黑塔", "大黑塔"],
+                "role_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
             },
             "workspace_root": str(tmp_path),
             "session_id": None,
@@ -327,7 +385,52 @@ def test_guide_list_portal_payload_mapping_and_filtered_rendering(cli_runner, fa
             "payload": {
                 "page": 1,
                 "limit": 5,
+                "trait": None,
                 "trait_id": None,
+                "role": None,
+                "role_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+                "portal": "购物区",
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_guide_list_with_portal_and_role_payload_mapping(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "trail.commands.guide.fetch_cw_guide_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide list path used")),
+        raising=False,
+    )
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": build_success_response(
+                request_id="req-guide-list-portal-role",
+                data={"list": [], "next_page_token": None},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--portal", "购物区", "--role", "黑塔", "--limit", "5"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok guide.list.cw count=0 more=0"]
+    assert client.calls == [
+        {
+            "method": "guide.list.cw",
+            "payload": {
+                "page": 1,
+                "limit": 5,
+                "trait": None,
+                "trait_id": None,
+                "role": ["黑塔"],
+                "role_id": None,
                 "order": None,
                 "next_page_token": None,
                 "match_change_job": None,
@@ -410,7 +513,10 @@ def test_guide_list_multi_portal_payload_mapping_and_grouped_rendering(cli_runne
             "payload": {
                 "page": 1,
                 "limit": 3,
+                "trait": None,
                 "trait_id": None,
+                "role": None,
+                "role_id": None,
                 "order": None,
                 "next_page_token": None,
                 "match_change_job": None,
@@ -449,12 +555,402 @@ def test_guide_list_portal_id_payload_mapping(cli_runner, fake_daemon_client, tm
             "payload": {
                 "page": 1,
                 "limit": 3,
+                "trait": None,
                 "trait_id": None,
+                "role": None,
+                "role_id": None,
                 "order": None,
                 "next_page_token": None,
                 "match_change_job": None,
                 "match_hard": None,
                 "portal_id": "shop",
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_guide_list_with_portal_and_role_id_payload_mapping(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "trail.commands.guide.fetch_cw_guide_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide list path used")),
+        raising=False,
+    )
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": build_success_response(
+                request_id="req-guide-list-portal-role-id",
+                data={"list": [], "next_page_token": None},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        ["guide", "list", "cw", "--portal", "购物区", "--role-id", "1001", "--role-id", "1002", "--limit", "5"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok guide.list.cw count=0 more=0"]
+    assert client.calls == [
+        {
+            "method": "guide.list.cw",
+            "payload": {
+                "page": 1,
+                "limit": 5,
+                "trait": None,
+                "trait_id": None,
+                "role": None,
+                "role_id": ["1001", "1002"],
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+                "portal": "购物区",
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_guide_list_role_fuzzy_success_renders_candidates_and_warning(
+    cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(
+        "trail.commands.guide.fetch_cw_guide_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide list path used")),
+        raising=False,
+    )
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": build_success_response(
+                request_id="req-guide-list-role-fuzzy",
+                data={
+                    "list": [
+                        {
+                            "lineup_id": "lineup-herta",
+                            "title": "黑塔阵容",
+                            "version": "3.2",
+                            "carry_roles": ["黑塔"],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": False,
+                            "like": 21,
+                            "favour": 8,
+                        }
+                    ],
+                    "next_page_token": None,
+                    "role_candidates": [
+                        {
+                            "query": "黑搭",
+                            "role_resolution": "fuzzy",
+                            "resolved": "黑塔",
+                            "candidates": [
+                                {
+                                    "query": "黑搭",
+                                    "role": "黑塔",
+                                    "id": "1001",
+                                    "selected": True,
+                                    "score": 0.96,
+                                    "front_back": "front",
+                                    "traits": ["智识"],
+                                    "role_tags": ["输出", "智识"],
+                                },
+                                {
+                                    "query": "黑搭",
+                                    "role": "大黑塔",
+                                    "id": "1002",
+                                    "selected": False,
+                                    "score": 0.82,
+                                    "front_back": "front",
+                                    "traits": ["智识"],
+                                    "role_tags": ["输出"],
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+        }
+    )
+    client._responses["guide.list.cw"]["warnings"] = [
+        {
+            "code": "GUIDE_ROLE_FUZZY_MATCH",
+            "query": "黑搭",
+            "resolved": "黑塔",
+            "message": "角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+        }
+    ]
+
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--role", "黑搭"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "ok guide.list.cw count=1 more=0",
+        "info role_query=黑搭 role_resolution=fuzzy resolved=黑塔 candidates=2",
+        "opt query=黑搭 role=黑塔 id=1001 selected=1 score=0.96 front_back=front traits=智识 role_tags=输出|智识",
+        "opt query=黑搭 role=大黑塔 id=1002 selected=0 score=0.82 front_back=front traits=智识 role_tags=输出",
+        "guide id=lineup-herta title=黑塔阵容 version=3.2 idx=1 carry=黑塔 hard=1 change_equip=0 expert=0 like=21 favour=8",
+        "warn code=GUIDE_ROLE_FUZZY_MATCH query=黑搭 resolved=黑塔 msg=角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+    ]
+
+
+def test_guide_list_role_exact_ambiguous_success_renders_candidates_and_warning(
+    cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(
+        "trail.commands.guide.fetch_cw_guide_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide list path used")),
+        raising=False,
+    )
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": build_success_response(
+                request_id="req-guide-list-role-exact-ambiguous",
+                data={
+                    "list": [
+                        {
+                            "lineup_id": "lineup-wolf",
+                            "title": "银狼阵容",
+                            "version": "3.2",
+                            "carry_roles": ["银狼"],
+                            "support_hard": False,
+                            "has_change_equip": True,
+                            "has_expert": True,
+                            "like": 13,
+                            "favour": 5,
+                        }
+                    ],
+                    "next_page_token": None,
+                    "role_candidates": [
+                        {
+                            "query": "银狼",
+                            "role_resolution": "exact_ambiguous",
+                            "resolved": "银狼",
+                            "candidates": [
+                                {
+                                    "query": "银狼",
+                                    "role": "银狼",
+                                    "id": "1003",
+                                    "selected": True,
+                                    "score": 1.0,
+                                    "front_back": "back",
+                                    "traits": ["虚无"],
+                                    "role_tags": ["减防"],
+                                },
+                                {
+                                    "query": "银狼",
+                                    "role": "银狼Lv.999",
+                                    "id": "1004",
+                                    "selected": False,
+                                    "score": 0.86,
+                                    "front_back": "back",
+                                    "traits": ["虚无"],
+                                    "role_tags": ["减防"],
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+        }
+    )
+    client._responses["guide.list.cw"]["warnings"] = [
+        {
+            "code": "GUIDE_ROLE_SIMILAR_CANDIDATES",
+            "query": "银狼",
+            "resolved": "银狼",
+            "message": "角色名虽已精确命中，但存在高相似候选，请确认目标角色是否正确",
+        }
+    ]
+
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--role", "银狼"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "ok guide.list.cw count=1 more=0",
+        "info role_query=银狼 role_resolution=exact_ambiguous resolved=银狼 candidates=2",
+        "opt query=银狼 role=银狼 id=1003 selected=1 score=1.00 front_back=back traits=虚无 role_tags=减防",
+        "opt query=银狼 role=银狼Lv.999 id=1004 selected=0 score=0.86 front_back=back traits=虚无 role_tags=减防",
+        "guide id=lineup-wolf title=银狼阵容 version=3.2 idx=1 carry=银狼 hard=0 change_equip=1 expert=1 like=13 favour=5",
+        "warn code=GUIDE_ROLE_SIMILAR_CANDIDATES query=银狼 resolved=银狼 msg=角色名虽已精确命中，但存在高相似候选，请确认目标角色是否正确",
+    ]
+
+
+def test_guide_list_multi_role_queries_keep_duplicate_candidate_blocks(
+    cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(
+        "trail.commands.guide.fetch_cw_guide_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide list path used")),
+        raising=False,
+    )
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": build_success_response(
+                request_id="req-guide-list-role-duplicate-blocks",
+                data={
+                    "list": [
+                        {
+                            "lineup_id": "lineup-herta",
+                            "title": "黑塔阵容",
+                            "version": "3.2",
+                            "carry_roles": ["黑塔"],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": False,
+                            "like": 21,
+                            "favour": 8,
+                        }
+                    ],
+                    "next_page_token": None,
+                    "role_candidates": [
+                        {
+                            "query": "黑搭",
+                            "role_resolution": "fuzzy",
+                            "resolved": "黑塔",
+                            "candidates": [
+                                {
+                                    "query": "黑搭",
+                                    "role": "黑塔",
+                                    "id": "1001",
+                                    "selected": True,
+                                    "score": 0.96,
+                                    "front_back": "front",
+                                    "traits": ["智识"],
+                                    "role_tags": ["输出", "智识"],
+                                }
+                            ],
+                        },
+                        {
+                            "query": "黑塔塔",
+                            "role_resolution": "fuzzy",
+                            "resolved": "黑塔",
+                            "candidates": [
+                                {
+                                    "query": "黑塔塔",
+                                    "role": "黑塔",
+                                    "id": "1001",
+                                    "selected": True,
+                                    "score": 0.88,
+                                    "front_back": "front",
+                                    "traits": ["智识"],
+                                    "role_tags": ["输出", "智识"],
+                                }
+                            ],
+                        },
+                    ],
+                },
+            )
+        }
+    )
+    client._responses["guide.list.cw"]["warnings"] = [
+        {
+            "code": "GUIDE_ROLE_FUZZY_MATCH",
+            "query": "黑搭",
+            "resolved": "黑塔",
+            "message": "角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+        },
+        {
+            "code": "GUIDE_ROLE_FUZZY_MATCH",
+            "query": "黑塔塔",
+            "resolved": "黑塔",
+            "message": "角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+        },
+    ]
+
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--role", "黑搭", "--role", "黑塔塔"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "ok guide.list.cw count=1 more=0",
+        "info role_query=黑搭 role_resolution=fuzzy resolved=黑塔 candidates=1",
+        "opt query=黑搭 role=黑塔 id=1001 selected=1 score=0.96 front_back=front traits=智识 role_tags=输出|智识",
+        "info role_query=黑塔塔 role_resolution=fuzzy resolved=黑塔 candidates=1",
+        "opt query=黑塔塔 role=黑塔 id=1001 selected=1 score=0.88 front_back=front traits=智识 role_tags=输出|智识",
+        "guide id=lineup-herta title=黑塔阵容 version=3.2 idx=1 carry=黑塔 hard=1 change_equip=0 expert=0 like=21 favour=8",
+        "warn code=GUIDE_ROLE_FUZZY_MATCH query=黑搭 resolved=黑塔 msg=角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+        "warn code=GUIDE_ROLE_FUZZY_MATCH query=黑塔塔 resolved=黑塔 msg=角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+    ]
+
+
+def test_guide_list_trait_lookup_failure_renders_trait_candidates(
+    cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(
+        "trail.commands.guide.fetch_cw_guide_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide list path used")),
+        raising=False,
+    )
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": {
+                "request_id": "req-guide-list-trait-invalid",
+                "ok": False,
+                "data": {},
+                "screenshot": None,
+                "timing": {},
+                "warnings": [
+                    {"trait": "巡猎", "trait_id": "2001", "score": 0.91},
+                    {"trait": "智识", "trait_id": "2003", "score": 0.67},
+                ],
+                "references": [],
+                "debug": {"request_id": "req-guide-list-trait-invalid"},
+                "error": {"code": "GUIDE_TRAIT_INVALID", "message": "guide trait invalid: 巡烈"},
+            }
+        }
+    )
+
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--trait", "巡烈"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail guide.list.cw code=GUIDE_TRAIT_INVALID",
+        "request id=req-guide-list-trait-invalid",
+        'why msg="guide trait invalid: 巡烈"',
+        "warn trait=巡猎 trait_id=2001 score=0.91",
+        "warn trait=智识 trait_id=2003 score=0.67",
+    ]
+
+
+def test_guide_list_with_portal_and_trait_payload_mapping(cli_runner, fake_daemon_client, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "trail.commands.guide.fetch_cw_guide_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide list path used")),
+        raising=False,
+    )
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": build_success_response(
+                request_id="req-guide-list-portal-trait",
+                data={"list": [], "next_page_token": None},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--portal", "购物区", "--trait", "巡猎", "--limit", "5"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok guide.list.cw count=0 more=0"]
+    assert client.calls == [
+        {
+            "method": "guide.list.cw",
+            "payload": {
+                "page": 1,
+                "limit": 5,
+                "trait": "巡猎",
+                "trait_id": None,
+                "role": None,
+                "role_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+                "portal": "购物区",
             },
             "workspace_root": str(tmp_path),
             "session_id": None,
@@ -470,6 +966,26 @@ def test_guide_list_rejects_portal_and_portal_id_together(cli_runner):
     assert result.stdout.splitlines() == [
         "fail guide.list.cw code=GUIDE_INPUT_INVALID",
         'why msg="guide options \'--portal\' and \'--portal-id\' are mutually exclusive"',
+    ]
+
+
+def test_guide_list_rejects_trait_and_trait_id_together(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--trait", "巡猎", "--trait-id", "2001"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail guide.list.cw code=GUIDE_INPUT_INVALID",
+        'why msg="guide options \'--trait\' and \'--trait-id\' are mutually exclusive"',
+    ]
+
+
+def test_guide_list_rejects_role_and_role_id_together(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--role", "黑塔", "--role-id", "1001"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail guide.list.cw code=GUIDE_INPUT_INVALID",
+        'why msg="guide options \'--role\' and \'--role-id\' are mutually exclusive"',
     ]
 
 
@@ -585,12 +1101,245 @@ def test_command_service_handles_guide_list_cw_accepts_boolean_filters(tmp_path:
         {
             "page": 2,
             "limit": 10,
+            "trait": None,
             "trait_id": 1005,
+            "role": None,
+            "role_id": None,
             "order": "Recent",
             "next_page_token": "token-2",
             "match_change_job": True,
             "match_hard": False,
         }
+    ]
+
+
+def test_command_service_handles_guide_list_cw_with_trait_and_roles(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+
+    observed: list[dict[str, object]] = []
+
+    def fake_fetch_guide_list(**kwargs):
+        observed.append(kwargs)
+        return {"list": [], "next_page_token": None}
+
+    monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide_list", fake_fetch_guide_list)
+
+    service = CommandService(runtime_service=SimpleNamespace())
+    payload = service.handle(
+        _guide_request(
+            workspace_root=tmp_path,
+            method="guide.list.cw",
+            payload={
+                "page": 2,
+                "limit": 10,
+                "trait": "巡猎",
+                "trait_id": None,
+                "role": ["黑塔", "大黑塔"],
+                "role_id": None,
+                "order": "Recent",
+                "next_page_token": "token-2",
+                "match_change_job": "true",
+                "match_hard": "false",
+            },
+        )
+    )
+
+    assert payload == {
+        "request_id": "req-guide.list.cw",
+        "ok": True,
+        "data": {"list": [], "next_page_token": None},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    assert observed == [
+        {
+            "page": 2,
+            "limit": 10,
+            "trait": "巡猎",
+            "trait_id": None,
+            "role": ["黑塔", "大黑塔"],
+            "role_id": None,
+            "order": "Recent",
+            "next_page_token": "token-2",
+            "match_change_job": True,
+            "match_hard": False,
+        }
+    ]
+
+
+def test_command_service_promotes_role_warnings_to_envelope(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+
+    monkeypatch.setattr(
+        "trail.scenes.cw.guide.fetch_cw_guide_list",
+        lambda **kwargs: {
+            "list": [],
+            "next_page_token": None,
+            "role_candidates": [
+                {
+                    "query": "黑搭",
+                    "role_resolution": "fuzzy",
+                    "resolved": "黑塔",
+                    "candidates": [],
+                }
+            ],
+            "role_warnings": [
+                {
+                    "code": "GUIDE_ROLE_FUZZY_MATCH",
+                    "query": "黑搭",
+                    "resolved": "黑塔",
+                    "message": "角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+                }
+            ],
+        },
+    )
+
+    service = CommandService(runtime_service=SimpleNamespace())
+    payload = service.handle(
+        _guide_request(
+            workspace_root=tmp_path,
+            method="guide.list.cw",
+            payload={
+                "page": 1,
+                "limit": 20,
+                "trait": None,
+                "trait_id": None,
+                "role": ["黑搭"],
+                "role_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+            },
+        )
+    )
+
+    assert payload == {
+        "request_id": "req-guide.list.cw",
+        "ok": True,
+        "data": {
+            "list": [],
+            "next_page_token": None,
+            "role_candidates": [
+                {
+                    "query": "黑搭",
+                    "role_resolution": "fuzzy",
+                    "resolved": "黑塔",
+                    "candidates": [],
+                }
+            ],
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [
+            {
+                "code": "GUIDE_ROLE_FUZZY_MATCH",
+                "query": "黑搭",
+                "resolved": "黑塔",
+                "message": "角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+            }
+        ],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    assert "role_warnings" not in payload["data"]
+
+
+def test_command_service_maps_GuideTraitLookupError_to_failure_envelope(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+    from trail.scenes.cw.guide import GuideTraitLookupError
+
+    def fake_fetch_guide_list(**kwargs):
+        raise GuideTraitLookupError(
+            "巡烈",
+            candidates=[
+                {"trait": "巡猎", "trait_id": "2001", "score": 0.91},
+                {"trait": "智识", "trait_id": "2003", "score": 0.67},
+            ],
+        )
+
+    monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide_list", fake_fetch_guide_list)
+
+    service = CommandService(runtime_service=SimpleNamespace())
+    payload = service.handle(
+        _guide_request(
+            workspace_root=tmp_path,
+            method="guide.list.cw",
+            payload={
+                "page": 1,
+                "limit": 20,
+                "trait": "巡烈",
+                "trait_id": None,
+                "role": None,
+                "role_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+            },
+        )
+    )
+
+    assert payload == {
+        "request_id": "req-guide.list.cw",
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [
+            {"trait": "巡猎", "trait_id": "2001", "score": 0.91},
+            {"trait": "智识", "trait_id": "2003", "score": 0.67},
+        ],
+        "references": [],
+        "debug": None,
+        "error": {"code": "GUIDE_TRAIT_INVALID", "message": "guide trait invalid: 巡烈"},
+    }
+
+
+def test_command_service_trait_lookup_failure_renders_request_line_via_render_output(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+    from trail.scenes.cw.guide import GuideTraitLookupError
+
+    def fake_fetch_guide_list(**kwargs):
+        raise GuideTraitLookupError(
+            "巡烈",
+            candidates=[
+                {"trait": "巡猎", "trait_id": "2001", "score": 0.91},
+            ],
+        )
+
+    monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide_list", fake_fetch_guide_list)
+
+    service = CommandService(runtime_service=SimpleNamespace())
+    payload = service.handle(
+        _guide_request(
+            workspace_root=tmp_path,
+            method="guide.list.cw",
+            payload={
+                "page": 1,
+                "limit": 20,
+                "trait": "巡烈",
+                "trait_id": None,
+                "role": None,
+                "role_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+            },
+        )
+    )
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "fail guide.list.cw code=GUIDE_TRAIT_INVALID",
+        "request id=req-guide.list.cw",
+        'why msg="guide trait invalid: 巡烈"',
+        "warn trait=巡猎 trait_id=2001 score=0.91",
     ]
 
 
@@ -682,14 +1431,17 @@ def test_command_service_handles_guide_list_cw_with_portal_filters(tmp_path: Pat
         {
             "page": 1,
             "limit": 20,
+            "trait": None,
             "trait_id": None,
+            "role": None,
+            "role_id": None,
             "order": None,
-                "next_page_token": None,
-                "match_change_job": None,
-                "match_hard": None,
-                "portal": "购物区",
-            }
-        ]
+            "next_page_token": None,
+            "match_change_job": None,
+            "match_hard": None,
+            "portal": "购物区",
+        }
+    ]
 
 
 def test_command_service_handles_guide_list_cw_with_multi_portal_groups(tmp_path: Path, monkeypatch):
@@ -750,7 +1502,10 @@ def test_command_service_handles_guide_list_cw_with_multi_portal_groups(tmp_path
         {
             "page": 1,
             "limit": 3,
+            "trait": None,
             "trait_id": None,
+            "role": None,
+            "role_id": None,
             "order": None,
             "next_page_token": None,
             "match_change_job": None,

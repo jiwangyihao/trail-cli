@@ -62,11 +62,25 @@ def _append_warnings(lines: list[str], payload: dict[str, Any]) -> None:
             continue
         if warning.get("portal") is not None:
             lines.append(
-                f"warn portal={_encode_value(warning.get('portal'))} score={_encode_value(warning.get('score'))}"
+                f"warn portal={_encode_value(warning.get('portal'))} score={_encode_value(_format_score_value(warning.get('score')))}"
             )
             continue
-        lines.append(
-            f"warn code={_encode_value(warning.get('code'))} msg={_encode_value(warning.get('message'))}"
+        if warning.get("trait") is not None or warning.get("trait_id") is not None:
+            _append_fact_line(
+                lines,
+                "warn",
+                ("trait", warning.get("trait")),
+                ("trait_id", warning.get("trait_id")),
+                ("score", _format_score_value(warning.get("score"))),
+            )
+            continue
+        _append_fact_line(
+            lines,
+            "warn",
+            ("code", warning.get("code")),
+            ("query", warning.get("query")),
+            ("resolved", warning.get("resolved")),
+            ("msg", warning.get("message")),
         )
 
 
@@ -189,6 +203,26 @@ def _compact_sequence(value: Any) -> str | None:
     return "|".join(compact_items)
 
 
+def _compact_text_or_sequence(value: Any) -> str | None:
+    text = _first_string(value)
+    if text is not None:
+        return text
+    return _compact_sequence(value)
+
+
+def _format_score_value(value: Any) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return f"{float(value):.2f}"
+    if isinstance(value, str):
+        try:
+            return f"{float(value):.2f}"
+        except ValueError:
+            return value or None
+    return str(value)
+
+
 def _compact_role_card(value: Any) -> str | None:
     item = _as_dict(value)
     name = _first_string(item.get("name"))
@@ -217,6 +251,62 @@ def _append_fact_line(lines: list[str], prefix: str, *facts: tuple[str, Any]) ->
     rendered = _format_fact_sequence(*facts)
     if rendered:
         lines.append(f"{prefix} {rendered}")
+
+
+def _append_guide_role_candidate_blocks(lines: list[str], data: dict[str, Any]) -> None:
+    for block in _as_list(data.get("role_candidates")):
+        if not isinstance(block, dict):
+            continue
+        candidates = [candidate for candidate in _as_list(block.get("candidates")) if isinstance(candidate, dict)]
+        _append_fact_line(
+            lines,
+            "info",
+            ("role_query", block.get("query")),
+            ("role_resolution", block.get("role_resolution")),
+            ("resolved", block.get("resolved")),
+            ("candidates", len(candidates)),
+        )
+        for candidate in candidates:
+            _append_fact_line(
+                lines,
+                "opt",
+                ("query", candidate.get("query") or block.get("query")),
+                ("role", candidate.get("role")),
+                ("id", candidate.get("id")),
+                ("selected", candidate.get("selected") if "selected" in candidate else None),
+                ("score", _format_score_value(candidate.get("score"))),
+                ("front_back", candidate.get("front_back")),
+                ("traits", _compact_text_or_sequence(candidate.get("traits"))),
+                ("role_tags", _compact_text_or_sequence(candidate.get("role_tags"))),
+            )
+
+
+def _append_guide_list_item(lines: list[str], item: dict[str, Any], *, index: int, portal: Any = None) -> None:
+    final_roles = _compact_role_cards(item.get("final_role_cards"))
+    facts: list[tuple[str, Any]] = []
+    if portal is not None:
+        facts.append(("portal", portal))
+    facts.extend(
+        [
+            ("id", _guide_id(item)),
+            ("title", item.get("title")),
+            ("version", item.get("version")),
+            ("idx", index),
+            ("carry", _first_carry_role(item)),
+            ("hard", bool(item.get("support_hard"))),
+            ("change_equip", bool(item.get("has_change_equip"))),
+            ("expert", bool(item.get("has_expert"))),
+            ("like", item.get("like")),
+            ("favour", item.get("favour")),
+        ]
+    )
+    lines.append("guide " + _format_fact_sequence(*facts))
+    if final_roles is not None:
+        final_role_facts: list[tuple[str, Any]] = []
+        if portal is not None:
+            final_role_facts.append(("portal", portal))
+        final_role_facts.extend([("idx", index), ("final_roles", final_roles)])
+        _append_fact_line(lines, "guide", *final_role_facts)
 
 
 def _append_cw_shop_items(lines: list[str], data: dict[str, Any]) -> None:
@@ -736,6 +826,7 @@ def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:
         )
         lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
         _append_shot(lines, payload)
+        _append_guide_role_candidate_blocks(lines, data)
         for group in portal_groups:
             if not isinstance(group, dict):
                 continue
@@ -751,24 +842,7 @@ def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:
             for index, item in enumerate(items, start=1):
                 if not isinstance(item, dict):
                     continue
-                final_roles = _compact_role_cards(item.get("final_role_cards"))
-                lines.append(
-                    "guide "
-                    + _format_fact_sequence(
-                        ("portal", group.get("portal_title")),
-                        ("id", _guide_id(item)),
-                        ("title", item.get("title")),
-                        ("idx", index),
-                        ("carry", _first_carry_role(item)),
-                        ("hard", bool(item.get("support_hard"))),
-                        ("change_equip", bool(item.get("has_change_equip"))),
-                        ("expert", bool(item.get("has_expert"))),
-                        ("like", item.get("like")),
-                        ("favour", item.get("favour")),
-                    )
-                )
-                if final_roles is not None:
-                    _append_fact_line(lines, "guide", ("portal", group.get("portal_title")), ("idx", index), ("final_roles", final_roles))
+                _append_guide_list_item(lines, item, index=index, portal=group.get("portal_title"))
         _append_warnings(lines, payload)
         _append_references(lines, payload)
         return lines
@@ -782,26 +856,11 @@ def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:
     )
     lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
     _append_shot(lines, payload)
+    _append_guide_role_candidate_blocks(lines, data)
     for index, item in enumerate(items, start=1):
         if not isinstance(item, dict):
             continue
-        final_roles = _compact_role_cards(item.get("final_role_cards"))
-        lines.append(
-            "guide "
-            + _format_fact_sequence(
-                ("id", _guide_id(item)),
-                ("title", item.get("title")),
-                ("idx", index),
-                ("carry", _first_carry_role(item)),
-                ("hard", bool(item.get("support_hard"))),
-                ("change_equip", bool(item.get("has_change_equip"))),
-                ("expert", bool(item.get("has_expert"))),
-                ("like", item.get("like")),
-                ("favour", item.get("favour")),
-            )
-        )
-        if final_roles is not None:
-            _append_fact_line(lines, "guide", ("idx", index), ("final_roles", final_roles))
+        _append_guide_list_item(lines, item, index=index)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
@@ -1110,7 +1169,7 @@ def _render_failure_lines(command: str, payload: dict[str, Any]) -> list[str]:
         first_line += " tainted=1"
 
     lines = [first_line]
-    request_id = debug.get("request_id")
+    request_id = debug.get("request_id") or payload.get("request_id")
     if request_id:
         lines.append(f"request id={_encode_value(request_id)}")
 

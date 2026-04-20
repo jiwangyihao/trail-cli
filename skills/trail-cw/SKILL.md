@@ -48,7 +48,7 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 6. 如果是 `环境优先`：
    - 先运行 `trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest --battle-mode standard|overclock`
    - 读取返回的三卡摘要，必要时在用户允许下执行 `trail cw portal.refresh --session <id>` / `trail cw portal.restart --session <id>`
-   - 若需要按环境反查攻略，切到 `trail-cw-guide`，使用 `trail guide list cw --portal <title>` 或 `trail guide list cw --portal-id <id>`
+    - 若需要按环境 / 羁绊 / 角色反查攻略，切到 `trail-cw-guide`，使用 `trail guide list cw --portal <title>`、`trail guide list cw --portal-id <id>`、`trail guide list cw --trait <name>` 或 `trail guide list cw --role <name>`
    - 再执行 `trail cw portal.select --session <id> --card-idx <n>` 进入游戏
 7. 进入游戏后，如果当前 session 还没有已加载的攻略，则切到 `trail-cw-guide`，执行：
     - `trail guide fetch cw <lineup_url|lineup_id>`
@@ -75,6 +75,7 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 - `trail cw enter` 只到首页，不再直接推进到投资环境页；真正开局一律使用 `trail cw start`
 - `trail cw start` 负责把首页推进到投资环境页，并把 `mode / difficulty / battle_mode` 固化到当前 session
 - `trail cw guide` 只负责当前对局攻略的 apply/current；攻略查询与拉取继续使用 `trail guide ... cw`
+- 在 list 阶段选攻略时，同时读取 `version`，不要只看 portal / hard / change_equip / expert
 - `trail cw portal.select|refresh|restart` 只在投资环境页可用；`refresh/restart` 是否允许，先看用户在首页给出的偏好
 - 如果当前动作让 `stage` 失效，立刻回到 `trail cw stage detect --session <id>`
 - `continue` 模式表示“继续当前 UI 进度”，不是重新创建 session；只有当 session 中缺少 guide 状态时，才重新走攻略子 skill

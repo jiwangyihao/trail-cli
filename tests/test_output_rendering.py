@@ -115,7 +115,7 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert (
-        "```text\nok guide.list.cw count=2 more=1 next=token-2\nguide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1\nguide id=def idx=2 hard=0 change_equip=1 expert=0\n```"
+        "```text\nok guide.list.cw count=2 more=1 next=token-2\nguide id=abc title=购物阵容 version=3.2 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45\nguide id=def title=事件阵容 version=3.2 idx=2 hard=0 change_equip=1 expert=0 like=22 favour=9\n```"
         in readme
     )
     assert "`trail guide fetch cw` 默认文本会直接返回你选中的完整攻略字段，字段名尽量使用货币战争页面里的中文文案；现在还会补充 `羁绊列表`、`运营思路`" in readme
@@ -706,6 +706,334 @@ def test_render_output_renders_grouped_portal_guide_lists():
         "guide portal=事件区 id=event-guide title=事件区优选阵容 idx=1 carry=停云 hard=0 change_equip=1 expert=0 like=22 favour=9",
         "guide portal=事件区 idx=1 final_roles=停云/carry:1/star:4/rarity:2",
     ]
+
+
+def test_render_output_guide_list_renders_version_in_item_summary():
+    payload = {
+        "ok": True,
+        "data": {
+            "list": [
+                {
+                    "lineup_id": "guide-version",
+                    "title": "版本校验阵容",
+                    "version": "3.2",
+                    "carry_roles": ["黑塔"],
+                    "support_hard": True,
+                    "has_change_equip": False,
+                    "has_expert": True,
+                    "like": 31,
+                    "favour": 12,
+                }
+            ],
+            "next_page_token": None,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "ok guide.list.cw count=1 more=0",
+        "guide id=guide-version title=版本校验阵容 version=3.2 idx=1 carry=黑塔 hard=1 change_equip=0 expert=1 like=31 favour=12",
+    ]
+
+
+def test_render_output_guide_list_renders_role_candidate_blocks_before_guides():
+    payload = {
+        "ok": True,
+        "data": {
+            "list": [
+                {
+                    "lineup_id": "lineup-herta",
+                    "title": "黑塔阵容",
+                    "version": "3.2",
+                    "carry_roles": ["黑塔"],
+                    "support_hard": True,
+                    "has_change_equip": False,
+                    "has_expert": False,
+                    "like": 21,
+                    "favour": 8,
+                }
+            ],
+            "next_page_token": None,
+            "role_candidates": [
+                {
+                    "query": "黑搭",
+                    "role_resolution": "fuzzy",
+                    "resolved": "黑塔",
+                    "candidates": [
+                        {
+                            "query": "黑搭",
+                            "role": "黑塔",
+                            "id": "1001",
+                            "selected": True,
+                            "score": 0.96,
+                            "front_back": "front",
+                            "traits": ["智识"],
+                            "role_tags": ["输出", "智识"],
+                        },
+                        {
+                            "query": "黑搭",
+                            "role": "大黑塔",
+                            "id": "1002",
+                            "selected": False,
+                            "score": 0.82,
+                            "front_back": "front",
+                            "traits": ["智识"],
+                            "role_tags": ["输出"],
+                        },
+                    ],
+                }
+            ],
+        },
+        "screenshot": ".trail/shots/req-guide-role.png",
+        "timing": {},
+        "warnings": [
+            {
+                "code": "GUIDE_ROLE_FUZZY_MATCH",
+                "query": "黑搭",
+                "resolved": "黑塔",
+                "message": "角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+            }
+        ],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "ok guide.list.cw count=1 more=0",
+        "shot path=.trail/shots/req-guide-role.png",
+        "info role_query=黑搭 role_resolution=fuzzy resolved=黑塔 candidates=2",
+        "opt query=黑搭 role=黑塔 id=1001 selected=1 score=0.96 front_back=front traits=智识 role_tags=输出|智识",
+        "opt query=黑搭 role=大黑塔 id=1002 selected=0 score=0.82 front_back=front traits=智识 role_tags=输出",
+        "guide id=lineup-herta title=黑塔阵容 version=3.2 idx=1 carry=黑塔 hard=1 change_equip=0 expert=0 like=21 favour=8",
+        "warn code=GUIDE_ROLE_FUZZY_MATCH query=黑搭 resolved=黑塔 msg=角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+    ]
+
+
+def test_render_output_guide_list_grouped_portal_role_candidates_render_once_before_groups():
+    payload = {
+        "ok": True,
+        "data": {
+            "portals": [
+                {
+                    "portal_title": "购物区",
+                    "list": [
+                        {
+                            "lineup_id": "shop-guide",
+                            "title": "购物区优选阵容",
+                            "version": "3.2",
+                            "carry_roles": ["黑塔"],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": False,
+                            "like": 21,
+                            "favour": 8,
+                        }
+                    ],
+                    "more": False,
+                    "next_page_token": None,
+                },
+                {
+                    "portal_title": "事件区",
+                    "list": [
+                        {
+                            "lineup_id": "event-guide",
+                            "title": "事件区优选阵容",
+                            "version": "3.2",
+                            "carry_roles": ["黑塔"],
+                            "support_hard": False,
+                            "has_change_equip": True,
+                            "has_expert": True,
+                            "like": 9,
+                            "favour": 3,
+                        }
+                    ],
+                    "more": False,
+                    "next_page_token": None,
+                },
+            ],
+            "count": 2,
+            "more": False,
+            "role_candidates": [
+                {
+                    "query": "黑搭",
+                    "role_resolution": "fuzzy",
+                    "resolved": "黑塔",
+                    "candidates": [
+                        {
+                            "query": "黑搭",
+                            "role": "黑塔",
+                            "id": "1001",
+                            "selected": True,
+                            "score": 0.96,
+                            "front_back": "front",
+                            "traits": ["智识"],
+                            "role_tags": ["输出", "智识"],
+                        }
+                    ],
+                }
+            ],
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [
+            {
+                "code": "GUIDE_ROLE_FUZZY_MATCH",
+                "query": "黑搭",
+                "resolved": "黑塔",
+                "message": "角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+            }
+        ],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "ok guide.list.cw groups=2 count=2 more=0",
+        "info role_query=黑搭 role_resolution=fuzzy resolved=黑塔 candidates=1",
+        "opt query=黑搭 role=黑塔 id=1001 selected=1 score=0.96 front_back=front traits=智识 role_tags=输出|智识",
+        "guide portal=购物区 count=1 more=0",
+        "guide portal=购物区 id=shop-guide title=购物区优选阵容 version=3.2 idx=1 carry=黑塔 hard=1 change_equip=0 expert=0 like=21 favour=8",
+        "guide portal=事件区 count=1 more=0",
+        "guide portal=事件区 id=event-guide title=事件区优选阵容 version=3.2 idx=1 carry=黑塔 hard=0 change_equip=1 expert=1 like=9 favour=3",
+        "warn code=GUIDE_ROLE_FUZZY_MATCH query=黑搭 resolved=黑塔 msg=角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+    ]
+
+
+def test_render_output_guide_list_renders_multi_role_warnings_with_query_and_resolved():
+    payload = {
+        "ok": True,
+        "data": {
+            "list": [
+                {
+                    "lineup_id": "lineup-herta",
+                    "title": "黑塔阵容",
+                    "version": "3.2",
+                    "carry_roles": ["黑塔"],
+                    "support_hard": True,
+                    "has_change_equip": False,
+                    "has_expert": False,
+                    "like": 21,
+                    "favour": 8,
+                }
+            ],
+            "next_page_token": None,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [
+            {
+                "code": "GUIDE_ROLE_FUZZY_MATCH",
+                "query": "黑搭",
+                "resolved": "黑塔",
+                "message": "角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+            },
+            {
+                "code": "GUIDE_ROLE_SIMILAR_CANDIDATES",
+                "query": "银狼",
+                "resolved": "银狼",
+                "message": "角色名虽已精确命中，但存在高相似候选，请确认目标角色是否正确",
+            },
+        ],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "ok guide.list.cw count=1 more=0",
+        "guide id=lineup-herta title=黑塔阵容 version=3.2 idx=1 carry=黑塔 hard=1 change_equip=0 expert=0 like=21 favour=8",
+        "warn code=GUIDE_ROLE_FUZZY_MATCH query=黑搭 resolved=黑塔 msg=角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+        "warn code=GUIDE_ROLE_SIMILAR_CANDIDATES query=银狼 resolved=银狼 msg=角色名虽已精确命中，但存在高相似候选，请确认目标角色是否正确",
+    ]
+
+
+def test_render_output_guide_list_trait_lookup_failure_renders_trait_candidate_warns():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [
+            {"trait": "巡猎", "trait_id": "2001", "score": 0.91},
+            {"trait": "智识", "trait_id": "2003", "score": 0.67},
+        ],
+        "references": [],
+        "debug": {"request_id": "req-guide-trait-invalid"},
+        "error": {"code": "GUIDE_TRAIT_INVALID", "message": "guide trait invalid: 巡烈"},
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "fail guide.list.cw code=GUIDE_TRAIT_INVALID",
+        "request id=req-guide-trait-invalid",
+        'why msg="guide trait invalid: 巡烈"',
+        "warn trait=巡猎 trait_id=2001 score=0.91",
+        "warn trait=智识 trait_id=2003 score=0.67",
+    ]
+
+
+def test_render_output_failure_uses_top_level_request_id_when_debug_missing():
+    payload = {
+        "request_id": "req-top-level-only",
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [
+            {"trait": "巡猎", "trait_id": "2001", "score": 0.91},
+        ],
+        "references": [],
+        "debug": None,
+        "error": {"code": "GUIDE_TRAIT_INVALID", "message": "guide trait invalid: 巡烈"},
+    }
+
+    assert render_output("guide.list.cw", payload).splitlines() == [
+        "fail guide.list.cw code=GUIDE_TRAIT_INVALID",
+        "request id=req-top-level-only",
+        'why msg="guide trait invalid: 巡烈"',
+        "warn trait=巡猎 trait_id=2001 score=0.91",
+    ]
+
+
+def test_render_output_guide_list_rejects_yaml_output():
+    payload = {
+        "ok": True,
+        "data": {"list": [], "next_page_token": None},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("guide.list.cw", payload, output_format="yaml").splitlines() == [
+        "fail guide.list.cw code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        'why msg="yaml not supported for guide.list.cw"',
+    ]
+
+
+def test_readme_documents_guide_list_name_filters_and_version() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "trail guide list cw --trait <name>" in readme
+    assert "trail guide list cw --role <name>" in readme
+    assert "`guide list cw` 列表结果现在会直接返回 `version`" in readme
+    assert "guide id=abc title=购物阵容 version=3.2 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45" in readme
+
+
+def test_skills_document_guide_list_version_as_selection_fact() -> None:
+    cw_guide_skill = (PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md").read_text(encoding="utf-8")
+    cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "`guide list cw` 已直接返回 `version`，Agent 在 list 阶段就应把版本兼容性纳入筛选判断" in cw_guide_skill
+    assert "在 list 阶段选攻略时，同时读取 `version`，不要只看 portal / hard / change_equip / expert" in cw_skill
 
 
 def test_render_output_renders_guide_fetch_summary_text():

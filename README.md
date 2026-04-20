@@ -44,6 +44,8 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
   - 是否接受刷开局（后续是否允许 `trail cw portal.refresh` / `trail cw portal.restart`）
 - `trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest --battle-mode standard|overclock` 负责把首页推进到投资环境页
 - 如果先按环境选攻略，再用：`trail guide list cw --portal <title>` 或 `trail guide list cw --portal-id <id>`
+- 如需免查 config 直接筛攻略，也可以在 list 阶段使用：`trail guide list cw --trait <name>`、`trail guide list cw --role <name>`；需要脚本固化或精确复现时，再切到 `--trait-id` / `--role-id`
+- `guide list cw` 列表结果现在会直接返回 `version`，list 阶段就应把版本兼容性纳入筛选判断
 - 查看返回的三卡摘要后，根据需要执行：
   - `trail cw portal.select --session <id> --card-idx <n>`
   - `trail cw portal.refresh --session <id>`
@@ -151,8 +153,8 @@ guide 运营思路="前期：过渡\n中期：D牌\n后期：补强"
 
 ```text
 ok guide.list.cw count=2 more=1 next=token-2
-guide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1
-guide id=def idx=2 hard=0 change_equip=1 expert=0
+guide id=abc title=购物阵容 version=3.2 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45
+guide id=def title=事件阵容 version=3.2 idx=2 hard=0 change_equip=1 expert=0 like=22 favour=9
 ```
 
 ```text
@@ -192,7 +194,12 @@ recover action=daemon.request_status request=req-42
 - `运营思路`：取自攻略详情原始 `description` 文本，会保留换行，适合直接作为局内运营参考
 - `星徽攻略`：是否需要转阵营道具/星徽，这对选攻略非常关键
 - `专家顾问`：是否包含专家顾问角色；这类角色通常不能在商店中直接购买
+- `support_hard`：是否适用于超频博弈，不表示“更适合高压环境”
+- `has_change_equip`：是否需要转阵营道具/星徽，这对选攻略非常关键
+- `has_expert`：是否包含专家顾问角色；这类角色通常不能在商店中直接购买
+- `version`：攻略适用版本；`guide list cw` 已在列表阶段直接返回，选攻略时先判断是否适配当前版本
 - `final_role_cards`：最终阵容角色摘要，包含 `name / star / rarity / is_carry`，适合在 list 阶段判断“是否存在 X 星 X 费角色”
+- `--role <name>` 在名称不精确或存在高相似角色时，可能返回 `info role_query=...` / `opt ...` 候选块，并在末尾追加 `warn code=GUIDE_ROLE_*` 提醒 Agent 复核目标角色
 - 对语义尚不明确、或当前 fetch 响应里没有直接来源的字段，不默认重新发明英文别名，避免误导 Agent
 
 ## Skill 边界

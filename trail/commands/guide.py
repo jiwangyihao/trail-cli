@@ -18,6 +18,13 @@ def _unsupported_scene_response(scene: str) -> dict:
     )
 
 
+def _guide_input_invalid_response(message: str) -> dict:
+    return with_auto_capture(
+        None,
+        lambda: (_ for _ in ()).throw(TrailError("GUIDE_INPUT_INVALID", message)),
+    )
+
+
 def _require_cw_scene(scene: str) -> bool:
     return scene == "cw"
 
@@ -45,36 +52,51 @@ def guide_list(
     scene: str,
     page: int = typer.Option(1, "--page"),
     limit: int = typer.Option(20, "--limit"),
-    trait_id: int | None = typer.Option(None, "--trait-id"),
+    trait: str | None = typer.Option(None, "--trait", help="按羁绊名称筛选，免查 config。与 --trait-id 互斥。"),
+    trait_id: int | None = typer.Option(None, "--trait-id", help="按羁绊 id 精确筛选。与 --trait 互斥。"),
+    role: list[str] | None = typer.Option(None, "--role", help="按角色名称筛选，可重复传入多个值。与 --role-id 互斥。"),
+    role_id: list[str] | None = typer.Option(None, "--role-id", help="按角色 id 精确筛选，可重复传入多个值。与 --role 互斥。"),
     order: str | None = typer.Option(None, "--order"),
     next_page_token: str | None = typer.Option(None, "--next-page-token"),
-    match_change_job: str | None = typer.Option(None, "--match-change-job"),
-    match_hard: str | None = typer.Option(None, "--match-hard"),
-    portal: list[str] | None = typer.Option(None, "--portal"),
-    portal_id: list[str] | None = typer.Option(None, "--portal-id"),
+    match_change_job: str | None = typer.Option(None, "--match-change-job", help="保留当前布尔筛选语义，传 true/false 以按是否换装筛选。"),
+    match_hard: str | None = typer.Option(None, "--match-hard", help="保留当前布尔筛选语义，传 true/false 以按是否支持硬需求筛选。"),
+    portal: list[str] | None = typer.Option(None, "--portal", help="按投资环境筛选，名称用于免查 config。与 --portal-id 互斥。"),
+    portal_id: list[str] | None = typer.Option(None, "--portal-id", help="按投资环境筛选，id 用于精确复现。与 --portal 互斥。"),
 ) -> None:
     """列出可选攻略。默认字段面向“选攻略”，会保留 has_change_equip / has_expert / support_hard / final_role_cards 等高价值信息。"""
 
     if not _require_cw_scene(scene):
         print_output(f"guide.list.{scene}", _unsupported_scene_response(scene))
         return
+    role_values = list(role or [])
+    role_id_values = list(role_id or [])
     portal_values = list(portal or [])
     portal_id_values = list(portal_id or [])
+    if trait is not None and trait_id is not None:
+        print_output(
+            f"guide.list.{scene}",
+            _guide_input_invalid_response("guide options '--trait' and '--trait-id' are mutually exclusive"),
+        )
+        return
+    if role_values and role_id_values:
+        print_output(
+            f"guide.list.{scene}",
+            _guide_input_invalid_response("guide options '--role' and '--role-id' are mutually exclusive"),
+        )
+        return
     if portal_values and portal_id_values:
         print_output(
             f"guide.list.{scene}",
-            with_auto_capture(
-                None,
-                lambda: (_ for _ in ()).throw(
-                    TrailError("GUIDE_INPUT_INVALID", "guide options '--portal' and '--portal-id' are mutually exclusive")
-                ),
-            ),
+            _guide_input_invalid_response("guide options '--portal' and '--portal-id' are mutually exclusive"),
         )
         return
     payload = {
         "page": page,
         "limit": limit,
+        "trait": trait,
         "trait_id": trait_id,
+        "role": role_values or None,
+        "role_id": role_id_values or None,
         "order": order,
         "next_page_token": next_page_token,
         "match_change_job": match_change_job,

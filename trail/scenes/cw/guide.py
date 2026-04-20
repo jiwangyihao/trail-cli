@@ -36,10 +36,12 @@ PURCHASE_COUNT_BY_STAR = {
     2: 3,
     3: 9,
 }
+LOOKUP_WHITESPACE_PATTERN = re.compile(r"\s+")
 CW_GUIDE_UPSTREAM_PAGE_SIZE = 10
 CW_GUIDE_PORTAL_MAX_PAGES = 30
 CW_GUIDE_PORTAL_DETAIL_WORKERS = 8
 CW_GUIDE_RECOVERY_ORIGIN = "guide.fetch.cw"
+GUIDE_ROLE_HIGH_RISK_SIMILARITY_THRESHOLD = 0.75
 
 CW_WIDTH = 1920
 CW_HEIGHT = 1080
@@ -59,6 +61,12 @@ GUIDE_POST_APPLY_SETTLE_DELAY = 1.0
 class GuidePortalLookupError(TrailError):
     def __init__(self, portal: str, *, candidates: list[dict[str, object]]):
         super().__init__("GUIDE_PORTAL_INVALID", f"guide portal invalid: {portal}")
+        self.candidates = candidates
+
+
+class GuideTraitLookupError(TrailError):
+    def __init__(self, trait: str, *, candidates: list[dict[str, object]]):
+        super().__init__("GUIDE_TRAIT_INVALID", f"guide trait invalid: {trait}")
         self.candidates = candidates
 
 
@@ -247,6 +255,7 @@ def _build_guide_list_request_payload(
     page: int,
     limit: int,
     trait_id: int | None,
+    role_ids: list[str],
     order: str | None,
     next_page_token: str | None,
     match_change_job: bool | None,
@@ -265,7 +274,7 @@ def _build_guide_list_request_payload(
         "page": str(page),
         "limit": str(limit),
         "lineup_type": "Tourn",
-        "role_ids": [],
+        "role_ids": role_ids,
         "trait_ids": trait_ids,
         "next_page_token": next_page_token or "",
         "match_change_job": False if match_change_job is None else match_change_job,
@@ -281,6 +290,7 @@ def _fetch_cw_guide_list_data(
     page: int,
     limit: int,
     trait_id: int | None,
+    role_ids: list[str],
     order: str | None,
     next_page_token: str | None,
     match_change_job: bool | None,
@@ -298,6 +308,7 @@ def _fetch_cw_guide_list_data(
             page=page,
             limit=limit,
             trait_id=trait_id,
+            role_ids=role_ids,
             order=order,
             next_page_token=next_page_token,
             match_change_job=match_change_job,
@@ -453,6 +464,296 @@ def _portal_candidates(query: str, portal_list: list[dict[str, str]]) -> list[di
     ]
     ranked.sort(key=lambda item: (-float(item["score"]), str(item["title"])))
     return ranked[:3]
+
+
+def _normalize_lookup_text(text: str) -> str:
+    return LOOKUP_WHITESPACE_PATTERN.sub(" ", text.strip().lower()).strip()
+
+
+def _normalize_string_filters(value: str | list[str] | None, *, option_name: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list):
+        raise TrailError("GUIDE_INPUT_INVALID", f"guide {option_name} filter must be a string or list of strings")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise TrailError("GUIDE_INPUT_INVALID", f"guide {option_name} filter must be a string or list of strings")
+        result.append(item)
+    return result
+
+
+def _build_trait_name_lookup(raw_config: Mapping[str, object]) -> tuple[list[dict[str, object]], dict[str, str]]:
+    traits = _normalize_traits(raw_config.get("trait_info_list"))
+    trait_name_by_id = {
+        str(item["id"]): str(item["name"])
+        for item in traits
+        if item.get("id") is not None and isinstance(item.get("name"), str) and item.get("name")
+    }
+    return traits, trait_name_by_id
+
+
+def _trait_similarity(query: str, trait_name: str) -> float:
+    normalized_query = _normalize_lookup_text(query)
+    normalized_name = _normalize_lookup_text(trait_name)
+    if not normalized_query or not normalized_name:
+        return 0.0
+    return SequenceMatcher(a=normalized_query, b=normalized_name).ratio()
+
+
+def _trait_candidates(query: str, traits: list[dict[str, object]]) -> list[dict[str, object]]:
+    ranked: list[dict[str, object]] = []
+    for trait in traits:
+        name = str(trait.get("name") or "")
+        trait_id = trait.get("id")
+        if not name or trait_id is None:
+            continue
+        score = _trait_similarity(query, name)
+        ranked.append({
+            "trait": name,
+            "trait_id": str(trait_id),
+            "score": round(score, 2),
+            "_score": score,
+        })
+    ranked.sort(key=lambda item: (-float(item["_score"]), str(item["trait"])))
+    return [{key: value for key, value in item.items() if key != "_score"} for item in ranked[:3]]
+
+
+def _resolve_guide_trait_id(*, raw_config: Mapping[str, object], trait: str | None, trait_id: int | None) -> int | None:
+    if trait is None:
+        return trait_id
+    traits, _ = _build_trait_name_lookup(raw_config)
+    normalized_query = _normalize_lookup_text(trait)
+    for item in traits:
+        if _normalize_lookup_text(str(item.get("name") or "")) != normalized_query:
+            continue
+        resolved_id = item.get("id")
+        return int(resolved_id) if resolved_id is not None else None
+    raise GuideTraitLookupError(trait, candidates=_trait_candidates(trait, traits))
+
+
+def _normalize_role_item_tags(role: Mapping[str, object]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    role_tags = role.get("role_tags")
+    if not isinstance(role_tags, list):
+        return result
+    for item in role_tags:
+        name = item.get("name") if isinstance(item, Mapping) else item
+        if not isinstance(name, str) or not name or name in seen:
+            continue
+        seen.add(name)
+        result.append(name)
+    return result
+
+
+def _build_role_catalog(raw_config: Mapping[str, object]) -> list[dict[str, object]]:
+    role_list = raw_config.get("role_list")
+    if not isinstance(role_list, list):
+        return []
+    result: list[dict[str, object]] = []
+    for item in role_list:
+        if not isinstance(item, Mapping):
+            continue
+        role_id = item.get("id")
+        name = str(item.get("name") or "")
+        if role_id is None or not name:
+            continue
+        result.append({
+            "id": str(role_id),
+            "name": name,
+            "normalized_name": _normalize_lookup_text(name),
+            "front_back": str(item.get("front_back_type") or ""),
+            "trait_ids": [str(trait_id) for trait_id in _normalize_role_trait_ids(item) if trait_id is not None],
+            "role_tags": _normalize_role_item_tags(item),
+        })
+    return result
+
+
+def _is_character_rearrangement(left: str, right: str) -> bool:
+    return bool(left and right and left != right and len(left) == len(right) and sorted(left) == sorted(right))
+
+
+def _has_contains_relation(left: str, right: str) -> bool:
+    return bool(left and right and (left in right or right in left))
+
+
+def _rank_role_matches(query: str, role_catalog: list[dict[str, object]]) -> list[dict[str, object]]:
+    normalized_query = _normalize_lookup_text(query)
+    ranked: list[dict[str, object]] = []
+    for role in role_catalog:
+        normalized_name = str(role.get("normalized_name") or "")
+        similarity = SequenceMatcher(a=normalized_query, b=normalized_name).ratio() if normalized_query and normalized_name else 0.0
+        ranked.append({
+            "role": role,
+            "score": similarity,
+            "is_exact": normalized_query == normalized_name,
+            "is_rearranged": _is_character_rearrangement(normalized_query, normalized_name),
+            "has_contains": _has_contains_relation(normalized_query, normalized_name),
+        })
+    ranked.sort(
+        key=lambda item: (
+            -int(bool(item["is_rearranged"])),
+            -int(bool(item["has_contains"])),
+            -float(item["score"]),
+            str(item["role"].get("name") or ""),
+        )
+    )
+    return ranked
+
+
+def _pick_highest_similarity_role_match(ranked: list[dict[str, object]]) -> dict[str, object] | None:
+    if not ranked:
+        return None
+    return min(ranked, key=lambda item: (-float(item["score"]), str(item["role"].get("name") or "")))
+
+
+def _build_resolved_first_role_matches(
+    resolved_match: Mapping[str, object],
+    ranked: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    ordered = [dict(resolved_match)]
+    ordered.extend(match for match in ranked if match is not resolved_match)
+    return ordered
+
+
+def _role_traits_from_ids(trait_ids: list[str], *, trait_name_by_id: Mapping[str, str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for trait_id in trait_ids:
+        name = trait_name_by_id.get(str(trait_id))
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        result.append(name)
+    return result
+
+
+def _build_role_candidate_entry(
+    *,
+    query: str,
+    match: Mapping[str, object],
+    selected: bool,
+    trait_name_by_id: Mapping[str, str],
+) -> dict[str, object]:
+    role = match["role"]
+    return {
+        "query": query,
+        "role": role["name"],
+        "id": role["id"],
+        "selected": selected,
+        "score": round(float(match["score"]), 2),
+        "front_back": role["front_back"],
+        "traits": _role_traits_from_ids(list(role.get("trait_ids") or []), trait_name_by_id=trait_name_by_id),
+        "role_tags": list(role.get("role_tags") or []),
+    }
+
+
+def _is_high_risk_role_match(match: Mapping[str, object]) -> bool:
+    return bool(
+        match.get("is_rearranged")
+        or match.get("has_contains")
+        or float(match.get("score") or 0.0) >= GUIDE_ROLE_HIGH_RISK_SIMILARITY_THRESHOLD
+    )
+
+
+def _resolve_guide_role_filters(*, raw_config: Mapping[str, object], role: str | list[str] | None) -> dict[str, object]:
+    role_queries = _normalize_string_filters(role, option_name="role")
+    if not role_queries:
+        return {
+            "role_ids": [],
+            "role_candidates": [],
+            "role_warnings": [],
+        }
+
+    _, trait_name_by_id = _build_trait_name_lookup(raw_config)
+    role_catalog = _build_role_catalog(raw_config)
+    role_ids: list[str] = []
+    seen_role_ids: set[str] = set()
+    role_candidates: list[dict[str, object]] = []
+    role_warnings: list[dict[str, object]] = []
+
+    for query in role_queries:
+        ranked = _rank_role_matches(query, role_catalog)
+        if not ranked:
+            continue
+
+        resolved_match = next((item for item in ranked if item["is_exact"]), None)
+        if resolved_match is None:
+            resolved_match = _pick_highest_similarity_role_match(ranked)
+        if resolved_match is None:
+            continue
+        resolved_role = resolved_match["role"]
+        resolved_id = str(resolved_role["id"])
+        if resolved_id not in seen_role_ids:
+            seen_role_ids.add(resolved_id)
+            role_ids.append(resolved_id)
+
+        exact_matches = [item for item in ranked if item["is_exact"]]
+        if exact_matches:
+            risky_matches = [item for item in ranked if item is not resolved_match and _is_high_risk_role_match(item)]
+            if not risky_matches:
+                continue
+            selected_matches = [resolved_match, *risky_matches[:2]]
+            role_candidates.append(
+                {
+                    "query": query,
+                    "role_resolution": "exact_ambiguous",
+                    "resolved": resolved_role["name"],
+                    "candidates": [
+                        _build_role_candidate_entry(
+                            query=query,
+                            match=match,
+                            selected=index == 0,
+                            trait_name_by_id=trait_name_by_id,
+                        )
+                        for index, match in enumerate(selected_matches)
+                    ],
+                }
+            )
+            role_warnings.append(
+                {
+                    "code": "GUIDE_ROLE_SIMILAR_CANDIDATES",
+                    "query": query,
+                    "resolved": resolved_role["name"],
+                    "message": "角色名虽已精确命中，但存在高相似候选，请确认目标角色是否正确",
+                }
+            )
+            continue
+
+        selected_matches = _build_resolved_first_role_matches(resolved_match, ranked)[:3]
+        role_candidates.append(
+            {
+                "query": query,
+                "role_resolution": "fuzzy",
+                "resolved": resolved_role["name"],
+                "candidates": [
+                    _build_role_candidate_entry(
+                        query=query,
+                        match=match,
+                        selected=index == 0,
+                        trait_name_by_id=trait_name_by_id,
+                    )
+                    for index, match in enumerate(selected_matches)
+                ],
+            }
+        )
+        role_warnings.append(
+            {
+                "code": "GUIDE_ROLE_FUZZY_MATCH",
+                "query": query,
+                "resolved": resolved_role["name"],
+                "message": "角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
+            }
+        )
+
+    return {
+        "role_ids": role_ids,
+        "role_candidates": role_candidates,
+        "role_warnings": role_warnings,
+    }
 
 
 def _resolve_guide_portal_filter(
@@ -734,11 +1035,14 @@ def fetch_cw_guide_list(
     *,
     page: int,
     limit: int,
-    trait_id: int | None,
-    order: str | None,
-    next_page_token: str | None,
-    match_change_job: bool | None,
-    match_hard: bool | None,
+    trait: str | None = None,
+    trait_id: int | None = None,
+    role: str | list[str] | None = None,
+    role_id: str | list[str] | None = None,
+    order: str | None = None,
+    next_page_token: str | None = None,
+    match_change_job: bool | None = None,
+    match_hard: bool | None = None,
     portal: str | list[str] | None = None,
     portal_id: str | list[str] | None = None,
     timeout: int = 10,
@@ -750,40 +1054,66 @@ def fetch_cw_guide_list(
             "guide portal filter only supports first page without next_page_token",
         )
 
+    raw_config: dict[str, object] | None = None
+    needs_config = has_portal_filter or trait is not None or role is not None
+    if needs_config:
+        raw_config = _fetch_cw_config_data(timeout=timeout)
+
+    resolved_trait_id = trait_id
+    if trait is not None and raw_config is not None:
+        resolved_trait_id = _resolve_guide_trait_id(raw_config=raw_config, trait=trait, trait_id=trait_id)
+
+    role_ids = _normalize_string_filters(role_id, option_name="role")
+    role_candidates: list[dict[str, object]] = []
+    role_warnings: list[dict[str, object]] = []
+    if role is not None and raw_config is not None:
+        role_resolution = _resolve_guide_role_filters(raw_config=raw_config, role=role)
+        role_ids = list(role_resolution["role_ids"])
+        role_candidates = list(role_resolution["role_candidates"])
+        role_warnings = list(role_resolution["role_warnings"])
+
     portal_filters: list[dict[str, str]] = []
     if has_portal_filter:
         portal_filters = _resolve_guide_portal_filters(
-            portal_list=fetch_cw_guide_config(timeout=timeout).get("portal_list", []),
+            portal_list=_normalize_portal_list(raw_config.get("portal_list") if raw_config is not None else None),
             portal=portal,
             portal_id=portal_id,
         )
 
     if portal_filters:
-        return _fetch_cw_guide_list_for_portals(
+        result = _fetch_cw_guide_list_for_portals(
             portal_filters=portal_filters,
             limit=limit,
-            trait_id=trait_id,
+            trait_id=resolved_trait_id,
+            role_ids=role_ids,
             order=order,
             match_change_job=match_change_job,
             match_hard=match_hard,
             timeout=timeout,
         )
+    else:
+        data = _fetch_cw_guide_list_data(
+            page=page,
+            limit=limit,
+            trait_id=resolved_trait_id,
+            role_ids=role_ids,
+            order=order,
+            next_page_token=next_page_token,
+            match_change_job=match_change_job,
+            match_hard=match_hard,
+            timeout=timeout,
+        )
+        lineup_list = data.get("list")
+        result = {
+            "list": [_normalize_lineup_summary(item) for item in lineup_list] if isinstance(lineup_list, list) else [],
+            "next_page_token": data.get("next_page_token"),
+        }
 
-    data = _fetch_cw_guide_list_data(
-        page=page,
-        limit=limit,
-        trait_id=trait_id,
-        order=order,
-        next_page_token=next_page_token,
-        match_change_job=match_change_job,
-        match_hard=match_hard,
-        timeout=timeout,
-    )
-    lineup_list = data.get("list")
-    return {
-        "list": [_normalize_lineup_summary(item) for item in lineup_list] if isinstance(lineup_list, list) else [],
-        "next_page_token": data.get("next_page_token"),
-    }
+    if role_candidates:
+        result["role_candidates"] = role_candidates
+    if role_warnings:
+        result["role_warnings"] = role_warnings
+    return result
 
 
 def _normalize_portal_values(value: str | list[str] | None) -> list[str]:
@@ -836,6 +1166,7 @@ def _fetch_cw_guide_list_for_portals(
     portal_filters: list[dict[str, str]],
     limit: int,
     trait_id: int | None,
+    role_ids: list[str],
     order: str | None,
     match_change_job: bool | None,
     match_hard: bool | None,
@@ -858,6 +1189,7 @@ def _fetch_cw_guide_list_for_portals(
             page=1,
             limit=CW_GUIDE_UPSTREAM_PAGE_SIZE,
             trait_id=trait_id,
+            role_ids=role_ids,
             order=order,
             next_page_token=next_page_token,
             match_change_job=match_change_job,
