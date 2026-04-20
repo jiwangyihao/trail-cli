@@ -28,6 +28,7 @@ description: Use when an agent needs the simple-first Trail HSR entry: run `trai
 ## 执行规则
 
 - 默认 simple 层只教 `trail start`、`trail ocr read`、`trail input ...`
+- 通用场景判断继续走 `trail start` / `trail ocr read` / `trail input ...`，不要把 `trail cw stage` 当成登录页、大世界等非 CW 场景检测器
 - `trail start` 成功后优先复用返回的 `session=<id>`，后续场景命令都显式带上它
 - 如果 `trail ocr read` 已返回 OCR 结果和 `shot path=...`，不要马上再跑额外截图命令
 - `trail ocr read` 默认走 `ocr_mode=fast`（`1280x720`）；当你怀疑快档漏字、需要更稳的 box，或要做高精度对照时，再显式加 `--ocr-mode high`。如需强制做一次快档后高精度补跑，可再加 `--retry-high always`；正常情况下保持默认 `--retry-high auto`

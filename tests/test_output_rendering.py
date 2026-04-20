@@ -111,9 +111,14 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert (
+        "```text\nok guide.fetch.cw 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2 最低金币=40 最低等级=7 中期等级=8\nguide 攻略标签=#7级搜牌|#银河学者|#适用超频博弈|#专家顾问\nguide 投资环境=商店|事件 优选投资策略=快攻|回蓝 次选投资策略=暴击|连携\nguide 简易装备优先度=升级|买卡|打精英 进阶装备优先度=希儿|停云\nguide 阶段=前期阵容 前台=黑塔/star:1/rarity:1 后台=艾丝妲/star:1/rarity:1 羁绊=智识\nguide 阶段=最终阵容 前台=希儿/carry:1/star:3/rarity:3 后台=佩拉/star:2/rarity:2 羁绊=巡猎|量子\n```"
+        in readme
+    )
+    assert (
         "```text\nok guide.list.cw count=2 more=1 next=token-2\nguide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1\nguide id=def idx=2 hard=0 change_equip=1 expert=0\n```"
         in readme
     )
+    assert "`trail guide fetch cw` 默认文本会直接返回你选中的完整攻略字段，字段名尽量使用货币战争页面里的中文文案" in readme
     assert (
         "```text\nok ocr.read hits=2\nshot path=.trail/shots/req-ocr.png\ntext value=点击进入 box=122,88,74,20 center=159,98\ntext value=开始挑战 box=410,502,120,36 center=470,520\n```"
         in readme
@@ -123,6 +128,8 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert "商店快照里的 `coins` / `level` / `reserve_full` / `max_team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" in readme
+    assert "`guide.fetch.cw` 现在也进入 YAML allowlist" in readme
+    assert "`最低金币`：这套攻略默认要求保留的最低金币阈值" in readme
     assert (
         "```text\nfail input.click code=INPUT_BACKEND_MISSING tainted=1\nrequest id=req-42\nwhy msg=\"input backend missing\"\nrecover action=daemon.request_status request=req-42\n```"
         in readme
@@ -183,6 +190,7 @@ def test_readme_documents_trail_start_as_default_entry() -> None:
 def test_readme_and_cw_skills_document_help_boundaries() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
     cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
+    hsr_skill = (PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md").read_text(encoding="utf-8")
     cw_guide_skill = (PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md").read_text(encoding="utf-8")
     replenish_skill = (PROJECT_ROOT / "skills" / "trail-cw-replenish" / "SKILL.md").read_text(encoding="utf-8")
     events_skill = (PROJECT_ROOT / "skills" / "trail-cw-events" / "SKILL.md").read_text(encoding="utf-8")
@@ -190,10 +198,20 @@ def test_readme_and_cw_skills_document_help_boundaries() -> None:
     slots_skill = (PROJECT_ROOT / "skills" / "trail-cw-slots" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页" in readme
+    assert "`trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断" in readme
+    assert "`cw`：货币战争固定流程命令" in readme
+    assert "`stage` 只用于已进入货币战争后的内部阶段快速检测/等待" in readme
     assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in readme
     assert "`trail cw invest.read|choose` 继续只表示局内 invest 事件" in readme
     assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in cw_skill
-    assert "`trail cw stage` 只负责检测或等待" in cw_skill
+    assert (
+        "`trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断，也不代替分组动作执行"
+        in cw_skill
+    )
+    assert (
+        "通用场景判断继续走 `trail start` / `trail ocr read` / `trail input ...`，不要把 `trail cw stage` 当成登录页、大世界等非 CW 场景检测器"
+        in hsr_skill
+    )
     assert (
         "`trail cw guide apply/current` 只面向当前对局已选攻略；攻略查询与拉取继续使用顶层 `trail guide ... cw`"
         in cw_guide_skill
@@ -692,21 +710,35 @@ def test_render_output_renders_guide_fetch_summary_text():
         "ok": True,
         "data": {
             "lineup_id": "abc",
+            "title": "7群攻2银河学者",
             "share_code": "##demo##",
+            "labels": ["7级搜牌", "银河学者"],
             "version": "3.2",
+            "min_coins": 40,
             "min_level": 7,
             "mid_level": 8,
             "support_hard": True,
             "has_change_equip": False,
             "has_expert": True,
-            "on_field": {"希儿": 9, "停云": 3},
-            "off_field": {"佩拉": 1},
             "portals": ["商店", "事件"],
             "first_fight_augments": ["快攻", "回蓝"],
             "second_fight_augments": ["暴击", "连携"],
             "order_basic": ["升级", "买卡", "打精英"],
             "order_compose": ["希儿", "停云"],
-            "role_stages": [{"name": "希儿", "stage": 1}, {"name": "停云", "stage": 2}],
+            "role_stages": [
+                {
+                    "stage": "Opening",
+                    "front_roles": [{"name": "黑塔", "star": 1, "rarity": 1, "is_carry": False}],
+                    "back_roles": [{"name": "艾丝妲", "star": 1, "rarity": 1, "is_carry": False}],
+                    "traits": ["智识"],
+                },
+                {
+                    "stage": "Final",
+                    "front_roles": [{"name": "希儿", "star": 3, "rarity": 3, "is_carry": True}],
+                    "back_roles": [{"name": "佩拉", "star": 2, "rarity": 2, "is_carry": False}],
+                    "traits": ["巡猎", "量子"],
+                },
+            ],
         },
         "screenshot": None,
         "timing": {},
@@ -717,11 +749,55 @@ def test_render_output_renders_guide_fetch_summary_text():
     }
 
     assert render_output("guide.fetch.cw", payload).splitlines() == [
-        "ok guide.fetch.cw id=abc share_code=##demo## version=3.2 min_level=7 mid_level=8 hard=1 change_equip=0 expert=1",
-        "guide on_field=希儿:9|停云:3 off_field=佩拉:1",
-        "guide portals=商店|事件 first_augments=快攻|回蓝 second_augments=暴击|连携",
-        "guide order_basic=升级|买卡|打精英 order_compose=希儿|停云 role_stages=name:希儿/stage:1|name:停云/stage:2",
+        "ok guide.fetch.cw 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2 最低金币=40 最低等级=7 中期等级=8",
+        "guide 攻略标签=#7级搜牌|#银河学者|#适用超频博弈|#专家顾问",
+        "guide 投资环境=商店|事件 优选投资策略=快攻|回蓝 次选投资策略=暴击|连携",
+        "guide 简易装备优先度=升级|买卡|打精英 进阶装备优先度=希儿|停云",
+        "guide 阶段=前期阵容 前台=黑塔/star:1/rarity:1 后台=艾丝妲/star:1/rarity:1 羁绊=智识",
+        "guide 阶段=最终阵容 前台=希儿/carry:1/star:3/rarity:3 后台=佩拉/star:2/rarity:2 羁绊=巡猎|量子",
     ]
+
+
+def test_render_output_allows_yaml_for_guide_fetch():
+    payload = {
+        "ok": True,
+        "data": {
+            "lineup_id": "abc",
+            "title": "7群攻2银河学者",
+            "share_code": "##demo##",
+            "labels": ["7级搜牌", "银河学者"],
+            "version": "3.2",
+            "min_coins": 40,
+            "min_level": 7,
+            "mid_level": 8,
+            "support_hard": True,
+            "has_change_equip": False,
+            "has_expert": True,
+            "portals": ["商店", "事件"],
+            "first_fight_augments": ["快攻", "回蓝"],
+            "second_fight_augments": ["暴击", "连携"],
+            "order_basic": ["升级", "买卡", "打精英"],
+            "order_compose": ["希儿", "停云"],
+            "role_stages": [],
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("guide.fetch.cw", payload, output_format="yaml").splitlines()
+
+    assert lines[0:4] == [
+        "ok guide.fetch.cw 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2 最低金币=40 最低等级=7 中期等级=8",
+        "guide 攻略标签=#7级搜牌|#银河学者|#适用超频博弈|#专家顾问",
+        "guide 投资环境=商店|事件 优选投资策略=快攻|回蓝 次选投资策略=暴击|连携",
+        "guide 简易装备优先度=升级|买卡|打精英 进阶装备优先度=希儿|停云",
+    ]
+    assert "lineup_id: abc" in lines
+    assert "title: 7群攻2银河学者" in lines
 
 
 def test_render_output_renders_cw_enter_home_text():

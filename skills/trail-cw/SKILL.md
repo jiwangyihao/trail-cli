@@ -1,6 +1,6 @@
 ---
 name: trail-cw
-description: Use when an agent needs to orchestrate a full Currency Wars run by looping on stage detection and dispatching to Trail sub-skills.
+description: Use when an agent needs to orchestrate a full Currency Wars run by looping on internal Currency Wars stage detection and dispatching to Trail sub-skills.
 ---
 
 # Skill: trail-cw
@@ -9,6 +9,7 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 
 - 编排一整局货币战争
 - 在关键阶段切换到攻略、编队、商店、补给、事件子 skill
+- `trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断，也不代替分组动作执行
 - 负责循环、阶段切换和失败恢复，不重写 CLI 原子动作
 - 把每条命令返回的 `screenshot` 视为第一手事实来源；CLI 自带的 `detect/read/status` 只作为辅助判断
 
@@ -50,8 +51,9 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
    - 若需要按环境反查攻略，切到 `trail-cw-guide`，使用 `trail guide list cw --portal <title>` 或 `trail guide list cw --portal-id <id>`
    - 再执行 `trail cw portal.select --session <id> --card-idx <n>` 进入游戏
 7. 进入游戏后，如果当前 session 还没有已加载的攻略，则切到 `trail-cw-guide`，执行：
-   - `trail guide fetch cw <lineup_url|lineup_id>`
-   - `trail cw guide apply --session <id> --lineup-id <lineup_id>`
+    - `trail guide fetch cw <lineup_url|lineup_id>`
+      返回后先核对 `攻略标题` / `攻略标签` / `攻略码` / `最低金币` / `投资环境` / `投资策略`；其中布尔类攻略特征会作为 `#标签` 并入 `攻略标签`
+    - `trail cw guide apply --session <id> --lineup-id <lineup_id>`
 8. 如果是 `continue` 模式，且 session 中已经有可用的 guide 状态，则跳过重新 apply
 9. 循环执行：
     - `trail cw stage detect --session <id>`
@@ -74,7 +76,6 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 - `trail cw start` 负责把首页推进到投资环境页，并把 `mode / difficulty / battle_mode` 固化到当前 session
 - `trail cw guide` 只负责当前对局攻略的 apply/current；攻略查询与拉取继续使用 `trail guide ... cw`
 - `trail cw portal.select|refresh|restart` 只在投资环境页可用；`refresh/restart` 是否允许，先看用户在首页给出的偏好
-- `trail cw stage` 只负责检测或等待，不代替分组动作执行
 - 如果当前动作让 `stage` 失效，立刻回到 `trail cw stage detect --session <id>`
 - `continue` 模式表示“继续当前 UI 进度”，不是重新创建 session；只有当 session 中缺少 guide 状态时，才重新走攻略子 skill
 - 不要假设 `read_*` 命令已经穷尽了所有 UI 语义；必要时直接根据 screenshot 做多模态判断后，再调用显式动作命令

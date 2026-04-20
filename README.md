@@ -66,7 +66,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `image`：进阶模板识别与等待
 - `input`：点击、拖拽、按键
 - `state`：进阶读取 session 与 scene state
-- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；其余分组处理局内阶段与资源，包含 `portal`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
+- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；其余分组处理局内阶段与资源，包含 `portal`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
 ## Window Launch
 
@@ -129,11 +129,22 @@ DirectML 安装与环境 profile 说明：
 - 只有结果未知或当前失败显式可恢复时，才会出现 `recover action=daemon.request_status request=<id>`；仅有 `request id=<id>` 不等于当前失败一定可恢复
 - `trail daemon request-status --request-id <id>` 用于回查某个请求的终态、关联 session、最近可见阶段与污染状态，典型输出是 `ok daemon.request_status request=req-42 session=sess-1 final_state=completed last_visible_stage=responded tainted=0`
 - `tainted=1` 表示当前 failure 或状态带有运行态污染风险；继续执行前，先确认请求终态，再决定是否执行 `trail daemon reconcile-session --session <id>`
-- `--format yaml` 仍然保留同一条首行摘要，但只在允许的命令上提供结构化视图；当前更适合 `daemon status`、`state dump`、`guide config cw` 这类结果体量更大或层级更深的命令
+- `--format yaml` 仍然保留同一条首行摘要，但只在允许的命令上提供结构化视图；当前更适合 `daemon status`、`state dump`、`guide fetch cw`、`guide config cw` 这类结果体量更大或层级更深的命令
 - `--verbose` 只追加 `debug kind=...` 调试行，不改变默认文本协议里的事实集合与顺序
 - 对多模态 agent 来说，截图仍是第一手事实来源；默认文本里的 `detect/read/status` 结果是压缩后的动作信号，而不是替代截图的唯一真相
 
 文本协议示例：
+
+```text
+ok guide.fetch.cw 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2 最低金币=40 最低等级=7 中期等级=8
+guide 攻略标签=#7级搜牌|#银河学者|#适用超频博弈|#专家顾问
+guide 投资环境=商店|事件 优选投资策略=快攻|回蓝 次选投资策略=暴击|连携
+guide 简易装备优先度=升级|买卡|打精英 进阶装备优先度=希儿|停云
+guide 阶段=前期阵容 前台=黑塔/star:1/rarity:1 后台=艾丝妲/star:1/rarity:1 羁绊=智识
+guide 阶段=最终阵容 前台=希儿/carry:1/star:3/rarity:3 后台=佩拉/star:2/rarity:2 羁绊=巡猎|量子
+```
+
+- `trail guide fetch cw` 默认文本会直接返回你选中的完整攻略字段，字段名尽量使用货币战争页面里的中文文案；当默认文本不够时，`guide.fetch.cw` 现在也进入 YAML allowlist
 
 ```text
 ok guide.list.cw count=2 more=1 next=token-2
@@ -167,11 +178,16 @@ recover action=daemon.request_status request=req-42
 
 ## Guide 字段语义
 
-- `support_hard`：是否适用于超频博弈，不表示“更适合高压环境”
-- `has_change_equip`：是否需要转阵营道具/星徽，这对选攻略非常关键
-- `has_expert`：是否包含专家顾问角色；这类角色通常不能在商店中直接购买
+- `trail guide fetch cw` 默认文本会直接返回攻略标题、攻略标签、投资环境、投资策略、装备优先度与阶段阵容等完整关键信息，方便在 apply 前确认是否就是目标攻略
+- `攻略标签`：除了原始标签外，还会把布尔类攻略特征折叠成 `#标签`，例如 `#适用超频博弈`、`#星徽攻略`、`#专家顾问`；值为 false 时省略
+- `适用超频博弈`：是否适用于超频博弈，不表示“更适合高压环境”
+- `最低金币`：这套攻略默认要求保留的最低金币阈值；后续 shop 决策应把它当成约束，而不是可随意花完的预算
+- `优选投资策略` / `次选投资策略`：分别对应页面里的 primary / secondary investment strategy，不是战斗增益名的技术字段
+- `简易装备优先度` / `进阶装备优先度`：分别对应页面里的 base / advanced equip priority，不是泛化的“基础顺序 / 成型顺序”
+- `星徽攻略`：是否需要转阵营道具/星徽，这对选攻略非常关键
+- `专家顾问`：是否包含专家顾问角色；这类角色通常不能在商店中直接购买
 - `final_role_cards`：最终阵容角色摘要，包含 `name / star / rarity / is_carry`，适合在 list 阶段判断“是否存在 X 星 X 费角色”
-- 对语义尚不明确的字段，不默认展示，避免误导 Agent
+- 对语义尚不明确、或当前 fetch 响应里没有直接来源的字段，不默认重新发明英文别名，避免误导 Agent
 
 ## Skill 边界
 
@@ -182,6 +198,7 @@ recover action=daemon.request_status request=req-42
 - `skills/trail-hsr` 负责 `trail start`、`trail ocr read`、`trail input ...` 的 simple-first 起手与场景切换
 - `skills/trail-hsr-advanced` 负责 daemon / window / session / screen / image / state 等进阶命令
 - `trail cw enter` 只负责把页面带到货币战争首页；真正进入投资环境页要用 `trail cw start`
+- `trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断
 - `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
 - `trail cw portal.select|refresh|restart` 只用于首页之后的投资环境选择页
 - `trail cw invest.read|choose` 继续表示局内 invest 事件，不是开局投资环境页命令

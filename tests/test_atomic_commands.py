@@ -1575,7 +1575,7 @@ def test_cw_help_exposes_scene_command_groups(cli_runner):
     [
         ("portal", ("投资环境页", "选择", "刷新", "重开")),
         ("invest", ("局内", "invest", "事件")),
-        ("stage", ("检测", "等待", "阶段")),
+        ("stage", ("货币战争内部", "检测", "等待", "登录页", "大世界", "非 CW")),
         ("guide", ("应用", "回顾", "当前对局", "已选攻略")),
         ("shop", ("商店", "购买", "刷新", "关闭")),
         ("event", ("通用", "特殊事件")),
@@ -1596,6 +1596,7 @@ def test_cw_group_help_describes_expected_boundary(cli_runner, group_name, expec
         ("portal", "进入投资环境页"),
         ("guide", "攻略列表"),
         ("stage", "推进流程"),
+        ("stage", "通用场景"),
         ("event", "处理所有事件"),
     ],
 )
