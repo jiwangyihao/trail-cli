@@ -253,6 +253,12 @@ class RuntimeOperator:
     def screenshot(self, *, from_x=None, from_y=None, to_x=None, to_y=None):
         return self.window.capture(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y)
 
+    def capture_image(self, *, from_x=None, from_y=None, to_x=None, to_y=None, normalize: bool = True):
+        capture_image = getattr(self.window, "capture_image", None)
+        if not callable(capture_image):
+            raise TrailError("SCREENSHOT_FAILED", "window controller does not support capture_image")
+        return capture_image(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y, normalize=normalize)
+
     @staticmethod
     def _decode_ocr_image(image):
         if isinstance(image, Image.Image):
@@ -411,44 +417,8 @@ class RuntimeOperator:
             retry_high=ocr_config.retry_high,
         )
 
-    def locate(self, template: str, **kwargs):
-        image = self.screenshot(**kwargs)
-        box = self.matcher.locate(template, image)
-        if box is not None:
-            resolved = self._offset_box(box, **kwargs)
-            self._record_trace("locate", template=template, kwargs=dict(kwargs), box=self._serialize_box(resolved), retried=False)
-            return resolved
-
-        sleep(0.1)
-        retry_image = self.screenshot(**kwargs)
-        retry_box = self.matcher.locate(template, retry_image)
-        if retry_box is None:
-            self._record_trace("locate", template=template, kwargs=dict(kwargs), box=None, retried=True)
-            return None
-        resolved = self._offset_box(retry_box, **kwargs)
-        self._record_trace("locate", template=template, kwargs=dict(kwargs), box=self._serialize_box(resolved), retried=True)
-        return resolved
-
-    def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
-        deadline = monotonic() + timeout
-        while monotonic() < deadline:
-            box = self.locate(template)
-            if box is not None:
-                self._record_trace("wait_img", template=template, timeout=timeout, interval=interval, found=True)
-                return box
-            sleep(interval)
-        self._record_trace("wait_img", template=template, timeout=timeout, interval=interval, found=False)
-        return None
-
-    def ocr(
-        self,
-        *,
-        capture: dict[str, Any] | None = None,
-        ocr: OcrRequestConfig | None = None,
-    ):
-        capture_payload = dict(capture or {})
+    def _ocr_from_image(self, image, *, ocr: OcrRequestConfig | None = None) -> list[Any]:
         ocr_config = normalize_runtime_ocr_request_config(ocr)
-        image = self.screenshot(**capture_payload)
         self._set_debug_context(
             ocr_mode_requested=ocr_config.ocr_mode,
             ocr_mode_effective=ocr_config.ocr_mode,
@@ -508,7 +478,52 @@ class RuntimeOperator:
             ocr_retry_high=1 if retry_high else 0,
             ocr_retry_reason=retry_reason,
         )
+        return pieces
+
+    def locate(self, template: str, **kwargs):
+        image = self.screenshot(**kwargs)
+        box = self.matcher.locate(template, image)
+        if box is not None:
+            resolved = self._offset_box(box, **kwargs)
+            self._record_trace("locate", template=template, kwargs=dict(kwargs), box=self._serialize_box(resolved), retried=False)
+            return resolved
+
+        sleep(0.1)
+        retry_image = self.screenshot(**kwargs)
+        retry_box = self.matcher.locate(template, retry_image)
+        if retry_box is None:
+            self._record_trace("locate", template=template, kwargs=dict(kwargs), box=None, retried=True)
+            return None
+        resolved = self._offset_box(retry_box, **kwargs)
+        self._record_trace("locate", template=template, kwargs=dict(kwargs), box=self._serialize_box(resolved), retried=True)
+        return resolved
+
+    def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
+            box = self.locate(template)
+            if box is not None:
+                self._record_trace("wait_img", template=template, timeout=timeout, interval=interval, found=True)
+                return box
+            sleep(interval)
+        self._record_trace("wait_img", template=template, timeout=timeout, interval=interval, found=False)
+        return None
+
+    def ocr(
+        self,
+        *,
+        capture: dict[str, Any] | None = None,
+        ocr: OcrRequestConfig | None = None,
+    ):
+        capture_payload = dict(capture or {})
+        image = self.screenshot(**capture_payload)
+        pieces = self._ocr_from_image(image, ocr=ocr)
         self._record_trace("ocr", kwargs=dict(capture_payload), pieces=len(pieces))
+        return pieces
+
+    def ocr_image(self, image, *, ocr: OcrRequestConfig | None = None):
+        pieces = self._ocr_from_image(image, ocr=ocr)
+        self._record_trace("ocr_image", pieces=len(pieces))
         return pieces
 
     def _prepare_input_target(self) -> None:

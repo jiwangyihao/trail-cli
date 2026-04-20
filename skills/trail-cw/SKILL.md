@@ -80,8 +80,9 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 - 如果当前动作让 `stage` 失效，立刻回到 `trail cw stage detect --session <id>`
 - `continue` 模式表示“继续当前 UI 进度”，不是重新创建 session；只有当 session 中缺少 guide 状态时，才重新走攻略子 skill
 - 不要假设 `read_*` 命令已经穷尽了所有 UI 语义；必要时直接根据 screenshot 做多模态判断后，再调用显式动作命令
-- 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补额外截图命令
-- `trail ocr read` 默认是 `ocr_mode=fast`（`1280x720`）；当你怀疑快档漏字、需要更稳的 box，或要人工复核关键文字时，再显式加 `--ocr-mode high`。如需固定做高精度补跑对照，可加 `--retry-high always`；常规情况下保持默认 `--retry-high auto`
+- 槽位名字确认时，先看当前 screenshot，再优先使用 `trail cw slots read --session <id> --slot ...` 做定向确认；只有需要完整快照兜底时，才不传 `--slot`
+- `trail ocr read` 只保留给非槽位特定文字或通用 OCR 场景；如果同时需要这类 OCR 文字和对应截图，优先只运行一次 `trail ocr read`，不要紧接着再补额外截图命令
+- `trail ocr read` 默认是 `ocr_mode=fast`（`1280x720`）；当你怀疑通用 OCR 快档漏字、需要更稳的 box，或要人工复核关键文字时，再显式加 `--ocr-mode high`。如需固定做高精度补跑对照，可加 `--retry-high always`；常规情况下保持默认 `--retry-high auto`
 - 如果 `detect/read` 与截图观感冲突，以截图为准；guide 相关元数据（如 `support_hard`、`has_change_equip`、`has_expert`）主要用于选攻略，不用于替代实屏判断
 - `trail cw invest.read|choose` 继续只表示局内 invest 事件，不要把它们当成开局投资环境页命令
 - 开发期调试场景命令时，可给 CLI 加顶层 `--verbose` 查看中间 trace

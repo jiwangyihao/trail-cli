@@ -55,6 +55,13 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
 - `trail cw invest.read|choose` 继续只表示局内 invest 事件，不是开局投资环境页命令
 
+编队槽位读取建议：
+
+- 先看当前阶段已有 screenshot，再决定是否真的需要读取槽位名字。
+- `trail cw slots read --session <id> --slot front:0 --slot hand:3` 是首选定向确认路径，只读“看见有角色但名字不确定”的槽位。
+- 不传 `--slot` 时，`trail cw slots read --session <id>` 仍保留现有全量读取语义，只作为完整快照兜底，不表示默认行为已经改变。
+- 如果局部读取结果带 `stale=1`，它不等于新的完整 fresh 快照；后续判断仍要结合已有截图和基线来源。
+
 ## 命令面概览
 
 - `start`：simple-first 启动入口，自动收口 daemon、游戏、窗口与 session
