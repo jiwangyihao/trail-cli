@@ -32,7 +32,14 @@ from trail.scenes.cw.events import (
     settle_cw_next,
     start_cw_battle,
 )
-from trail.scenes.cw.guide import apply_cw_guide, apply_cw_guide_via_ui, fetch_cw_guide, fetch_cw_guide_list, fetch_cw_guide_payload
+from trail.scenes.cw.guide import (
+    apply_cw_guide,
+    apply_cw_guide_via_ui,
+    fetch_cw_guide,
+    fetch_cw_guide_list,
+    fetch_cw_guide_payload,
+    recover_cw_guide_from_latest_artifact,
+)
 from trail.scenes.cw.guide import fetch_cw_guide_config
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw.portal import (
@@ -276,7 +283,7 @@ class CwService:
                 artifact_store=artifact_store,
                 lineup_id=payload["lineup_id"],
             ),
-            "cw.guide.current": lambda: _current_guide(session),
+            "cw.guide.current": lambda: _current_guide(session, artifact_store=artifact_store),
             "cw.slots.read": lambda: read_cw_slots(
                 session,
                 reader=slots_reader_factory(runtime(), targets=payload.get("slot")),
@@ -317,7 +324,7 @@ class CwService:
                 session,
                 closer=shop_closer_factory(runtime()),
             ).scene_state["cw"]["shop"],
-            "cw.shop.status": lambda: shop_cw_status(session),
+            "cw.shop.status": lambda: _shop_status(session, artifact_store=artifact_store),
             "cw.crystals.collect": lambda: collect_cw_crystals(
                 session,
                 collector=crystal_collector_factory(runtime()),
@@ -379,9 +386,16 @@ class CwService:
         return session, artifact_store, runtime, handlers, tracker
 
 
-def _current_guide(session):
+def _current_guide(session, *, artifact_store: ArtifactStore):
     guide_state = session.scene_state.get("cw", {}).get("guide")
-    return guide_state if isinstance(guide_state, dict) else None
+    if isinstance(guide_state, dict):
+        return guide_state
+    return recover_cw_guide_from_latest_artifact(session, artifact_store=artifact_store)
+
+
+def _shop_status(session, *, artifact_store: ArtifactStore) -> dict:
+    _current_guide(session, artifact_store=artifact_store)
+    return shop_cw_status(session)
 
 
 def _apply_guide(session, *, runtime, artifact_store: ArtifactStore, lineup_id: str):

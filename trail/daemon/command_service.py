@@ -5,6 +5,7 @@ import inspect
 from pathlib import Path
 from typing import Any
 
+from trail.artifacts.store import ArtifactStore
 from trail.commands.helpers import to_jsonable
 from trail.core.errors import TrailError
 from trail.daemon.client import daemon_transport_failure
@@ -390,8 +391,17 @@ class CommandService:
         self._guide_scene(request.method, "guide.fetch.")
         from trail.scenes.cw import guide as cw_guide
 
+        guide_payload = to_jsonable(cw_guide.fetch_cw_guide(request.payload["url"], fetcher=cw_guide.fetch_cw_guide_payload))
+        ArtifactStore(Path(request.workspace_root) / ".trail" / "artifacts").create(
+            scene="cw",
+            kind="guide",
+            payload={
+                **guide_payload,
+                "recovery_origin": "guide.fetch.cw",
+            },
+        )
         return success(
-            to_jsonable(cw_guide.fetch_cw_guide(request.payload["url"], fetcher=cw_guide.fetch_cw_guide_payload)),
+            guide_payload,
             request_id=request.request_id,
         )
 
