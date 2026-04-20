@@ -76,6 +76,10 @@ def select_cw_portal(session, *, card_idx: int, runtime) -> dict[str, object]:
     return selected
 
 
+def detect_cw_portal(session, *, runtime, portal_list: object) -> dict[str, object]:
+    return _snapshot_cw_portal_from_invest_page(session, runtime=runtime, portal_list=portal_list)
+
+
 def refresh_cw_portal(session, *, runtime, portal_list: object) -> dict[str, object]:
     _require_portal_page(runtime, session=session, expected_page="invest")
     try:
@@ -88,7 +92,7 @@ def refresh_cw_portal(session, *, runtime, portal_list: object) -> dict[str, obj
         raise TrailError("CW_PORTAL_REFRESH_UNAVAILABLE", "cw portal.refresh unavailable") from error
 
     sleep(PORTAL_SETTLE_INTERVAL)
-    _wait_for_portal_page(
+    current = _wait_for_portal_page(
         runtime,
         session=session,
         expected_page="invest",
@@ -96,6 +100,20 @@ def refresh_cw_portal(session, *, runtime, portal_list: object) -> dict[str, obj
         error_message="cw portal.refresh did not settle back to invest",
     )
 
+    return _snapshot_cw_portal_from_invest_page(session, runtime=runtime, portal_list=portal_list, current_page=current)
+
+
+def _snapshot_cw_portal_from_invest_page(
+    session,
+    *,
+    runtime,
+    portal_list: object,
+    current_page: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    if current_page is None:
+        _require_portal_page(runtime, session=session, expected_page="invest")
+    elif current_page.get("page") != "invest":
+        _raise_portal_page_invalid(expected_page="invest", current=current_page)
     cards = summarize_portal_cards(runtime.ocr(), portal_list, collection_matches=detect_portal_collection_matches(runtime))
     snapshot = {
         "cards": cards,
@@ -172,6 +190,10 @@ def _require_portal_page(runtime, *, session, expected_page: str) -> None:
                 current["stage"] = stage.get("value")
     if current.get("page") == expected_page:
         return
+    _raise_portal_page_invalid(expected_page=expected_page, current=current)
+
+
+def _raise_portal_page_invalid(*, expected_page: str, current: Mapping[str, object]) -> None:
     message = f"cw portal action only supports {expected_page}, current page: {current.get('page')}"
     if current.get("stage") is not None:
         message += f", stage: {current.get('stage')}"

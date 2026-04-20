@@ -43,6 +43,7 @@ from trail.scenes.cw.guide import (
 from trail.scenes.cw.guide import fetch_cw_guide_config
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw.portal import (
+    detect_cw_portal,
     detect_portal_collection_matches,
     refresh_cw_portal,
     restart_cw_portal_to_settlement_entry,
@@ -282,6 +283,14 @@ class CwService:
                 session,
                 card_idx=payload["card_idx"],
                 runtime=runtime(),
+            ),
+            "cw.portal.detect": lambda: _attach_guides_to_portal_snapshot(
+                session,
+                detect_cw_portal(
+                    session,
+                    runtime=runtime(),
+                    portal_list=fetch_cw_guide_config().get("portal_list", []),
+                ),
             ),
             "cw.portal.refresh": lambda: _attach_guides_to_portal_snapshot(
                 session,

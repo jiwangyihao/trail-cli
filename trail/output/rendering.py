@@ -1142,6 +1142,7 @@ TEXT_RENDERERS = {
     "cw.enter": _render_cw_entry,
     "cw.start": _render_cw_portal_cards,
     "cw.portal.select": _render_cw_portal_select,
+    "cw.portal.detect": _render_cw_portal_cards,
     "cw.portal.refresh": _render_cw_portal_cards,
     "cw.portal.restart": _render_cw_portal_cards,
     "cw.guide.apply": _render_cw_guide_summary,

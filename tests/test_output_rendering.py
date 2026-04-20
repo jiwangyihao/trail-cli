@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from trail.cli import app
-from trail.output.rendering import print_output, render_output, set_output_options
+from trail.output.rendering import TEXT_RENDERERS, _render_cw_portal_cards, print_output, render_output, set_output_options
 from tests.support.fake_daemon import build_success_response
 
 
@@ -207,7 +207,9 @@ def test_readme_and_cw_skills_document_help_boundaries() -> None:
     assert "`cw`：货币战争固定流程命令" in readme
     assert "`stage` 只用于已进入货币战争后的内部阶段快速检测/等待" in readme
     assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in readme
-    assert "`trail cw invest.read|choose` 继续只表示局内 invest 事件" in readme
+    assert "`trail cw invest read|choose` 继续只表示局内 invest 事件" in readme
+    assert "`trail cw portal select --session <id> --card-idx <n>`" in readme
+    assert "`trail cw portal select|detect|refresh|restart` 只用于首页之后的投资环境选择页" in readme
     assert "guide 投资环境=购物区 count=1 more=1 next=group-token" in readme
     assert "guide.config.cw --format yaml" in readme
     assert "artifact=" not in readme
@@ -216,10 +218,13 @@ def test_readme_and_cw_skills_document_help_boundaries() -> None:
         not in readme
     )
     assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in cw_skill
+    assert "`trail cw invest read|choose` 继续只表示局内 invest 事件" in cw_skill
+    assert "`trail cw portal select --session <id> --card-idx <n>`" in cw_skill
     assert (
         "`trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断，也不代替分组动作执行"
         in cw_skill
     )
+    assert "`trail cw portal select|detect|refresh|restart` 只在投资环境页可用" in cw_skill
     assert (
         "通用场景判断继续走 `trail start` / `trail ocr read` / `trail input ...`，不要把 `trail cw stage` 当成登录页、大世界等非 CW 场景检测器"
         in hsr_skill
@@ -228,14 +233,43 @@ def test_readme_and_cw_skills_document_help_boundaries() -> None:
         "`trail cw guide apply/current` 只面向当前对局已选攻略；攻略查询与拉取继续使用顶层 `trail guide ... cw`"
         in cw_guide_skill
     )
-    assert "`trail cw invest.read|choose` 继续只表示局内 invest 事件" in replenish_skill
     assert "攻略快照ID" in cw_guide_skill
     assert "artifact=" not in cw_guide_skill
     assert "artifact=" not in cw_skill
+    assert "局内 invest 事件" in replenish_skill
+    assert "开局投资环境页命令" in replenish_skill
     assert "处理 Boss 预览、特殊事件、结算翻页与战斗继续" in events_skill
     assert "不负责商店、补给和整局循环" in events_skill
-    assert "已经完成 `trail cw start` 和 `trail cw portal.select`" in shop_skill
-    assert "已经完成 `trail cw start` 和 `trail cw portal.select`" in slots_skill
+    assert "已经完成 `trail cw start`" in shop_skill
+    assert "已经进入局内商店阶段" in shop_skill
+    assert "已经完成 `trail cw start`" in slots_skill
+    assert "已经进入局内编队/备战阶段" in slots_skill
+
+
+def test_readme_and_cw_skill_document_portal_detect_recovery_contract() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "`trail cw portal detect --session <id>`" in readme
+    assert "已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot" in readme
+    assert "不要重复执行 `trail cw start`" in readme
+    assert "detect = 重识别当前三张卡，不点击" in readme
+    assert "refresh = 点击刷新后生成新的三张卡" in readme
+    assert "detect 后可直接 `select`" in readme
+    assert "`restart` 依旧要求已有开局真值" in readme
+    assert "detect 不会补录 `mode/difficulty/battle_mode`" in readme
+    assert "trail cw portal.refresh" not in readme
+    assert "trail cw portal.restart" not in readme
+
+    assert "`trail cw portal detect --session <id>`" in cw_skill
+    assert "已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot" in cw_skill
+    assert "不要回退到 `trail cw start`" in cw_skill
+    assert "只重建当前三张卡识别结果，不点击、不刷新、不重开" in cw_skill
+    assert "detect 后可直接 `select`" in cw_skill
+    assert "`restart` 依旧要求已有开局真值" in cw_skill
+    assert "detect 不会补录 `mode/difficulty/battle_mode`" in cw_skill
+    assert "trail cw portal.refresh" not in cw_skill
+    assert "trail cw portal.restart" not in cw_skill
 
 
 def test_render_output_renders_canonical_stage_wait_text():
@@ -1322,6 +1356,10 @@ def test_render_output_renders_cw_enter_already_home_info():
     ]
 
 
+def test_render_output_registers_cw_portal_detect_to_portal_cards_family():
+    assert TEXT_RENDERERS["cw.portal.detect"] is _render_cw_portal_cards
+
+
 def test_render_output_renders_cw_start_portal_cards_family():
     payload = {
         "ok": True,
@@ -1414,6 +1452,105 @@ def test_render_output_cw_start_omits_guide_tag_field_when_portal_guide_has_no_t
     assert 'opt idx=1 投资环境="No Tag Portal" score=0.42 待收集=0' in rendered
     assert 'guide idx=1 gid=1 攻略ID=plain-guide 攻略标题=无标签攻略 版本=3.2 主C=希儿' in rendered
     assert "攻略标签=" not in rendered
+
+
+def test_render_output_renders_cw_portal_detect_family():
+    payload = {
+        "ok": True,
+        "data": {
+            "cards": [
+                {
+                    "card_idx": 1,
+                    "portal_title": "Alpha Portal",
+                    "portal_description": "Alpha Desc",
+                    "score": 0.99,
+                    "guides": [
+                        {
+                            "lineup_id": "alpha-guide",
+                            "title": "Alpha攻略",
+                            "carry_roles": ["希儿"],
+                            "support_hard": True,
+                            "has_change_equip": False,
+                            "has_expert": True,
+                            "like": 123,
+                            "favour": 45,
+                        }
+                    ],
+                }
+            ],
+            "mode": None,
+            "difficulty": None,
+            "battle_mode": None,
+            "stale": False,
+        },
+        "screenshot": ".trail/shots/req-portal-detect.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.portal.detect", payload).splitlines() == [
+        "ok cw.portal.detect cards=1",
+        "shot path=.trail/shots/req-portal-detect.png",
+        'opt idx=1 投资环境="Alpha Portal" score=0.99 待收集=0',
+        'opt idx=1 说明="Alpha Desc"',
+        'guide idx=1 gid=1 攻略ID=alpha-guide 攻略标题=Alpha攻略 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45',
+    ]
+
+
+def test_render_output_cw_portal_detect_rejects_yaml_output():
+    payload = {
+        "ok": True,
+        "data": {
+            "cards": [
+                {
+                    "card_idx": 1,
+                    "portal_title": "Alpha Portal",
+                    "portal_description": "Alpha Desc",
+                    "score": 0.99,
+                }
+            ],
+            "mode": None,
+            "difficulty": None,
+            "battle_mode": None,
+            "stale": False,
+        },
+        "screenshot": ".trail/shots/req-portal-detect-yaml.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.portal.detect", payload, output_format="yaml").splitlines() == [
+        "fail cw.portal.detect code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        "shot path=.trail/shots/req-portal-detect-yaml.png",
+        'why msg="yaml not supported for cw.portal.detect"',
+    ]
+
+
+def test_render_output_renders_cw_portal_detect_failure_without_recover():
+    payload = {
+        "request_id": "req-cw-portal-detect-fail",
+        "ok": False,
+        "data": {},
+        "screenshot": ".trail/shots/req-cw-portal-detect-fail.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": {"code": "CW_PORTAL_PAGE_INVALID", "message": "cw portal action only supports invest, current page: home"},
+    }
+
+    assert render_output("cw.portal.detect", payload).splitlines() == [
+        "fail cw.portal.detect code=CW_PORTAL_PAGE_INVALID",
+        "request id=req-cw-portal-detect-fail",
+        "shot path=.trail/shots/req-cw-portal-detect-fail.png",
+        'why msg="cw portal action only supports invest, current page: home"',
+    ]
 
 
 @pytest.mark.parametrize("command", ["cw.portal.refresh", "cw.portal.restart"])

@@ -10,9 +10,17 @@ from trail.output.rendering import print_output
 
 DEFAULT_CW_STAGE_WAIT_TIMEOUT = 120
 
-CW_APP_HELP = "货币战争固定流程命令：enter 到首页，start 从首页进入投资环境页；其余分组处理局内阶段与资源。"
+CW_APP_HELP = (
+    "货币战争固定流程命令：enter 到首页，start 从首页进入投资环境页；"
+    "portal 负责投资环境页的识别/选择/刷新/重开，其中 detect 只重识别当前三张卡，"
+    "refresh 点击刷新后生成新的三张卡；其余分组处理局内阶段与资源。"
+)
 CW_GUIDE_HELP = "应用或回顾当前对局已选攻略。当前攻略摘要会输出 攻略ID、攻略标题、攻略码、版本、攻略标签 与 攻略快照ID。"
-CW_PORTAL_HELP = "投资环境页上的选择/刷新/重开动作。投资环境卡片会输出 投资环境、说明、待收集、score，以及下挂攻略摘要。"
+CW_PORTAL_HELP = (
+    "投资环境页上的识别/选择/刷新/重开动作。"
+    "detect 重新识别并保存当前三张卡；refresh 点击刷新后生成新的三张卡。"
+    "投资环境卡片会输出 投资环境、说明、待收集、score，以及下挂攻略摘要。"
+)
 CW_STAGE_HELP = "仅用于货币战争内部阶段的快速检测或等待；不适用于登录页、大世界等非 CW 场景。"
 CW_SLOTS_HELP = "读取编队槽位并执行换位或上场。"
 CW_SHOP_HELP = "读取商店、购买槽位并刷新或关闭。"
@@ -109,7 +117,7 @@ def cw_start(
     )
 
 
-@portal_app.command("select")
+@portal_app.command("select", help="选择当前投资环境页上的一张卡。")
 def cw_portal_select(
     session: str = typer.Option(..., "--session"),
     card_idx: int = typer.Option(..., "--card-idx"),
@@ -117,12 +125,23 @@ def cw_portal_select(
     _print_cw("cw.portal.select", session_id=session, payload={"card_idx": card_idx})
 
 
-@portal_app.command("refresh")
+@portal_app.command(
+    "detect",
+    help=(
+        "当前已在投资环境页时重新识别并保存 portal snapshot；"
+        "只重建当前三张卡识别结果，不点击、不刷新、不重开。"
+    ),
+)
+def cw_portal_detect(session: str = typer.Option(..., "--session")) -> None:
+    _print_cw("cw.portal.detect", session_id=session)
+
+
+@portal_app.command("refresh", help="点击刷新后生成新的三张卡。")
 def cw_portal_refresh(session: str = typer.Option(..., "--session")) -> None:
     _print_cw("cw.portal.refresh", session_id=session)
 
 
-@portal_app.command("restart")
+@portal_app.command("restart", help="按已有开局真值重开投资环境页并生成新一轮三张卡。")
 def cw_portal_restart(session: str = typer.Option(..., "--session")) -> None:
     _print_cw("cw.portal.restart", session_id=session)
 

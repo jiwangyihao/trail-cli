@@ -40,6 +40,11 @@ CW_MUTATING_METHODS = {
     "cw.event.handle",
 }
 
+CW_CAPTURE_METHODS = {
+    "cw.slots.read",
+    "cw.portal.detect",
+}
+
 def success(
     data: dict[str, Any],
     *,
@@ -383,7 +388,7 @@ class CommandService:
 
         if request.method.startswith("cw."):
             service = self._session_service(request)
-            if request.method == "cw.slots.read":
+            if request.method in CW_CAPTURE_METHODS:
                 return self._run_cw_with_capture(request, service=service)
             if request.method in CW_MUTATING_METHODS:
                 session_id = request.session_id or request.payload.get("session_id")
