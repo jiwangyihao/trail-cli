@@ -933,6 +933,235 @@ def test_cw_guide_current_service_reads_applied_guide_from_session(tmp_path: Pat
     }
 
 
+def test_cw_guide_current_service_recovers_guide_from_latest_artifact_and_persists_session(tmp_path: Path):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    store = ArtifactStore(tmp_path / ".trail" / "artifacts")
+    artifact = store.create(
+        scene="cw",
+        kind="guide",
+        payload={
+            **fake_guide(),
+            "artifact_id": None,
+            "lineup_id": "69c9014f24546dfbd2b26227",
+            "title": "7群攻2银河学者",
+            "recovery_origin": "guide.fetch.cw",
+        },
+    )
+
+    payload = cw_service.handle(
+        method="cw.guide.current",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert payload == {
+        "artifact": artifact.artifact_id,
+        "lineup_id": "69c9014f24546dfbd2b26227",
+        "share_code": "##demo##",
+        "source_url": None,
+        "title": "7群攻2银河学者",
+        "author": None,
+        "uploader": None,
+        "labels": [],
+        "support_hard": False,
+        "has_change_equip": False,
+        "has_expert": False,
+        "version": None,
+        "on_field": {"希儿": 9},
+        "off_field": {"佩拉": 3},
+        "role_stages": [],
+        "first_fight_augments": [],
+        "second_fight_augments": [],
+        "portals": [],
+        "order_basic": [],
+        "order_compose": [],
+        "remaining_purchases": {"希儿": 9, "佩拉": 3},
+    }
+    assert persisted.scene_state["cw"]["guide"] == payload
+    assert persisted.scene_state["cw"]["constraints"] == {
+        "min_coins": 40,
+        "min_level": 7,
+        "mid_level": 9,
+        "priority": {},
+        "positioning": {},
+    }
+
+
+def test_cw_shop_status_recovers_guide_summary_from_latest_artifact_when_session_guide_missing(tmp_path: Path):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    loaded = service.load_session(session.session_id)
+    loaded.scene_state["cw"] = {
+        "guide": None,
+        "constraints": {},
+        "slots": {"stale": False, "hand": ["银狼"]},
+        "sell_plan": {"candidates": [0]},
+        "shop": {
+            "opened": True,
+            "stale": False,
+            "items": [{"name": "希儿", "price": 3}],
+            "coins": 15,
+            "level": 4,
+            "reserve_full": False,
+            "max_team_size": 6,
+        },
+        "stage": {"stale": False, "name": "shop"},
+        "metrics": {},
+    }
+    service.save_session(loaded)
+    store = ArtifactStore(tmp_path / ".trail" / "artifacts")
+    artifact = store.create(
+        scene="cw",
+        kind="guide",
+        payload={
+            **fake_guide(),
+            "artifact_id": None,
+            "lineup_id": "69c9014f24546dfbd2b26227",
+            "recovery_origin": "guide.fetch.cw",
+        },
+    )
+
+    payload = cw_service.handle(
+        method="cw.shop.status",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert payload == {
+        "opened": True,
+        "stale": False,
+        "items": [{"name": "希儿", "price": 3}],
+        "coins": 15,
+        "level": 4,
+        "reserve_full": False,
+        "max_team_size": 6,
+        "guide_summary": {
+            "remaining_purchases": {"希儿": 9, "佩拉": 3},
+            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9},
+        },
+    }
+    assert persisted.scene_state["cw"]["guide"]["artifact"] == artifact.artifact_id
+    assert persisted.scene_state["cw"]["shop"] == {
+        "opened": True,
+        "stale": False,
+        "items": [{"name": "希儿", "price": 3}],
+        "coins": 15,
+        "level": 4,
+        "reserve_full": False,
+        "max_team_size": 6,
+    }
+    assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["银狼"]}
+    assert persisted.scene_state["cw"]["stage"] == {"stale": False, "name": "shop"}
+    assert persisted.scene_state["cw"]["sell_plan"] == {"candidates": [0]}
+
+
+def test_cw_guide_current_service_ignores_non_fetch_origin_artifacts_and_uses_latest_fetch_origin(tmp_path: Path):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    store = ArtifactStore(tmp_path / ".trail" / "artifacts")
+    older_fetch = store.create(
+        scene="cw",
+        kind="guide",
+        payload={
+            **fake_guide(),
+            "artifact_id": None,
+            "lineup_id": "fetch-old",
+            "share_code": "##fetch-old##",
+            "title": "旧 fetch 攻略",
+            "created_at": "2026-04-20T10:00:00+00:00",
+            "recovery_origin": "guide.fetch.cw",
+        },
+    )
+    latest_fetch = store.create(
+        scene="cw",
+        kind="guide",
+        payload={
+            **fake_guide(),
+            "artifact_id": None,
+            "lineup_id": "fetch-new",
+            "share_code": "##fetch-new##",
+            "title": "新 fetch 攻略",
+            "created_at": "2026-04-20T11:00:00+00:00",
+            "recovery_origin": "guide.fetch.cw",
+        },
+    )
+    store.create(
+        scene="cw",
+        kind="guide",
+        payload={
+            **fake_guide(),
+            "artifact_id": None,
+            "lineup_id": "preview-newest",
+            "share_code": "##preview-newest##",
+            "title": "最新但不可恢复",
+            "created_at": "2026-04-20T12:00:00+00:00",
+        },
+    )
+
+    payload = cw_service.handle(
+        method="cw.guide.current",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert payload["artifact"] == latest_fetch.artifact_id
+    assert payload["lineup_id"] == "fetch-new"
+    assert payload["share_code"] == "##fetch-new##"
+    assert payload["title"] == "新 fetch 攻略"
+    assert payload["artifact"] != older_fetch.artifact_id
+    assert persisted.scene_state["cw"]["guide"]["artifact"] == latest_fetch.artifact_id
+
+
+def test_cw_guide_current_service_preserves_consumed_remaining_purchases_from_shop_summary(tmp_path: Path):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    loaded = service.load_session(session.session_id)
+    loaded.scene_state["cw"] = {
+        "guide": None,
+        "constraints": {},
+        "slots": {"stale": False},
+        "sell_plan": {},
+        "shop": {
+            "opened": True,
+            "stale": False,
+            "items": [{"name": "希儿", "price": 3}],
+            "guide_summary": {
+                "remaining_purchases": {"希儿": 4, "佩拉": 1},
+                "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9},
+            },
+        },
+        "stage": {"stale": False, "name": "shop"},
+        "metrics": {},
+    }
+    service.save_session(loaded)
+    store = ArtifactStore(tmp_path / ".trail" / "artifacts")
+    artifact = store.create(
+        scene="cw",
+        kind="guide",
+        payload={
+            **fake_guide(),
+            "artifact_id": None,
+            "lineup_id": "69c9014f24546dfbd2b26227",
+            "recovery_origin": "guide.fetch.cw",
+        },
+    )
+
+    payload = cw_service.handle(
+        method="cw.guide.current",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert payload["artifact"] == artifact.artifact_id
+    assert payload["remaining_purchases"] == {"希儿": 4, "佩拉": 1}
+    assert persisted.scene_state["cw"]["guide"]["remaining_purchases"] == {"希儿": 4, "佩拉": 1}
+
+
 def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit():
     guide_module = load_cw_guide_module()
     apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
@@ -980,6 +1209,171 @@ def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit():
         apply_template,
     ]
     assert keys == [("esc", 3, 1)]
+
+
+def _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch) -> dict[str, object]:
+    apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
+    assert apply_cw_guide_via_ui is not None
+    assert guide_module.GUIDE_CONFIRM_SETTLE_DELAY > 0, "GUIDE_CONFIRM_SETTLE_DELAY must stay > 0"
+
+    enter_code_template = str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve())
+    confirm_template = str((CW_ASSET_ROOT / "ensure2.png").resolve())
+    apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
+    sleep_calls: list[float] = []
+    events: list[object] = []
+    state = {"confirm_clicked": False, "confirm_settled": False}
+
+    def fake_sleep(seconds: float):
+        sleep_calls.append(seconds)
+        events.append(("sleep", seconds))
+        if state["confirm_clicked"] and seconds == guide_module.GUIDE_CONFIRM_SETTLE_DELAY:
+            state["confirm_settled"] = True
+
+    monkeypatch.setattr(guide_module, "sleep", fake_sleep)
+
+    confirm_box = Box(left=100, top=20, width=40, height=20, source=confirm_template)
+    apply_box = Box(left=200, top=20, width=40, height=20, source=apply_template)
+
+    class RuntimeStub:
+        def __init__(self):
+            self._apply_locate_results = [apply_box, None]
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            if template == enter_code_template:
+                return Box(left=10, top=20, width=40, height=20, source=template)
+            if template == confirm_template:
+                return confirm_box
+            if template == apply_template:
+                events.append("wait_apply")
+                assert state["confirm_settled"], "guide.apply queried before confirm settle"
+                return apply_box
+            return Box(left=10, top=20, width=40, height=20, source=template)
+
+        def click_point(self, x: float, y: float, **kwargs):
+            if (x, y) == confirm_box.center:
+                state["confirm_clicked"] = True
+                events.append("confirm_click")
+
+        def type_text(self, text: str):
+            return None
+
+        def locate(self, template: str, **kwargs):
+            if template == enter_code_template:
+                return Box(left=10, top=20, width=40, height=20, source=template)
+            if template == apply_template:
+                if self._apply_locate_results:
+                    return self._apply_locate_results.pop(0)
+                return None
+            return None
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            return None
+
+    apply_cw_guide_via_ui(RuntimeStub(), share_code="##demo##")
+
+    return {"sleep_calls": sleep_calls, "events": events}
+
+
+def test_apply_cw_guide_via_ui_waits_for_confirm_result_to_settle_before_clicking_apply(monkeypatch):
+    guide_module = load_cw_guide_module()
+    result = _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch)
+
+    assert result["sleep_calls"][:3] == [
+        guide_module.GUIDE_INPUT_FOCUS_DELAY,
+        guide_module.GUIDE_TEXT_SETTLE_DELAY,
+        guide_module.GUIDE_CONFIRM_SETTLE_DELAY,
+    ]
+    confirm_click_index = result["events"].index("confirm_click")
+    assert result["events"][confirm_click_index : confirm_click_index + 3] == [
+        "confirm_click",
+        ("sleep", guide_module.GUIDE_CONFIRM_SETTLE_DELAY),
+        "wait_apply",
+    ]
+
+
+def test_apply_cw_guide_via_ui_confirm_settle_test_rejects_zero_delay(monkeypatch):
+    guide_module = load_cw_guide_module()
+    monkeypatch.setattr(guide_module, "GUIDE_CONFIRM_SETTLE_DELAY", 0.0)
+
+    with pytest.raises(AssertionError, match="GUIDE_CONFIRM_SETTLE_DELAY"):
+        _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch)
+
+
+def _exercise_apply_cw_guide_post_apply_settle(guide_module, monkeypatch) -> dict[str, object]:
+    apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
+    assert apply_cw_guide_via_ui is not None
+    assert guide_module.GUIDE_POST_APPLY_SETTLE_DELAY > 0, "GUIDE_POST_APPLY_SETTLE_DELAY must stay > 0"
+
+    enter_code_template = str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve())
+    apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
+    sleep_calls: list[float] = []
+    events: list[object] = []
+    state = {"apply_cleared": False, "post_apply_settled": False}
+
+    def fake_sleep(seconds: float):
+        sleep_calls.append(seconds)
+        events.append(("sleep", seconds))
+        if state["apply_cleared"] and seconds == guide_module.GUIDE_POST_APPLY_SETTLE_DELAY:
+            state["post_apply_settled"] = True
+
+    monkeypatch.setattr(guide_module, "sleep", fake_sleep)
+
+    class RuntimeStub:
+        def __init__(self):
+            self._apply_locate_results = [Box(left=10, top=20, width=40, height=20, source=apply_template), None]
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            return Box(left=10, top=20, width=40, height=20, source=template)
+
+        def click_point(self, x: float, y: float, **kwargs):
+            return None
+
+        def type_text(self, text: str):
+            return None
+
+        def locate(self, template: str, **kwargs):
+            if template == enter_code_template:
+                return Box(left=10, top=20, width=40, height=20, source=template)
+            if template == apply_template:
+                if self._apply_locate_results:
+                    result = self._apply_locate_results.pop(0)
+                    if result is None:
+                        state["apply_cleared"] = True
+                        events.append("apply_cleared")
+                    return result
+                state["apply_cleared"] = True
+                events.append("apply_cleared")
+                return None
+            return None
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            events.append(("press_key", key, presses, interval))
+            assert state["post_apply_settled"], "guide exited before post-apply settle"
+
+    apply_cw_guide_via_ui(RuntimeStub(), share_code="##demo##")
+
+    return {"sleep_calls": sleep_calls, "events": events}
+
+
+def test_apply_cw_guide_via_ui_waits_for_post_apply_settle_before_exit(monkeypatch):
+    guide_module = load_cw_guide_module()
+    result = _exercise_apply_cw_guide_post_apply_settle(guide_module, monkeypatch)
+
+    assert result["sleep_calls"][-1] == guide_module.GUIDE_POST_APPLY_SETTLE_DELAY
+    apply_cleared_index = result["events"].index("apply_cleared")
+    assert result["events"][apply_cleared_index : apply_cleared_index + 3] == [
+        "apply_cleared",
+        ("sleep", guide_module.GUIDE_POST_APPLY_SETTLE_DELAY),
+        ("press_key", "esc", guide_module.GUIDE_ESC_PRESSES, guide_module.GUIDE_ESC_INTERVAL),
+    ]
+
+
+def test_apply_cw_guide_via_ui_post_apply_settle_test_rejects_zero_delay(monkeypatch):
+    guide_module = load_cw_guide_module()
+    monkeypatch.setattr(guide_module, "GUIDE_POST_APPLY_SETTLE_DELAY", 0.0)
+
+    with pytest.raises(AssertionError, match="GUIDE_POST_APPLY_SETTLE_DELAY"):
+        _exercise_apply_cw_guide_post_apply_settle(guide_module, monkeypatch)
 
 
 def test_apply_cw_guide_via_ui_fails_when_apply_button_does_not_clear():

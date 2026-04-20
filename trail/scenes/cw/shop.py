@@ -118,6 +118,15 @@ def _stable_constraints_summary(cw_state: dict) -> dict[str, Any]:
     return {key: deepcopy(constraints.get(key)) for key in SHOP_SUMMARY_CONSTRAINT_KEYS if key in constraints}
 
 
+def _guide_summary(cw_state: dict) -> dict[str, Any] | None:
+    if _guide_state(cw_state) is None:
+        return None
+    return {
+        "remaining_purchases": deepcopy(_remaining_purchases(cw_state)),
+        "constraints": _stable_constraints_summary(cw_state),
+    }
+
+
 def _shop_state(cw_state: dict) -> dict[str, Any]:
     shop_state = cw_state.get("shop")
     return shop_state if isinstance(shop_state, dict) else {}
@@ -299,4 +308,9 @@ def close_cw_shop(session: SessionModel, *, closer: ShopAction | None = None) ->
 
 
 def shop_cw_status(session: SessionModel) -> dict:
-    return ensure_cw_state(session).get("shop", {"stale": True})
+    cw_state = ensure_cw_state(session)
+    status = deepcopy(cw_state.get("shop", {"stale": True}))
+    guide_summary = _guide_summary(cw_state)
+    if guide_summary is not None:
+        status["guide_summary"] = guide_summary
+    return status

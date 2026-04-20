@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -436,7 +437,7 @@ def test_guide_commands_render_text_error_when_scene_not_supported(cli_runner, a
     )
 
 
-def test_command_service_handles_guide_fetch_cw(tmp_path: Path, monkeypatch):
+def test_command_service_handles_guide_fetch_cw_and_persists_artifact(tmp_path: Path, monkeypatch):
     from trail.daemon.command_service import CommandService
 
     calls: list[tuple[str, object]] = []
@@ -473,6 +474,18 @@ def test_command_service_handles_guide_fetch_cw(tmp_path: Path, monkeypatch):
         "error": None,
     }
     assert calls == [("fetch_guide", "abc"), ("fetch_payload", "abc")]
+    artifacts = list((tmp_path / ".trail" / "artifacts").glob("*.json"))
+    assert len(artifacts) == 1
+    artifact_payload = json.loads(artifacts[0].read_text(encoding="utf-8"))
+    assert artifact_payload == {
+        "artifact_id": artifacts[0].stem,
+        "scene": "cw",
+        "kind": "guide",
+        "lineup_id": "abc",
+        "share_code": "##demo##",
+        "recovery_origin": "guide.fetch.cw",
+        "created_at": artifact_payload["created_at"],
+    }
 
 
 def test_command_service_handles_guide_list_cw_accepts_boolean_filters(tmp_path: Path, monkeypatch):
