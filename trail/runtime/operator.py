@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -716,6 +717,54 @@ class CachedOcrEngine:
         return result or []
 
 
+ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == ctypes.sizeof(ctypes.c_ulonglong) else ctypes.c_ulong
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
+
+class INPUT_UNION(ctypes.Union):
+    _fields_ = [
+        ("mi", MOUSEINPUT),
+        ("ki", KEYBDINPUT),
+        ("hi", HARDWAREINPUT),
+    ]
+
+
+class INPUT(ctypes.Structure):
+    _anonymous_ = ("value",)
+    _fields_ = [
+        ("type", wintypes.DWORD),
+        ("value", INPUT_UNION),
+    ]
+
+
 class RapidOcrAdapter:
     def __init__(self):
         self._engine_cache: dict[OcrEngineKey, CachedOcrEngine] = {}
@@ -1009,6 +1058,8 @@ class PyAutoGuiInputDriver:
     MOUSEEVENTF_LEFTDOWN = 0x0002
     MOUSEEVENTF_LEFTUP = 0x0004
     KEYEVENTF_KEYUP = 0x0002
+    KEYEVENTF_UNICODE = 0x0004
+    INPUT_KEYBOARD = 1
     VIRTUAL_KEY_OVERRIDES = {
         "esc": 0x1B,
         "escape": 0x1B,
@@ -1075,7 +1126,53 @@ class PyAutoGuiInputDriver:
         pyautogui.click(x, y)
 
     def ensure_available(self) -> None:
+        if sys.platform == "win32":
+            return
         self._load_backend()
+
+    @staticmethod
+    def _utf16_code_units(text: str) -> list[int]:
+        encoded = text.encode("utf-16-le")
+        return [int.from_bytes(encoded[index : index + 2], "little") for index in range(0, len(encoded), 2)]
+
+    @classmethod
+    def _unicode_key_input(cls, code_unit: int, flags: int) -> INPUT:
+        return INPUT(
+            type=cls.INPUT_KEYBOARD,
+            value=INPUT_UNION(
+                ki=KEYBDINPUT(
+                    wVk=0,
+                    wScan=code_unit,
+                    dwFlags=flags,
+                    time=0,
+                    dwExtraInfo=0,
+                )
+            ),
+        )
+
+    @classmethod
+    def _send_windows_unicode_text(cls, text: str) -> None:
+        code_units = cls._utf16_code_units(text)
+        if not code_units:
+            return
+        user32 = getattr(getattr(ctypes, "windll", None), "user32", None)
+        send_input = getattr(user32, "SendInput", None)
+        if not callable(send_input):
+            raise TrailError("INPUT_BACKEND_UNAVAILABLE", "windows unicode text input unavailable")
+        payload = []
+        for code_unit in code_units:
+            payload.append(cls._unicode_key_input(code_unit, cls.KEYEVENTF_UNICODE))
+            payload.append(cls._unicode_key_input(code_unit, cls.KEYEVENTF_UNICODE | cls.KEYEVENTF_KEYUP))
+        try:
+            buffer = (INPUT * len(payload))(*payload)
+        except Exception as exc:
+            raise TrailError("INPUT_BACKEND_UNAVAILABLE", "windows unicode text input unavailable") from exc
+        try:
+            sent = send_input(len(payload), buffer, ctypes.sizeof(INPUT))
+        except Exception as exc:
+            raise TrailError("INPUT_BACKEND_UNAVAILABLE", "windows unicode text input failed") from exc
+        if sent != len(payload):
+            raise TrailError("INPUT_BACKEND_UNAVAILABLE", "windows unicode text input failed")
 
     def drag(self, from_x: float, from_y: float, to_x: float, to_y: float) -> None:
         if self._should_use_virtual_screen_path(from_x, from_y, to_x, to_y):
@@ -1097,6 +1194,9 @@ class PyAutoGuiInputDriver:
         pyautogui.hotkey(*keys)
 
     def type_text(self, text: str) -> None:
+        if sys.platform == "win32":
+            self._send_windows_unicode_text(text)
+            return
         pyautogui = self._load_backend()
         pyautogui.write(text, interval=0)
 
