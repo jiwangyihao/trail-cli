@@ -85,4 +85,13 @@
      - `trail guide list cw --portal <portal_title> --limit 3`
 - 额外说明：
   - 这页和首页最重要的区别是：已经没有 `开始「货币战争」`，而是明确出现三张投资环境卡和底部 `确认`
+  - `剩余次数` 指的是当前投资环境页还能执行几次 `cw portal.refresh`
+  - 当 `剩余次数` 归零后，继续运行 `cw portal.refresh` 不会再改变卡片内容，应优先考虑 `cw portal.select` 或 `cw portal.restart`
+  - `cw portal.restart` 不是默认下一步；它更适合在**用户已经选定攻略、并且明确表示接受刷开局**时使用
+  - 这类刷开局流程的推荐顺序是：
+    1. `trail cw start ...` 进入投资环境页
+    2. 观察当前三张卡是否包含目标攻略需要的投资环境
+    3. 若未命中，则在当前页优先尝试 `trail cw portal.refresh --session <id>`
+    4. 刷新次数耗尽仍未命中时，再执行 `trail cw portal.restart --session <id>` 回到新一轮投资环境页
+    5. 之后继续按 `refresh -> restart` 的顺序循环，直到出现目标投资环境为止
   - 这张图已按左下 UID OCR 框做马赛克脱敏
