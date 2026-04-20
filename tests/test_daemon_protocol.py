@@ -1694,6 +1694,76 @@ def test_command_service_handles_cw_portal_refresh_and_updates_snapshot(tmp_path
     assert runtime.capture_requests == [(False, "req-cw-portal-refresh")]
 
 
+@pytest.mark.parametrize(
+    ("method", "request_id", "mutation_name"),
+    [
+        ("cw.battle.start", "req-cw-battle-start", "start_cw_battle"),
+        ("cw.battle.continue", "req-cw-battle-continue", "continue_cw_battle"),
+        ("cw.settle.next", "req-cw-settle-next", "settle_cw_next"),
+    ],
+)
+def test_command_service_cw_stage_mutations_use_request_scoped_capture(
+    tmp_path: Path,
+    monkeypatch,
+    method: str,
+    request_id: str,
+    mutation_name: str,
+):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / f"{request_id}.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "stage": {"value": "battle", "stale": False},
+    }
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+
+    def fake_stage_mutation(session, **kwargs):
+        del kwargs
+        session.scene_state["cw"]["stage"] = {"stale": True}
+        return session
+
+    monkeypatch.setattr(f"trail.daemon.cw_service.{mutation_name}", fake_stage_mutation)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id=request_id,
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method=method,
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"] == {"stale": True}
+    assert payload["screenshot"] == f".trail/shots/{request_id}.png"
+    assert service.load_session(session.session_id).scene_state["cw"]["stage"] == {"stale": True}
+    assert service.request_status(request_id)["final_state"] == "completed"
+    assert runtime.capture_requests == [(False, request_id)]
+
+
 def test_command_service_handles_cw_portal_restart_and_reuses_request_journal(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 
