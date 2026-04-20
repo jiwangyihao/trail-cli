@@ -1587,6 +1587,137 @@ def test_cw_start_continues_pages_between_home_and_invest(
     assert runtime.wait_calls == expected_waits
 
 
+def test_cw_start_entry_new_allows_highest_when_already_selected(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    cards = _portal_cards()
+    entry_new_box = _box("entry.new", left=140, top=180)
+    start_game_box = _box("entry.start_game", left=240, top=280)
+    settle_box = _box("stage.settle", left=340, top=380)
+    boss_preview_box = _box("stage.boss_preview", left=440, top=480)
+    invest_box = _box("entry.invest_environment", left=540, top=580)
+    runtime = StartRuntime(
+        locate_results={
+            _asset("entry.new"): entry_new_box,
+        },
+        wait_results={
+            _asset("entry.new"): entry_new_box,
+            _asset("entry.start_game"): start_game_box,
+            _asset("stage.settle"): settle_box,
+            _asset("stage.boss_preview"): boss_preview_box,
+            _asset("entry.invest_environment"): invest_box,
+        },
+        ocr_result=[{"text": "货币战争"}],
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "home"},
+        "slots": {"stale": False, "hand": ["银狼"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"stale": False, "steps": [2]},
+    }
+    service.save_session(session)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-start-entry-new-highest-already",
+        mode="new",
+        difficulty="highest",
+        battle_mode="standard",
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"] == {
+        "cards": cards,
+        "mode": "new",
+        "difficulty": "highest",
+        "battle_mode": "standard",
+        "stale": False,
+    }
+    assert persisted.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": "new",
+        "difficulty": "highest",
+        "battle_mode": "standard",
+    }
+    assert persisted.scene_state["cw"]["slots"] == {"stale": True, "hand": ["银狼"]}
+    assert persisted.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
+    assert persisted.scene_state["cw"]["sell_plan"] == {"stale": True}
+    assert runtime.clicks == [
+        (300, 250),
+        entry_new_box.center,
+        start_game_box.center,
+        settle_box.center,
+        boss_preview_box.center,
+    ]
+    assert runtime.wait_calls == [
+        _asset("entry.new"),
+        _asset("entry.start_game"),
+        _asset("stage.settle"),
+        _asset("stage.boss_preview"),
+        _asset("entry.invest_environment"),
+    ]
+
+
+def test_cw_start_entry_new_clicks_highest_when_button_visible(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    cards = _portal_cards()
+    entry_new_box = _box("entry.new", left=140, top=180)
+    highest_box = _box("entry.difficulty.highest", left=190, top=220)
+    start_game_box = _box("entry.start_game", left=240, top=280)
+    settle_box = _box("stage.settle", left=340, top=380)
+    boss_preview_box = _box("stage.boss_preview", left=440, top=480)
+    invest_box = _box("entry.invest_environment", left=540, top=580)
+    runtime = StartRuntime(
+        locate_results={
+            _asset("entry.new"): entry_new_box,
+            _asset("entry.difficulty.highest"): highest_box,
+        },
+        wait_results={
+            _asset("entry.new"): entry_new_box,
+            _asset("entry.start_game"): start_game_box,
+            _asset("stage.settle"): settle_box,
+            _asset("stage.boss_preview"): boss_preview_box,
+            _asset("entry.invest_environment"): invest_box,
+        },
+        ocr_result=[{"text": "货币战争"}],
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "home"},
+        "slots": {"stale": False, "hand": ["银狼"]},
+        "shop": {"stale": False, "opened": True},
+        "sell_plan": {"stale": False, "steps": [2]},
+    }
+    service.save_session(session)
+
+    envelope = _run_cw_start(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-start-entry-new-highest-visible",
+        mode="new",
+        difficulty="highest",
+        battle_mode="standard",
+    )
+
+    assert envelope["ok"] is True
+    assert runtime.clicks == [
+        (300, 250),
+        entry_new_box.center,
+        highest_box.center,
+        start_game_box.center,
+        settle_box.center,
+        boss_preview_box.center,
+    ]
+
+
 def test_cw_start_boss_preview_preserves_known_entry_truth_source(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
     cards = _portal_cards()

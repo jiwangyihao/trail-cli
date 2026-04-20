@@ -205,7 +205,9 @@ def _select_difficulty(runtime, *, difficulty: str) -> None:
         return
 
     if difficulty == "highest":
-        _click_box_center(runtime, _wait(runtime, "entry.difficulty.highest"))
+        box = _locate(runtime, "entry.difficulty.highest")
+        if box is not None:
+            _click_box_center(runtime, box)
         return
 
     if difficulty == "lowest":
