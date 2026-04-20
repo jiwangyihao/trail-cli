@@ -10,22 +10,39 @@ from trail.output.rendering import print_output
 
 DEFAULT_CW_STAGE_WAIT_TIMEOUT = 120
 
-cw_app = typer.Typer(no_args_is_help=True)
-cw_guide_app = typer.Typer(no_args_is_help=True)
-portal_app = typer.Typer(no_args_is_help=True)
-stage_app = typer.Typer(no_args_is_help=True)
-slots_app = typer.Typer(no_args_is_help=True)
-shop_app = typer.Typer(no_args_is_help=True)
-crystals_app = typer.Typer(no_args_is_help=True)
-hand_app = typer.Typer(no_args_is_help=True)
-replenish_app = typer.Typer(no_args_is_help=True)
-invest_app = typer.Typer(no_args_is_help=True)
-encounter_app = typer.Typer(no_args_is_help=True)
-fortune_app = typer.Typer(no_args_is_help=True)
-boss_preview_app = typer.Typer(no_args_is_help=True)
-battle_app = typer.Typer(no_args_is_help=True)
-settle_app = typer.Typer(no_args_is_help=True)
-event_app = typer.Typer(no_args_is_help=True)
+CW_APP_HELP = "货币战争固定流程命令：enter 到首页，start 从首页进入投资环境页；其余分组处理局内阶段与资源。"
+CW_GUIDE_HELP = "应用或回顾当前对局已选攻略。"
+CW_PORTAL_HELP = "投资环境页上的选择/刷新/重开动作。"
+CW_STAGE_HELP = "检测或等待当前货币战争阶段。"
+CW_SLOTS_HELP = "读取编队槽位并执行换位或上场。"
+CW_SHOP_HELP = "读取商店、购买槽位并刷新或关闭。"
+CW_CRYSTALS_HELP = "收取当前局内结晶产出。"
+CW_HAND_HELP = "出售手牌或生成出售候选。"
+CW_REPLENISH_HELP = "读取或选择局内补给事件。"
+CW_INVEST_HELP = "读取或选择局内 invest 事件。"
+CW_ENCOUNTER_HELP = "读取或选择局内遭遇事件。"
+CW_FORTUNE_HELP = "读取或选择局内命运卜者事件。"
+CW_BOSS_PREVIEW_HELP = "确认首领预览并继续战斗前阶段。"
+CW_BATTLE_HELP = "处理战斗开始与战后继续。"
+CW_SETTLE_HELP = "处理整局结算链页面。"
+CW_EVENT_HELP = "处理其余通用/特殊事件节点。"
+
+cw_app = typer.Typer(no_args_is_help=True, help=CW_APP_HELP)
+cw_guide_app = typer.Typer(no_args_is_help=True, help=CW_GUIDE_HELP)
+portal_app = typer.Typer(no_args_is_help=True, help=CW_PORTAL_HELP)
+stage_app = typer.Typer(no_args_is_help=True, help=CW_STAGE_HELP)
+slots_app = typer.Typer(no_args_is_help=True, help=CW_SLOTS_HELP)
+shop_app = typer.Typer(no_args_is_help=True, help=CW_SHOP_HELP)
+crystals_app = typer.Typer(no_args_is_help=True, help=CW_CRYSTALS_HELP)
+hand_app = typer.Typer(no_args_is_help=True, help=CW_HAND_HELP)
+replenish_app = typer.Typer(no_args_is_help=True, help=CW_REPLENISH_HELP)
+invest_app = typer.Typer(no_args_is_help=True, help=CW_INVEST_HELP)
+encounter_app = typer.Typer(no_args_is_help=True, help=CW_ENCOUNTER_HELP)
+fortune_app = typer.Typer(no_args_is_help=True, help=CW_FORTUNE_HELP)
+boss_preview_app = typer.Typer(no_args_is_help=True, help=CW_BOSS_PREVIEW_HELP)
+battle_app = typer.Typer(no_args_is_help=True, help=CW_BATTLE_HELP)
+settle_app = typer.Typer(no_args_is_help=True, help=CW_SETTLE_HELP)
+event_app = typer.Typer(no_args_is_help=True, help=CW_EVENT_HELP)
 
 
 class EnterMode(StrEnum):

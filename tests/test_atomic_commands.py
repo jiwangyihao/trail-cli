@@ -19,6 +19,31 @@ from tests.support.fake_daemon import build_success_response, write_ready_manife
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+CW_HELP_COMMANDS = {
+    "enter",
+    "start",
+    "guide",
+    "portal",
+    "stage",
+    "slots",
+    "shop",
+    "crystals",
+    "hand",
+    "replenish",
+    "invest",
+    "encounter",
+    "fortune",
+    "boss-preview",
+    "battle",
+    "settle",
+    "event",
+}
+
+
+def _normalize_help(output: str) -> str:
+    return " ".join(output.split())
+
+
 def _maybe_import_start_module():
     try:
         return importlib.import_module("trail.commands.start")
@@ -56,6 +81,39 @@ def _extract_help_option_block(output: str, option_name: str) -> str:
             block.append(line)
 
     return " ".join(block)
+
+
+def _extract_help_command_block(output: str, command_name: str) -> str:
+    lines = output.splitlines()
+    block: list[str] = []
+    capture = False
+    in_commands = False
+
+    for raw_line in lines:
+        line = raw_line.strip(" │")
+        if "Commands" in line:
+            in_commands = True
+            continue
+        if not line:
+            if capture and block:
+                break
+            continue
+
+        if not in_commands:
+            continue
+
+        token = line.split()[0]
+        if token == command_name:
+            capture = True
+            block.append(line)
+            continue
+
+        if capture:
+            if token in CW_HELP_COMMANDS:
+                break
+            block.append(line)
+
+    return _normalize_help(" ".join(block))
 
 
 @pytest.fixture(autouse=True)
@@ -1478,23 +1536,75 @@ def test_cli_help_exposes_top_level_command_groups(cli_runner):
 
 def test_cw_help_exposes_scene_command_groups(cli_runner):
     result = cli_runner.invoke(app, ["cw", "--help"])
+    normalized = _normalize_help(result.output)
 
     assert result.exit_code == 0
-    assert "enter" in result.stdout
-    assert "guide" in result.stdout
-    assert "stage" in result.stdout
-    assert "slots" in result.stdout
-    assert "shop" in result.stdout
-    assert "crystals" in result.stdout
-    assert "hand" in result.stdout
-    assert "replenish" in result.stdout
-    assert "invest" in result.stdout
-    assert "encounter" in result.stdout
-    assert "fortune" in result.stdout
-    assert "boss-preview" in result.stdout
-    assert "battle" in result.stdout
-    assert "settle" in result.stdout
-    assert "event" in result.stdout
+    assert "货币战争固定流程命令" in normalized
+    assert "enter 到首页" in normalized
+    assert "start 从首页进入投资环境页" in normalized
+    assert "enter" in _extract_help_command_block(result.output, "enter")
+    assert "start" in _extract_help_command_block(result.output, "start")
+
+    expected_blocks = {
+        "guide": ("应用", "回顾", "当前对局", "已选攻略"),
+        "portal": ("投资环境页", "选择", "刷新", "重开"),
+        "stage": ("检测", "等待", "阶段"),
+        "slots": ("编队",),
+        "shop": ("商店",),
+        "crystals": ("结晶",),
+        "hand": ("手牌",),
+        "replenish": ("补给事件",),
+        "invest": ("局内", "invest", "事件"),
+        "encounter": ("遭遇事件",),
+        "fortune": ("命运卜者事件",),
+        "boss-preview": ("首领预览",),
+        "battle": ("战斗",),
+        "settle": ("结算",),
+        "event": ("通用", "特殊事件"),
+    }
+
+    for command_name, anchors in expected_blocks.items():
+        block = _extract_help_command_block(result.output, command_name)
+        assert command_name in block
+        for anchor in anchors:
+            assert anchor in block
+
+
+@pytest.mark.parametrize(
+    ("group_name", "expected_anchors"),
+    [
+        ("portal", ("投资环境页", "选择", "刷新", "重开")),
+        ("invest", ("局内", "invest", "事件")),
+        ("stage", ("检测", "等待", "阶段")),
+        ("guide", ("应用", "回顾", "当前对局", "已选攻略")),
+        ("shop", ("商店", "购买", "刷新", "关闭")),
+        ("event", ("通用", "特殊事件")),
+    ],
+)
+def test_cw_group_help_describes_expected_boundary(cli_runner, group_name, expected_anchors):
+    result = cli_runner.invoke(app, ["cw", group_name, "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    for anchor in expected_anchors:
+        assert anchor in normalized
+
+
+@pytest.mark.parametrize(
+    ("group_name", "forbidden_phrase"),
+    [
+        ("portal", "进入投资环境页"),
+        ("guide", "攻略列表"),
+        ("stage", "推进流程"),
+        ("event", "处理所有事件"),
+    ],
+)
+def test_cw_group_help_avoids_forbidden_phrases(cli_runner, group_name, forbidden_phrase):
+    result = cli_runner.invoke(app, ["cw", group_name, "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    assert forbidden_phrase not in normalized
 
 
 def test_cw_enter_help_exposes_home_only_contract(cli_runner):

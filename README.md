@@ -42,7 +42,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
   - `攻略优先` / `环境优先`
   - `standard` / `overclock`
   - 是否接受刷开局（后续是否允许 `trail cw portal.refresh` / `trail cw portal.restart`）
-- 进入投资环境页：`trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest --battle-mode standard|overclock`
+- `trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest --battle-mode standard|overclock` 负责把首页推进到投资环境页
 - 如果先按环境选攻略，再用：`trail guide list cw --portal <title>` 或 `trail guide list cw --portal-id <id>`
 - 查看返回的三卡摘要后，根据需要执行：
   - `trail cw portal.select --session <id> --card-idx <n>`
@@ -50,6 +50,8 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
   - `trail cw portal.restart --session <id>`
 - 在进入游戏并完成投资环境选择后，再执行：`trail cw guide apply --session <id> --lineup-id <lineup_id>`
 - 如需回顾当前已应用攻略：`trail cw guide current --session <id>`
+- `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
+- `trail cw invest.read|choose` 继续只表示局内 invest 事件，不是开局投资环境页命令
 
 ## 命令面概览
 
@@ -64,7 +66,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `image`：进阶模板识别与等待
 - `input`：点击、拖拽、按键
 - `state`：进阶读取 session 与 scene state
-- `cw`：货币战争固定流程命令，包含 `enter`、`start`、`portal`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
+- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；其余分组处理局内阶段与资源，包含 `portal`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
 ## Window Launch
 
@@ -180,6 +182,7 @@ recover action=daemon.request_status request=req-42
 - `skills/trail-hsr` 负责 `trail start`、`trail ocr read`、`trail input ...` 的 simple-first 起手与场景切换
 - `skills/trail-hsr-advanced` 负责 daemon / window / session / screen / image / state 等进阶命令
 - `trail cw enter` 只负责把页面带到货币战争首页；真正进入投资环境页要用 `trail cw start`
+- `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
 - `trail cw portal.select|refresh|restart` 只用于首页之后的投资环境选择页
 - `trail cw invest.read|choose` 继续表示局内 invest 事件，不是开局投资环境页命令
 - `skills/trail-hsr` 负责 session、窗口检查与场景切换

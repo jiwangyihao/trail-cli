@@ -31,6 +31,7 @@ description: Use when an agent needs to fetch or apply a Currency Wars guide art
 
 - `trail guide fetch cw` 直接返回攻略内容，不自动修改 session，也不把 artifact 当主要产出
 - `trail guide list cw --portal ...` / `--portal-id ...` 适合在“环境优先”流程里，根据投资环境页三卡摘要反查更合适的攻略
+- `trail cw guide apply/current` 只面向当前对局已选攻略；攻略查询与拉取继续使用顶层 `trail guide ... cw`
 - `trail cw guide apply` 必须显式传入 `--lineup-id`（兼容旧 `--guide` 别名时，也应优先把它理解成 lineup_id）
 - 不要把 `trail cw enter` 视为可以立刻 apply 攻略的时机；`cw enter` 现在只到首页，真正进入游戏前还需要 `trail cw start` 和 `trail cw portal.select`
 - artifact 记录发生在 apply 成功后，便于后续通过 `trail cw guide current` 回顾当前实际应用的攻略
