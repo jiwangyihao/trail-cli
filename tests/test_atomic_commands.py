@@ -1711,6 +1711,20 @@ def test_cw_guide_help_mentions_snapshot_id(cli_runner):
     assert "artifact=" not in normalized
 
 
+def test_cw_slots_read_help_describes_slot_as_targeted_confirmation(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "slots", "read", "--help"])
+    normalized = _normalize_help(result.output)
+    slot_help = _normalize_help(_extract_help_option_block(result.output, "--slot"))
+
+    assert result.exit_code == 0
+    assert "--slot" in result.output
+    assert "先看当前截图" in normalized
+    assert "有角色但名字不确定" in normalized
+    assert "不传 --slot 时仍保留全量读取" in normalized
+    assert "定向确认" in slot_help
+    assert "全量读取" in slot_help
+
+
 def test_cw_enter_help_exposes_home_only_contract(cli_runner):
     result = cli_runner.invoke(app, ["cw", "enter", "--help"])
 

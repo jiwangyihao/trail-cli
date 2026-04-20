@@ -153,10 +153,20 @@ def cw_stage_wait(
     _print_cw("cw.stage.wait", session_id=session, payload={"timeout": timeout})
 
 
-@slots_app.command("read")
+@slots_app.command(
+    "read",
+    help=(
+        "读取编队槽位；先看当前截图，再对看见有角色但名字不确定的槽位显式传 --slot 做定向确认。"
+        "不传 --slot 时仍保留全量读取语义，作为完整快照兜底。"
+    ),
+)
 def cw_slots_read(
     session: str = typer.Option(..., "--session"),
-    slot: list[str] | None = typer.Option(None, "--slot"),
+    slot: list[str] | None = typer.Option(
+        None,
+        "--slot",
+        help="定向确认名字不确定槽位；不传 --slot 时仍保留全量读取。",
+    ),
 ) -> None:
     _print_cw("cw.slots.read", session_id=session, payload={"slot": list(slot or []) or None})
 
