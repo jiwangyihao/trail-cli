@@ -261,6 +261,10 @@ def test_project_agents_declares_renderer_contracts() -> None:
     assert "trail.output.debug.collect_debug_events" in agents
     assert "trail.output.debug.render_debug_lines" in agents
     assert "当前 YAML allowlist 是 `daemon.status`、`state.dump`、`guide.fetch.cw`、`guide.config.cw`。" in agents
+    assert "guide.list.cw 的默认文本改用 攻略ID/攻略标题/版本/主C/攻略标签/最终阵容" in agents
+    assert "cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`" in agents
+    assert "cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id" in agents
+    assert "guide.config.cw` 使用 `赛季/子赛季/大版本/搜牌档位/羁绊/角色/角色标签/投资环境`" in agents
     assert "README.md` 示例与说明" in agents
     assert "renderer 单测" in agents
     assert "CLI stdout 测试或 RPC/契约测试增量" in agents

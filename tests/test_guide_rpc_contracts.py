@@ -173,12 +173,12 @@ def test_guide_config_renders_summary_and_yaml(cli_runner, fake_daemon_client, t
     assert text_result.exit_code == 0
     assert yaml_result.exit_code == 0
     assert text_result.stdout.splitlines() == [
-        "ok guide.config.cw season=12 sub_season=3 big_version=3.2",
-        "info lineup_levels=1 traits=2 roles=3 role_tags=1 portal_list=2",
+        "ok guide.config.cw 赛季=12 子赛季=3 大版本=3.2",
+        "info 搜牌档位=1 羁绊=2 角色=3 角色标签=1 投资环境=2",
     ]
     assert yaml_result.stdout.splitlines()[0:2] == [
-        "ok guide.config.cw season=12 sub_season=3 big_version=3.2",
-        "info lineup_levels=1 traits=2 roles=3 role_tags=1 portal_list=2",
+        "ok guide.config.cw 赛季=12 子赛季=3 大版本=3.2",
+        "info 搜牌档位=1 羁绊=2 角色=3 角色标签=1 投资环境=2",
     ]
     assert "meta:" in yaml_result.stdout
     assert "portal_list:" in yaml_result.stdout
@@ -215,6 +215,7 @@ def test_guide_list_renders_paging_and_facts(cli_runner, fake_daemon_client, tmp
                         {
                             "lineup_id": "abc",
                             "title": "7群攻2银河学者",
+                            "version": "3.2",
                             "carry_roles": ["希儿", "停云"],
                             "final_role_cards": [
                                 {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
@@ -260,8 +261,8 @@ def test_guide_list_renders_paging_and_facts(cli_runner, fake_daemon_client, tmp
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
         "ok guide.list.cw count=1 more=1 next=next-token",
-        "guide id=abc title=7群攻2银河学者 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
-        "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3|佩拉/star:4/rarity:2",
+        "guide 攻略ID=abc 攻略标题=7群攻2银河学者 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45",
+        "guide idx=1 最终阵容=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3|佩拉/star:4/rarity:2",
     ]
     assert client.calls == [
         {
@@ -354,6 +355,7 @@ def test_guide_list_portal_payload_mapping_and_filtered_rendering(cli_runner, fa
                         {
                             "lineup_id": "portal-guide",
                             "title": "购物阵容",
+                            "version": "3.2",
                             "carry_roles": ["希儿"],
                             "final_role_cards": [
                                 {"name": "希儿", "star": 5, "rarity": 3, "is_carry": True},
@@ -376,8 +378,8 @@ def test_guide_list_portal_payload_mapping_and_filtered_rendering(cli_runner, fa
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
         "ok guide.list.cw count=1 more=0",
-        "guide id=portal-guide title=购物阵容 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
-        "guide idx=1 final_roles=希儿/carry:1/star:5/rarity:3",
+        "guide 攻略ID=portal-guide 攻略标题=购物阵容 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45",
+        "guide idx=1 最终阵容=希儿/carry:1/star:5/rarity:3",
     ]
     assert client.calls == [
         {
@@ -457,6 +459,7 @@ def test_guide_list_multi_portal_payload_mapping_and_grouped_rendering(cli_runne
                                 {
                                     "lineup_id": "shop-guide",
                                     "title": "购物区优选阵容",
+                                    "version": "3.2",
                                     "carry_roles": ["希儿"],
                                     "final_role_cards": [{"name": "希儿", "star": 5, "rarity": 3, "is_carry": True}],
                                     "support_hard": True,
@@ -475,6 +478,7 @@ def test_guide_list_multi_portal_payload_mapping_and_grouped_rendering(cli_runne
                                 {
                                     "lineup_id": "event-guide",
                                     "title": "事件区优选阵容",
+                                    "version": "3.2",
                                     "carry_roles": ["停云"],
                                     "final_role_cards": [{"name": "停云", "star": 4, "rarity": 2, "is_carry": True}],
                                     "support_hard": False,
@@ -500,13 +504,88 @@ def test_guide_list_multi_portal_payload_mapping_and_grouped_rendering(cli_runne
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
         "ok guide.list.cw groups=2 count=2 more=0",
-        "guide portal=购物区 count=1 more=0",
-        "guide portal=购物区 id=shop-guide title=购物区优选阵容 idx=1 carry=希儿 hard=1 change_equip=0 expert=1 like=123 favour=45",
-        "guide portal=购物区 idx=1 final_roles=希儿/carry:1/star:5/rarity:3",
-        "guide portal=事件区 count=1 more=0",
-        "guide portal=事件区 id=event-guide title=事件区优选阵容 idx=1 carry=停云 hard=0 change_equip=1 expert=0 like=22 favour=9",
-        "guide portal=事件区 idx=1 final_roles=停云/carry:1/star:4/rarity:2",
+        "guide 投资环境=购物区 count=1 more=0",
+        "guide 投资环境=购物区 攻略ID=shop-guide 攻略标题=购物区优选阵容 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45",
+        "guide 投资环境=购物区 idx=1 最终阵容=希儿/carry:1/star:5/rarity:3",
+        "guide 投资环境=事件区 count=1 more=0",
+        "guide 投资环境=事件区 攻略ID=event-guide 攻略标题=事件区优选阵容 版本=3.2 idx=1 主C=停云 攻略标签=#星徽攻略 点赞=22 收藏=9",
+        "guide 投资环境=事件区 idx=1 最终阵容=停云/carry:1/star:4/rarity:2",
     ]
+    assert client.calls == [
+        {
+            "method": "guide.list.cw",
+            "payload": {
+                "page": 1,
+                "limit": 3,
+                "trait": None,
+                "trait_id": None,
+                "role": None,
+                "role_id": None,
+                "order": None,
+                "next_page_token": None,
+                "match_change_job": None,
+                "match_hard": None,
+                "portal": ["购物区", "事件区"],
+            },
+            "workspace_root": str(tmp_path),
+            "session_id": None,
+            "verbose": False,
+        }
+    ]
+
+
+def test_guide_list_grouped_paged_multi_portal_rendering_keeps_next_only_on_group_line(
+    cli_runner, fake_daemon_client, tmp_path: Path
+):
+    client = fake_daemon_client(
+        {
+            "guide.list.cw": build_success_response(
+                request_id="req-guide-list-grouped-paged",
+                data={
+                    "portals": [
+                        {
+                            "portal_title": "购物区",
+                            "list": [
+                                {
+                                    "lineup_id": "shop-guide",
+                                    "title": "购物区优选阵容",
+                                    "version": "3.2",
+                                    "carry_roles": ["希儿"],
+                                    "support_hard": True,
+                                    "like": 123,
+                                    "favour": 45,
+                                }
+                            ],
+                            "more": True,
+                            "next_page_token": "group-token",
+                        },
+                        {
+                            "portal_title": "事件区",
+                            "list": [],
+                            "more": True,
+                            "next_page_token": "group-token",
+                        }
+                    ],
+                    "count": 1,
+                    "more": True,
+                },
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        ["guide", "list", "cw", "--portal", "购物区", "--portal", "事件区", "--limit", "3"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "ok guide.list.cw groups=2 count=1 more=1",
+        "guide 投资环境=购物区 count=1 more=1 next=group-token",
+        "guide 投资环境=购物区 攻略ID=shop-guide 攻略标题=购物区优选阵容 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈 点赞=123 收藏=45",
+        "guide 投资环境=事件区 count=0 more=1 next=group-token",
+    ]
+    assert "next=group-token" not in result.stdout.splitlines()[0]
     assert client.calls == [
         {
             "method": "guide.list.cw",
@@ -694,7 +773,7 @@ def test_guide_list_role_fuzzy_success_renders_candidates_and_warning(
         "info role_query=黑搭 role_resolution=fuzzy resolved=黑塔 candidates=2",
         "opt query=黑搭 role=黑塔 id=1001 selected=1 score=0.96 front_back=front traits=智识 role_tags=输出|智识",
         "opt query=黑搭 role=大黑塔 id=1002 selected=0 score=0.82 front_back=front traits=智识 role_tags=输出",
-        "guide id=lineup-herta title=黑塔阵容 version=3.2 idx=1 carry=黑塔 hard=1 change_equip=0 expert=0 like=21 favour=8",
+        "guide 攻略ID=lineup-herta 攻略标题=黑塔阵容 版本=3.2 idx=1 主C=黑塔 攻略标签=#适用超频博弈 点赞=21 收藏=8",
         "warn code=GUIDE_ROLE_FUZZY_MATCH query=黑搭 resolved=黑塔 msg=角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
     ]
 
@@ -776,7 +855,7 @@ def test_guide_list_role_exact_ambiguous_success_renders_candidates_and_warning(
         "info role_query=银狼 role_resolution=exact_ambiguous resolved=银狼 candidates=2",
         "opt query=银狼 role=银狼 id=1003 selected=1 score=1.00 front_back=back traits=虚无 role_tags=减防",
         "opt query=银狼 role=银狼Lv.999 id=1004 selected=0 score=0.86 front_back=back traits=虚无 role_tags=减防",
-        "guide id=lineup-wolf title=银狼阵容 version=3.2 idx=1 carry=银狼 hard=0 change_equip=1 expert=1 like=13 favour=5",
+        "guide 攻略ID=lineup-wolf 攻略标题=银狼阵容 版本=3.2 idx=1 主C=银狼 攻略标签=#星徽攻略|#专家顾问 点赞=13 收藏=5",
         "warn code=GUIDE_ROLE_SIMILAR_CANDIDATES query=银狼 resolved=银狼 msg=角色名虽已精确命中，但存在高相似候选，请确认目标角色是否正确",
     ]
 
@@ -872,7 +951,7 @@ def test_guide_list_multi_role_queries_keep_duplicate_candidate_blocks(
         "opt query=黑搭 role=黑塔 id=1001 selected=1 score=0.96 front_back=front traits=智识 role_tags=输出|智识",
         "info role_query=黑塔塔 role_resolution=fuzzy resolved=黑塔 candidates=1",
         "opt query=黑塔塔 role=黑塔 id=1001 selected=1 score=0.88 front_back=front traits=智识 role_tags=输出|智识",
-        "guide id=lineup-herta title=黑塔阵容 version=3.2 idx=1 carry=黑塔 hard=1 change_equip=0 expert=0 like=21 favour=8",
+        "guide 攻略ID=lineup-herta 攻略标题=黑塔阵容 版本=3.2 idx=1 主C=黑塔 攻略标签=#适用超频博弈 点赞=21 收藏=8",
         "warn code=GUIDE_ROLE_FUZZY_MATCH query=黑搭 resolved=黑塔 msg=角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
         "warn code=GUIDE_ROLE_FUZZY_MATCH query=黑塔塔 resolved=黑塔 msg=角色名未精确命中，已按最相近角色继续筛选，请确认目标角色是否正确",
     ]
@@ -986,6 +1065,34 @@ def test_guide_list_rejects_role_and_role_id_together(cli_runner):
     assert result.stdout.splitlines() == [
         "fail guide.list.cw code=GUIDE_INPUT_INVALID",
         'why msg="guide options \'--role\' and \'--role-id\' are mutually exclusive"',
+    ]
+
+
+def test_guide_list_failure_keeps_fail_request_why_warn_order(cli_runner, fake_daemon_client):
+    fake_daemon_client(
+        {
+            "guide.list.cw": {
+                "request_id": "req-portal-invalid",
+                "ok": False,
+                "data": {},
+                "screenshot": None,
+                "timing": {},
+                "warnings": [{"portal": "购物区", "score": 0.98}],
+                "references": [],
+                "debug": {"request_id": "req-portal-invalid"},
+                "error": {"code": "GUIDE_PORTAL_INVALID", "message": "guide portal invalid: 购物曲"},
+            }
+        }
+    )
+
+    result = cli_runner.invoke(app, ["guide", "list", "cw", "--portal", "购物曲"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail guide.list.cw code=GUIDE_PORTAL_INVALID",
+        "request id=req-portal-invalid",
+        'why msg="guide portal invalid: 购物曲"',
+        "warn portal=购物区 score=0.98",
     ]
 
 
