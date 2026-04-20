@@ -1886,7 +1886,14 @@ def test_apply_cw_guide_via_ui_confirm_settle_test_rejects_zero_delay(monkeypatc
         _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch)
 
 
-def _exercise_apply_cw_guide_apply_ready_settle(guide_module, monkeypatch, *, shift_apply_box: bool = False) -> dict[str, object]:
+def _exercise_apply_cw_guide_apply_ready_settle(
+    guide_module,
+    monkeypatch,
+    *,
+    shift_apply_box: bool = False,
+    drop_apply_once: bool = False,
+    drop_apply_after_checks: int = 0,
+) -> dict[str, object]:
     apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
     assert apply_cw_guide_via_ui is not None
     assert guide_module.GUIDE_APPLY_READY_DELAY > 0, "GUIDE_APPLY_READY_DELAY must stay > 0"
@@ -1914,6 +1921,7 @@ def _exercise_apply_cw_guide_apply_ready_settle(guide_module, monkeypatch, *, sh
         def __init__(self):
             self._current_apply_box = initial_apply_box
             self._stable_checks_remaining = expected_stable_checks
+            self._apply_dropped = False
 
         def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
             if template == apply_template:
@@ -1935,6 +1943,12 @@ def _exercise_apply_cw_guide_apply_ready_settle(guide_module, monkeypatch, *, sh
             if template == enter_code_template:
                 return Box(left=10, top=20, width=40, height=20, source=template)
             if template == apply_template:
+                if drop_apply_once and not self._apply_dropped and state["stable_checks"] >= drop_apply_after_checks:
+                    self._apply_dropped = True
+                    state["stable_checks"] = 0
+                    self._stable_checks_remaining = expected_stable_checks + 1
+                    events.append("apply_missing")
+                    return None
                 if shift_apply_box and self._current_apply_box is initial_apply_box:
                     self._current_apply_box = shifted_apply_box
                     state["stable_checks"] = 0
@@ -1991,6 +2005,77 @@ def test_apply_cw_guide_via_ui_relocates_apply_button_after_settle_shift(monkeyp
     assert "apply_shift" in result["events"]
     assert ("apply_locate", result["final_apply_center"]) in result["events"]
     assert result["events"].index("apply_shift") < result["events"].index("apply_click")
+
+
+def test_apply_cw_guide_via_ui_tolerates_transient_apply_miss_during_settle(monkeypatch):
+    guide_module = load_cw_guide_module()
+    result = _exercise_apply_cw_guide_apply_ready_settle(guide_module, monkeypatch, drop_apply_once=True)
+
+    assert "apply_missing" in result["events"]
+    assert result["events"].index("apply_missing") < result["events"].index("apply_click")
+
+
+def test_apply_cw_guide_via_ui_restarts_stability_window_after_apply_miss(monkeypatch):
+    guide_module = load_cw_guide_module()
+    result = _exercise_apply_cw_guide_apply_ready_settle(
+        guide_module,
+        monkeypatch,
+        drop_apply_once=True,
+        drop_apply_after_checks=2,
+    )
+
+    locate_events_after_missing = []
+    missing_seen = False
+    for event in result["events"]:
+        if event == "apply_missing":
+            missing_seen = True
+            continue
+        if event == "apply_click":
+            break
+        if missing_seen and isinstance(event, tuple) and event[:1] == ("apply_locate",):
+            locate_events_after_missing.append(event)
+
+    assert len(locate_events_after_missing) == result["expected_stable_checks"] + 1
+
+
+def test_apply_cw_guide_via_ui_fails_when_apply_button_never_stabilizes(monkeypatch):
+    guide_module = load_cw_guide_module()
+    apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
+    assert apply_cw_guide_via_ui is not None
+    monkeypatch.setattr(guide_module, "GUIDE_UI_WAIT_TIMEOUT", 1.0)
+
+    apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
+    first_box = Box(left=200, top=20, width=40, height=20, source=apply_template)
+    second_box = Box(left=260, top=20, width=40, height=20, source=apply_template)
+
+    class RuntimeStub:
+        def __init__(self):
+            self._toggle = False
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            if template == apply_template:
+                return first_box
+            return Box(left=10, top=20, width=40, height=20, source=template)
+
+        def click_point(self, x: float, y: float, **kwargs):
+            return None
+
+        def type_text(self, text: str):
+            return None
+
+        def locate(self, template: str, **kwargs):
+            if template == apply_template:
+                self._toggle = not self._toggle
+                return first_box if self._toggle else second_box
+            return Box(left=10, top=20, width=40, height=20, source=template)
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            return None
+
+    with pytest.raises(TrailError) as exc_info:
+        apply_cw_guide_via_ui(RuntimeStub(), share_code="##demo##")
+
+    assert exc_info.value.code == "GUIDE_UI_NOT_FOUND"
 
 
 def test_apply_cw_guide_via_ui_apply_ready_test_rejects_zero_delay(monkeypatch):

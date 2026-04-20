@@ -139,7 +139,9 @@ def _wait_required_template(runtime, *, alias: str):
     return box
 
 
-def _wait_for_template_to_stabilize(runtime, *, alias: str, settle_delay: float, interval: float):
+def _wait_for_template_to_stabilize(runtime, *, alias: str, timeout: float, settle_delay: float, interval: float):
+    if timeout <= 0:
+        raise AssertionError(f"{alias} wait timeout must stay > 0")
     if settle_delay <= 0:
         raise AssertionError(f"{alias} settle delay must stay > 0")
     if interval <= 0:
@@ -149,17 +151,25 @@ def _wait_for_template_to_stabilize(runtime, *, alias: str, settle_delay: float,
     stable_checks = max(1, math.ceil(settle_delay / interval))
     box = _wait_required_template(runtime, alias=alias)
     stable_count = 0
-    while stable_count < stable_checks:
-        sleep(interval)
+    deadline = monotonic() + timeout
+    while True:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        sleep(min(interval, remaining))
         current = runtime.locate(template)
         if current is None:
-            raise TrailError("GUIDE_UI_NOT_FOUND", f"guide ui element not found: {alias}")
-        if _box_center(current) == _box_center(box):
+            box = None
+            stable_count = 0
+            continue
+        if box is not None and _box_center(current) == _box_center(box):
             stable_count += 1
         else:
             stable_count = 0
         box = current
-    return box
+        if stable_count >= stable_checks:
+            return box
+    raise TrailError("GUIDE_UI_NOT_FOUND", f"guide ui element not found: {alias}")
 
 
 def _is_template_visible(runtime, *, alias: str):
@@ -190,6 +200,7 @@ def apply_cw_guide_via_ui(runtime, *, share_code: str) -> None:
     apply_box = _wait_for_template_to_stabilize(
         runtime,
         alias="guide.apply",
+        timeout=GUIDE_UI_WAIT_TIMEOUT,
         settle_delay=GUIDE_APPLY_READY_DELAY,
         interval=GUIDE_APPLY_SETTLE_INTERVAL,
     )
