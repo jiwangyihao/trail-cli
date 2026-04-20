@@ -68,7 +68,7 @@ class OcrEngine(Protocol):
 class InputDriver(Protocol):
     def ensure_available(self) -> None: ...
     def click(self, x: float, y: float, **kwargs) -> None: ...
-    def drag(self, from_x: float, from_y: float, to_x: float, to_y: float) -> None: ...
+    def drag(self, from_x: float, from_y: float, to_x: float, to_y: float, duration: float | None = None) -> None: ...
     def press(self, key: str) -> None: ...
     def hotkey(self, *keys: str) -> None: ...
     def type_text(self, text: str) -> None: ...
@@ -583,16 +583,17 @@ class RuntimeOperator:
         self._record_trace("click_point", point=[x, y], screen_point=[screen_x, screen_y])
         self._check_foreground_after_input()
 
-    def drag_to(self, from_x: float, from_y: float, to_x: float, to_y: float):
+    def drag_to(self, from_x: float, from_y: float, to_x: float, to_y: float, *, duration: float | None = None):
         self._prepare_input_target()
         screen_from_x, screen_from_y = self._to_screen_point(from_x, from_y)
         screen_to_x, screen_to_y = self._to_screen_point(to_x, to_y)
-        self.input.drag(screen_from_x, screen_from_y, screen_to_x, screen_to_y)
+        self.input.drag(screen_from_x, screen_from_y, screen_to_x, screen_to_y, duration=duration)
         self._mark_input_action()
         self._record_trace(
             "drag_to",
             from_point=[from_x, from_y],
             to_point=[to_x, to_y],
+            duration=duration,
             screen_from=[screen_from_x, screen_from_y],
             screen_to=[screen_to_x, screen_to_y],
         )
@@ -1104,13 +1105,25 @@ class PyAutoGuiInputDriver:
         user32.mouse_event(PyAutoGuiInputDriver.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
     @staticmethod
-    def _virtual_drag(from_x: float, from_y: float, to_x: float, to_y: float) -> None:
+    def _virtual_drag(from_x: float, from_y: float, to_x: float, to_y: float, *, duration: float | None = None) -> None:
         user32 = ctypes.windll.user32
         user32.SetCursorPos(round(from_x), round(from_y))
         user32.mouse_event(PyAutoGuiInputDriver.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-        sleep(0.1)
-        user32.SetCursorPos(round(to_x), round(to_y))
-        sleep(0.1)
+        if duration is None:
+            sleep(0.1)
+            user32.SetCursorPos(round(to_x), round(to_y))
+            sleep(0.1)
+        else:
+            # Step through the path so the game receives a visible swipe instead of an instant cursor jump.
+            steps = max(1, round(duration / 0.02))
+            interval = duration / steps
+            for step in range(1, steps + 1):
+                progress = step / steps
+                user32.SetCursorPos(
+                    round(from_x + (to_x - from_x) * progress),
+                    round(from_y + (to_y - from_y) * progress),
+                )
+                sleep(interval)
         user32.mouse_event(PyAutoGuiInputDriver.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
     @classmethod
@@ -1189,13 +1202,13 @@ class PyAutoGuiInputDriver:
         if sent != len(payload):
             raise TrailError("INPUT_BACKEND_UNAVAILABLE", "windows unicode text input failed")
 
-    def drag(self, from_x: float, from_y: float, to_x: float, to_y: float) -> None:
+    def drag(self, from_x: float, from_y: float, to_x: float, to_y: float, duration: float | None = None) -> None:
         if self._should_use_virtual_screen_path(from_x, from_y, to_x, to_y):
-            self._virtual_drag(from_x, from_y, to_x, to_y)
+            self._virtual_drag(from_x, from_y, to_x, to_y, duration=duration)
             return
         pyautogui = self._load_backend()
         pyautogui.moveTo(from_x, from_y)
-        pyautogui.dragTo(to_x, to_y, duration=0.5)
+        pyautogui.dragTo(to_x, to_y, duration=0.5 if duration is None else duration)
 
     def press(self, key: str) -> None:
         if sys.platform == "win32":

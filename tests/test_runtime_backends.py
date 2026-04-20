@@ -5159,6 +5159,37 @@ def test_pyautogui_input_driver_drag_uses_win32_cursor_for_primary_coords_on_win
     ]
 
 
+def test_pyautogui_input_driver_drag_respects_explicit_duration_on_windows(monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    class User32:
+        def __init__(self):
+            self.calls: list[tuple[str, tuple[int, ...]]] = []
+
+        def SetCursorPos(self, x: int, y: int):
+            self.calls.append(("SetCursorPos", (x, y)))
+            return 1
+
+        def mouse_event(self, flags: int, dx: int, dy: int, data: int, extra: int):
+            self.calls.append(("mouse_event", (flags, dx, dy, data, extra)))
+            return 1
+
+    sleep_calls: list[float] = []
+    user32 = User32()
+    monkeypatch.setattr(operator_module.sys, "platform", "win32")
+    monkeypatch.setattr(operator_module.ctypes, "windll", SimpleNamespace(user32=user32))
+    monkeypatch.setattr(operator_module, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    driver = operator_module.PyAutoGuiInputDriver()
+    driver.drag(960, 1014, 1000, 1020, duration=0.2)
+
+    cursor_positions = [args for name, args in user32.calls if name == "SetCursorPos"]
+    assert cursor_positions[0] == (960, 1014)
+    assert cursor_positions[-1] == (1000, 1020)
+    assert len(cursor_positions) > 2
+    assert sum(sleep_calls) == pytest.approx(0.2)
+
+
 def test_pyautogui_input_driver_press_uses_win32_key_events_on_windows(monkeypatch):
     import trail.runtime.operator as operator_module
 
