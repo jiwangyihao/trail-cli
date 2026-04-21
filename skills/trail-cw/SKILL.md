@@ -1,6 +1,6 @@
 ---
 name: trail-cw
-description: Use when an agent needs to orchestrate a full Currency Wars run by looping on internal Currency Wars stage detection and dispatching to Trail sub-skills.
+description: Use when an agent needs to orchestrate a full Currency Wars run, with `trail cw battle run` as the default battle and settle entry.
 ---
 
 # Skill: trail-cw
@@ -29,8 +29,8 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 3. `cw start` 到投资环境页
 4. 选择投资环境并进入游戏
 5. 在合适时机拉取并应用攻略
-6. 循环：stage detect -> 分发到 slots/shop/replenish/events 子 skill
-7. 直到 settle next / game over
+6. 循环：stage detect -> 分发到 slots/shop/replenish/events 子 skill；常规 battle / settle 链默认执行 `trail cw battle run --session <id> --timeout 570`
+7. 直到 `battle.run` / `game_over` 收口
 
 ## 标准流程
 
@@ -62,14 +62,19 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 9. 循环执行：
     - `trail cw stage detect --session <id>`
     - 根据 `data.value` 分发：
-       - `preparation` 或需要调整编队时，切到 `trail-cw-slots`
+      - `preparation` 或需要调整编队时，切到 `trail-cw-slots`
       - `shop` 时，切到 `trail-cw-shop`
       - `replenish`、`encounter`、`fortune` 时，切到 `trail-cw-replenish`
       - `invest` 时，先根据 screenshot 或页面标题判断；如果 screenshot 或页面标题显示“请选择投资策略”，优先使用 `trail cw strategy detect|refresh|select`；只有普通局内 invest 事件才切到 `trail-cw-replenish`
-      - `boss_preview`、`event`、`settle`、`game_over` 或战斗衔接时，切到 `trail-cw-events`
+      - `boss_preview`、`event` 时，切到 `trail-cw-events`
+      - `battle`、`settle` 或截图显示已经进入 battle / settle 链时，默认执行 `trail cw battle run --session <id> --timeout 570`
+      - `game_over` 时结束整局
     - 每次动作后如果看到 `shot path=...` 和 `info read_image_first=1`，先读图，再看返回的 `data`，不要假设旧状态仍然有效
     - 如果 `detect/read` 与截图观感冲突，以截图为准，再决定下一条显式动作命令
-10. 在 `settle` 阶段执行 `trail cw settle next --session <id>` 后继续下一轮识别；在 `game_over` 后退出
+    - `trail cw battle run` 返回后，先看 `status/result/stage/stale/in_battle` 与本次 screenshot；若已回到非 battle 阶段，继续主循环
+    - 如果 `trail cw battle run` 的 stdout 丢失但还能确认当前 `session_id`，切到 `trail-hsr-advanced`，按它的 control-plane 恢复流程继续处理 stdout-loss / 状态回读
+    - 只有当 `battle.run` 报错、结果与截图矛盾、或用户明确要求手工拆链时，才切到 `trail-cw-battle-advanced`
+10. 在 `game_over` 后退出
 
 ## 执行规则
 
@@ -81,8 +86,12 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 - `trail cw enter` 只到首页，不再直接推进到投资环境页；真正开局一律使用 `trail cw start`
 - `trail cw start` 负责把首页推进到投资环境页，并把 `mode / difficulty / battle_mode` 固化到当前 session
 - `trail cw guide` 只负责当前对局攻略的 apply/current；攻略查询与拉取继续使用 `trail guide ... cw`
+- 在 list 阶段选攻略时，同时读取 `版本` 与 `攻略标签` / `最终阵容`，不要回退到 portal / hard / change_equip / expert 这些旧字段名
 - `trail cw portal select|detect|refresh|restart` 只在投资环境页可用；`detect` 只重建当前三张卡识别结果，不点击、不刷新、不重开，且 detect 后可直接 `select`；`refresh` 才会点击刷新后生成新的三张卡；`restart` 依旧要求已有开局真值，detect 不会补录 `mode/difficulty/battle_mode`；`refresh/restart` 是否允许，先看用户在首页给出的偏好
 - `stage=invest` 时，不要默认走 `trail cw invest read|choose`；如果 screenshot 或页面标题显示“请选择投资策略”，优先使用 `trail cw strategy detect|refresh|select`
+- `trail cw battle run --session <id> --timeout 570` 是常规 battle / settle 主入口；不要把 `trail cw battle start` / `trail cw battle continue` / `trail cw settle next` 当成默认流程
+- 只有在 `battle.run` 报错、结果与截图矛盾、或用户明确要求手工拆链时，才切到 `trail-cw-battle-advanced`
+- 如果 `battle.run` 已在 daemon 内成功收口但 stdout 丢失，切到 `trail-hsr-advanced`，由它负责后续 control-plane 恢复与状态回读
 - 如果当前动作让 `stage` 失效，立刻回到 `trail cw stage detect --session <id>`
 - `continue` 模式表示“继续当前 UI 进度”，不是重新创建 session；只有当 session 中缺少 guide 状态时，才重新走攻略子 skill
 - 不要假设 `read_*` 命令已经穷尽了所有 UI 语义；必要时直接根据 screenshot 做多模态判断后，再调用显式动作命令

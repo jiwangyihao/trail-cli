@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
-from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.stage import mark_cw_stage_stale
 from trail.session.models import SessionModel
 
 OptionChooser = Callable[[int], object]
@@ -194,11 +194,6 @@ BATTLE_START_POINT = _point(0.5, 0.824)
 BATTLE_CONTINUE_POINT = _point(0.5, 0.824)
 
 
-def _invalidate_cw_stage(session: SessionModel) -> None:
-    ensure_cw_state(session)["stage"] = {"stale": True}
-    session.last_stage = None
-
-
 def _build_option_chooser(runtime, *, option_points: dict[int, tuple[float, float]], confirm_point: tuple[float, float]):
     def chooser(option: int) -> None:
         point = option_points.get(option)
@@ -276,7 +271,7 @@ def read_cw_replenish(session: SessionModel) -> dict:
 
 def choose_cw_replenish(session: SessionModel, *, option: int, chooser: OptionChooser) -> SessionModel:
     chooser(option)
-    _invalidate_cw_stage(session)
+    mark_cw_stage_stale(session)
     return session
 
 
@@ -287,7 +282,7 @@ def read_cw_invest(session: SessionModel) -> dict:
 
 def choose_cw_invest(session: SessionModel, *, option: int, chooser: OptionChooser) -> SessionModel:
     chooser(option)
-    _invalidate_cw_stage(session)
+    mark_cw_stage_stale(session)
     return session
 
 
@@ -298,7 +293,7 @@ def read_cw_encounter(session: SessionModel) -> dict:
 
 def choose_cw_encounter(session: SessionModel, *, option: int, chooser: OptionChooser) -> SessionModel:
     chooser(option)
-    _invalidate_cw_stage(session)
+    mark_cw_stage_stale(session)
     return session
 
 
@@ -309,35 +304,35 @@ def read_cw_fortune(session: SessionModel) -> dict:
 
 def choose_cw_fortune(session: SessionModel, *, option: int, chooser: OptionChooser) -> SessionModel:
     chooser(option)
-    _invalidate_cw_stage(session)
+    mark_cw_stage_stale(session)
     return session
 
 
 def confirm_cw_boss_preview(session: SessionModel, *, confirmer: SceneAction) -> SessionModel:
     confirmer()
-    _invalidate_cw_stage(session)
+    mark_cw_stage_stale(session)
     return session
 
 
 def settle_cw_next(session: SessionModel, *, continuer: SceneAction) -> SessionModel:
     continuer()
-    _invalidate_cw_stage(session)
+    mark_cw_stage_stale(session)
     return session
 
 
 def start_cw_battle(session: SessionModel, *, starter: SceneAction) -> SessionModel:
     starter()
-    _invalidate_cw_stage(session)
+    mark_cw_stage_stale(session)
     return session
 
 
 def continue_cw_battle(session: SessionModel, *, continuer: SceneAction) -> SessionModel:
     continuer()
-    _invalidate_cw_stage(session)
+    mark_cw_stage_stale(session)
     return session
 
 
 def handle_cw_event(session: SessionModel, *, handler: EventHandler) -> dict:
     event_type, handled_action = handler()
-    _invalidate_cw_stage(session)
+    mark_cw_stage_stale(session)
     return {"event_type": event_type, "handled_action": handled_action}

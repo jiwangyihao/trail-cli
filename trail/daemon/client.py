@@ -21,6 +21,8 @@ RETRIABLE_TRANSPORT_ERRORS = (
     BrokenPipeError,
 )
 SOCKET_RESPONSE_TIMEOUT_SECONDS = 120.0
+DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS = 570
+CW_BATTLE_RUN_TIMEOUT_BUFFER_SECONDS = 30.0
 
 
 class DaemonTransport(Protocol):
@@ -78,6 +80,21 @@ def is_daemon_control_plane_error(response: dict[str, Any]) -> bool:
     return isinstance(code, str) and code.startswith("DAEMON_")
 
 
+def normalize_cw_battle_run_timeout(raw_timeout: Any) -> int:
+    if isinstance(raw_timeout, int) and not isinstance(raw_timeout, bool) and raw_timeout > 0:
+        return raw_timeout
+    return DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS
+
+
+def resolve_response_timeout(method: str, payload: dict[str, Any] | None) -> float:
+    if method != "cw.battle.run":
+        return SOCKET_RESPONSE_TIMEOUT_SECONDS
+
+    raw_timeout = payload.get("timeout") if isinstance(payload, dict) else None
+    battle_timeout_seconds = normalize_cw_battle_run_timeout(raw_timeout)
+    return float(battle_timeout_seconds) + CW_BATTLE_RUN_TIMEOUT_BUFFER_SECONDS
+
+
 def send_daemon_request(
     request: DaemonRequest,
     token: str,
@@ -101,7 +118,7 @@ def send_daemon_request(
 
     host, port_text = endpoint.split(":", 1)
     with socket.create_connection((host, int(port_text)), timeout=5) as sock:
-        sock.settimeout(SOCKET_RESPONSE_TIMEOUT_SECONDS)
+        sock.settimeout(resolve_response_timeout(request.method, request.payload))
         sock.sendall(json.dumps(body, ensure_ascii=False).encode("utf-8") + b"\n")
         with sock.makefile("r", encoding="utf-8") as reader:
             return json.loads(reader.readline())

@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import Any
 
 
-def build_image_guidance(screenshot: Path | str | None) -> dict[str, bool] | None:
+def build_image_guidance(screenshot: Path | str | None) -> dict[str, int] | None:
     if screenshot is None:
         return None
-    return {"read_image_first": True}
+    return {"read_image_first": 1}
 
 
 def _attach_image_guidance(payload: dict[str, Any], *, screenshot: Path | str | None) -> dict[str, Any]:
@@ -27,19 +27,17 @@ def command_success(
     references: list[dict[str, Any]] | None = None,
     debug: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return _attach_image_guidance(
-        {
-            "ok": True,
-            "data": deepcopy(data),
-            "screenshot": None if screenshot is None else str(screenshot),
-            "timing": deepcopy(timing or {}),
-            "warnings": deepcopy(warnings or []),
-            "references": deepcopy(references or []),
-            "debug": deepcopy(debug),
-            "error": None,
-        },
-        screenshot=screenshot,
-    )
+    envelope = {
+        "ok": True,
+        "data": deepcopy(data),
+        "screenshot": None if screenshot is None else str(screenshot),
+        "timing": deepcopy(timing or {}),
+        "warnings": deepcopy(warnings or []),
+        "references": deepcopy(references or []),
+        "debug": deepcopy(debug),
+        "error": None,
+    }
+    return _attach_image_guidance(envelope, screenshot=screenshot)
 
 
 def command_failure(
@@ -52,16 +50,13 @@ def command_failure(
     references: list[dict[str, Any]] | None = None,
     debug: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return _attach_image_guidance(
-        {
-            "ok": False,
-            "data": {},
-            "screenshot": None if screenshot is None else str(screenshot),
-            "timing": deepcopy(timing or {}),
-            "warnings": deepcopy(warnings or []),
-            "references": deepcopy(references or []),
-            "debug": deepcopy(debug),
-            "error": {"code": code, "message": message},
-        },
-        screenshot=screenshot,
-    )
+    return {
+        "ok": False,
+        "data": {},
+        "screenshot": None if screenshot is None else str(screenshot),
+        "timing": deepcopy(timing or {}),
+        "warnings": deepcopy(warnings or []),
+        "references": deepcopy(references or []),
+        "debug": deepcopy(debug),
+        "error": {"code": code, "message": message},
+    }

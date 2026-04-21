@@ -163,7 +163,8 @@
      - `trail cw crystals collect --session <id>`
   2. 若要布阵、卖牌、看商店，再按局内流程运行对应 `cw slots` / `cw hand` / `cw shop` 命令
   3. 准备完成后再运行：
-     - `trail cw battle start --session <id>`
+     - `trail cw battle run --session <id> --timeout 570`
+  4. `trail cw battle start --session <id>` 仍保留为 advanced/manual fallback，只在需要手工拆 battle / settle 链时使用，不是默认主流程
 - 额外说明：
   - 这里已经进入局内，出现了 `备战阶段`、`出战`、`商店` 和手牌栏
 

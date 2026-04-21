@@ -38,6 +38,7 @@ CW_MUTATING_METHODS = {
     "cw.encounter.choose",
     "cw.fortune.choose",
     "cw.boss_preview.confirm",
+    "cw.battle.run",
     "cw.battle.start",
     "cw.battle.continue",
     "cw.settle.next",

@@ -973,6 +973,7 @@ def test_command_service_ocr_read_fast_mode_maps_boxes_back_to_original_capture_
     assert render_output("ocr.read", payload).splitlines() == [
         "ok ocr.read hits=1",
         f"shot path={payload['screenshot']}",
+        "info read_image_first=1",
         "text value=按钮 box=150,75,150,75 center=225,112",
     ]
 
@@ -1036,6 +1037,7 @@ def test_command_service_ocr_read_fast_mode_dict_box_renders_without_crashing(tm
     assert render_output("ocr.read", payload).splitlines() == [
         "ok ocr.read hits=1",
         f"shot path={payload['screenshot']}",
+        "info read_image_first=1",
         "text value=按钮 box=122,87,74,36 center=159,105",
     ]
 
@@ -1516,6 +1518,7 @@ def test_command_service_ocr_read_retry_high_success_suppresses_fast_warning_fro
     assert render_output("ocr.read", payload).splitlines() == [
         "ok ocr.read hits=1",
         f"shot path={payload['screenshot']}",
+        "info read_image_first=1",
         "text value=高精度",
     ]
 

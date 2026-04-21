@@ -683,6 +683,80 @@ def test_cw_battle_continue_renders_stage_summary(cli_runner, fake_daemon_client
     _assert_single_call(client, method="cw.battle.continue", payload={}, tmp_path=tmp_path)
 
 
+def test_cw_battle_run_forwards_timeout(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.battle.run": build_success_response(
+                request_id="req-cw-battle-run",
+                data={},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "battle", "run", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    _assert_single_call(client, method="cw.battle.run", payload={"timeout": 570}, tmp_path=tmp_path)
+
+
+def test_cw_battle_run_renders_completed_summary(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.battle.run": build_success_response(
+                request_id="req-cw-battle-run-completed",
+                data={
+                    "status": "completed",
+                    "result": "win",
+                    "stage": "shop",
+                    "stale": False,
+                    "in_battle": False,
+                    "round": "1-1",
+                    "hp": 82,
+                    "coins": 4,
+                    "exp": 2,
+                    "settle_text": "挑战成功",
+                },
+                screenshot=".trail/shots/req-cw-battle-run-completed.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "battle", "run", "--session", SESSION_ID, "--timeout", "570"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "ok cw.battle.run status=completed result=win stage=shop stale=0 in_battle=0",
+        "shot path=.trail/shots/req-cw-battle-run-completed.png",
+        "info read_image_first=1",
+        "info round=1-1 hp=82 coins=4 exp=2",
+        "info settle_text=挑战成功",
+    ]
+    _assert_single_call(client, method="cw.battle.run", payload={"timeout": 570}, tmp_path=tmp_path)
+
+
+def test_cw_battle_run_renders_timeout_summary(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.battle.run": build_success_response(
+                request_id="req-cw-battle-run-timeout",
+                data={"status": "in_progress", "stale": True, "in_battle": True, "timeout_seconds": 570},
+                screenshot=".trail/shots/req-cw-battle-run-timeout.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "battle", "run", "--session", SESSION_ID, "--timeout", "570"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "ok cw.battle.run status=in_progress stale=1 in_battle=1",
+        "shot path=.trail/shots/req-cw-battle-run-timeout.png",
+        "info read_image_first=1",
+        "info timeout_seconds=570",
+    ]
+    _assert_single_call(client, method="cw.battle.run", payload={"timeout": 570}, tmp_path=tmp_path)
+
+
 def test_cw_stage_wait_renders_stage_and_shot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
