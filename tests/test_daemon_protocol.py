@@ -1322,6 +1322,167 @@ def test_command_service_handles_cw_start_reports_completed_known_failure_when_p
     assert loaded.scene_state.get("daemon", {}).get("tainted", False) is False
 
 
+def test_command_service_handles_cw_slots_place_known_failure_as_completed(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ProtocolRuntime(tmp_path / "cw-slots-place-known-fail.png")
+    runtime.capture_after_action = lambda optional=False, request_id=None: str(
+        tmp_path / ".trail" / "shots" / f"{request_id}.png"
+    )
+    runtime_service = ProtocolRuntimeService(runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    def fail_after_partial_execution(session, actions, placer):
+        del actions, placer
+        session.scene_state.setdefault("cw", {})["slots"] = {"front": ["希儿"], "back": [], "hand": [], "stale": True}
+        session.scene_state["cw"]["sell_plan"] = {}
+        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:0")
+        error.known_failure_after_save = True
+        raise error
+
+    monkeypatch.setattr("trail.daemon.cw_service.place_cw_slots", fail_after_partial_execution)
+    request = DaemonRequest(
+        request_id="req-cw-slots-place-known-fail",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.slots.place",
+        payload={
+            "session_id": session.session_id,
+            "actions": [{"source": "hand:0", "target": "front:0"}],
+        },
+    )
+
+    payload = command_service.handle(request)
+    status = service.request_status(request.request_id)
+    loaded = service.load_session(session.session_id)
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "SLOTS_CANNOT_BE_FIELDED",
+        "message": "target slot cannot field character: front:0",
+    }
+    assert payload["screenshot"] == ".trail/shots/req-cw-slots-place-known-fail.png"
+    assert status["final_state"] == "completed"
+    assert status["tainted"] is False
+    assert loaded.scene_state["cw"]["slots"]["stale"] is True
+
+
+def test_command_service_handles_cw_slots_place_known_failure_save_error_as_applied_but_not_persisted(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ProtocolRuntime(tmp_path / "cw-slots-place-known-fail-save-error.png")
+    runtime.capture_after_action = lambda optional=False, request_id=None: str(
+        tmp_path / ".trail" / "shots" / f"{request_id}.png"
+    )
+    runtime_service = ProtocolRuntimeService(runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    def fail_after_partial_execution(session, actions, placer):
+        del actions, placer
+        session.scene_state.setdefault("cw", {})["slots"] = {"front": ["希儿"], "back": [], "hand": [], "stale": True}
+        session.scene_state["cw"]["sell_plan"] = {}
+        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:0")
+        error.known_failure_after_save = True
+        raise error
+
+    monkeypatch.setattr("trail.daemon.cw_service.place_cw_slots", fail_after_partial_execution)
+    monkeypatch.setattr(service, "save_session", lambda model: (_ for _ in ()).throw(OSError("save failed")))
+    request = DaemonRequest(
+        request_id="req-cw-slots-place-known-fail-save-error",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.slots.place",
+        payload={
+            "session_id": session.session_id,
+            "actions": [{"source": "hand:0", "target": "front:0"}],
+        },
+    )
+
+    payload = command_service.handle(request)
+    status = service.request_status(request.request_id)
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert payload["debug"]["last_known_stage"] == "side_effect_applied"
+    assert "OSError: save failed" in payload["debug"]["detail"]
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True
+
+
+def test_command_service_handles_cw_slots_place_known_failure_capture_error_as_persisted_but_response_unknown(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ProtocolRuntime(tmp_path / "cw-slots-place-known-fail-capture-error.png")
+    runtime_service = ProtocolRuntimeService(runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    def fail_after_partial_execution(session, actions, placer):
+        del actions, placer
+        session.scene_state.setdefault("cw", {})["slots"] = {"front": ["希儿"], "back": [], "hand": [], "stale": True}
+        session.scene_state["cw"]["sell_plan"] = {}
+        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:0")
+        error.known_failure_after_save = True
+        raise error
+
+    monkeypatch.setattr("trail.daemon.cw_service.place_cw_slots", fail_after_partial_execution)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.with_auto_capture",
+        lambda runtime, action, verbose=False: (_ for _ in ()).throw(RuntimeError("capture failed")),
+    )
+    request = DaemonRequest(
+        request_id="req-cw-slots-place-known-fail-capture-error",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.slots.place",
+        payload={
+            "session_id": session.session_id,
+            "actions": [{"source": "hand:0", "target": "front:0"}],
+        },
+    )
+
+    payload = command_service.handle(request)
+    status = service.request_status(request.request_id)
+    loaded = service.load_session(session.session_id)
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert payload["debug"]["last_known_stage"] == "state_persisted"
+    assert "RuntimeError: capture failed" in payload["debug"]["detail"]
+    assert status["final_state"] == "persisted_but_response_unknown"
+    assert status["tainted"] is True
+    assert loaded.scene_state["cw"]["slots"]["stale"] is True
+
+
 @pytest.mark.parametrize("requested_mode", ["new", "continue"])
 def test_command_service_handles_cw_start_consumes_unfinished_progress_flag_before_run_start_chain(
     tmp_path: Path,

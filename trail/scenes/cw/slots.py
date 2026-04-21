@@ -93,6 +93,13 @@ def _clear_sell_plan(cw_state: dict) -> None:
     cw_state["sell_plan"] = {}
 
 
+def _mark_slots_stale(session: SessionModel) -> SessionModel:
+    cw_state = ensure_cw_state(session)
+    cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
+    _clear_sell_plan(cw_state)
+    return session
+
+
 def _snapshot_has_any_name(*areas: list[Any]) -> bool:
     return any(value is not None and str(value).strip() for area in areas for value in area)
 
@@ -539,24 +546,63 @@ def read_cw_slots(session: SessionModel, *, reader: SlotsSnapshotReader, targets
     return session
 
 
+def _normalize_place_actions(actions: list[dict[str, str]]) -> list[tuple[str, str]]:
+    if not actions:
+        raise TrailError("CW_OPTION_INVALID", "cw slots place requires at least one --action")
+
+    normalized: list[tuple[str, str]] = []
+    for action in actions:
+        if not isinstance(action, dict):
+            raise TrailError("CW_OPTION_INVALID", f"cw slots place action invalid: {action!r}")
+        source = action.get("source")
+        target = action.get("target")
+        if not isinstance(source, str) or not isinstance(target, str):
+            raise TrailError("CW_OPTION_INVALID", f"cw slots place action invalid: {action!r}")
+        _parse_slot_reference(source)
+        _parse_slot_reference(target)
+        normalized.append((source, target))
+    return normalized
+
+
+def _normalize_sell_slots(slots: list[int]) -> list[int]:
+    if not slots:
+        raise TrailError("CW_OPTION_INVALID", "cw hand sell requires at least one --slot")
+
+    normalized: list[int] = []
+    for slot in slots:
+        if not isinstance(slot, int) or isinstance(slot, bool):
+            raise TrailError("CW_OPTION_INVALID", f"cw hand sell slot invalid: {slot!r}")
+        if slot < 0 or slot >= len(HAND_SLOT_POINTS):
+            raise TrailError("SLOTS_POSITION_INVALID", f"invalid hand slot: {slot}")
+        normalized.append(slot)
+    return normalized
+
+
 def swap_cw_slots(session: SessionModel, *, source: str, target: str, swapper: SlotMover | None = None) -> SessionModel:
     if swapper is not None:
         swapper(source, target)
     del source, target
-    cw_state = ensure_cw_state(session)
-    cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
-    _clear_sell_plan(cw_state)
-    return session
+    return _mark_slots_stale(session)
+
+
+def place_cw_slots(session: SessionModel, *, actions: list[dict[str, str]], placer: SlotMover | None = None) -> SessionModel:
+    normalized = _normalize_place_actions(actions)
+    for source, target in normalized:
+        try:
+            if placer is not None:
+                placer(source, target)
+        except TrailError as error:
+            _mark_slots_stale(session)
+            error.known_failure_after_save = True
+            raise
+    return _mark_slots_stale(session)
 
 
 def place_one_cw_slot(session: SessionModel, *, source: str, target: str, placer: SlotMover | None = None) -> SessionModel:
     if placer is not None:
         placer(source, target)
     del source, target
-    cw_state = ensure_cw_state(session)
-    cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
-    _clear_sell_plan(cw_state)
-    return session
+    return _mark_slots_stale(session)
 
 
 def collect_cw_crystals(session: SessionModel, *, collector: CrystalCollector | None = None) -> SessionModel:
@@ -579,11 +625,21 @@ def plan_cw_hand_sell(session: SessionModel) -> dict:
     return deepcopy(cw_state["sell_plan"])
 
 
+def sell_cw_hand_slots(session: SessionModel, *, slots: list[int], seller: HandSeller | None = None) -> SessionModel:
+    normalized = _normalize_sell_slots(slots)
+    for slot in normalized:
+        try:
+            if seller is not None:
+                seller(slot)
+        except TrailError as error:
+            _mark_slots_stale(session)
+            error.known_failure_after_save = True
+            raise
+    return _mark_slots_stale(session)
+
+
 def sell_one_cw_hand(session: SessionModel, *, slot: int, seller: HandSeller | None = None) -> SessionModel:
     if seller is not None:
         seller(slot)
     del slot
-    cw_state = ensure_cw_state(session)
-    cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
-    _clear_sell_plan(cw_state)
-    return session
+    return _mark_slots_stale(session)

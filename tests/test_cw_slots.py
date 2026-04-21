@@ -942,20 +942,124 @@ def test_build_cw_slot_swapper_drags_between_slot_points_and_rejects_cannot_be_f
     assert blocked_runtime.clicks == [slots_module.INFO_DISMISS_POINT]
 
 
-def test_slots_place_one_invalidates_existing_snapshot(tmp_path):
+def test_place_cw_slots_runs_actions_in_order(tmp_path):
     slots_module = load_cw_slots_module()
-    place_one_cw_slot = getattr(slots_module, "place_one_cw_slot", None)
-    assert place_one_cw_slot is not None
+    place_cw_slots = getattr(slots_module, "place_cw_slots", None)
+    assert place_cw_slots is not None
 
     session = build_fake_cw_session(tmp_path)
-    refreshed = place_one_cw_slot(session, source="hand:2", target="back:0")
+    before_slots = deepcopy(session.scene_state["cw"]["slots"])
+    calls: list[tuple[str, str]] = []
 
-    assert refreshed.scene_state["cw"]["slots"] == {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": True,
-    }
+    def placer(source: str, target: str) -> None:
+        calls.append((source, target))
+
+    refreshed = place_cw_slots(
+        session,
+        actions=[
+            {"source": "hand:2", "target": "back:0"},
+            {"source": "hand:0", "target": "front:0"},
+        ],
+        placer=placer,
+    )
+
+    assert calls == [("hand:2", "back:0"), ("hand:0", "front:0")]
+    assert refreshed.scene_state["cw"]["slots"]["stale"] is True
+    assert refreshed.scene_state["cw"]["slots"]["front"] == before_slots["front"]
+    assert refreshed.scene_state["cw"]["slots"]["back"] == before_slots["back"]
+    assert refreshed.scene_state["cw"]["slots"]["hand"] == before_slots["hand"]
+    assert refreshed.scene_state["cw"]["sell_plan"] == {}
+
+
+def test_place_cw_slots_stops_after_first_runtime_failure_and_keeps_stale(tmp_path):
+    slots_module = load_cw_slots_module()
+    place_cw_slots = getattr(slots_module, "place_cw_slots", None)
+    assert place_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    before_slots = deepcopy(session.scene_state["cw"]["slots"])
+    calls: list[tuple[str, str]] = []
+
+    def placer(source: str, target: str) -> None:
+        calls.append((source, target))
+        if len(calls) == 2:
+            raise TrailError("SLOTS_CANNOT_BE_FIELDED", f"target slot cannot field character: {target}")
+
+    with pytest.raises(TrailError) as exc_info:
+        place_cw_slots(
+            session,
+            actions=[
+                {"source": "hand:2", "target": "back:0"},
+                {"source": "hand:0", "target": "front:0"},
+                {"source": "hand:1", "target": "back:2"},
+            ],
+            placer=placer,
+        )
+
+    assert exc_info.value.code == "SLOTS_CANNOT_BE_FIELDED"
+    assert calls == [("hand:2", "back:0"), ("hand:0", "front:0")]
+    assert exc_info.value.known_failure_after_save is True
+    assert session.scene_state["cw"]["slots"]["stale"] is True
+    assert session.scene_state["cw"]["slots"]["front"] == before_slots["front"]
+    assert session.scene_state["cw"]["slots"]["back"] == before_slots["back"]
+    assert session.scene_state["cw"]["slots"]["hand"] == before_slots["hand"]
+    assert session.scene_state["cw"]["sell_plan"] == {}
+
+
+def test_place_cw_slots_requires_non_empty_actions_without_mutating_session(tmp_path):
+    slots_module = load_cw_slots_module()
+    place_cw_slots = getattr(slots_module, "place_cw_slots", None)
+    assert place_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["sell_plan"] = {"candidates": [0, 2]}
+    before_slots = deepcopy(session.scene_state["cw"]["slots"])
+    before_sell_plan = deepcopy(session.scene_state["cw"]["sell_plan"])
+
+    with pytest.raises(TrailError) as exc_info:
+        place_cw_slots(session, actions=[])
+
+    assert exc_info.value.code == "CW_OPTION_INVALID"
+    assert session.scene_state["cw"]["slots"] == before_slots
+    assert session.scene_state["cw"]["sell_plan"] == before_sell_plan
+
+
+def test_place_cw_slots_rejects_invalid_position_without_mutating_session(tmp_path):
+    slots_module = load_cw_slots_module()
+    place_cw_slots = getattr(slots_module, "place_cw_slots", None)
+    assert place_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["sell_plan"] = {"candidates": [0, 2]}
+    before_slots = deepcopy(session.scene_state["cw"]["slots"])
+    before_sell_plan = deepcopy(session.scene_state["cw"]["sell_plan"])
+
+    with pytest.raises(TrailError) as exc_info:
+        place_cw_slots(session, actions=[{"source": "hand:2", "target": "front:99"}])
+
+    assert exc_info.value.code == "SLOTS_POSITION_INVALID"
+    assert not hasattr(exc_info.value, "known_failure_after_save")
+    assert session.scene_state["cw"]["slots"] == before_slots
+    assert session.scene_state["cw"]["sell_plan"] == before_sell_plan
+
+
+def test_place_cw_slots_rejects_malformed_action_without_mutating_session(tmp_path):
+    slots_module = load_cw_slots_module()
+    place_cw_slots = getattr(slots_module, "place_cw_slots", None)
+    assert place_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["sell_plan"] = {"candidates": [0, 2]}
+    before_slots = deepcopy(session.scene_state["cw"]["slots"])
+    before_sell_plan = deepcopy(session.scene_state["cw"]["sell_plan"])
+
+    with pytest.raises(TrailError) as exc_info:
+        place_cw_slots(session, actions=[{}])
+
+    assert exc_info.value.code == "CW_OPTION_INVALID"
+    assert not hasattr(exc_info.value, "known_failure_after_save")
+    assert session.scene_state["cw"]["slots"] == before_slots
+    assert session.scene_state["cw"]["sell_plan"] == before_sell_plan
 
 
 def test_collect_cw_crystals_records_metric(tmp_path):
@@ -1029,8 +1133,13 @@ def test_sell_plan_rejects_stale_slots_snapshot(tmp_path):
     ("method_name", "kwargs"),
     [
         ("swap_cw_slots", {"source": "hand:0", "target": "front:0"}),
-        ("place_one_cw_slot", {"source": "hand:2", "target": "back:0"}),
-        ("sell_one_cw_hand", {"slot": 2}),
+        (
+            "place_cw_slots",
+            {
+                "actions": [{"source": "hand:2", "target": "back:0"}],
+            },
+        ),
+        ("sell_cw_hand_slots", {"slots": [2]}),
     ],
 )
 def test_slots_mutations_clear_sell_plan(tmp_path, method_name, kwargs):
@@ -1046,20 +1155,109 @@ def test_slots_mutations_clear_sell_plan(tmp_path, method_name, kwargs):
     assert refreshed.scene_state["cw"]["sell_plan"] == {}
 
 
-def test_sell_one_marks_slots_snapshot_stale(tmp_path):
+def test_sell_cw_hand_slots_requires_non_empty_list_without_mutating_session(tmp_path):
     slots_module = load_cw_slots_module()
-    sell_one_cw_hand = getattr(slots_module, "sell_one_cw_hand", None)
-    assert sell_one_cw_hand is not None
+    sell_cw_hand_slots = getattr(slots_module, "sell_cw_hand_slots", None)
+    assert sell_cw_hand_slots is not None
 
     session = build_fake_cw_session(tmp_path)
-    refreshed = sell_one_cw_hand(session, slot=2)
+    session.scene_state["cw"]["sell_plan"] = {"candidates": [0, 2]}
+    before_slots = deepcopy(session.scene_state["cw"]["slots"])
+    before_sell_plan = deepcopy(session.scene_state["cw"]["sell_plan"])
 
-    assert refreshed.scene_state["cw"]["slots"] == {
-        "front": ["希儿"],
-        "back": ["佩拉"],
-        "hand": ["银狼", None, "阮·梅"],
-        "stale": True,
-    }
+    with pytest.raises(TrailError) as exc_info:
+        sell_cw_hand_slots(session, slots=[])
+
+    assert exc_info.value.code == "CW_OPTION_INVALID"
+    assert session.scene_state["cw"]["slots"] == before_slots
+    assert session.scene_state["cw"]["sell_plan"] == before_sell_plan
+
+
+def test_sell_cw_hand_slots_rejects_non_integer_slot_without_mutating_session(tmp_path):
+    slots_module = load_cw_slots_module()
+    sell_cw_hand_slots = getattr(slots_module, "sell_cw_hand_slots", None)
+    assert sell_cw_hand_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["sell_plan"] = {"candidates": [0, 2]}
+    before_slots = deepcopy(session.scene_state["cw"]["slots"])
+    before_sell_plan = deepcopy(session.scene_state["cw"]["sell_plan"])
+
+    with pytest.raises(TrailError) as exc_info:
+        sell_cw_hand_slots(session, slots=["0"])
+
+    assert exc_info.value.code == "CW_OPTION_INVALID"
+    assert not hasattr(exc_info.value, "known_failure_after_save")
+    assert session.scene_state["cw"]["slots"] == before_slots
+    assert session.scene_state["cw"]["sell_plan"] == before_sell_plan
+
+
+def test_sell_cw_hand_slots_rejects_out_of_range_slot_without_mutating_session(tmp_path):
+    slots_module = load_cw_slots_module()
+    sell_cw_hand_slots = getattr(slots_module, "sell_cw_hand_slots", None)
+    assert sell_cw_hand_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["sell_plan"] = {"candidates": [0, 2]}
+    before_slots = deepcopy(session.scene_state["cw"]["slots"])
+    before_sell_plan = deepcopy(session.scene_state["cw"]["sell_plan"])
+
+    with pytest.raises(TrailError) as exc_info:
+        sell_cw_hand_slots(session, slots=[99])
+
+    assert exc_info.value.code == "SLOTS_POSITION_INVALID"
+    assert not hasattr(exc_info.value, "known_failure_after_save")
+    assert session.scene_state["cw"]["slots"] == before_slots
+    assert session.scene_state["cw"]["sell_plan"] == before_sell_plan
+
+
+def test_sell_cw_hand_slots_runs_slots_in_order(tmp_path):
+    slots_module = load_cw_slots_module()
+    sell_cw_hand_slots = getattr(slots_module, "sell_cw_hand_slots", None)
+    assert sell_cw_hand_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    before_slots = deepcopy(session.scene_state["cw"]["slots"])
+    calls: list[int] = []
+
+    def seller(slot: int) -> None:
+        calls.append(slot)
+
+    refreshed = sell_cw_hand_slots(session, slots=[2, 0], seller=seller)
+
+    assert calls == [2, 0]
+    assert refreshed.scene_state["cw"]["slots"]["stale"] is True
+    assert refreshed.scene_state["cw"]["slots"]["front"] == before_slots["front"]
+    assert refreshed.scene_state["cw"]["slots"]["back"] == before_slots["back"]
+    assert refreshed.scene_state["cw"]["slots"]["hand"] == before_slots["hand"]
+    assert refreshed.scene_state["cw"]["sell_plan"] == {}
+
+
+def test_sell_cw_hand_slots_stops_after_first_runtime_failure(tmp_path):
+    slots_module = load_cw_slots_module()
+    sell_cw_hand_slots = getattr(slots_module, "sell_cw_hand_slots", None)
+    assert sell_cw_hand_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    before_slots = deepcopy(session.scene_state["cw"]["slots"])
+    calls: list[int] = []
+
+    def seller(slot: int) -> None:
+        calls.append(slot)
+        if len(calls) == 2:
+            raise TrailError("UNEXPECTED_ERROR", f"sell failed at slot: {slot}")
+
+    with pytest.raises(TrailError) as exc_info:
+        sell_cw_hand_slots(session, slots=[2, 0, 1], seller=seller)
+
+    assert exc_info.value.code == "UNEXPECTED_ERROR"
+    assert calls == [2, 0]
+    assert exc_info.value.known_failure_after_save is True
+    assert session.scene_state["cw"]["slots"]["stale"] is True
+    assert session.scene_state["cw"]["slots"]["front"] == before_slots["front"]
+    assert session.scene_state["cw"]["slots"]["back"] == before_slots["back"]
+    assert session.scene_state["cw"]["slots"]["hand"] == before_slots["hand"]
+    assert session.scene_state["cw"]["sell_plan"] == {}
 
 
 def _build_cw_harness(tmp_path: Path):
@@ -1298,14 +1496,14 @@ def test_cw_slots_read_command_service_preserves_unexpected_exception_semantics(
             ("slots", "front"),
         ),
         (
-            "cw.slots.place_one",
+            "cw.slots.place",
             "req-slots-place-1",
-            {"source": "hand:0", "target": "front:0"},
+            {"actions": [{"source": "hand:0", "target": "front:0"}]},
             lambda monkeypatch: (
                 monkeypatch.setattr("trail.daemon.cw_service.slot_placer_factory", lambda runtime: object()),
                 monkeypatch.setattr(
-                    "trail.daemon.cw_service.place_one_cw_slot",
-                    lambda session, source, target, placer: _set_slots(session, {"front": ["希儿"], "back": ["佩拉"], "hand": [], "stale": False}),
+                    "trail.daemon.cw_service.place_cw_slots",
+                    lambda session, actions, placer: _set_slots(session, {"front": ["希儿"], "back": ["佩拉"], "hand": [], "stale": False}),
                 ),
             ),
             "back",
@@ -1328,14 +1526,14 @@ def test_cw_slots_read_command_service_preserves_unexpected_exception_semantics(
             ("metrics", "last_crystal_collection"),
         ),
         (
-            "cw.hand.sell_one",
-            "req-hand-sell-one-1",
-            {"slot": 0},
+            "cw.hand.sell",
+            "req-hand-sell-1",
+            {"slots": [0]},
             lambda monkeypatch: (
                 monkeypatch.setattr("trail.daemon.cw_service.hand_seller_factory", lambda runtime: object()),
                 monkeypatch.setattr(
-                    "trail.daemon.cw_service.sell_one_cw_hand",
-                    lambda session, slot, seller: _set_slots(session, {"front": [], "back": [], "hand": [None], "stale": True}),
+                    "trail.daemon.cw_service.sell_cw_hand_slots",
+                    lambda session, slots, seller: _set_slots(session, {"front": [], "back": [], "hand": [None], "stale": True}),
                 ),
             ),
             "stale",

@@ -2178,7 +2178,99 @@ def test_render_output_renders_cw_slots_before_warn_and_ref():
     ]
 
 
-def test_render_output_adds_read_image_first_after_shot_for_cw_options_success():
+def test_render_output_renders_cw_slots_place_success_text():
+    payload = {
+        "ok": True,
+        "data": {
+            "front": ["希儿"],
+            "back": ["佩拉"],
+            "hand": [],
+            "stale": True,
+        },
+        "screenshot": ".trail/shots/req-cw-slots-place.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.slots.place", payload).splitlines() == [
+        "ok cw.slots.place front=1 back=1 hand=0 stale=1",
+        "shot path=.trail/shots/req-cw-slots-place.png",
+    ]
+
+
+def test_render_output_renders_cw_slots_place_known_failure_without_recover():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": ".trail/shots/req-cw-slots-place-failed.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"request_id": "req-cw-slots-place-failed"},
+        "error": {
+            "code": "SLOTS_CANNOT_BE_FIELDED",
+            "message": "target slot cannot field character: front:0",
+        },
+    }
+
+    assert render_output("cw.slots.place", payload).splitlines() == [
+        "fail cw.slots.place code=SLOTS_CANNOT_BE_FIELDED",
+        "request id=req-cw-slots-place-failed",
+        "shot path=.trail/shots/req-cw-slots-place-failed.png",
+        'why msg="target slot cannot field character: front:0"',
+    ]
+
+
+def test_render_output_renders_cw_hand_sell_success_text():
+    payload = {
+        "ok": True,
+        "data": {
+            "front": ["希儿"],
+            "back": ["佩拉"],
+            "hand": [None, "银狼", None],
+            "stale": True,
+        },
+        "screenshot": ".trail/shots/req-cw-hand-sell.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.hand.sell", payload).splitlines() == [
+        "ok cw.hand.sell front=1 back=1 hand=1 stale=1",
+        "shot path=.trail/shots/req-cw-hand-sell.png",
+    ]
+
+
+def test_render_output_renders_cw_hand_sell_known_failure_without_recover():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": ".trail/shots/req-cw-hand-sell-failed.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"request_id": "req-cw-hand-sell-failed"},
+        "error": {
+            "code": "SLOTS_POSITION_INVALID",
+            "message": "invalid hand slot: 7",
+        },
+    }
+
+    assert render_output("cw.hand.sell", payload).splitlines() == [
+        "fail cw.hand.sell code=SLOTS_POSITION_INVALID",
+        "request id=req-cw-hand-sell-failed",
+        "shot path=.trail/shots/req-cw-hand-sell-failed.png",
+        'why msg="invalid hand slot: 7"',
+    ]
+
+
+def test_render_output_renders_cw_options_text():
     payload = {
         "ok": True,
         "data": {"options": [{"id": 1, "name": "量子力学"}, 2]},
@@ -2371,6 +2463,54 @@ def test_render_output_renders_cw_hand_sell_plan_text():
 
     assert render_output("cw.hand.sell_plan", payload).splitlines() == [
         "ok cw.hand.sell_plan count=2"
+    ]
+
+
+def test_render_output_rejects_yaml_for_cw_slots_place():
+    payload = {
+        "ok": True,
+        "data": {
+            "front": ["希儿"],
+            "back": ["佩拉"],
+            "hand": [],
+            "stale": True,
+        },
+        "screenshot": ".trail/shots/req-cw-slots-place.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.slots.place", payload, output_format="yaml").splitlines() == [
+        "fail cw.slots.place code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        "shot path=.trail/shots/req-cw-slots-place.png",
+        'why msg="yaml not supported for cw.slots.place"',
+    ]
+
+
+def test_render_output_rejects_yaml_for_cw_hand_sell():
+    payload = {
+        "ok": True,
+        "data": {
+            "front": ["希儿"],
+            "back": ["佩拉"],
+            "hand": [None, "银狼", None],
+            "stale": True,
+        },
+        "screenshot": ".trail/shots/req-cw-hand-sell.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.hand.sell", payload, output_format="yaml").splitlines() == [
+        "fail cw.hand.sell code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        "shot path=.trail/shots/req-cw-hand-sell.png",
+        'why msg="yaml not supported for cw.hand.sell"',
     ]
 
 
@@ -2940,6 +3080,21 @@ def test_skill_docs_split_simple_and_advanced_commands() -> None:
     assert "trail image wait" in advanced
     assert "trail state dump" in advanced
     assert "trail start" in cw
+
+
+def test_readme_and_cw_slots_skill_document_batch_place_sell_contract() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    slots_skill = (PROJECT_ROOT / "skills" / "trail-cw-slots" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "`trail cw slots place --session <id> --action hand:0,front:0 --action hand:1,back:2`" in readme
+    assert "`trail cw hand sell --session <id> --slot 0 --slot 2`" in readme
+    assert "严格保序、遇错即停" in readme
+    assert "重新执行 `trail cw slots read`" in readme
+    assert "place-one" not in slots_skill
+    assert "sell-one" not in slots_skill
+    assert "`trail cw slots place --session <id> --action <src,dst> ...`" in slots_skill
+    assert "`trail cw hand sell --session <id> --slot <n> --slot <m>`" in slots_skill
+    assert "`place` / `sell` 都严格保序、遇错即停；只要中途失败且前面动作可能已生效，先重新执行 `trail cw slots read --session <id>`" in slots_skill
 
 
 def test_advanced_skill_documents_window_launch_path_resolution_contract() -> None:

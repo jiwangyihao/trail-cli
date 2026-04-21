@@ -182,6 +182,56 @@ def test_request_status_reflects_reconcile_clearing_taint(tmp_path: Path):
     assert service.request_status("req-reconcile-status")["tainted"] is False
 
 
+def test_finish_mutation_completed_failure_does_not_taint_session(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.begin_mutation(session_id=session.session_id, request_id="req-known-fail", command_name="cw.slots.place")
+
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id="req-known-fail",
+        command_name="cw.slots.place",
+        final_state="completed",
+        envelope=_envelope(
+            ok=False,
+            screenshot=".trail/shots/req-known-fail.png",
+            error={"code": "SLOTS_CANNOT_BE_FIELDED", "message": "target slot cannot field character: front:0"},
+        ),
+    )
+
+    status = service.request_status("req-known-fail")
+    loaded = service.load_session(session.session_id)
+
+    assert status["final_state"] == "completed"
+    assert status["tainted"] is False
+    assert loaded.scene_state.get("daemon", {}).get("tainted", False) is False
+
+
+def test_begin_mutation_allows_following_cw_command_after_completed_failure(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.begin_mutation(session_id=session.session_id, request_id="req-known-fail", command_name="cw.slots.place")
+    service.finish_mutation(
+        session_id=session.session_id,
+        request_id="req-known-fail",
+        command_name="cw.slots.place",
+        final_state="completed",
+        envelope=_envelope(
+            ok=False,
+            error={"code": "SLOTS_CANNOT_BE_FIELDED", "message": "target slot cannot field character: front:0"},
+        ),
+    )
+
+    accepted = service.begin_mutation(
+        session_id=session.session_id,
+        request_id="req-next",
+        command_name="cw.hand.sell",
+        enforce_cw_tainted=True,
+    )
+
+    assert accepted["status"] == "accepted"
+
+
 def test_ensure_cw_mutation_allowed_requires_reconcile_for_risky_session(tmp_path: Path):
     service = SessionService(workspace_root=tmp_path)
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
@@ -239,31 +289,6 @@ def test_request_status_uses_record_taint_when_risky_record_saved_but_session_no
     service.reconcile_session(session.session_id)
 
     assert service.request_status("req-record-taint")["tainted"] is False
-
-
-def test_request_status_reflects_reconcile_clearing_taint(tmp_path: Path):
-    service = SessionService(workspace_root=tmp_path)
-    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
-    service.begin_mutation(session_id=session.session_id, request_id="req-reconcile-status", command_name="input.click")
-    service.finish_mutation(
-        session_id=session.session_id,
-        request_id="req-reconcile-status",
-        command_name="input.click",
-        final_state="persisted_but_response_unknown",
-        envelope=_envelope(
-            ok=False,
-            screenshot=".trail/shots/req-reconcile-status.png",
-            error={"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
-        ),
-    )
-
-    assert service.request_status("req-reconcile-status")["tainted"] is True
-
-    service.reconcile_session(session.session_id)
-
-    assert service.request_status("req-reconcile-status")["tainted"] is False
-
-
 def test_duplicate_request_id_returns_duplicate_terminal(tmp_path: Path):
     service = SessionService(workspace_root=tmp_path)
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
