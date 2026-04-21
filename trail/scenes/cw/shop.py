@@ -60,6 +60,8 @@ SHOP_LEVEL_REGION = _pixel_region(220, 880, 360, 950)
 SHOP_EXP_REGION = _pixel_region(256, 943, 325, 973)
 SHOP_SCAN_RESET_SETTLE_SECONDS = 1.0
 SHOP_SCAN_OPEN_SETTLE_SECONDS = 1.5
+SHOP_BUY_CONFIRM_RETRY_SECONDS = 0.5
+SHOP_BUY_CONFIRM_MAX_ATTEMPTS = 4
 
 ShopScanner = Callable[[], dict[str, Any]]
 ShopSnapshotReader = Callable[[], dict[str, Any]]
@@ -134,7 +136,9 @@ def _parse_last_int(items: list[Any], *, default: int | None) -> int | None:
 
 def _parse_shop_items(raw_items: list[Any] | None) -> tuple[list[dict[str, Any]], bool]:
     items: list[dict[str, Any]] = []
+    slot_items: dict[int, dict[str, Any]] = {}
     reserve_full = False
+    slot_lane_width = _shop_scan_slot_lane_width(raw_items or [])
     for item in raw_items or []:
         text = _read_ocr_text(item).strip()
         if not text:
@@ -142,12 +146,65 @@ def _parse_shop_items(raw_items: list[Any] | None) -> tuple[list[dict[str, Any]]
         if "备" in text:
             reserve_full = True
             continue
+        slot = _shop_scan_slot_for_item(item, lane_width=slot_lane_width)
+        if slot is not None:
+            box = _read_ocr_box(item)
+            bottom = box[3] if box is not None else 0.0
+            entry = slot_items.setdefault(slot, {"slot": slot, "price": None, "_price_bottom": -1.0, "_names": []})
+            if text.isdecimal():
+                if bottom >= entry["_price_bottom"]:
+                    entry["price"] = int(text)
+                    entry["_price_bottom"] = bottom
+                continue
+            entry["_names"].append((bottom, text))
+            continue
         if text.isdecimal():
             if items and items[-1]["price"] is None:
                 items[-1]["price"] = int(text)
             continue
         items.append({"name": text, "price": None})
+    if slot_items:
+        slotted_items: list[dict[str, Any]] = []
+        for slot in sorted(SHOP_SLOT_POINTS):
+            entry = slot_items.get(slot)
+            if entry is None:
+                slotted_items.append({"slot": slot, "name": None, "price": None})
+                continue
+            price = entry.get("price")
+            if price is None:
+                slotted_items.append({"slot": slot, "name": None, "price": None})
+                continue
+            name_candidates = [candidate for candidate in entry.get("_names", []) if candidate[0] <= entry["_price_bottom"] + 20.0]
+            if not name_candidates:
+                name_candidates = entry.get("_names", [])
+            name = max(name_candidates, default=(0.0, None), key=lambda candidate: candidate[0])[1]
+            slotted_items.append({"slot": slot, "name": name, "price": price})
+        return slotted_items, reserve_full
     return items, reserve_full
+
+
+def _shop_scan_slot_lane_width(items: list[Any]) -> float | None:
+    boxes = [box for item in items if (box := _read_ocr_box(item)) is not None and box[2] > 10 and box[3] > 10]
+    if not boxes:
+        return None
+    scan_width = max(box[2] for box in boxes)
+    if scan_width < 100:
+        return None
+    return scan_width / float(len(SHOP_SLOT_POINTS))
+
+
+def _shop_scan_slot_for_item(item: Any, *, lane_width: float | None) -> int | None:
+    if lane_width is None:
+        return None
+    box = _read_ocr_box(item)
+    if box is None:
+        return None
+    left, top, right, bottom = box
+    if right <= 10 or bottom <= 10:
+        return None
+    center_x = (left + right) / 2.0
+    slot = int(center_x / lane_width) + 1
+    return max(1, min(len(SHOP_SLOT_POINTS), slot))
 
 
 def _parse_shop_level_value(text: str) -> int | None:
@@ -464,7 +521,10 @@ def _normalized_shop_items(items: Any) -> list[dict[str, Any]]:
         return normalized
     for item in items:
         if isinstance(item, dict):
-            normalized.append({"name": item.get("name"), "price": item.get("price")})
+            normalized_item = {"name": item.get("name"), "price": item.get("price")}
+            if item.get("slot") is not None:
+                normalized_item["slot"] = item.get("slot")
+            normalized.append(normalized_item)
             continue
         if isinstance(item, str):
             normalized.append({"name": item, "price": None})
@@ -494,6 +554,18 @@ def _purchase_confirmed(*, before_items: list[dict[str, Any]], after_items: list
     after_item = after_items[index] if 0 <= index < len(after_items) else None
     after_name = after_item.get("name") if isinstance(after_item, dict) else None
     return before_item != after_item and after_name != expect
+
+
+def _scan_until_purchase_confirmed(cw_state: dict, *, before_items: list[dict[str, Any]], slot: int, expect: str, scanner: ShopScanner) -> dict[str, Any]:
+    updated_shop: dict[str, Any] | None = None
+    for attempt in range(SHOP_BUY_CONFIRM_MAX_ATTEMPTS):
+        if attempt > 0:
+            sleep(SHOP_BUY_CONFIRM_RETRY_SECONDS)
+        updated_shop = _scan_shop_snapshot(cw_state, scanner=scanner)
+        after_items = _normalized_shop_items(updated_shop.get("items"))
+        if _purchase_confirmed(before_items=before_items, after_items=after_items, slot=slot, expect=expect):
+            return updated_shop
+    raise TrailError("SHOP_BUY_NOT_CONFIRMED", f"shop purchase not confirmed for slot {slot}: {expect}")
 
 
 def _decrement_remaining_purchase(cw_state: dict, *, expect: str) -> None:
@@ -601,10 +673,7 @@ def buy_cw_shop_slot(session: SessionModel, *, slot: int, expect: str, buyer: Sh
     before_items = _normalized_shop_items(_shop_state(cw_state).get("items"))
     _require_fresh_shop_item(cw_state, slot=slot, expect=expect)
     buyer(slot=slot, expect=expect)
-    updated_shop = _scan_shop_snapshot(cw_state, scanner=scanner)
-    after_items = _normalized_shop_items(updated_shop.get("items"))
-    if not _purchase_confirmed(before_items=before_items, after_items=after_items, slot=slot, expect=expect):
-        raise TrailError("SHOP_BUY_NOT_CONFIRMED", f"shop purchase not confirmed for slot {slot}: {expect}")
+    updated_shop = _scan_until_purchase_confirmed(cw_state, before_items=before_items, slot=slot, expect=expect, scanner=scanner)
     _decrement_remaining_purchase(cw_state, expect=expect)
     updated_shop["guide_summary"] = {
         "remaining_purchases": deepcopy(_remaining_purchases(cw_state)),

@@ -208,6 +208,34 @@ def test_parse_shop_items_uses_rapidocr_tuple_text_instead_of_confidence():
     assert reserve_full is False
 
 
+def test_parse_shop_items_preserves_empty_slot_from_ocr_positions():
+    shop_module = load_cw_shop_module()
+    parse_shop_items = getattr(shop_module, "_parse_shop_items", None)
+    assert parse_shop_items is not None
+
+    raw_items = [
+        _rapidocr_piece("翡翠", bbox=[[30, 0], [150, 0], [150, 28], [30, 28]]),
+        _rapidocr_piece("1", bbox=[[170, 0], [200, 0], [200, 28], [170, 28]]),
+        _rapidocr_piece("三月七", bbox=[[320, 0], [440, 0], [440, 28], [320, 28]]),
+        _rapidocr_piece("1", bbox=[[460, 0], [490, 0], [490, 28], [460, 28]]),
+        _rapidocr_piece("万敌", bbox=[[820, 0], [940, 0], [940, 28], [820, 28]]),
+        _rapidocr_piece("2", bbox=[[950, 0], [980, 0], [980, 28], [950, 28]]),
+        _rapidocr_piece("符玄", bbox=[[1090, 0], [1210, 0], [1210, 28], [1090, 28]]),
+        _rapidocr_piece("4", bbox=[[1230, 0], [1260, 0], [1260, 28], [1230, 28]]),
+    ]
+
+    assert parse_shop_items(raw_items) == (
+        [
+            {"slot": 1, "name": "翡翠", "price": 1},
+            {"slot": 2, "name": "三月七", "price": 1},
+            {"slot": 3, "name": None, "price": None},
+            {"slot": 4, "name": "万敌", "price": 2},
+            {"slot": 5, "name": "符玄", "price": 4},
+        ],
+        False,
+    )
+
+
 def test_build_cw_shop_scanner_reads_rapidocr_tuple_text_fields():
     shop_module = load_cw_shop_module()
     build_cw_shop_scanner = getattr(shop_module, "build_cw_shop_scanner", None)
@@ -1100,6 +1128,38 @@ def test_shop_buy_slot_without_guide_does_not_crash_or_create_guide(tmp_path):
     assert refreshed.scene_state["cw"]["shop"]["opened"] is True
     assert refreshed.scene_state["cw"]["shop"]["items"] == [{"name": "阮·梅", "price": 30}]
     assert refreshed.scene_state["cw"]["slots"]["stale"] is True
+
+
+def test_shop_buy_slot_retries_confirmation_until_slot_changes(tmp_path, monkeypatch):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert scan_cw_shop is not None
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session, fake_buy_success
+
+    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    scan_cw_shop(session, scanner=fake_shop_snapshot)
+
+    sleep_calls: list[float] = []
+    snapshots = iter((fake_shop_snapshot(), fake_shop_snapshot_after_purchase()))
+
+    monkeypatch.setattr(shop_module, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    refreshed = buy_cw_shop_slot(
+        session,
+        slot=1,
+        expect="银狼",
+        buyer=fake_buy_success,
+        scanner=lambda: next(snapshots),
+    )
+
+    assert refreshed.scene_state["cw"]["guide"]["remaining_purchases"]["银狼"] == 0
+    assert refreshed.scene_state["cw"]["shop"]["items"][0]["name"] == "阮·梅"
+    assert refreshed.scene_state["cw"]["shop"]["items"][0]["price"] == 30
+    assert sleep_calls == [shop_module.SHOP_BUY_CONFIRM_RETRY_SECONDS]
 
 
 @pytest.mark.parametrize(
