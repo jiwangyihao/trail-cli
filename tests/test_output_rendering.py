@@ -253,10 +253,10 @@ def test_readme_mentions_text_output_protocol() -> None:
         "ok cw.shop.scan opened=1 stale=0 count=2",
         "shot path=.trail/shots/req-shop.png\ninfo read_image_first=1",
         "item idx=1 slot=1 name=希儿 cost=2",
-        "info coins=40 level=7 reserve_full=0 max_team_size=8",
+        "info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7",
     )
     assert "```text\nok cw.shop.status count=2\nshot path=.trail/shots/req-shop.png\n" not in readme
-    assert "商店快照里的 `coins` / `level` / `reserve_full` / `max_team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" in readme
+    assert "商店快照里的 `coins` / `level` / `exp` / `reserve_full` / `team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" in readme
     assert "`guide.fetch.cw` 现在也进入 YAML allowlist" in readme
     assert "`羁绊列表`：按当前攻略各阶段阵容里出现过的羁绊去重汇总，并尽量保留层数" in readme
     assert "`优选装备` / `次选装备`：按角色展开的推荐装备列表" in readme
@@ -774,8 +774,9 @@ def test_render_output_renders_cw_shop_status_without_shot_or_guidance():
             ],
             "coins": 40,
             "level": 7,
+            "exp": "4/52",
             "reserve_full": False,
-            "max_team_size": 8,
+            "team_size": "7/7",
         },
         "screenshot": None,
         "timing": {},
@@ -791,7 +792,7 @@ def test_render_output_renders_cw_shop_status_without_shot_or_guidance():
         "item idx=2 slot=2 name=停云 cost=1",
         "item idx=3 slot=3 name=布洛妮娅 cost=4",
         "item idx=4 name=无槽位条目 cost=9",
-        "info coins=40 level=7 reserve_full=0 max_team_size=8",
+        "info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7",
     ]
 
 
@@ -2544,8 +2545,9 @@ def test_render_output_renders_cw_shop_scan_snapshot_info_text():
             "stale": False,
             "coins": 40,
             "level": 7,
+            "exp": "4/52",
             "reserve_full": False,
-            "max_team_size": 8,
+            "team_size": "7/7",
         },
         "screenshot": ".trail/shots/req-shop-scan.png",
         "image_guidance": {"read_image_first": True},
@@ -2561,7 +2563,7 @@ def test_render_output_renders_cw_shop_scan_snapshot_info_text():
         "shot path=.trail/shots/req-shop-scan.png",
         "info read_image_first=1",
         "item idx=1 slot=1 name=银狼 cost=20",
-        "info coins=40 level=7 reserve_full=0 max_team_size=8",
+        "info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7",
     ]
 
 
@@ -2574,8 +2576,9 @@ def test_render_output_does_not_render_stale_shop_snapshot_info_for_open_command
             "stale": True,
             "coins": 40,
             "level": 7,
+            "exp": "4/52",
             "reserve_full": False,
-            "max_team_size": 8,
+            "team_size": "7/7",
         },
         "screenshot": ".trail/shots/req-shop-open.png",
         "timing": {},

@@ -2,11 +2,19 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
+from io import BytesIO
+import os
+from pathlib import Path
 import re
+import traceback
+from typing import TYPE_CHECKING
 from time import sleep
 from typing import Any
 
+from PIL import Image, ImageEnhance
+
 from trail.core.errors import TrailError
+from trail.runtime.ocr_config import OcrRequestConfig
 from trail.scenes.cw.models import ensure_cw_state
 from trail.session.models import SessionModel
 
@@ -18,6 +26,10 @@ def _point(x_ratio: float, y_ratio: float) -> tuple[int, int]:
     return int(CW_WIDTH * x_ratio), int(CW_HEIGHT * y_ratio)
 
 
+def _pixel_point(x: int, y: int) -> tuple[int, int]:
+    return x, y
+
+
 def _region(from_x: float, from_y: float, to_x: float, to_y: float) -> dict[str, int]:
     return {
         "from_x": int(CW_WIDTH * from_x),
@@ -27,7 +39,11 @@ def _region(from_x: float, from_y: float, to_x: float, to_y: float) -> dict[str,
     }
 
 
-SHOP_OPEN_POINT = _point(0.8438, 0.8481)
+def _pixel_region(from_x: int, from_y: int, to_x: int, to_y: int) -> dict[str, int]:
+    return {"from_x": from_x, "from_y": from_y, "to_x": to_x, "to_y": to_y}
+
+
+SHOP_OPEN_POINT = _pixel_point(1628, 992)
 SHOP_CLOSE_POINT = _point(0.5, 0.55)
 SHOP_SCAN_RESET_POINT = SHOP_CLOSE_POINT
 SHOP_SLOT_POINTS = {
@@ -38,19 +54,23 @@ SHOP_SLOT_POINTS = {
     5: _point(0.80, 0.18),
 }
 SHOP_SCAN_REGION = _region(0.19, 0.26, 0.88, 0.31)
-SHOP_TEAM_SIZE_REGION = _region(0.4479, 0.1760, 0.5625, 0.3056)
-SHOP_COINS_REGION = _region(0.84, 0.81, 0.89, 0.89)
-SHOP_LEVEL_REGION = _region(0.117, 0.815, 0.1825, 0.869)
-SHOP_MAX_TEAM_SIZE_REGION = _region(0.505, 0.18, 0.608, 0.27)
-SHOP_SCAN_SETTLE_SECONDS = 0.35
+SHOP_TEAM_SIZE_REGION = _pixel_region(835, 188, 1095, 281)
+SHOP_COINS_REGION = _pixel_region(1615, 902, 1698, 956)
+SHOP_LEVEL_REGION = _pixel_region(220, 880, 360, 950)
+SHOP_EXP_REGION = _pixel_region(256, 943, 325, 973)
+SHOP_SCAN_RESET_SETTLE_SECONDS = 1.0
+SHOP_SCAN_OPEN_SETTLE_SECONDS = 1.5
 
-ShopScanner = Callable[[], tuple[list[Any], int | None, int | None, bool, int | None]]
+ShopScanner = Callable[[], dict[str, Any]]
 ShopSnapshotReader = Callable[[], dict[str, Any]]
 ShopSnapshotSource = ShopScanner | ShopSnapshotReader
 ShopBuyer = Callable[..., object]
 ShopAction = Callable[[], object]
 
 SHOP_SUMMARY_CONSTRAINT_KEYS = ("min_coins", "min_level", "mid_level")
+SHOP_DEBUG_CAPTURE_ENV = "TRAIL_DEBUG_CW_SHOP_CAPTURE"
+if TYPE_CHECKING:
+    from trail.runtime.operator import RuntimeOperator
 
 
 def _read_ocr_text(item: Any) -> str:
@@ -70,6 +90,30 @@ def _read_ocr_text(item: Any) -> str:
     if isinstance(item, str | int | float):
         return str(item)
     return ""
+
+
+def _debug_capture_path(runtime: "RuntimeOperator", *, name: str) -> Path | None:
+    if os.getenv(SHOP_DEBUG_CAPTURE_ENV) not in {"1", "true", "TRUE", "yes", "YES"}:
+        return None
+    window = getattr(runtime, "window", None)
+    workspace = getattr(window, "workspace", None)
+    if workspace is None:
+        return None
+    return Path(workspace) / f"debug-shop-{name}.png"
+
+
+def _maybe_dump_shop_capture(runtime: "RuntimeOperator", *, name: str, capture: dict[str, int]) -> Path | None:
+    path = _debug_capture_path(runtime, name=name)
+    if path is None:
+        return None
+    try:
+        payload = runtime.screenshot(**capture)
+        path.write_bytes(payload)
+        return path
+    except Exception:
+        fallback = path.with_suffix(".error.txt")
+        fallback.write_text(traceback.format_exc(), encoding="utf-8")
+        return fallback
 
 
 def _parse_first_int(items: list[Any], *, default: int | None) -> int | None:
@@ -149,15 +193,75 @@ def _parse_shop_level(items: list[Any], *, default: int | None) -> int | None:
     return default
 
 
-def _parse_shop_team_size_candidate(text: str) -> int | None:
+def _parse_shop_ratio(text: str) -> tuple[int, int] | None:
     match = re.fullmatch(r"(\d+)\s*/\s*(\d+)", text)
     if match is None:
         return None
-    current_size = int(match.group(1))
-    max_size = int(match.group(2))
+    return int(match.group(1)), int(match.group(2))
+
+
+def _parse_shop_team_size_candidate(text: str) -> str | None:
+    ratio = _parse_shop_ratio(text)
+    if ratio is None:
+        return None
+    current_size, max_size = ratio
     if current_size < 2 or max_size < current_size:
         return None
-    return max_size
+    return f"{current_size}/{max_size}"
+
+
+def _parse_shop_exp_candidate(text: str) -> str | None:
+    ratio = _parse_shop_ratio(text)
+    if ratio is None:
+        return None
+    current_exp, max_exp = ratio
+    if current_exp < 0 or max_exp <= 0 or max_exp < current_exp:
+        return None
+    return f"{current_exp}/{max_exp}"
+
+
+def _parse_shop_exp(items: list[Any], *, default: str | None) -> str | None:
+    normalized_texts: list[str] = []
+    for item in items:
+        text = _read_ocr_text(item).strip()
+        if text:
+            normalized_texts.append(re.sub(r"\s+", "", text))
+
+    for normalized in normalized_texts:
+        value = _parse_shop_exp_candidate(normalized)
+        if value is not None:
+            return value
+
+    return default
+
+
+def _ocr_shop_capture_items(runtime, *, capture: dict[str, int], contrast: float | None = None) -> list[Any]:
+    screenshot = getattr(runtime, "screenshot", None)
+    ocr_image = getattr(runtime, "ocr_image", None)
+    if callable(screenshot) and callable(ocr_image):
+        try:
+            payload = screenshot(**capture)
+            image = Image.open(BytesIO(payload)).convert("RGB")
+            if contrast is not None:
+                image = ImageEnhance.Contrast(image.convert("L")).enhance(contrast)
+            try:
+                return ocr_image(image, ocr=OcrRequestConfig(ocr_mode="high", retry_high="never"))
+            except TypeError:
+                return ocr_image(image)
+        except Exception:
+            pass
+    return runtime.ocr(capture=capture) or []
+
+
+def _ocr_shop_exp_items(runtime) -> list[Any]:
+    try:
+        full_ocr_items = runtime.ocr(capture=None) or []
+    except Exception:
+        return _ocr_shop_capture_items(runtime, capture=SHOP_EXP_REGION)
+    filtered_items = _filter_ocr_items_to_region(full_ocr_items, SHOP_EXP_REGION)
+    if filtered_items:
+        return filtered_items
+    return _ocr_shop_capture_items(runtime, capture=SHOP_EXP_REGION)
 
 
 def _read_ocr_box(item: Any) -> tuple[float, float, float, float] | None:
@@ -182,6 +286,24 @@ def _read_ocr_box(item: Any) -> tuple[float, float, float, float] | None:
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
     return min(xs), min(ys), max(xs), max(ys)
+
+
+def _ocr_box_center_in_region(box: tuple[float, float, float, float], region: dict[str, int]) -> bool:
+    left, top, right, bottom = box
+    center_x = (left + right) / 2.0
+    center_y = (top + bottom) / 2.0
+    return region["from_x"] <= center_x <= region["to_x"] and region["from_y"] <= center_y <= region["to_y"]
+
+
+def _filter_ocr_items_to_region(items: list[Any], region: dict[str, int]) -> list[Any]:
+    filtered: list[Any] = []
+    for item in items:
+        box = _read_ocr_box(item)
+        if box is None:
+            continue
+        if _ocr_box_center_in_region(box, region):
+            filtered.append(item)
+    return filtered
 
 
 def _team_size_tokens_are_contiguous(boxes: list[tuple[float, float, float, float]]) -> bool:
@@ -210,7 +332,7 @@ def _team_size_tokens_are_contiguous(boxes: list[tuple[float, float, float, floa
     return True
 
 
-def _parse_shop_team_size(items: list[Any], *, default: int | None) -> int | None:
+def _parse_shop_team_size(items: list[Any], *, default: str | None) -> str | None:
     tokens: list[tuple[str, tuple[float, float, float, float] | None]] = []
     for item in items:
         text = _read_ocr_text(item).strip()
@@ -285,16 +407,19 @@ def _build_shop_snapshot(
     items: list[Any],
     coins: int | None,
     level: int | None,
+    exp: str | None,
     reserve_full: bool,
-    max_team_size: int | None,
+    team_size: str | None,
 ) -> dict[str, Any]:
+    preserved_team_size = _shop_state(cw_state).get("team_size") if team_size is None else team_size
     return {
         **_preserved_shop_flags(cw_state),
         "items": deepcopy(items),
         "coins": coins,
         "level": level,
+        "exp": exp,
         "reserve_full": reserve_full,
-        "max_team_size": max_team_size,
+        "team_size": preserved_team_size,
         "guide_summary": {
             "remaining_purchases": deepcopy(_remaining_purchases(cw_state)),
             "constraints": _stable_constraints_summary(cw_state),
@@ -311,8 +436,9 @@ def _scan_shop_snapshot(cw_state: dict, *, scanner: ShopSnapshotSource) -> dict[
             items=_normalized_shop_items(scanned.get("items")),
             coins=scanned.get("coins"),
             level=scanned.get("level"),
+            exp=scanned.get("exp"),
             reserve_full=bool(scanned.get("reserve_full", False)),
-            max_team_size=scanned.get("max_team_size"),
+            team_size=scanned.get("team_size"),
         )
         if "opened" in scanned:
             snapshot["opened"] = bool(scanned["opened"])
@@ -320,14 +446,15 @@ def _scan_shop_snapshot(cw_state: dict, *, scanner: ShopSnapshotSource) -> dict[
             snapshot["stale"] = bool(scanned["stale"])
         return snapshot
 
-    items, coins, level, reserve_full, max_team_size = scanned
+    items, coins, level, reserve_full, team_size = scanned
     return _build_shop_snapshot(
         cw_state,
         items=items,
         coins=coins,
         level=level,
+        exp=None,
         reserve_full=reserve_full,
-        max_team_size=max_team_size,
+        team_size=team_size,
     )
 
 
@@ -384,19 +511,34 @@ def build_cw_shop_opener(runtime) -> ShopAction:
     return lambda: runtime.click_point(*SHOP_OPEN_POINT)
 
 
-def _read_shop_page_snapshot(runtime, *, read_max_team_size: bool) -> tuple[list[dict[str, Any]], int | None, int | None, bool, int | None]:
+def _read_shop_page_snapshot(runtime, *, read_team_size: bool) -> dict[str, Any]:
+    _maybe_dump_shop_capture(runtime, name="scan", capture=SHOP_SCAN_REGION)
+    _maybe_dump_shop_capture(runtime, name="coins", capture=SHOP_COINS_REGION)
+    _maybe_dump_shop_capture(runtime, name="level", capture=SHOP_LEVEL_REGION)
+    _maybe_dump_shop_capture(runtime, name="exp", capture=SHOP_EXP_REGION)
     items, reserve_full = _parse_shop_items(runtime.ocr(capture=SHOP_SCAN_REGION))
     coins = _parse_first_int(runtime.ocr(capture=SHOP_COINS_REGION) or [], default=0)
-    level = _parse_shop_level(runtime.ocr(capture=SHOP_LEVEL_REGION) or [], default=None)
-    max_team_size = None
-    if read_max_team_size:
-        max_team_size = _parse_last_int(runtime.ocr(capture=SHOP_MAX_TEAM_SIZE_REGION) or [], default=None)
-    return items, coins, level, reserve_full, max_team_size
+    level = _parse_shop_level(_ocr_shop_capture_items(runtime, capture=SHOP_LEVEL_REGION, contrast=1.8), default=None)
+    exp = _parse_shop_exp(_ocr_shop_exp_items(runtime), default=None)
+    team_size = None
+    if read_team_size:
+        _maybe_dump_shop_capture(runtime, name="team-size", capture=SHOP_TEAM_SIZE_REGION)
+        team_size = _parse_shop_team_size(runtime.ocr(capture=SHOP_TEAM_SIZE_REGION) or [], default=None)
+    snapshot = {
+        "items": items,
+        "coins": coins,
+        "level": level,
+        "exp": exp,
+        "reserve_full": reserve_full,
+    }
+    if read_team_size:
+        snapshot["team_size"] = team_size
+    return snapshot
 
 
 def build_cw_shop_scanner(runtime) -> ShopScanner:
-    def scanner() -> tuple[list[dict[str, Any]], int | None, int | None, bool, int | None]:
-        return _read_shop_page_snapshot(runtime, read_max_team_size=True)
+    def scanner() -> dict[str, Any]:
+        return _read_shop_page_snapshot(runtime, read_team_size=False)
 
     return scanner
 
@@ -404,26 +546,19 @@ def build_cw_shop_scanner(runtime) -> ShopScanner:
 def build_cw_shop_scan_snapshot_reader(runtime) -> ShopSnapshotReader:
     def reader() -> dict[str, Any]:
         runtime.click_point(*SHOP_SCAN_RESET_POINT)
-        sleep(SHOP_SCAN_SETTLE_SECONDS)
-        max_team_size = None
+        sleep(SHOP_SCAN_RESET_SETTLE_SECONDS)
+        team_size = None
         try:
+            _maybe_dump_shop_capture(runtime, name="team-size", capture=SHOP_TEAM_SIZE_REGION)
             team_size_items = runtime.ocr(capture=SHOP_TEAM_SIZE_REGION) or []
         except Exception:
             team_size_items = None
         if team_size_items is not None:
-            max_team_size = _parse_shop_team_size(team_size_items, default=None)
+            team_size = _parse_shop_team_size(team_size_items, default=None)
         runtime.click_point(*SHOP_OPEN_POINT)
-        sleep(SHOP_SCAN_SETTLE_SECONDS)
-        items, coins, level, reserve_full, _ = _read_shop_page_snapshot(runtime, read_max_team_size=False)
-        return {
-            "opened": True,
-            "stale": False,
-            "items": items,
-            "coins": coins,
-            "level": level,
-            "reserve_full": reserve_full,
-            "max_team_size": max_team_size,
-        }
+        sleep(SHOP_SCAN_OPEN_SETTLE_SECONDS)
+        snapshot = _read_shop_page_snapshot(runtime, read_team_size=False)
+        return {"opened": True, "stale": False, **snapshot, "team_size": team_size}
 
     return reader
 

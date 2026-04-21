@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 import importlib
+from io import BytesIO
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from PIL import Image
 import pytest
 
 from trail.core.errors import TrailError
@@ -19,15 +21,36 @@ IMAGE_BACKED_CLOSED_SHOP_SHOT = IMAGE_BACKED_SHOT_ROOT / "3e2fae9b5be74f99bbfce0
 
 
 def fake_shop_snapshot():
-    return ([{"name": "银狼", "price": 20}], 40, 7, False, 8)
+    return {
+        "items": [{"name": "银狼", "price": 20}],
+        "coins": 40,
+        "level": 7,
+        "exp": "4/52",
+        "reserve_full": False,
+        "team_size": "7/7",
+    }
 
 
 def fake_shop_snapshot_after_purchase():
-    return ([{"name": "阮·梅", "price": 30}], 22, 8, False, 8)
+    return {
+        "items": [{"name": "阮·梅", "price": 30}],
+        "coins": 22,
+        "level": 8,
+        "exp": "8/52",
+        "reserve_full": False,
+        "team_size": "7/7",
+    }
 
 
 def fake_shop_snapshot_target_unchanged_other_changed():
-    return ([{"name": "银狼", "price": 20}, {"name": "阮·梅", "price": 30}], 22, 8, False, 8)
+    return {
+        "items": [{"name": "银狼", "price": 20}, {"name": "阮·梅", "price": 30}],
+        "coins": 22,
+        "level": 8,
+        "exp": "8/52",
+        "reserve_full": False,
+        "team_size": "7/7",
+    }
 
 
 def load_cw_shop_module():
@@ -35,6 +58,31 @@ def load_cw_shop_module():
         return importlib.import_module("trail.scenes.cw.shop")
     except ModuleNotFoundError as exc:
         pytest.fail(f"missing trail.scenes.cw.shop: {exc}")
+
+
+def test_maybe_dump_shop_capture_writes_region_png(tmp_path, monkeypatch):
+    shop_module = load_cw_shop_module()
+    maybe_dump_shop_capture = getattr(shop_module, "_maybe_dump_shop_capture", None)
+    assert maybe_dump_shop_capture is not None
+
+    workspace = tmp_path / ".trail" / "shots"
+    workspace.mkdir(parents=True)
+    monkeypatch.setenv(shop_module.SHOP_DEBUG_CAPTURE_ENV, "1")
+
+    calls: list[dict[str, int]] = []
+
+    class RuntimeStub:
+        window = SimpleNamespace(workspace=workspace)
+
+        def screenshot(self, **capture):
+            calls.append(capture)
+            return b"fake-png"
+
+    path = maybe_dump_shop_capture(RuntimeStub(), name="scan", capture=shop_module.SHOP_SCAN_REGION)
+
+    assert path == workspace / "debug-shop-scan.png"
+    assert path.read_bytes() == b"fake-png"
+    assert calls == [shop_module.SHOP_SCAN_REGION]
 
 
 def _rapidocr_piece(text: str, score: float = 0.99, *, bbox=None):
@@ -78,8 +126,10 @@ def _build_cw_shop_scan_runtime(
                 return [_rapidocr_piece("62")]
             if capture == shop_module.SHOP_LEVEL_REGION:
                 return [_rapidocr_piece("LV.3")]
-            if capture == shop_module.SHOP_MAX_TEAM_SIZE_REGION:
-                return [_rapidocr_piece("8")]
+            if capture is None:
+                return [_rapidocr_piece("4/52", bbox=[[262, 943], [319, 943], [319, 973], [262, 973]])]
+            if capture == shop_module.SHOP_EXP_REGION:
+                return [_rapidocr_piece("4/52")]
             raise AssertionError(f"unexpected capture: {capture}")
 
         def capture_after_action(self, optional: bool = False, request_id: str | None = None):
@@ -163,19 +213,23 @@ def test_build_cw_shop_scanner_reads_rapidocr_tuple_text_fields():
     build_cw_shop_scanner = getattr(shop_module, "build_cw_shop_scanner", None)
     assert build_cw_shop_scanner is not None
 
-    expected_level_region = {
-        "from_x": 224,
-        "from_y": 880,
-        "to_x": 350,
-        "to_y": 938,
-    }
+    expected_team_size_region = {"from_x": 835, "from_y": 188, "to_x": 1095, "to_y": 281}
+    expected_coins_region = {"from_x": 1615, "from_y": 902, "to_x": 1698, "to_y": 956}
+    expected_level_region = {"from_x": 220, "from_y": 880, "to_x": 360, "to_y": 950}
+    expected_exp_region = {"from_x": 256, "from_y": 943, "to_x": 325, "to_y": 973}
+    expected_shop_open_point = (1628, 992)
+
+    assert shop_module.SHOP_OPEN_POINT == expected_shop_open_point
+    assert shop_module.SHOP_TEAM_SIZE_REGION == expected_team_size_region
+    assert shop_module.SHOP_COINS_REGION == expected_coins_region
     assert shop_module.SHOP_LEVEL_REGION == expected_level_region
+    assert shop_module.SHOP_EXP_REGION == expected_exp_region
 
     captures = [
         shop_module.SHOP_SCAN_REGION,
-        shop_module.SHOP_COINS_REGION,
+        expected_coins_region,
         expected_level_region,
-        shop_module.SHOP_MAX_TEAM_SIZE_REGION,
+        None,
     ]
     payloads = [
         [
@@ -191,7 +245,7 @@ def test_build_cw_shop_scanner_reads_rapidocr_tuple_text_fields():
             _rapidocr_piece("3", 0.9983481764793396),
             _rapidocr_piece("0/4", 0.9960913062095642),
         ],
-        [_rapidocr_piece("8", 0.99673992395401)],
+        [_rapidocr_piece("4/52", 0.9947374314069748, bbox=[[262, 943], [319, 943], [319, 973], [262, 973]])],
     ]
 
     class Runtime:
@@ -207,13 +261,13 @@ def test_build_cw_shop_scanner_reads_rapidocr_tuple_text_fields():
     runtime = Runtime()
     scanner = build_cw_shop_scanner(runtime)
 
-    assert scanner() == (
-        [{"name": "黑塔", "price": 1}, {"name": "阿格莱雅", "price": 1}],
-        62,
-        3,
-        False,
-        8,
-    )
+    assert scanner() == {
+        "items": [{"name": "黑塔", "price": 1}, {"name": "阿格莱雅", "price": 1}],
+        "coins": 62,
+        "level": 3,
+        "exp": "4/52",
+        "reserve_full": False,
+    }
     assert runtime.calls == captures
 
 
@@ -227,14 +281,14 @@ def test_build_cw_shop_scanner_reads_image_backed_shop_page_when_fixture_availab
         shop_module=shop_module,
     )
     scanner = build_cw_shop_scanner(runtime)
-    items, coins, level, reserve_full, max_team_size = scanner()
+    snapshot = scanner()
 
-    assert items
-    assert any(item.get("price") is not None for item in items)
-    assert coins is not None
-    assert level is not None
-    assert reserve_full is False
-    assert max_team_size is None or isinstance(max_team_size, int)
+    assert snapshot["items"]
+    assert any(item.get("price") is not None for item in snapshot["items"])
+    assert snapshot["coins"] is not None
+    assert snapshot["level"] is None or isinstance(snapshot["level"], int)
+    assert snapshot["exp"] is not None
+    assert snapshot["reserve_full"] is False
 
 
 def test_build_cw_shop_scan_reader_reads_image_backed_team_size_when_fixture_available(monkeypatch):
@@ -271,11 +325,12 @@ def test_build_cw_shop_scan_reader_reads_image_backed_team_size_when_fixture_ava
     snapshot = reader()
 
     assert runtime.clicks == [shop_module.SHOP_SCAN_RESET_POINT, shop_module.SHOP_OPEN_POINT]
-    assert snapshot["max_team_size"] == 3
+    assert snapshot["team_size"] == "3/3"
     assert snapshot["items"]
     assert any(item.get("price") is not None for item in snapshot["items"])
     assert snapshot["coins"] is not None
-    assert snapshot["level"] is not None
+    assert snapshot["level"] is None or isinstance(snapshot["level"], int)
+    assert snapshot["exp"] is not None
 
 
 def test_parse_shop_level_prefers_level_text_over_progress_counter():
@@ -351,15 +406,15 @@ def test_parse_shop_level_rejects_progress_only_payloads(raw_items):
 @pytest.mark.parametrize(
     ("raw_items", "expected"),
     [
-        ([_rapidocr_piece("3/3")], 3),
-        ([_rapidocr_piece("4/6")], 6),
+        ([_rapidocr_piece("3/3")], "3/3"),
+        ([_rapidocr_piece("4/6")], "4/6"),
         (
             [
                 _rapidocr_piece("3", bbox=[[10, 10], [24, 10], [24, 34], [10, 34]]),
                 _rapidocr_piece("/", bbox=[[25, 10], [33, 10], [33, 34], [25, 34]]),
                 _rapidocr_piece("3", bbox=[[34, 10], [48, 10], [48, 34], [34, 34]]),
             ],
-            3,
+            "3/3",
         ),
     ],
 )
@@ -369,6 +424,14 @@ def test_parse_shop_team_size_extracts_max_size_from_ratio_tokens(raw_items, exp
     assert parse_shop_team_size is not None
 
     assert parse_shop_team_size(raw_items, default=None) == expected
+
+
+def test_parse_shop_exp_extracts_progress_ratio():
+    shop_module = load_cw_shop_module()
+    parse_shop_exp = getattr(shop_module, "_parse_shop_exp", None)
+    assert parse_shop_exp is not None
+
+    assert parse_shop_exp([_rapidocr_piece("4/52")], default=None) == "4/52"
 
 
 @pytest.mark.parametrize(
@@ -434,6 +497,8 @@ def test_build_cw_shop_scan_snapshot_reader_closes_then_reopens_before_scanning(
                 return [_rapidocr_piece("62")]
             if capture == shop_module.SHOP_LEVEL_REGION:
                 return [_rapidocr_piece("LV.3")]
+            if capture is None:
+                return [_rapidocr_piece("4/52", bbox=[[262, 943], [319, 943], [319, 973], [262, 973]])]
             raise AssertionError(f"unexpected capture: {capture}")
 
     monkeypatch.setattr(shop_module, "sleep", lambda seconds: events.append(("wait", seconds)))
@@ -448,16 +513,18 @@ def test_build_cw_shop_scan_snapshot_reader_closes_then_reopens_before_scanning(
         shop_module.SHOP_SCAN_REGION,
         shop_module.SHOP_COINS_REGION,
         shop_module.SHOP_LEVEL_REGION,
+        None,
     ]
     assert events == [
         ("click", shop_module.SHOP_SCAN_RESET_POINT),
-        ("wait", shop_module.SHOP_SCAN_SETTLE_SECONDS),
+        ("wait", shop_module.SHOP_SCAN_RESET_SETTLE_SECONDS),
         ("ocr", shop_module.SHOP_TEAM_SIZE_REGION),
         ("click", shop_module.SHOP_OPEN_POINT),
-        ("wait", shop_module.SHOP_SCAN_SETTLE_SECONDS),
+        ("wait", shop_module.SHOP_SCAN_OPEN_SETTLE_SECONDS),
         ("ocr", shop_module.SHOP_SCAN_REGION),
         ("ocr", shop_module.SHOP_COINS_REGION),
         ("ocr", shop_module.SHOP_LEVEL_REGION),
+        ("ocr", None),
     ]
     assert snapshot == {
         "opened": True,
@@ -465,8 +532,9 @@ def test_build_cw_shop_scan_snapshot_reader_closes_then_reopens_before_scanning(
         "items": [{"name": "黑塔", "price": 1}],
         "coins": 62,
         "level": 3,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 3,
+        "team_size": "3/3",
     }
 
 
@@ -499,6 +567,8 @@ def test_build_cw_shop_scan_snapshot_reader_continues_when_team_size_ocr_raises(
                 return [_rapidocr_piece("62")]
             if capture == shop_module.SHOP_LEVEL_REGION:
                 return [_rapidocr_piece("LV.3")]
+            if capture is None:
+                return [_rapidocr_piece("4/52", bbox=[[262, 943], [319, 943], [319, 973], [262, 973]])]
             raise AssertionError(f"unexpected capture: {capture}")
 
     monkeypatch.setattr(shop_module, "sleep", lambda seconds: events.append(("wait", seconds)))
@@ -513,16 +583,18 @@ def test_build_cw_shop_scan_snapshot_reader_continues_when_team_size_ocr_raises(
         shop_module.SHOP_SCAN_REGION,
         shop_module.SHOP_COINS_REGION,
         shop_module.SHOP_LEVEL_REGION,
+        None,
     ]
     assert events == [
         ("click", shop_module.SHOP_SCAN_RESET_POINT),
-        ("wait", shop_module.SHOP_SCAN_SETTLE_SECONDS),
+        ("wait", shop_module.SHOP_SCAN_RESET_SETTLE_SECONDS),
         ("ocr", shop_module.SHOP_TEAM_SIZE_REGION),
         ("click", shop_module.SHOP_OPEN_POINT),
-        ("wait", shop_module.SHOP_SCAN_SETTLE_SECONDS),
+        ("wait", shop_module.SHOP_SCAN_OPEN_SETTLE_SECONDS),
         ("ocr", shop_module.SHOP_SCAN_REGION),
         ("ocr", shop_module.SHOP_COINS_REGION),
         ("ocr", shop_module.SHOP_LEVEL_REGION),
+        ("ocr", None),
     ]
     assert snapshot == {
         "opened": True,
@@ -530,8 +602,9 @@ def test_build_cw_shop_scan_snapshot_reader_continues_when_team_size_ocr_raises(
         "items": [{"name": "黑塔", "price": 1}],
         "coins": 62,
         "level": 3,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": None,
+        "team_size": None,
     }
 
 
@@ -557,17 +630,121 @@ def test_read_shop_page_snapshot_without_max_team_size_is_pure_ocr():
                 return [_rapidocr_piece("62")]
             if capture == shop_module.SHOP_LEVEL_REGION:
                 return [_rapidocr_piece("LV.3")]
+            if capture is None:
+                return [_rapidocr_piece("4/52", bbox=[[262, 943], [319, 943], [319, 973], [262, 973]])]
             raise AssertionError(f"unexpected capture: {capture}")
 
     runtime = Runtime()
 
-    assert read_shop_page_snapshot(runtime, read_max_team_size=False) == ([{"name": "黑塔", "price": 1}], 62, 3, False, None)
+    assert read_shop_page_snapshot(runtime, read_team_size=False) == {
+        "items": [{"name": "黑塔", "price": 1}],
+        "coins": 62,
+        "level": 3,
+        "exp": "4/52",
+        "reserve_full": False,
+    }
     assert runtime.ocr_calls == [
         shop_module.SHOP_SCAN_REGION,
         shop_module.SHOP_COINS_REGION,
         shop_module.SHOP_LEVEL_REGION,
+        None,
     ]
     assert runtime.clicks == []
+
+
+def test_read_shop_page_snapshot_uses_ocr_image_for_level_region_when_available():
+    shop_module = load_cw_shop_module()
+    read_shop_page_snapshot = getattr(shop_module, "_read_shop_page_snapshot", None)
+    assert read_shop_page_snapshot is not None
+
+    screenshot_calls: list[dict[str, int]] = []
+    ocr_calls: list[dict[str, int]] = []
+    ocr_image_calls: list[tuple[int, int]] = []
+
+    class Runtime:
+        def screenshot(self, **capture):
+            screenshot_calls.append(capture)
+            image = Image.new("RGB", (capture["to_x"] - capture["from_x"], capture["to_y"] - capture["from_y"]), color="gray")
+            buffer = BytesIO()
+            image.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        def ocr(self, *, capture):
+            ocr_calls.append(capture)
+            if capture == shop_module.SHOP_SCAN_REGION:
+                return [_rapidocr_piece("黑塔"), _rapidocr_piece("1")]
+            if capture == shop_module.SHOP_COINS_REGION:
+                return [_rapidocr_piece("62")]
+            if capture == shop_module.SHOP_EXP_REGION:
+                return [_rapidocr_piece("4/52")]
+            raise AssertionError(f"unexpected capture: {capture}")
+
+        def ocr_image(self, image):
+            ocr_image_calls.append(image.size)
+            if image.size == (
+                shop_module.SHOP_LEVEL_REGION["to_x"] - shop_module.SHOP_LEVEL_REGION["from_x"],
+                shop_module.SHOP_LEVEL_REGION["to_y"] - shop_module.SHOP_LEVEL_REGION["from_y"],
+            ):
+                return [_rapidocr_piece("7"), _rapidocr_piece("LV.")]
+            return [_rapidocr_piece("4/52")]
+
+    snapshot = read_shop_page_snapshot(Runtime(), read_team_size=False)
+
+    assert snapshot == {
+        "items": [{"name": "黑塔", "price": 1}],
+        "coins": 62,
+        "level": 7,
+        "exp": "4/52",
+        "reserve_full": False,
+    }
+    assert screenshot_calls == [shop_module.SHOP_LEVEL_REGION, shop_module.SHOP_EXP_REGION]
+    assert ocr_calls == [shop_module.SHOP_SCAN_REGION, shop_module.SHOP_COINS_REGION, None]
+    assert ocr_image_calls == [
+        (
+            shop_module.SHOP_LEVEL_REGION["to_x"] - shop_module.SHOP_LEVEL_REGION["from_x"],
+            shop_module.SHOP_LEVEL_REGION["to_y"] - shop_module.SHOP_LEVEL_REGION["from_y"],
+        ),
+        (
+            shop_module.SHOP_EXP_REGION["to_x"] - shop_module.SHOP_EXP_REGION["from_x"],
+            shop_module.SHOP_EXP_REGION["to_y"] - shop_module.SHOP_EXP_REGION["from_y"],
+        ),
+    ]
+
+
+def test_read_shop_page_snapshot_reads_exp_from_full_ocr_then_filters_to_region():
+    shop_module = load_cw_shop_module()
+    read_shop_page_snapshot = getattr(shop_module, "_read_shop_page_snapshot", None)
+    assert read_shop_page_snapshot is not None
+
+    ocr_calls: list[dict[str, int] | None] = []
+
+    class Runtime:
+        def ocr(self, *, capture=None):
+            ocr_calls.append(capture)
+            if capture == shop_module.SHOP_SCAN_REGION:
+                return [_rapidocr_piece("黑塔"), _rapidocr_piece("1")]
+            if capture == shop_module.SHOP_COINS_REGION:
+                return [_rapidocr_piece("62")]
+            if capture == shop_module.SHOP_LEVEL_REGION:
+                return [_rapidocr_piece("LV.3")]
+            if capture is None:
+                return [
+                    _rapidocr_piece("前台区域", bbox=[[900, 294], [1015, 294], [1015, 324], [900, 324]]),
+                    _rapidocr_piece("4/52", bbox=[[262, 945], [319, 945], [319, 973], [262, 973]]),
+                    _rapidocr_piece("38", bbox=[[1633, 912], [1681, 912], [1681, 948], [1633, 948]]),
+                ]
+            raise AssertionError(f"unexpected capture: {capture}")
+
+    snapshot = read_shop_page_snapshot(Runtime(), read_team_size=False)
+
+    assert snapshot == {
+        "items": [{"name": "黑塔", "price": 1}],
+        "coins": 62,
+        "level": 3,
+        "exp": "4/52",
+        "reserve_full": False,
+    }
+    assert ocr_calls == [shop_module.SHOP_SCAN_REGION, shop_module.SHOP_COINS_REGION, shop_module.SHOP_LEVEL_REGION, None]
 
 
 def test_build_cw_shop_scanner_remains_shop_page_only_for_buy_confirmation():
@@ -590,14 +767,20 @@ def test_build_cw_shop_scanner_remains_shop_page_only_for_buy_confirmation():
                 return [_rapidocr_piece("62")]
             if capture == shop_module.SHOP_LEVEL_REGION:
                 return [_rapidocr_piece("LV.3")]
-            if capture == shop_module.SHOP_MAX_TEAM_SIZE_REGION:
-                return [_rapidocr_piece("8")]
+            if capture == shop_module.SHOP_EXP_REGION:
+                return [_rapidocr_piece("4/52")]
             raise AssertionError(f"unexpected capture: {capture}")
 
     runtime = Runtime()
     scanner = build_cw_shop_scanner(runtime)
 
-    assert scanner() == ([{"name": "黑塔", "price": 1}], 62, 3, False, 8)
+    assert scanner() == {
+        "items": [{"name": "黑塔", "price": 1}],
+        "coins": 62,
+        "level": 3,
+        "exp": "4/52",
+        "reserve_full": False,
+    }
     assert runtime.clicks == []
 
 
@@ -614,8 +797,9 @@ def test_scan_cw_shop_converges_to_same_snapshot_from_opened_or_closed_start(tmp
         "items": [{"name": "黑塔", "price": 1}],
         "coins": 2,
         "level": 3,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 3,
+        "team_size": "3/3",
     }
 
     opened_session = build_fake_cw_session(tmp_path)
@@ -632,8 +816,9 @@ def test_scan_cw_shop_converges_to_same_snapshot_from_opened_or_closed_start(tmp
         "items": [{"name": "黑塔", "price": 1}],
         "coins": 2,
         "level": 3,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 3,
+        "team_size": "3/3",
         "guide_summary": {
             "remaining_purchases": {},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -674,8 +859,9 @@ def test_shop_scan_refreshes_store_snapshot(tmp_path):
         "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 8,
+        "team_size": "7/7",
         "guide_summary": {
             "remaining_purchases": {"银狼": 1},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -721,8 +907,8 @@ def test_build_cw_shop_scanner_reads_rapidocr_tuple_snapshot_fields():
         tuple(shop_module.SHOP_LEVEL_REGION.values()): [
             [[0, 0], "Lv.7", 0.9982701539993286],
         ],
-        tuple(shop_module.SHOP_MAX_TEAM_SIZE_REGION.values()): [
-            [[0, 0], "8", 0.9982701539993286],
+        tuple(shop_module.SHOP_EXP_REGION.values()): [
+            [[0, 0], "4/52", 0.9982701539993286],
         ],
     }
 
@@ -730,7 +916,13 @@ def test_build_cw_shop_scanner_reads_rapidocr_tuple_snapshot_fields():
         def ocr(self, *, capture):
             return ocr_payloads[tuple(capture.values())]
 
-    assert build_cw_shop_scanner(RuntimeStub())() == ([{"name": "黑塔", "price": 1}], 40, 7, False, 8)
+    assert build_cw_shop_scanner(RuntimeStub())() == {
+        "items": [{"name": "黑塔", "price": 1}],
+        "coins": 40,
+        "level": 7,
+        "exp": "4/52",
+        "reserve_full": False,
+    }
 
 
 def test_parse_shop_level_prefers_level_text_over_progress_counter():
@@ -746,6 +938,21 @@ def test_parse_shop_level_prefers_level_text_over_progress_counter():
     ]
 
     assert parse_shop_level(raw_items, default=None) == 3
+
+
+def test_parse_shop_level_accepts_digit_before_lv_token_when_progress_counter_exists():
+    shop_module = load_cw_shop_module()
+    parse_shop_level = getattr(shop_module, "_parse_shop_level", None)
+    assert parse_shop_level is not None
+
+    raw_items = [
+        [[0, 0], "购买经验", 0.998764380812645],
+        [[0, 0], "7", 0.9988219141960144],
+        [[0, 0], "LV.", 0.8283075491587321],
+        [[0, 0], "4/52", 0.994941234588623],
+    ]
+
+    assert parse_shop_level(raw_items, default=None) == 7
 
 
 def test_parse_shop_level_does_not_treat_progress_counter_as_level():
@@ -807,8 +1014,9 @@ def test_shop_scan_without_guide_keeps_opened_and_filters_guide_summary(tmp_path
         "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 8,
+        "team_size": "7/7",
         "guide_summary": {
             "remaining_purchases": {},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -853,8 +1061,9 @@ def test_shop_buy_slot_mutates_remaining_purchases(tmp_path):
         "items": [{"name": "阮·梅", "price": 30}],
         "coins": 22,
         "level": 8,
+        "exp": "8/52",
         "reserve_full": False,
-        "max_team_size": 8,
+        "team_size": "7/7",
         "opened": True,
         "guide_summary": {
             "remaining_purchases": {"银狼": 0},
@@ -1164,8 +1373,9 @@ def test_cw_shop_scan_read_commands_persist_two_phase_snapshot(tmp_path: Path):
         "items": [{"name": "黑塔", "price": 1}],
         "coins": 62,
         "level": 3,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 3,
+        "team_size": "3/3",
         "guide_summary": {
             "remaining_purchases": {"银狼": 2},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -1179,6 +1389,7 @@ def test_cw_shop_scan_read_commands_persist_two_phase_snapshot(tmp_path: Path):
         shop_module.SHOP_SCAN_REGION,
         shop_module.SHOP_COINS_REGION,
         shop_module.SHOP_LEVEL_REGION,
+        None,
     ]
     assert scanned == expected_snapshot
     assert status == expected_snapshot
@@ -1211,8 +1422,9 @@ def test_cw_shop_scan_flows_through_command_service_mutation_journal_and_persist
         "items": [{"name": "黑塔", "price": 1}],
         "coins": 62,
         "level": 3,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 3,
+        "team_size": "3/3",
         "guide_summary": {
             "remaining_purchases": {"银狼": 2},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -1226,6 +1438,7 @@ def test_cw_shop_scan_flows_through_command_service_mutation_journal_and_persist
         shop_module.SHOP_SCAN_REGION,
         shop_module.SHOP_COINS_REGION,
         shop_module.SHOP_LEVEL_REGION,
+        None,
     ]
     assert envelope["ok"] is True
     assert envelope["data"] == expected_snapshot
@@ -1245,8 +1458,9 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_save_fails_after_clic
         "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 8,
+        "team_size": "7/7",
         "guide_summary": {
             "remaining_purchases": {"银狼": 2},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -1281,6 +1495,7 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_save_fails_after_clic
         shop_module.SHOP_SCAN_REGION,
         shop_module.SHOP_COINS_REGION,
         shop_module.SHOP_LEVEL_REGION,
+        None,
     ]
     assert envelope["ok"] is False
     assert envelope["error"] == {
@@ -1315,8 +1530,9 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_click_side_effect_rai
         "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 8,
+        "team_size": "7/7",
         "guide_summary": {
             "remaining_purchases": {"银狼": 2},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -1374,8 +1590,9 @@ def test_cw_shop_scan_keeps_failed_before_side_effect_when_click_fails_before_in
         "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 8,
+        "team_size": "7/7",
         "guide_summary": {
             "remaining_purchases": {"银狼": 2},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -1432,8 +1649,9 @@ def test_cw_shop_scan_keeps_failed_before_side_effect_when_window_not_foreground
         "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 8,
+        "team_size": "7/7",
         "guide_summary": {
             "remaining_purchases": {"银狼": 2},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -1491,8 +1709,9 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_click_reports_window_
         "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 8,
+        "team_size": "7/7",
         "guide_summary": {
             "remaining_purchases": {"银狼": 2},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -1552,8 +1771,9 @@ def test_cw_shop_scan_marks_persisted_but_response_unknown_when_metadata_boom_ha
         "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 8,
+        "team_size": "7/7",
         "guide_summary": {
             "remaining_purchases": {"银狼": 2},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -1581,8 +1801,9 @@ def test_cw_shop_scan_marks_persisted_but_response_unknown_when_metadata_boom_ha
         "items": [{"name": "黑塔", "price": 1}],
         "coins": 62,
         "level": 3,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 3,
+        "team_size": "3/3",
         "guide_summary": {
             "remaining_purchases": {"银狼": 2},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
@@ -1596,6 +1817,7 @@ def test_cw_shop_scan_marks_persisted_but_response_unknown_when_metadata_boom_ha
         shop_module.SHOP_SCAN_REGION,
         shop_module.SHOP_COINS_REGION,
         shop_module.SHOP_LEVEL_REGION,
+        None,
     ]
     assert envelope["ok"] is False
     assert envelope["error"] == {
@@ -1639,8 +1861,9 @@ def test_cw_shop_buy_slot_marks_applied_but_not_persisted_when_confirmation_fail
         "items": [{"name": "银狼", "price": 20}],
         "coins": 40,
         "level": 7,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 8,
+        "team_size": "7/7",
         "opened": True,
         "guide_summary": {
             "remaining_purchases": {"银狼": 1},

@@ -1610,8 +1610,9 @@ def test_cw_shop_status_recovers_guide_summary_from_latest_artifact_when_session
             "items": [{"name": "希儿", "price": 3}],
             "coins": 15,
             "level": 4,
+            "exp": "4/52",
             "reserve_full": False,
-            "max_team_size": 6,
+            "team_size": "6/6",
         },
         "stage": {"stale": False, "name": "shop"},
         "metrics": {},
@@ -1643,8 +1644,9 @@ def test_cw_shop_status_recovers_guide_summary_from_latest_artifact_when_session
         "items": [{"name": "希儿", "price": 3}],
         "coins": 15,
         "level": 4,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 6,
+        "team_size": "6/6",
         "guide_summary": {
             "remaining_purchases": {"希儿": 9, "佩拉": 3},
             "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9},
@@ -1657,8 +1659,9 @@ def test_cw_shop_status_recovers_guide_summary_from_latest_artifact_when_session
         "items": [{"name": "希儿", "price": 3}],
         "coins": 15,
         "level": 4,
+        "exp": "4/52",
         "reserve_full": False,
-        "max_team_size": 6,
+        "team_size": "6/6",
     }
     assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["银狼"]}
     assert persisted.scene_state["cw"]["stage"] == {"stale": False, "name": "shop"}

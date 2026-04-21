@@ -649,7 +649,8 @@ class WindowsWindowController:
     def capture_image(self, *, from_x=None, from_y=None, to_x=None, to_y=None, normalize: bool = True):
         window = self._resolve_window()
         region = self._resolve_region(window)
-        if all(value is not None for value in (from_x, from_y, to_x, to_y)):
+        has_explicit_capture_region = all(value is not None for value in (from_x, from_y, to_x, to_y))
+        if has_explicit_capture_region:
             region = region.sub_region(
                 _scale_canonical_capture_value(from_x, target_size=region.width, canonical_size=CANONICAL_CLIENT_WIDTH),
                 _scale_canonical_capture_value(from_y, target_size=region.height, canonical_size=CANONICAL_CLIENT_HEIGHT),
@@ -660,11 +661,12 @@ class WindowsWindowController:
         hwnd = getattr(window, "_hWnd", None)
         capture_hwnd = int(hwnd) if hwnd is not None else None
         capture_region = region
-        target_size = _target_capture_size(region, capture_hwnd)
-        if capture_hwnd is not None and all(value is None for value in (from_x, from_y, to_x, to_y)):
+        target_size = (capture_region.width, capture_region.height) if has_explicit_capture_region else _target_capture_size(region, capture_hwnd)
+        if capture_hwnd is not None and not has_explicit_capture_region:
             overlay_target = _find_owned_overlay_target(capture_hwnd, region)
             if overlay_target is not None:
                 capture_hwnd, capture_region = overlay_target
+                target_size = _target_capture_size(capture_region, capture_hwnd)
         if sys.platform == "win32" and capture_hwnd is not None:
             scaled_region = _scale_region_for_screen_capture(capture_region, capture_hwnd)
             try:

@@ -395,8 +395,9 @@ def _append_cw_shop_snapshot_info(lines: list[str], data: dict[str, Any]) -> Non
         "info",
         ("coins", data.get("coins") if "coins" in data else None),
         ("level", data.get("level") if "level" in data else None),
+        ("exp", data.get("exp") if "exp" in data else None),
         ("reserve_full", bool(data.get("reserve_full")) if "reserve_full" in data else None),
-        ("max_team_size", data.get("max_team_size") if "max_team_size" in data else None),
+        ("team_size", data.get("team_size") if "team_size" in data else None),
     )
 
 

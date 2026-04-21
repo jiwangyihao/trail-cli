@@ -2219,6 +2219,33 @@ def test_windows_window_controller_capture_image_preserves_region_size_when_norm
     assert image.size == (201, 61)
 
 
+def test_windows_window_controller_capture_preserves_region_size_when_region_requested(monkeypatch, tmp_path):
+    import trail.runtime.window as window_module
+
+    controller = window_module.WindowsWindowController(
+        workspace=tmp_path,
+        window_binding=WindowBinding(title="Demo", hwnd=321),
+    )
+
+    monkeypatch.setattr(window_module.sys, "platform", "win32")
+    monkeypatch.setattr(controller, "_resolve_window", lambda: SimpleNamespace(_hWnd=321, title="Demo"))
+    monkeypatch.setattr(
+        controller,
+        "_resolve_region",
+        lambda window=None: window_module.Region(left=0, top=0, width=1920, height=1080),
+    )
+    monkeypatch.setattr(
+        window_module,
+        "_capture_with_windows_capture",
+        lambda hwnd, client_region: Image.new("RGB", (client_region.width, client_region.height), color="white"),
+    )
+
+    image_bytes = controller.capture(from_x=100, from_y=200, to_x=301, to_y=261)
+    image = Image.open(BytesIO(image_bytes))
+
+    assert image.size == (201, 61)
+
+
 def test_windows_window_controller_uses_resolved_hwnd_when_binding_missing(monkeypatch, tmp_path):
     import trail.runtime.window as window_module
     from PIL import Image

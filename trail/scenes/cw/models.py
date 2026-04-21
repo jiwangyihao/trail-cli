@@ -30,7 +30,7 @@ class CwSceneState:
         }
     )
     strategy: dict = field(default_factory=lambda: {"cards": [], "stale": True})
-    shop: dict = field(default_factory=lambda: {"stale": True, "max_team_size": None})
+    shop: dict = field(default_factory=lambda: {"stale": True, "team_size": None, "exp": None})
     stage: dict = field(default_factory=lambda: {"stale": True})
     metrics: dict = field(default_factory=dict)
 
