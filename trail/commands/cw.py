@@ -5,6 +5,8 @@ from enum import StrEnum
 import typer
 
 from trail.commands.helpers import call_daemon
+from trail.core.errors import TrailError
+from trail.output.capture import with_auto_capture as _with_auto_capture
 from trail.output.rendering import print_output
 
 
@@ -84,6 +86,27 @@ def _rpc_cw(method: str, *, session_id: str, payload: dict | None = None) -> dic
 
 def _print_cw(method: str, *, session_id: str, payload: dict | None = None) -> None:
     print_output(method, _rpc_cw(method, session_id=session_id, payload=payload))
+
+
+def _cw_input_invalid_response(message: str) -> dict:
+    return _with_auto_capture(
+        None,
+        lambda: (_ for _ in ()).throw(TrailError("CW_OPTION_INVALID", message)),
+    )
+
+
+def _parse_place_actions(values: list[str] | None) -> list[dict[str, str]]:
+    raw_values = list(values or [])
+    if not raw_values:
+        raise TrailError("CW_OPTION_INVALID", "cw slots place requires at least one --action")
+
+    actions: list[dict[str, str]] = []
+    for raw in raw_values:
+        parts = [part.strip() for part in raw.split(",")]
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            raise TrailError("CW_OPTION_INVALID", f"cw slots place action invalid: {raw}")
+        actions.append({"source": parts[0], "target": parts[1]})
+    return actions
 
 
 @cw_app.command("enter")
@@ -170,13 +193,17 @@ def cw_slots_swap(
     _print_cw("cw.slots.swap", session_id=session, payload={"source": source, "target": target})
 
 
-@slots_app.command("place-one")
-def cw_slots_place_one(
+@slots_app.command("place")
+def cw_slots_place(
     session: str = typer.Option(..., "--session"),
-    source: str = typer.Option(..., "--source"),
-    target: str = typer.Option(..., "--target"),
+    action: list[str] | None = typer.Option(None, "--action"),
 ) -> None:
-    _print_cw("cw.slots.place_one", session_id=session, payload={"source": source, "target": target})
+    try:
+        actions = _parse_place_actions(action)
+    except TrailError as error:
+        print_output("cw.slots.place", _cw_input_invalid_response(str(error)))
+        return
+    _print_cw("cw.slots.place", session_id=session, payload={"actions": actions})
 
 
 @crystals_app.command("collect")
@@ -184,9 +211,16 @@ def cw_crystals_collect(session: str = typer.Option(..., "--session")) -> None:
     _print_cw("cw.crystals.collect", session_id=session)
 
 
-@hand_app.command("sell-one")
-def cw_hand_sell_one(session: str = typer.Option(..., "--session"), slot: int = typer.Option(..., "--slot")) -> None:
-    _print_cw("cw.hand.sell_one", session_id=session, payload={"slot": slot})
+@hand_app.command("sell")
+def cw_hand_sell(
+    session: str = typer.Option(..., "--session"),
+    slot: list[int] | None = typer.Option(None, "--slot"),
+) -> None:
+    slots = list(slot or [])
+    if not slots:
+        print_output("cw.hand.sell", _cw_input_invalid_response("cw hand sell requires at least one --slot"))
+        return
+    _print_cw("cw.hand.sell", session_id=session, payload={"slots": slots})
 
 
 @hand_app.command("sell-plan")

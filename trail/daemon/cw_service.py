@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from time import sleep
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
-from trail.daemon.command_service import SideEffectAppliedButStateNotPersisted
+from trail.daemon.command_service import PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
 from trail.output.capture import with_auto_capture, with_selective_capture
 from trail.scenes.cw.entry import enter_cw, start_cw
 from trail.scenes.cw.events import (
@@ -69,10 +70,10 @@ from trail.scenes.cw.slots import (
     build_cw_slot_swapper,
     build_cw_slots_reader,
     collect_cw_crystals,
-    place_one_cw_slot,
+    place_cw_slots,
     plan_cw_hand_sell,
     read_cw_slots,
-    sell_one_cw_hand,
+    sell_cw_hand_slots,
     swap_cw_slots,
 )
 from trail.scenes.cw.stage import build_cw_stage_detector, detect_cw_stage, wait_cw_stage
@@ -204,6 +205,28 @@ class CwService:
 
         try:
             result = handlers[method]()
+        except TrailError as error:
+            if getattr(error, "known_failure_after_save", False):
+                try:
+                    session_service.save_session(session)
+                except Exception as save_error:
+                    raise SideEffectAppliedButStateNotPersisted(
+                        _unknown_result_envelope(save_error, last_known_stage="side_effect_applied")
+                    ) from save_error
+
+                extra_delay_seconds = PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS if method == "cw.portal.select" else 0.0
+                capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id, extra_delay_seconds=extra_delay_seconds)
+                try:
+                    return with_auto_capture(capture_runtime, lambda: (_ for _ in ()).throw(error), verbose=verbose)
+                except Exception as capture_error:
+                    raise PersistedButResponseUnknown(
+                        _unknown_result_envelope(capture_error, last_known_stage="state_persisted")
+                    ) from capture_error
+            if getattr(error, "completed_after_side_effect", False):
+                raise
+            if tracker.side_effect_applied:
+                raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
+            raise
         except CwSideEffectAppliedError as error:
             raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
         except Exception as error:
@@ -319,10 +342,9 @@ class CwService:
                 target=payload["target"],
                 swapper=slot_swapper_factory(runtime()),
             ).scene_state["cw"]["slots"],
-            "cw.slots.place_one": lambda: place_one_cw_slot(
+            "cw.slots.place": lambda: place_cw_slots(
                 session,
-                source=payload["source"],
-                target=payload["target"],
+                actions=payload["actions"],
                 placer=slot_placer_factory(runtime()),
             ).scene_state["cw"]["slots"],
             "cw.shop.open": lambda: open_cw_shop(
@@ -353,9 +375,9 @@ class CwService:
                 session,
                 collector=crystal_collector_factory(runtime()),
             ).scene_state["cw"]["metrics"],
-            "cw.hand.sell_one": lambda: sell_one_cw_hand(
+            "cw.hand.sell": lambda: sell_cw_hand_slots(
                 session,
-                slot=payload["slot"],
+                slots=payload["slots"],
                 seller=hand_seller_factory(runtime()),
             ).scene_state["cw"]["slots"],
             "cw.hand.sell_plan": lambda: plan_cw_hand_sell(session),
@@ -543,15 +565,25 @@ def _attach_guides_to_portal_snapshot(session, snapshot: dict[str, object], *, t
     return enriched
 
 
-def _unknown_result_envelope(error: Exception) -> dict:
+def _unknown_result_envelope(
+    error: Exception,
+    *,
+    response: dict[str, object] | None = None,
+    last_known_stage: str | None = None,
+) -> dict:
+    previous = deepcopy(response or {})
+    debug = deepcopy(previous.get("debug") or {})
+    debug["detail"] = _format_exception_detail(error)
+    if last_known_stage is not None:
+        debug["last_known_stage"] = last_known_stage
     return {
         "ok": False,
         "data": {},
-        "screenshot": None,
-        "timing": {},
-        "warnings": [],
-        "references": [],
-        "debug": {"detail": _format_exception_detail(error)},
+        "screenshot": previous.get("screenshot"),
+        "timing": deepcopy(previous.get("timing") or {}),
+        "warnings": deepcopy(previous.get("warnings") or []),
+        "references": deepcopy(previous.get("references") or []),
+        "debug": debug,
         "error": {
             "code": "DAEMON_UNAVAILABLE",
             "message": "mutation result unknown",

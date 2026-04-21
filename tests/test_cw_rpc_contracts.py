@@ -9,17 +9,6 @@ from tests.support.fake_daemon import build_success_response
 SESSION_ID = "a" * 32
 
 
-@pytest.fixture(autouse=True)
-def block_local_cw_execution(monkeypatch):
-    def fail_local_cw(*args, **kwargs):
-        raise AssertionError("local cw execution path used")
-
-    monkeypatch.setattr("trail.commands.cw._runtime_for_session", fail_local_cw, raising=False)
-    monkeypatch.setattr("trail.commands.cw._run", fail_local_cw, raising=False)
-    monkeypatch.setattr("trail.commands.cw.session_store_factory", lambda: fail_local_cw(), raising=False)
-    monkeypatch.setattr("trail.commands.cw.with_auto_capture", fail_local_cw, raising=False)
-
-
 def _assert_single_call(client, *, method: str, payload: dict, tmp_path) -> None:
     assert client.calls == [
         {
@@ -39,8 +28,6 @@ def _expected_lines(summary: str, *, screenshot: str | None = None, body: list[s
     if body:
         lines.extend(body)
     return lines
-
-
 def test_cw_stage_detect_renders_stage_and_shot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
@@ -342,33 +329,125 @@ def test_cw_guide_apply_renders_guide_summary(cli_runner, fake_daemon_client, tm
     _assert_single_call(client, method="cw.guide.apply", payload={"lineup_id": "abc"}, tmp_path=tmp_path)
 
 
-def test_cw_slots_place_one_renders_slot_counts_and_shot(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_slots_place_renders_slot_counts_and_shot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
-            "cw.slots.place_one": build_success_response(
-                request_id="req-cw-slots-place-one",
-                data={"front": ["希儿"], "back": [], "hand": [], "stale": False},
-                screenshot=".trail/shots/req-cw-slots-place-one.png",
+            "cw.slots.place": build_success_response(
+                request_id="req-cw-slots-place",
+                data={"front": ["希儿"], "back": ["佩拉"], "hand": [], "stale": True},
+                screenshot=".trail/shots/req-cw-slots-place.png",
             )
         }
     )
 
     result = cli_runner.invoke(
         app,
-        ["cw", "slots", "place-one", "--session", SESSION_ID, "--source", "hand:0", "--target", "front:0"],
+        [
+            "cw",
+            "slots",
+            "place",
+            "--session",
+            SESSION_ID,
+            "--action",
+            "hand:0,front:0",
+            "--action",
+            "hand:1,back:2",
+        ],
     )
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == _expected_lines(
-        "ok cw.slots.place_one front=1 back=0 hand=0 stale=0",
-        screenshot=".trail/shots/req-cw-slots-place-one.png",
+        "ok cw.slots.place front=1 back=1 hand=0 stale=1",
+        screenshot=".trail/shots/req-cw-slots-place.png",
     )
     _assert_single_call(
         client,
-        method="cw.slots.place_one",
-        payload={"source": "hand:0", "target": "front:0"},
+        method="cw.slots.place",
+        payload={
+            "actions": [
+                {"source": "hand:0", "target": "front:0"},
+                {"source": "hand:1", "target": "back:2"},
+            ]
+        },
         tmp_path=tmp_path,
     )
+
+
+def test_cw_hand_sell_renders_slot_counts_and_shot(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.hand.sell": build_success_response(
+                request_id="req-cw-hand-sell",
+                data={"front": ["希儿"], "back": ["佩拉"], "hand": [None, "银狼", None], "stale": True},
+                screenshot=".trail/shots/req-cw-hand-sell.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        ["cw", "hand", "sell", "--session", SESSION_ID, "--slot", "0", "--slot", "2"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.hand.sell front=1 back=1 hand=1 stale=1",
+        screenshot=".trail/shots/req-cw-hand-sell.png",
+    )
+    _assert_single_call(client, method="cw.hand.sell", payload={"slots": [0, 2]}, tmp_path=tmp_path)
+
+
+def test_cw_slots_place_one_is_removed(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "slots", "place-one", "--help"])
+
+    assert result.exit_code == 2
+    assert "No such command 'place-one'" in result.output
+
+
+def test_cw_slots_place_requires_at_least_one_action(cli_runner, fake_daemon_client):
+    client = fake_daemon_client({})
+
+    result = cli_runner.invoke(app, ["cw", "slots", "place", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.slots.place code=CW_OPTION_INVALID",
+        'why msg="cw slots place requires at least one --action"',
+    ]
+    assert client.calls == []
+
+
+def test_cw_slots_place_rejects_malformed_action_without_rpc(cli_runner, fake_daemon_client):
+    client = fake_daemon_client({})
+
+    result = cli_runner.invoke(app, ["cw", "slots", "place", "--session", SESSION_ID, "--action", "hand:0-front:0"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.slots.place code=CW_OPTION_INVALID",
+        'why msg="cw slots place action invalid: hand:0-front:0"',
+    ]
+    assert client.calls == []
+
+
+def test_cw_hand_sell_one_is_removed(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "hand", "sell-one", "--help"])
+
+    assert result.exit_code == 2
+    assert "No such command 'sell-one'" in result.output
+
+
+def test_cw_hand_sell_requires_at_least_one_slot(cli_runner, fake_daemon_client):
+    client = fake_daemon_client({})
+
+    result = cli_runner.invoke(app, ["cw", "hand", "sell", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.hand.sell code=CW_OPTION_INVALID",
+        'why msg="cw hand sell requires at least one --slot"',
+    ]
+    assert client.calls == []
 
 
 def test_cw_invest_choose_renders_stage_summary(cli_runner, fake_daemon_client, tmp_path):
@@ -567,17 +646,6 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
             _expected_lines(
                 "ok cw.crystals.collect status=done",
                 screenshot=".trail/shots/req-cw-crystals-collect.png",
-            ),
-        ),
-        (
-            ["cw", "hand", "sell-one", "--session", SESSION_ID, "--slot", "1"],
-            "cw.hand.sell_one",
-            {"slot": 1},
-            {"front": ["希儿"], "back": ["佩拉"], "hand": ["银狼", None, "阮·梅"], "stale": True},
-            ".trail/shots/req-cw-hand-sell-one.png",
-            _expected_lines(
-                "ok cw.hand.sell_one front=1 back=1 hand=2 stale=1",
-                screenshot=".trail/shots/req-cw-hand-sell-one.png",
             ),
         ),
         (

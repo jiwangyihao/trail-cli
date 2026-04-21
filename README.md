@@ -54,6 +54,9 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 如需回顾当前已应用攻略：`trail cw guide current --session <id>`
 - `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
 - `trail cw invest.read|choose` 继续只表示局内 invest 事件，不是开局投资环境页命令
+- 如需批量从手牌上场：`trail cw slots place --session <id> --action hand:0,front:0 --action hand:1,back:2`
+- 如需卖牌，先看建议：`trail cw hand sell-plan --session <id>`；真正出售时执行：`trail cw hand sell --session <id> --slot 0 --slot 2`
+- 这两类命令都严格保序、遇错即停；只要中途失败且前面动作可能已生效，就应重新执行 `trail cw slots read`
 
 ## 命令面概览
 
@@ -215,6 +218,8 @@ recover action=daemon.request_status request=req-42
 - `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
 - `trail cw portal.select|refresh|restart` 只用于首页之后的投资环境选择页
 - `trail cw invest.read|choose` 继续表示局内 invest 事件，不是开局投资环境页命令
+- `trail cw slots place` 用重复 `--action <source,target>` 显式批量上场；`trail cw hand sell` 用重复 `--slot <n>` 显式批量卖牌
+- 这两类批量命令都严格保序、遇错即停；如果中途失败且前面动作可能已生效，先重新执行 `trail cw slots read --session <id>` 再继续后续判断
 - `skills/trail-hsr` 负责 session、窗口检查与场景切换
 - `skills/trail-cw` 负责整局货币战争循环
 - `skills/trail-cw-*` 负责攻略、商店、补给、编队、事件等子流程
