@@ -218,6 +218,10 @@ class CwService:
 
         try:
             result = handlers[method]()
+        except CwSideEffectAppliedError as error:
+            raise SideEffectAppliedButStateNotPersisted(
+                _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+            ) from error
         except TrailError as error:
             if getattr(error, "known_failure_after_save", False):
                 try:
@@ -232,18 +236,21 @@ class CwService:
                 try:
                     return with_auto_capture(capture_runtime, lambda: (_ for _ in ()).throw(error), verbose=verbose)
                 except Exception as capture_error:
+                    screenshot = _safe_capture_after_action(capture_runtime)
                     raise PersistedButResponseUnknown(
-                        _unknown_result_envelope(capture_error, last_known_stage="state_persisted")
+                        _unknown_result_envelope(
+                            capture_error,
+                            last_known_stage="state_persisted",
+                            screenshot=screenshot,
+                            warnings=_safe_collect_warnings(capture_runtime),
+                            references=_safe_match_references(capture_runtime, screenshot=screenshot),
+                        )
                     ) from capture_error
-            if getattr(error, "completed_after_side_effect", False):
-                raise
-            if tracker.side_effect_applied:
-                raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
+            if tracker.side_effect_applied or getattr(error, "completed_after_side_effect", False):
+                raise SideEffectAppliedButStateNotPersisted(
+                    _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+                ) from error
             raise
-        except CwSideEffectAppliedError as error:
-            raise SideEffectAppliedButStateNotPersisted(
-                _unknown_result_envelope(error, last_known_stage="side_effect_applied")
-            ) from error
         except Exception as error:
             if tracker.side_effect_applied or getattr(error, "completed_after_side_effect", False):
                 raise SideEffectAppliedButStateNotPersisted(

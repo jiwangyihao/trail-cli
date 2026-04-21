@@ -53,7 +53,6 @@ CW_CAPTURE_METHODS = {
 CW_CAPTURED_READ_METHODS = {
     "cw.stage.detect",
     "cw.stage.wait",
-    "cw.shop.scan",
     "cw.replenish.read",
     "cw.invest.read",
     "cw.encounter.read",
