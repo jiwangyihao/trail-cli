@@ -85,6 +85,7 @@ OPEN_TEMPLATE_ALIAS = "slots.open"
 CANNOT_BE_FIELDED_ALIAS = "slots.cannot_be_fielded"
 HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS = 5
 SLOT_PANEL_SETTLE_SECONDS = 0.2
+INITIAL_UI_DISMISS_SETTLE_SECONDS = 1.0
 SLOT_NAME_STRIP_GAP = 24
 
 
@@ -454,7 +455,7 @@ def build_cw_slots_reader(runtime, targets: list[str] | None = None) -> SlotsSna
 
         captures: list[dict[str, Any]] = []
         runtime.click_point(*INFO_DISMISS_POINT)
-        sleep(SLOT_PANEL_SETTLE_SECONDS)
+        sleep(INITIAL_UI_DISMISS_SETTLE_SECONDS)
         for area in ("front", "back", "hand"):
             points = SLOT_POINTS_BY_AREA[area]
             for index in sorted(targets_by_area[area]):

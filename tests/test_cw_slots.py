@@ -429,7 +429,8 @@ def test_build_cw_slots_reader_dismisses_center_before_first_slot_capture(monkey
     slots_module = load_cw_slots_module()
     build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
     assert build_cw_slots_reader is not None
-    monkeypatch.setattr(slots_module, "sleep", lambda seconds: None, raising=False)
+    sleeps: list[float] = []
+    monkeypatch.setattr(slots_module, "sleep", lambda seconds: sleeps.append(seconds), raising=False)
 
     class RuntimeSpy:
         def __init__(self):
@@ -460,6 +461,7 @@ def test_build_cw_slots_reader_dismisses_center_before_first_slot_capture(monkey
         slots_module.FRONT_SLOT_POINTS[0],
         slots_module.INFO_DISMISS_POINT,
     ]
+    assert sleeps[0] == 1.0
 
 
 def test_capture_slot_name_panel_image_waits_longer_before_capture_and_keeps_dismiss_settle(monkeypatch):
