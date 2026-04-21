@@ -379,13 +379,17 @@ def _append_guide_final_roles_line(
 def _append_cw_shop_items(lines: list[str], data: dict[str, Any]) -> None:
     for index, item in enumerate(_iter_sorted_cw_shop_items(data), start=1):
         facts: list[tuple[str, Any]] = [("idx", index)]
-        if item.get("slot") is not None:
-            facts.append(("slot", item.get("slot")))
-        if item.get("name") is not None:
-            facts.append(("name", item.get("name")))
+        slot = item.get("slot")
+        if slot is not None:
+            facts.append(("slot", slot))
+        name = item.get("name")
+        if name is not None:
+            facts.append(("name", name))
         cost = item.get("price") if item.get("price") is not None else item.get("cost")
         if cost is not None:
             facts.append(("cost", cost))
+        elif name is None and slot is not None:
+            facts.append(("empty", True))
         lines.append("item " + _format_fact_sequence(*facts))
 
 
@@ -645,10 +649,22 @@ def _iter_sorted_cw_shop_items(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for _, _, _, item in decorated]
 
 
+def _count_cw_shop_items(items: list[Any]) -> int:
+    count = 0
+    for item in items:
+        if isinstance(item, dict):
+            if item.get("name") is not None:
+                count += 1
+            continue
+        if item is not None:
+            count += 1
+    return count
+
+
 def _render_cw_shop_status(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     items = _as_list(data.get("items"))
-    lines = [f"ok {command} count={_encode_value(len(items))}"]
+    lines = [f"ok {command} count={_encode_value(_count_cw_shop_items(items))}"]
     _append_success_capture_block(lines, payload)
     _append_cw_shop_items(lines, data)
     _append_cw_shop_snapshot_info(lines, data)
@@ -663,7 +679,7 @@ def _render_cw_shop_action(command: str, payload: dict[str, Any]) -> list[str]:
     summary = _format_fact_sequence(
         ("opened", bool(data.get("opened")) if "opened" in data else None),
         ("stale", bool(data.get("stale")) if "stale" in data else None),
-        ("count", len(items) if items is not None else None),
+        ("count", _count_cw_shop_items(items) if items is not None else None),
         ("slot", data.get("slot")),
         ("expect", data.get("expect")),
         ("got", data.get("got")),

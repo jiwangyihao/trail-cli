@@ -2536,6 +2536,41 @@ def test_render_output_renders_cw_shop_scan_snapshot_info_text():
     ]
 
 
+def test_render_output_renders_cw_shop_scan_with_empty_slot_placeholder():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [
+                {"slot": 1, "name": "翡翠", "price": 1},
+                {"slot": 2, "name": "三月七", "price": 1},
+                {"slot": 3, "name": None, "price": None},
+                {"slot": 4, "name": "万敌", "price": 2},
+                {"slot": 5, "name": "符玄", "price": 4},
+            ],
+            "opened": True,
+            "stale": False,
+        },
+        "screenshot": ".trail/shots/req-shop-scan-empty-slot.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.scan", payload).splitlines() == [
+        "ok cw.shop.scan opened=1 stale=0 count=4",
+        "shot path=.trail/shots/req-shop-scan-empty-slot.png",
+        "info read_image_first=1",
+        "item idx=1 slot=1 name=翡翠 cost=1",
+        "item idx=2 slot=2 name=三月七 cost=1",
+        "item idx=3 slot=3 empty=1",
+        "item idx=4 slot=4 name=万敌 cost=2",
+        "item idx=5 slot=5 name=符玄 cost=4",
+    ]
+
+
 def test_render_output_does_not_render_stale_shop_snapshot_info_for_open_command():
     payload = {
         "ok": True,
