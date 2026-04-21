@@ -29,6 +29,7 @@ def _expected_lines(summary: str, *, screenshot: str | None = None, body: list[s
     lines = [summary]
     if screenshot:
         lines.append(f"shot path={screenshot}")
+        lines.append("info read_image_first=1")
     if body:
         lines.extend(body)
     return lines

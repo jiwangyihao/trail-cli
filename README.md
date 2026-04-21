@@ -53,6 +53,10 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 在进入游戏并完成投资环境选择后，再执行：`trail cw guide apply --session <id> --lineup-id <lineup_id>`
 - 如需回顾当前已应用攻略：`trail cw guide current --session <id>`
 - `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
+- 常规 battle / settle 流程默认执行：`trail cw battle run --session <id> --timeout 570`
+- `trail cw battle run` 可能耗时接近 10 分钟，命令行工具的外部 timeout 至少调到 11 分钟
+- 如果 `trail cw battle run` 已在 daemon 内成功收口但当前 stdout 丢失，立刻执行：`trail state dump --session <id> --format yaml`
+- `trail cw battle start` / `trail cw battle continue` / `trail cw settle next` 仍保留为 CLI 兼容命令，但只建议在 `skills/trail-cw-battle-advanced` fallback 流程中手工拆链使用
 - `trail cw invest.read|choose` 继续只表示局内 invest 事件，不是开局投资环境页命令
 
 编队槽位读取建议：
@@ -75,7 +79,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `image`：进阶模板识别与等待
 - `input`：点击、拖拽、按键
 - `state`：进阶读取 session 与 scene state
-- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；其余分组处理局内阶段与资源，包含 `portal`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
+- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；常规 battle / settle 默认入口是 `trail cw battle run --session <id> --timeout 570`；`battle` / `settle` 分组仍保留兼容原子命令，但只建议在 `skills/trail-cw-battle-advanced` fallback 流程使用；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；其余分组处理局内阶段与资源，包含 `portal`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
 ## Window Launch
 
@@ -117,7 +121,7 @@ OCR 首版语义：
 - `retry_high=always` 在 `ocr_mode=fast` 下会先跑 `fast`，再无条件补跑一次 `high`
 - `ocr_mode=high` 下 `retry_high` 为 no-op
 - 模式与重试事实只在 `--verbose` 下出现
-- 默认成功输出协议保持不变：仍然是 `ok ocr.read hits=<n>`，有截图时先输出 `shot`，再输出 `text`
+- 默认成功输出协议保持不变：仍然是 `ok ocr.read hits=<n>`，有截图时先输出 `shot`，紧跟 `info read_image_first=1`，再输出 `text`
 
 DirectML 安装与环境 profile 说明：
 
@@ -133,7 +137,7 @@ DirectML 安装与环境 profile 说明：
 - 默认模式是常规消费层；`--format yaml` 是结构化兜底，`--verbose` 是开发/排障层，不应作为终端 Agent 的常规依赖
 - 默认模式绝不输出 YAML；只有显式指定 `--format yaml` 且命令进入 allowlist 时，才会在首行摘要后追加结构化块
 - 常见正文前缀包括 `shot`、`item`、`guide`、`text`、`info`、`why`、`warn`、`ref`、`request`、`recover`；`debug` 仅在 `--verbose` 下追加
-- `shot path=...` 表示当前命令结果对应的截图路径；只要当前命令有截图，就会输出 `shot path=...`，且位于实体行之前
+- `shot path=...` 表示当前命令结果对应的截图路径；只要当前命令有截图，success 文本就会先输出 `shot path=...`，并紧跟 `info read_image_first=1`，再继续实体行
 - 默认失败路径只要当前结果携带 `request_id`，就会保留 `request id=<id>`，用于恢复与排障
 - 只有结果未知或当前失败显式可恢复时，才会出现 `recover action=daemon.request_status request=<id>`；仅有 `request id=<id>` 不等于当前失败一定可恢复
 - `trail daemon request-status --request-id <id>` 用于回查某个请求的终态、关联 session、最近可见阶段与污染状态，典型输出是 `ok daemon.request_status request=req-42 session=sess-1 final_state=completed last_visible_stage=responded tainted=0`
@@ -177,6 +181,7 @@ guide 投资环境=事件区 count=0 more=1 next=group-token
 ```text
 ok cw.start cards=2
 shot path=.trail/shots/req-start.png
+info read_image_first=1
 opt idx=1 投资环境="购物区" score=0.99 待收集=1
 opt idx=1 说明="花金币买角色和升级"
 guide idx=1 gid=1 攻略ID=shop-guide 攻略标题=购物区优选阵容 版本=3.2 主C=希儿 攻略标签=#适用超频博弈 点赞=123 收藏=45
@@ -186,6 +191,7 @@ guide idx=1 gid=1 最终阵容=希儿/carry:1/star:5/rarity:3
 ```text
 ok cw.portal.select idx=2 投资环境="购物区"
 shot path=.trail/shots/req-portal-select.png
+info read_image_first=1
 ```
 
 ```text
@@ -208,6 +214,7 @@ info 搜牌档位=3 羁绊=42 角色=80 角色标签=11 投资环境=6
 ```text
 ok ocr.read hits=2
 shot path=.trail/shots/req-ocr.png
+info read_image_first=1
 text value=点击进入 box=122,88,74,20 center=159,98
 text value=开始挑战 box=410,502,120,36 center=470,520
 ```
@@ -215,6 +222,7 @@ text value=开始挑战 box=410,502,120,36 center=470,520
 ```text
 ok cw.shop.status count=2
 shot path=.trail/shots/req-shop.png
+info read_image_first=1
 item idx=1 slot=1 name=希儿 cost=2
 item idx=2 slot=2 name=停云 cost=1
 info coins=40 level=7 reserve_full=0 max_team_size=8
@@ -261,8 +269,11 @@ recover action=daemon.request_status request=req-42
 - `trail cw portal.select|refresh|restart` 只用于首页之后的投资环境选择页
 - `trail cw invest.read|choose` 继续表示局内 invest 事件，不是开局投资环境页命令
 - `skills/trail-hsr` 负责 session、窗口检查与场景切换
-- `skills/trail-cw` 负责整局货币战争循环
-- `skills/trail-cw-*` 负责攻略、商店、补给、编队、事件等子流程
+- `skills/trail-cw` 是整局货币战争循环的默认 owner；常规 battle / settle 链默认执行 `trail cw battle run --session <id> --timeout 570`
+- `skills/trail-cw-events` 只负责 Boss 预览与特殊事件，不再承载 battle 主流程
+- `skills/trail-cw-battle-advanced` 负责 CW 场景内 battle / settle 的 scene-local fallback；旧 `trail cw battle start|continue` 与 `trail cw settle next` 只建议在这里使用
+- `skills/trail-hsr-advanced` 继续负责 daemon / request-status / reconcile-session / window / session / screen / image / state 这类 control-plane 与恢复链路；如果 `trail cw battle run` 的 stdout 丢失但 `session=<id>` 还在，立刻执行 `trail state dump --session <id> --format yaml`
+- 其余 `skills/trail-cw-*` 继续负责攻略、商店、补给、编队等子流程；如果需要手工拆 battle / settle 链，切到 `trail-cw-battle-advanced`，不要回退到 `trail-cw-events`
 - README 里的 simple 层序列是默认入口；advanced 段落只在 simple 层失败或不够用时启用
 
 ## 项目边界

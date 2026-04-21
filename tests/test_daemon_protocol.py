@@ -9,7 +9,7 @@ import pytest
 from trail.core.errors import TrailError
 import trail.daemon.server as daemon_server_module
 from trail.daemon.command_service import CommandService, PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
-from trail.daemon.client import TrailDaemonClient, send_daemon_request
+from trail.daemon.client import TrailDaemonClient, resolve_response_timeout, send_daemon_request
 from trail.daemon.models import DaemonRequest
 from trail.daemon.protocol import PROTOCOL_VERSION
 from trail.daemon.server import TrailDaemonServer
@@ -1764,6 +1764,234 @@ def test_command_service_cw_stage_mutations_use_request_scoped_capture(
     assert runtime.capture_requests == [(False, request_id)]
 
 
+def test_command_service_handles_cw_battle_run_and_persists_last_result(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-battle-run.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.run_cw_battle",
+        lambda session, *, runtime, timeout: {"status": "in_progress", "stale": True, "in_battle": True, "timeout_seconds": timeout},
+    )
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-battle-run",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.battle.run",
+        payload={"session_id": session.session_id, "timeout": 42},
+    )
+
+    payload = command_service.handle(request)
+
+    loaded = service.load_session(session.session_id)
+    assert payload["ok"] is True
+    assert payload["data"]["status"] == "in_progress"
+    assert payload["screenshot"] == ".trail/shots/req-cw-battle-run.png"
+    assert service.request_status("req-cw-battle-run")["final_state"] == "completed"
+    assert loaded.last_result["command"] == "cw.battle.run"
+    assert loaded.last_result["data"]["status"] == "in_progress"
+    assert loaded.last_screenshot == ".trail/shots/req-cw-battle-run.png"
+    assert runtime.capture_requests == [(False, "req-cw-battle-run")]
+
+
+def _run_cw_battle_run_timeout_capture(tmp_path: Path, monkeypatch, raw_timeout=object()):
+    from trail.daemon.cw_service import CwService
+
+    sentinel = _run_cw_battle_run_timeout_capture.sentinel
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-battle-run-timeout-normalized.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    captured: list[int] = []
+
+    def fake_run_cw_battle(session, *, runtime, timeout):
+        del session, runtime
+        captured.append(timeout)
+        return {"status": "in_progress", "stale": True, "in_battle": True, "timeout_seconds": timeout}
+
+    monkeypatch.setattr("trail.daemon.cw_service.run_cw_battle", fake_run_cw_battle)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request_payload = {"session_id": session.session_id}
+    if raw_timeout is not sentinel:
+        request_payload["timeout"] = raw_timeout
+    request = DaemonRequest(
+        request_id="req-cw-battle-run-timeout-normalized",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.battle.run",
+        payload=request_payload,
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"]["timeout_seconds"] == captured[0]
+    return captured[0]
+
+
+_run_cw_battle_run_timeout_capture.sentinel = object()
+
+
+@pytest.mark.parametrize("raw_timeout", [0, -1, False, "42", _run_cw_battle_run_timeout_capture.sentinel])
+def test_cw_battle_run_timeout_invalid_values_fall_back_to_default(tmp_path: Path, monkeypatch, raw_timeout):
+    assert _run_cw_battle_run_timeout_capture(tmp_path, monkeypatch, raw_timeout) == 570
+
+
+def test_cw_battle_run_timeout_keeps_positive_int(tmp_path: Path, monkeypatch):
+    assert _run_cw_battle_run_timeout_capture(tmp_path, monkeypatch, 42) == 42
+
+
+def test_command_service_handles_cw_battle_start_waits_extra_before_capture(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-battle-start-delay.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    sleeps: list[float] = []
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {"stage": {"value": "battle", "stale": False}}
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr("trail.daemon.cw_service.start_cw_battle", lambda session, *, starter: _set_stage(session, {"stale": True}))
+    monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: sleeps.append(seconds))
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-battle-start-delay",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.battle.start",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert sleeps == [3.0]
+    assert runtime.capture_requests == [(False, "req-cw-battle-start-delay")]
+    assert service.request_status("req-cw-battle-start-delay")["final_state"] == "completed"
+
+
+def test_command_service_handles_state_dump_returns_latest_battle_run_snapshot(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-battle-run-state-dump.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.run_cw_battle",
+        lambda session, *, runtime, timeout: {"status": "in_progress", "stale": True, "in_battle": True, "timeout_seconds": timeout},
+    )
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    battle_payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-battle-run-state-dump",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.battle.run",
+            payload={"session_id": session.session_id, "timeout": 57},
+        )
+    )
+    dump_payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-state-dump-battle-run",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="state.dump",
+            payload={"session_id": session.session_id},
+        )
+    )
+
+    assert battle_payload["ok"] is True
+    assert dump_payload["ok"] is True
+    assert dump_payload["data"]["last_result"]["command"] == "cw.battle.run"
+    assert dump_payload["data"]["last_result"]["data"]["status"] == "in_progress"
+    assert dump_payload["data"]["last_result"]["data"]["in_battle"] is True
+    assert dump_payload["data"]["last_screenshot"] == ".trail/shots/req-cw-battle-run-state-dump.png"
+
+
 def test_command_service_handles_cw_portal_restart_and_reuses_request_journal(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 
@@ -2793,6 +3021,16 @@ def test_daemon_socket_timeout_budget_covers_long_running_scene_commands():
     assert client_module.SOCKET_RESPONSE_TIMEOUT_SECONDS >= 120.0
 
 
+def test_resolve_response_timeout_defaults_for_battle_run():
+    assert resolve_response_timeout("ocr.read", {}) == 120.0
+    assert resolve_response_timeout("cw.battle.run", {}) == 600.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": 42}) == 72.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": 0}) == 600.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": -1}) == 600.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": False}) == 600.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": "42"}) == 600.0
+
+
 def test_client_returns_daemon_unavailable_when_transport_returns_non_object_json(tmp_path: Path):
     server = socket.create_server(("127.0.0.1", 0))
     server.settimeout(5)
@@ -3057,7 +3295,7 @@ def test_send_daemon_request_round_trips_over_real_socket(tmp_path: Path):
     ]
 
 
-def test_send_daemon_request_uses_extended_read_timeout(monkeypatch, tmp_path: Path):
+def test_send_daemon_request_uses_battle_run_timeout(monkeypatch, tmp_path: Path):
     settimeouts: list[float] = []
     sent: list[bytes] = []
 
@@ -3096,13 +3334,72 @@ def test_send_daemon_request_uses_extended_read_timeout(monkeypatch, tmp_path: P
             workspace_root=str(tmp_path),
             session_id=None,
             verbose=False,
-            method="ocr.read",
-            payload={},
+            method="cw.battle.run",
+            payload={"timeout": 570},
         ),
         "token-1",
         endpoint="127.0.0.1:8765",
     )
 
     assert payload["ok"] is True
-    assert settimeouts == [120.0]
+    assert settimeouts == [600.0]
     assert sent
+
+
+def test_trail_daemon_client_call_keeps_timeout_mapping_on_real_path(monkeypatch, tmp_path: Path):
+    settimeouts: list[float] = []
+    methods: list[str] = []
+
+    class Reader:
+        def __init__(self, request_id: str):
+            self.request_id = request_id
+
+        def readline(self):
+            return json.dumps(build_success_response(request_id=self.request_id, data={}), ensure_ascii=False)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class Connection:
+        def __init__(self):
+            self.request_id = "req-timeout"
+
+        def settimeout(self, value):
+            settimeouts.append(value)
+
+        def sendall(self, payload):
+            request_body = json.loads(payload.decode("utf-8"))
+            methods.append(request_body["method"])
+            self.request_id = request_body["request_id"]
+
+        def makefile(self, *args, **kwargs):
+            return Reader(self.request_id)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("trail.daemon.client.socket.create_connection", lambda *args, **kwargs: Connection())
+    write_ready_manifest(
+        tmp_path / "daemon-home",
+        endpoint="127.0.0.1:8765",
+        token_value="token-1",
+    )
+    client = TrailDaemonClient(
+        workspace_root=tmp_path,
+        daemon_home=tmp_path / "daemon-home",
+        transport=send_daemon_request,
+    )
+
+    battle_payload = client.call("cw.battle.run", {"timeout": 570}, session_id="session-1")
+    ocr_payload = client.call("ocr.read", {}, session_id="session-1")
+
+    assert battle_payload["ok"] is True
+    assert ocr_payload["ok"] is True
+    assert methods == ["cw.battle.run", "ocr.read"]
+    assert settimeouts == [600.0, 120.0]

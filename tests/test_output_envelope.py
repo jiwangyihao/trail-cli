@@ -29,6 +29,7 @@ def test_failure_envelope_contains_error_code_and_screenshot(tmp_path):
     assert result["ok"] is False
     assert result["error"]["code"] == "WINDOW_NOT_FOUND"
     assert result["screenshot"].endswith("fail.png")
+    assert "image_guidance" not in result
 
 
 def test_command_success_deep_copies_data(tmp_path):
@@ -38,6 +39,18 @@ def test_command_success_deep_copies_data(tmp_path):
     payload["items"].append("卡芙卡")
 
     assert result["data"] == {"items": ["银狼"]}
+
+
+def test_command_success_with_screenshot_adds_image_guidance(tmp_path):
+    result = command_success(data={"done": True}, screenshot=tmp_path / "ok.png")
+
+    assert result["image_guidance"] == {"read_image_first": 1}
+
+
+def test_command_success_without_screenshot_omits_image_guidance():
+    result = command_success(data={"done": True}, screenshot=None)
+
+    assert "image_guidance" not in result
 
 
 class FakeRuntime:

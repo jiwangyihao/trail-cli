@@ -18,6 +18,12 @@ OCR_VERBOSE_ONLY_KEYS = (
 CW_ACTION_STAGE_COMMANDS = ("cw.battle.start", "cw.battle.continue", "cw.settle.next")
 
 
+def _markdown_section(document: str, heading: str) -> str:
+    marker = f"## {heading}\n"
+    assert marker in document, f"missing section: {heading}"
+    return document.split(marker, 1)[1].split("\n## ", 1)[0]
+
+
 def _stage_payload() -> dict:
     return {
         "ok": True,
@@ -78,6 +84,7 @@ def test_render_output_renders_canonical_stage_text():
     assert render_output("cw.stage.detect", payload).splitlines() == [
         "ok cw.stage.detect stage=shop stale=0",
         "shot path=.trail/shots/req-stage.png",
+        "info read_image_first=1",
     ]
 
 
@@ -94,7 +101,7 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert (
-        "- `shot path=...` 表示当前命令结果对应的截图路径；只要当前命令有截图，就会输出 `shot path=...`，且位于实体行之前"
+        "- `shot path=...` 表示当前命令结果对应的截图路径；只要当前命令有截图，success 文本就会先输出 `shot path=...`，并紧跟 `info read_image_first=1`，再继续实体行"
         in readme
     )
     assert "- 默认失败路径只要当前结果携带 `request_id`，就会保留 `request id=<id>`，用于恢复与排障" in readme
@@ -122,11 +129,11 @@ def test_readme_mentions_text_output_protocol() -> None:
     assert "guide.config.cw --format yaml" in readme
     assert "`trail guide fetch cw` 默认文本会直接返回你选中的完整攻略字段，字段名尽量使用货币战争页面里的中文文案；现在还会补充 `羁绊列表`、`运营思路`" in readme
     assert (
-        "```text\nok ocr.read hits=2\nshot path=.trail/shots/req-ocr.png\ntext value=点击进入 box=122,88,74,20 center=159,98\ntext value=开始挑战 box=410,502,120,36 center=470,520\n```"
+        "```text\nok ocr.read hits=2\nshot path=.trail/shots/req-ocr.png\ninfo read_image_first=1\ntext value=点击进入 box=122,88,74,20 center=159,98\ntext value=开始挑战 box=410,502,120,36 center=470,520\n```"
         in readme
     )
     assert (
-        "```text\nok cw.shop.status count=2\nshot path=.trail/shots/req-shop.png\nitem idx=1 slot=1 name=希儿 cost=2\nitem idx=2 slot=2 name=停云 cost=1\ninfo coins=40 level=7 reserve_full=0 max_team_size=8\n```"
+        "```text\nok cw.shop.status count=2\nshot path=.trail/shots/req-shop.png\ninfo read_image_first=1\nitem idx=1 slot=1 name=希儿 cost=2\nitem idx=2 slot=2 name=停云 cost=1\ninfo coins=40 level=7 reserve_full=0 max_team_size=8\n```"
         in readme
     )
     assert "商店快照里的 `coins` / `level` / `reserve_full` / `max_team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" in readme
@@ -196,18 +203,28 @@ def test_readme_and_cw_skills_document_help_boundaries() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
     cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
     hsr_skill = (PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md").read_text(encoding="utf-8")
+    hsr_advanced_skill = (PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md").read_text(encoding="utf-8")
     cw_guide_skill = (PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md").read_text(encoding="utf-8")
     replenish_skill = (PROJECT_ROOT / "skills" / "trail-cw-replenish" / "SKILL.md").read_text(encoding="utf-8")
     events_skill = (PROJECT_ROOT / "skills" / "trail-cw-events" / "SKILL.md").read_text(encoding="utf-8")
+    battle_advanced_skill = (PROJECT_ROOT / "skills" / "trail-cw-battle-advanced" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     shop_skill = (PROJECT_ROOT / "skills" / "trail-cw-shop" / "SKILL.md").read_text(encoding="utf-8")
     slots_skill = (PROJECT_ROOT / "skills" / "trail-cw-slots" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页" in readme
+    assert "常规 battle / settle 流程默认执行：`trail cw battle run --session <id> --timeout 570`" in readme
+    assert "命令行工具的外部 timeout 至少调到 11 分钟" in readme
+    assert "`trail state dump --session <id> --format yaml`" in readme
     assert "`trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断" in readme
     assert "`cw`：货币战争固定流程命令" in readme
     assert "`stage` 只用于已进入货币战争后的内部阶段快速检测/等待" in readme
     assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in readme
     assert "`trail cw invest.read|choose` 继续只表示局内 invest 事件" in readme
+    assert "`skills/trail-cw` 是整局货币战争循环的默认 owner" in readme
+    assert "`skills/trail-cw-events` 只负责 Boss 预览与特殊事件，不再承载 battle 主流程" in readme
+    assert "`skills/trail-cw-battle-advanced` 负责 CW 场景内 battle / settle 的 scene-local fallback" in readme
     assert "guide 投资环境=购物区 count=1 more=1 next=group-token" in readme
     assert "guide.config.cw --format yaml" in readme
     assert "artifact=" not in readme
@@ -216,6 +233,7 @@ def test_readme_and_cw_skills_document_help_boundaries() -> None:
         not in readme
     )
     assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in cw_skill
+    assert "`trail cw battle run --session <id> --timeout 570`" in cw_skill
     assert (
         "`trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断，也不代替分组动作执行"
         in cw_skill
@@ -232,10 +250,62 @@ def test_readme_and_cw_skills_document_help_boundaries() -> None:
     assert "攻略快照ID" in cw_guide_skill
     assert "artifact=" not in cw_guide_skill
     assert "artifact=" not in cw_skill
-    assert "处理 Boss 预览、特殊事件、结算翻页与战斗继续" in events_skill
-    assert "不负责商店、补给和整局循环" in events_skill
+    assert "处理 Boss 预览与特殊事件" in events_skill
+    assert "不负责 battle 主流程" in events_skill
+    assert "trail cw battle start --session <id>" not in events_skill
+    assert "trail cw battle continue --session <id>" not in events_skill
+    assert "trail cw settle next --session <id>" not in events_skill
+    assert "trail cw battle start --session <id>" in battle_advanced_skill
+    assert "trail cw battle continue --session <id>" in battle_advanced_skill
+    assert "trail cw settle next --session <id>" in battle_advanced_skill
+    assert "只负责 CW battle / settle 的 scene-local fallback" in battle_advanced_skill
+    assert "trail-cw-battle-advanced" in hsr_advanced_skill
     assert "已经完成 `trail cw start` 和 `trail cw portal.select`" in shop_skill
     assert "已经完成 `trail cw start` 和 `trail cw portal.select`" in slots_skill
+
+
+def test_battle_run_as_default_entry_is_documented_across_readme_and_skills() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    cw_flow_section = _markdown_section(readme, "货币战争流程")
+    command_overview_section = _markdown_section(readme, "命令面概览")
+    skill_boundary_section = _markdown_section(readme, "Skill 边界")
+    stage_reference = (PROJECT_ROOT / "docs" / "cw-stage-reference" / "README.md").read_text(encoding="utf-8")
+    preparation_stage_section = _markdown_section(stage_reference, "06-cw-preparation-stage.jpg")
+    cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
+    events_skill = (PROJECT_ROOT / "skills" / "trail-cw-events" / "SKILL.md").read_text(encoding="utf-8")
+    advanced_skill_path = PROJECT_ROOT / "skills" / "trail-cw-battle-advanced" / "SKILL.md"
+    hsr_advanced_skill = (PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "`trail cw battle run --session <id> --timeout 570`" in cw_flow_section
+    assert "命令行工具的外部 timeout 至少调到 11 分钟" in cw_flow_section
+    assert "`trail state dump --session <id> --format yaml`" in cw_flow_section
+    assert "`trail cw battle start` / `trail cw battle continue` / `trail cw settle next`" in cw_flow_section
+    assert "`skills/trail-cw-battle-advanced` fallback 流程" in cw_flow_section
+    assert "`battle` / `settle` 分组仍保留兼容原子命令" in command_overview_section
+    assert "常规 battle / settle 默认入口是 `trail cw battle run --session <id> --timeout 570`" in command_overview_section
+    assert "只建议在 `skills/trail-cw-battle-advanced` fallback 流程使用" in command_overview_section
+    assert "`skills/trail-cw` 是整局货币战争循环的默认 owner" in skill_boundary_section
+    assert "`skills/trail-cw-events` 只负责 Boss 预览与特殊事件，不再承载 battle 主流程" in skill_boundary_section
+    assert "`skills/trail-cw-battle-advanced` 负责 CW 场景内 battle / settle 的 scene-local fallback" in skill_boundary_section
+    assert "`skills/trail-hsr-advanced` 继续负责 daemon / request-status / reconcile-session / window / session / screen / image / state 这类 control-plane 与恢复链路" in skill_boundary_section
+    assert "`trail cw battle run --session <id> --timeout 570`" in cw_skill
+    assert "不负责 battle 主流程" in events_skill
+    assert "trail cw battle start --session <id>" not in events_skill
+    assert "trail cw battle continue --session <id>" not in events_skill
+    assert "trail cw settle next --session <id>" not in events_skill
+
+    assert advanced_skill_path.exists()
+    advanced_skill = advanced_skill_path.read_text(encoding="utf-8")
+
+    assert "trail cw battle start --session <id>" in advanced_skill
+    assert "trail cw battle continue --session <id>" in advanced_skill
+    assert "trail cw settle next --session <id>" in advanced_skill
+    assert "只在 `battle.run` 报错、结果与截图矛盾、或用户要求手工拆链时使用" in advanced_skill
+    assert "`trail state dump --session <id> --format yaml`" in hsr_advanced_skill
+    assert "trail-cw-battle-advanced" in hsr_advanced_skill
+    assert "`trail cw battle run --session <id> --timeout 570`" in preparation_stage_section
+    assert "`trail cw battle start --session <id>`" in preparation_stage_section
+    assert "advanced/manual fallback" in preparation_stage_section
 
 
 def test_render_output_renders_canonical_stage_wait_text():
@@ -244,6 +314,7 @@ def test_render_output_renders_canonical_stage_wait_text():
     assert render_output("cw.stage.wait", payload).splitlines() == [
         "ok cw.stage.wait stage=shop stale=0",
         "shot path=.trail/shots/req-stage.png",
+        "info read_image_first=1",
     ]
 
 
@@ -252,6 +323,7 @@ def test_render_output_renders_cw_action_stage_commands_with_shot(command: str):
     assert render_output(command, _stage_payload()).splitlines() == [
         f"ok {command} stage=shop stale=0",
         "shot path=.trail/shots/req-stage.png",
+        "info read_image_first=1",
     ]
 
 
@@ -275,7 +347,153 @@ def test_render_output_renders_cw_action_stage_commands_stale_only_payload_witho
     assert render_output(command, payload).splitlines() == [
         f"ok {command} stale=1",
         "shot path=.trail/shots/req-stage-stale.png",
+        "info read_image_first=1",
     ]
+
+
+def test_render_output_cw_battle_run_completed_summary():
+    payload = {
+        "ok": True,
+        "data": {
+            "status": "completed",
+            "result": "win",
+            "stage": "shop",
+            "stale": False,
+            "in_battle": False,
+            "round": "1-1",
+            "hp": 82,
+            "coins": 4,
+            "exp": 2,
+            "settle_text": "挑战成功",
+        },
+        "screenshot": ".trail/shots/req-cw-battle-run.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.battle.run", payload).splitlines() == [
+        "ok cw.battle.run status=completed result=win stage=shop stale=0 in_battle=0",
+        "shot path=.trail/shots/req-cw-battle-run.png",
+        "info read_image_first=1",
+        "info round=1-1 hp=82 coins=4 exp=2",
+        "info settle_text=挑战成功",
+    ]
+
+
+def test_render_output_cw_battle_run_timeout_in_settle_chain():
+    payload = {
+        "ok": True,
+        "data": {
+            "status": "in_progress",
+            "result": "win",
+            "stage": "settle",
+            "stale": True,
+            "in_battle": False,
+            "round": "1-1",
+            "hp": 82,
+            "coins": 4,
+            "exp": 2,
+            "settle_text": "挑战成功",
+            "timeout_seconds": 570,
+        },
+        "screenshot": ".trail/shots/req-cw-battle-run-settle-timeout.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.battle.run", payload).splitlines() == [
+        "ok cw.battle.run status=in_progress result=win stage=settle stale=1 in_battle=0",
+        "shot path=.trail/shots/req-cw-battle-run-settle-timeout.png",
+        "info read_image_first=1",
+        "info round=1-1 hp=82 coins=4 exp=2",
+        "info settle_text=挑战成功",
+        "info timeout_seconds=570",
+    ]
+
+
+def test_render_output_cw_battle_run_timeout_in_battle_only():
+    payload = {
+        "ok": True,
+        "data": {
+            "status": "in_progress",
+            "stale": True,
+            "in_battle": True,
+            "timeout_seconds": 570,
+        },
+        "screenshot": ".trail/shots/req-cw-battle-run-timeout.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.battle.run", payload).splitlines() == [
+        "ok cw.battle.run status=in_progress stale=1 in_battle=1",
+        "shot path=.trail/shots/req-cw-battle-run-timeout.png",
+        "info read_image_first=1",
+        "info timeout_seconds=570",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_lines"),
+    [
+        (
+            {
+                "ok": True,
+                "data": {"status": "completed", "stale": False, "in_battle": False},
+                "screenshot": ".trail/shots/req-cw-battle-run-sparse-completed.png",
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": None,
+                "error": None,
+            },
+            [
+                "ok cw.battle.run status=completed stale=0 in_battle=0",
+                "shot path=.trail/shots/req-cw-battle-run-sparse-completed.png",
+                "info read_image_first=1",
+            ],
+        ),
+        (
+            {
+                "ok": True,
+                "data": {
+                    "status": "in_progress",
+                    "stale": True,
+                    "in_battle": False,
+                    "timeout_seconds": 570,
+                },
+                "screenshot": ".trail/shots/req-cw-battle-run-sparse-timeout.png",
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": None,
+                "error": None,
+            },
+            [
+                "ok cw.battle.run status=in_progress stale=1 in_battle=0",
+                "shot path=.trail/shots/req-cw-battle-run-sparse-timeout.png",
+                "info read_image_first=1",
+                "info timeout_seconds=570",
+            ],
+        ),
+    ],
+)
+def test_render_output_cw_battle_run_omits_missing_result_and_stage(payload: dict, expected_lines: list[str]):
+    rendered = render_output("cw.battle.run", payload).splitlines()
+
+    assert rendered == expected_lines
+    assert all("result=unknown" not in line for line in rendered)
+    assert all("stage=unknown" not in line for line in rendered)
+    assert all("stage=null" not in line for line in rendered)
 
 
 def test_render_output_renders_cw_shop_status_sorted_items_and_costs():
@@ -304,6 +522,7 @@ def test_render_output_renders_cw_shop_status_sorted_items_and_costs():
     assert render_output("cw.shop.status", payload).splitlines() == [
         "ok cw.shop.status count=4",
         "shot path=.trail/shots/req-shop.png",
+        "info read_image_first=1",
         "item idx=1 slot=1 name=希儿 cost=2",
         "item idx=2 slot=2 name=停云 cost=1",
         "item idx=3 slot=3 name=布洛妮娅 cost=4",
@@ -497,6 +716,7 @@ def test_render_output_ocr_read_success_does_not_expand_provider_or_lang_fields(
     assert render_output("ocr.read", payload).splitlines() == [
         "ok ocr.read hits=1",
         "shot path=.trail/shots/req-ocr-provider-hidden.png",
+        "info read_image_first=1",
         "text value=点击进入 box=122,88,74,20 center=159,98",
     ]
 
@@ -533,6 +753,7 @@ def test_render_output_ocr_read_success_keeps_ocr_mode_retry_context_verbose_onl
     assert rendered.splitlines() == [
         "ok ocr.read hits=1",
         "shot path=.trail/shots/req-ocr-verbose-only-success.png",
+        "info read_image_first=1",
         "text value=点击进入 box=122,88,74,20 center=159,98",
     ]
     assert all(key not in rendered for key in OCR_VERBOSE_ONLY_KEYS)
@@ -616,6 +837,7 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
     assert render_output("guide.list.cw", payload).splitlines() == [
         "ok guide.list.cw count=2 more=1 next=token-2",
         "shot path=.trail/shots/req-guide-list.png",
+        "info read_image_first=1",
         "guide 攻略ID=abc 攻略标题=购物阵容 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45",
         "guide idx=1 最终阵容=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3|佩拉/star:4/rarity:2",
         "guide 攻略ID=def 攻略标题=事件阵容 版本=3.2 idx=2 攻略标签=#星徽攻略 点赞=22 收藏=9",
@@ -895,6 +1117,7 @@ def test_render_output_guide_list_renders_role_candidate_blocks_before_guides():
     assert render_output("guide.list.cw", payload).splitlines() == [
         "ok guide.list.cw count=1 more=0",
         "shot path=.trail/shots/req-guide-role.png",
+        "info read_image_first=1",
         "info role_query=黑搭 role_resolution=fuzzy resolved=黑塔 candidates=2",
         "opt query=黑搭 role=黑塔 id=1001 selected=1 score=0.96 front_back=front traits=智识 role_tags=输出|智识",
         "opt query=黑搭 role=大黑塔 id=1002 selected=0 score=0.82 front_back=front traits=智识 role_tags=输出",
@@ -1300,6 +1523,7 @@ def test_render_output_renders_cw_enter_home_text():
     assert render_output("cw.enter", payload).splitlines() == [
         "ok cw.enter page=home",
         "shot path=.trail/shots/req-enter.png",
+        "info read_image_first=1",
     ]
 
 
@@ -1318,6 +1542,7 @@ def test_render_output_renders_cw_enter_already_home_info():
     assert render_output("cw.enter", payload).splitlines() == [
         "ok cw.enter page=home",
         "shot path=.trail/shots/req-enter-home.png",
+        "info read_image_first=1",
         "info already_home=1",
     ]
 
@@ -1367,6 +1592,7 @@ def test_render_output_renders_cw_start_portal_cards_family():
     assert render_output("cw.start", payload).splitlines() == [
         "ok cw.start cards=2",
         "shot path=.trail/shots/req-start.png",
+        "info read_image_first=1",
         'opt idx=1 投资环境="Alpha Portal" score=0.99 待收集=1',
         'opt idx=1 说明="Alpha Desc"',
         'guide idx=1 gid=1 攻略ID=alpha-guide 攻略标题=Alpha攻略 版本=3.2 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45',
@@ -1484,6 +1710,7 @@ def test_render_output_renders_cw_portal_select_summary_text():
     assert render_output("cw.portal.select", payload).splitlines() == [
         'ok cw.portal.select idx=2 投资环境="Beta Portal"',
         "shot path=.trail/shots/req-portal-select.png",
+        "info read_image_first=1",
     ]
 
 
@@ -1542,6 +1769,7 @@ def test_render_output_renders_cw_guide_sparse_summaries_and_omits_empty_fields(
     assert render_output("cw.guide.apply", sparse_apply_payload).splitlines() == [
         "ok cw.guide.apply 攻略ID=abc 攻略码=##demo##",
         "shot path=.trail/shots/req-cw-guide-apply.png",
+        "info read_image_first=1",
     ]
     assert "guide 攻略标签=" not in render_output("cw.guide.current", sparse_payload)
     assert "攻略快照ID=" not in render_output(
@@ -1664,6 +1892,7 @@ def test_render_output_renders_cw_slots_summary_text():
     assert render_output("cw.slots.read", payload).splitlines() == [
         "ok cw.slots.read front=1 back=1 hand=1 stale=1",
         "shot path=.trail/shots/req-slots.png",
+        "info read_image_first=1",
         "slot pos=front:0 name=希儿 star=4",
         "slot pos=front:1 empty=1",
         "slot pos=back:0 name=佩拉 rarity=2",
@@ -1687,6 +1916,7 @@ def test_render_output_renders_cw_options_text():
     assert render_output("cw.invest.read", payload).splitlines() == [
         "ok cw.invest.read count=2",
         "shot path=.trail/shots/req-options.png",
+        "info read_image_first=1",
         "opt idx=1 id=1 name=量子力学",
         "opt idx=2 value=2",
     ]
@@ -1712,6 +1942,7 @@ def test_render_output_renders_cw_shop_buy_slot_summary_text():
     assert render_output("cw.shop.buy_slot", payload).splitlines() == [
         "ok cw.shop.buy_slot opened=1 stale=0 count=2",
         "shot path=.trail/shots/req-buy-slot.png",
+        "info read_image_first=1",
         "item idx=1 slot=1 name=银狼 cost=20",
         "item idx=2 slot=2 name=停云 cost=10",
     ]
@@ -1740,6 +1971,7 @@ def test_render_output_renders_cw_shop_scan_snapshot_info_text():
     assert render_output("cw.shop.scan", payload).splitlines() == [
         "ok cw.shop.scan opened=1 stale=0 count=1",
         "shot path=.trail/shots/req-shop-scan.png",
+        "info read_image_first=1",
         "item idx=1 slot=1 name=银狼 cost=20",
         "info coins=40 level=7 reserve_full=0 max_team_size=8",
     ]
@@ -1768,6 +2000,7 @@ def test_render_output_does_not_render_stale_shop_snapshot_info_for_open_command
     assert render_output("cw.shop.open", payload).splitlines() == [
         "ok cw.shop.open opened=1 stale=1 count=1",
         "shot path=.trail/shots/req-shop-open.png",
+        "info read_image_first=1",
         "item idx=1 slot=1 name=银狼 cost=20",
     ]
 
@@ -1804,6 +2037,7 @@ def test_render_output_renders_ocr_read_from_rapidocr_tuple_items():
     assert render_output("ocr.read", payload).splitlines() == [
         "ok ocr.read hits=2",
         "shot path=.trail/shots/req-ocr-raw.png",
+        "info read_image_first=1",
         "text value=点击进入 box=122,88,74,20 center=159,98",
         "text value=开始挑战 box=410,502,120,36 center=470,520",
     ]
@@ -1824,6 +2058,7 @@ def test_render_output_renders_cw_shop_refresh_action_with_snapshot_facts():
     assert render_output("cw.shop.refresh", payload).splitlines() == [
         "ok cw.shop.refresh opened=0 stale=1 count=1",
         "shot path=.trail/shots/req-refresh.png",
+        "info read_image_first=1",
         "item idx=1 slot=1 name=银狼 cost=20",
     ]
 
@@ -2027,6 +2262,7 @@ def test_render_output_verbose_includes_ocr_mode_effective_ocr_scale_applied_and
     assert render_output("ocr.read", payload, verbose=True).splitlines() == [
         "ok ocr.read hits=1",
         f'shot path="{encoded_screenshot}"',
+        "info read_image_first=1",
         "text value=点击进入",
         "debug kind=context key=ocr_mode_requested value=fast",
         "debug kind=context key=ocr_mode_effective value=high",
@@ -2069,6 +2305,7 @@ def test_render_output_verbose_includes_ocr_retry_high_zero_and_retry_reason_non
     assert render_output("ocr.read", payload, verbose=True).splitlines() == [
         "ok ocr.read hits=1",
         f'shot path="{encoded_screenshot}"',
+        "info read_image_first=1",
         "text value=点击进入",
         "debug kind=context key=ocr_mode_requested value=fast",
         "debug kind=context key=ocr_mode_effective value=fast",
@@ -2263,6 +2500,7 @@ def test_render_output_start_run_success_keeps_fixed_first_line_order():
     assert render_output("start.run", payload).splitlines() == [
         "ok start.run session=sess-start-1 reused=1 title=崩坏：星穹铁道 hwnd=123",
         "shot path=.trail/shots/req-start-run.png",
+        "info read_image_first=1",
     ]
 
 
@@ -2396,6 +2634,10 @@ def test_skill_docs_split_simple_and_advanced_commands() -> None:
     basic = (PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md").read_text(encoding="utf-8")
     advanced = (PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md").read_text(encoding="utf-8")
     cw = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
+    cw_events = (PROJECT_ROOT / "skills" / "trail-cw-events" / "SKILL.md").read_text(encoding="utf-8")
+    cw_battle_advanced = (PROJECT_ROOT / "skills" / "trail-cw-battle-advanced" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
     assert "trail start" in basic
     assert "trail ocr read" in basic
@@ -2425,7 +2667,16 @@ def test_skill_docs_split_simple_and_advanced_commands() -> None:
     assert "trail image locate" in advanced
     assert "trail image wait" in advanced
     assert "trail state dump" in advanced
+    assert "trail state dump --session <id> --format yaml" in advanced
+    assert "trail-cw-battle-advanced" in advanced
     assert "trail start" in cw
+    assert "trail cw battle run --session <id> --timeout 570" in cw
+    assert "trail cw battle start --session <id>" not in cw_events
+    assert "trail cw battle continue --session <id>" not in cw_events
+    assert "trail cw settle next --session <id>" not in cw_events
+    assert "trail cw battle start --session <id>" in cw_battle_advanced
+    assert "trail cw battle continue --session <id>" in cw_battle_advanced
+    assert "trail cw settle next --session <id>" in cw_battle_advanced
 
 
 def test_advanced_skill_documents_window_launch_path_resolution_contract() -> None:

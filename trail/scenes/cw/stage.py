@@ -25,13 +25,17 @@ SETTLE_OCR_KEYWORDS: tuple[str, ...] = ("继续挑战", "挑战成功", "挑战�
 STAGE_WAIT_INTERVAL_SECONDS = 0.5
 
 
+def mark_cw_stage_stale(session: SessionModel) -> None:
+    ensure_cw_state(session)["stage"] = {"stale": True}
+    session.last_stage = None
+
+
 def _invalidate_cw_stage(session: SessionModel, *, code: str, message: str) -> None:
-    cw_state = ensure_cw_state(session)
-    cw_state["stage"] = {
+    mark_cw_stage_stale(session)
+    ensure_cw_state(session)["stage"] = {
         "stale": True,
         "error": {"code": code, "message": message},
     }
-    session.last_stage = None
 
 
 def _read_ocr_piece(item: object) -> str:

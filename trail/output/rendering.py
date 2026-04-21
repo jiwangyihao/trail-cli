@@ -53,6 +53,8 @@ def _append_shot(lines: list[str], payload: dict[str, Any]) -> None:
     screenshot = payload.get("screenshot")
     if screenshot:
         lines.append(f"shot path={_encode_value(screenshot)}")
+        if payload.get("ok") is True:
+            lines.append("info read_image_first=1")
 
 
 def _append_warnings(lines: list[str], payload: dict[str, Any]) -> None:
@@ -410,6 +412,36 @@ def _render_cw_stage(command: str, payload: dict[str, Any]) -> list[str]:
     )
 
 
+def _render_cw_battle_run(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    summary = _format_fact_sequence(
+        ("status", _non_empty(data.get("status"))),
+        ("result", _non_empty(data.get("result"))),
+        ("stage", _non_empty(data.get("stage"))),
+        ("stale", bool(data.get("stale")) if "stale" in data else None),
+        ("in_battle", bool(data.get("in_battle")) if "in_battle" in data else None),
+    )
+    lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
+    _append_shot(lines, payload)
+    _append_fact_line(
+        lines,
+        "info",
+        ("round", _non_empty(data.get("round"))),
+        ("hp", data.get("hp") if "hp" in data else None),
+        ("coins", data.get("coins") if "coins" in data else None),
+        ("exp", data.get("exp") if "exp" in data else None),
+    )
+    _append_fact_line(lines, "info", ("settle_text", _non_empty(data.get("settle_text"))))
+    _append_fact_line(
+        lines,
+        "info",
+        ("timeout_seconds", data.get("timeout_seconds") if "timeout_seconds" in data else None),
+    )
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
+
+
 def _render_cw_entry(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     lines = [f"ok {command} page=home"]
@@ -533,7 +565,7 @@ def _append_cw_slot_lines(lines: list[str], data: dict[str, Any]) -> None:
 def _render_cw_slots_read(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     lines = _render_cw_slots(command, payload)
-    insert_at = 2 if payload.get("screenshot") else 1
+    insert_at = 3 if payload.get("screenshot") else 1
     slot_lines: list[str] = []
     _append_cw_slot_lines(slot_lines, data)
     lines[insert_at:insert_at] = slot_lines
@@ -1171,6 +1203,7 @@ TEXT_RENDERERS = {
     "cw.boss_preview.confirm": _render_cw_stage,
     "cw.battle.start": _render_cw_stage,
     "cw.battle.continue": _render_cw_stage,
+    "cw.battle.run": _render_cw_battle_run,
     "cw.settle.next": _render_cw_stage,
     "cw.event.handle": _render_cw_event_result,
     "window.attach": _render_window_attach,

@@ -5,10 +5,12 @@ from enum import StrEnum
 import typer
 
 from trail.commands.helpers import call_daemon
+from trail.daemon.client import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS
 from trail.output.rendering import print_output
 
 
 DEFAULT_CW_STAGE_WAIT_TIMEOUT = 120
+DEFAULT_CW_BATTLE_RUN_TIMEOUT = DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS
 
 CW_APP_HELP = "货币战争固定流程命令：enter 到首页，start 从首页进入投资环境页；其余分组处理局内阶段与资源。"
 CW_GUIDE_HELP = "应用或回顾当前对局已选攻略。当前攻略摘要会输出 攻略ID、攻略标题、攻略码、版本、攻略标签 与 攻略快照ID。"
@@ -286,6 +288,14 @@ def cw_boss_preview_confirm(session: str = typer.Option(..., "--session")) -> No
 @battle_app.command("start")
 def cw_battle_start(session: str = typer.Option(..., "--session")) -> None:
     _print_cw("cw.battle.start", session_id=session)
+
+
+@battle_app.command("run")
+def cw_battle_run(
+    session: str = typer.Option(..., "--session"),
+    timeout: int = typer.Option(DEFAULT_CW_BATTLE_RUN_TIMEOUT, "--timeout"),
+) -> None:
+    _print_cw("cw.battle.run", session_id=session, payload={"timeout": timeout})
 
 
 @battle_app.command("continue")

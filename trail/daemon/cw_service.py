@@ -5,8 +5,10 @@ from time import sleep
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
+from trail.daemon.client import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS, normalize_cw_battle_run_timeout
 from trail.daemon.command_service import SideEffectAppliedButStateNotPersisted
 from trail.output.capture import with_auto_capture, with_selective_capture
+from trail.scenes.cw.battle import run_cw_battle
 from trail.scenes.cw.entry import enter_cw, start_cw
 from trail.scenes.cw.events import (
     build_cw_battle_continuer,
@@ -101,6 +103,16 @@ settle_continuer_factory = build_cw_settle_continuer
 DEFAULT_CW_STAGE_WAIT_TIMEOUT = 120
 SIDE_EFFECT_RUNTIME_METHODS = {"click_point", "drag_to", "press_key", "type_text"}
 PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS = 2.0
+CW_BATTLE_START_EXTRA_CAPTURE_DELAY_SECONDS = 3.0
+DEFAULT_CW_BATTLE_RUN_TIMEOUT = DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS
+
+
+def _capture_delay_seconds_for_method(method: str) -> float:
+    if method == "cw.portal.select":
+        return PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS
+    if method == "cw.battle.start":
+        return CW_BATTLE_START_EXTRA_CAPTURE_DELAY_SECONDS
+    return 0.0
 
 
 class _RuntimeSideEffectTracker:
@@ -218,7 +230,7 @@ class CwService:
         except Exception as error:
             raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
 
-        extra_delay_seconds = PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS if method == "cw.portal.select" else 0.0
+        extra_delay_seconds = _capture_delay_seconds_for_method(method)
         capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id, extra_delay_seconds=extra_delay_seconds)
         return with_auto_capture(capture_runtime, lambda: result, verbose=verbose)
 
@@ -387,6 +399,11 @@ class CwService:
                 session,
                 confirmer=boss_preview_confirmer_factory(runtime()),
             ).scene_state["cw"]["stage"],
+            "cw.battle.run": lambda: run_cw_battle(
+                session,
+                runtime=runtime(),
+                timeout=normalize_cw_battle_run_timeout(payload.get("timeout") if isinstance(payload, dict) else None),
+            ),
             "cw.battle.start": lambda: start_cw_battle(
                 session,
                 starter=battle_starter_factory(runtime()),

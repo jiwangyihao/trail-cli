@@ -25,6 +25,7 @@ description: Use when `trail start` fails or when an agent needs advanced Trail 
 - `trail image locate`
 - `trail image wait`
 - `trail state dump --session <id>`
+- `trail state dump --session <id> --format yaml`
 
 ## Window Launch 规则
 
@@ -46,4 +47,6 @@ description: Use when `trail start` fails or when an agent needs advanced Trail 
 - 需要重建会话时，运行 `trail session create`
 - 如果命令结果未知，先记录默认文本里的 `request id=<id>`，再执行 `trail daemon request-status --request-id <id>`，从默认文本里的 `session=<id>` 获取需要恢复的 session
 - 如果 session 已被标记为 `tainted`，先确认请求终态，再执行 `trail daemon reconcile-session --session <id>`
+- 如果 `trail cw battle run --session <id> --timeout 570` 已在 daemon 内成功收口但 stdout 丢失，且你还能确认 `session=<id>`，立刻执行 `trail state dump --session <id> --format yaml` 回读当前 scene / session 状态
+- scene-local 的 battle / settle 手工拆链不在这里处理；那类 fallback 切到 `trail-cw-battle-advanced`，这里只有 control-plane / request-status / state / reconcile-session 恢复链路
 - 只有在 simple 层无法满足需求时，才使用这些进阶命令

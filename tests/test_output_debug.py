@@ -157,6 +157,7 @@ def test_verbose_output_ocr_mode_retry_context_uses_existing_debug_pipeline():
     assert render_output("ocr.read", payload, verbose=True).splitlines() == [
         "ok ocr.read hits=1",
         "shot path=.trail/shots/req-ocr-fast-retry.png",
+        "info read_image_first=1",
         "text value=点击进入",
         "debug kind=request msg=req-ocr-fast-retry",
         "debug kind=context key=ocr_mode_requested value=fast",

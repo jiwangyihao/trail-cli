@@ -14,7 +14,7 @@ def command_success(
     references: list[dict[str, Any]] | None = None,
     debug: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    envelope = {
         "ok": True,
         "data": deepcopy(data),
         "screenshot": None if screenshot is None else str(screenshot),
@@ -24,6 +24,9 @@ def command_success(
         "debug": deepcopy(debug),
         "error": None,
     }
+    if screenshot is not None:
+        envelope["image_guidance"] = {"read_image_first": 1}
+    return envelope
 
 
 def command_failure(
