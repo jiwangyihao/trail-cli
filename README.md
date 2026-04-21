@@ -59,7 +59,11 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 在进入游戏并完成投资环境选择后，再执行：`trail cw guide apply --session <id> --lineup-id <lineup_id>`
 - 如需回顾当前已应用攻略：`trail cw guide current --session <id>`
 - `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
+- `stage=invest` 时，不要默认走 `trail cw invest.*`
+- 如果 screenshot 或页面标题显示“请选择投资策略”，局内投资策略页应优先使用 `trail cw strategy detect|refresh|select`
+- 开局投资环境页仍是 `trail cw portal.*`；普通局内 invest 事件的兼容/粗粒度入口才是 `trail cw invest.*`
 - `trail cw invest read|choose` 继续只表示局内 invest 事件，不是开局投资环境页命令
+- 策略页显式流程示例：`trail cw stage detect --session <id>` -> `trail cw strategy detect --session <id>` -> `trail cw strategy refresh --session <id> --card-idx <n>` -> `trail cw strategy select --session <id> --card-idx <n>`
 
 编队槽位读取建议：
 
@@ -81,7 +85,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `image`：进阶模板识别与等待
 - `input`：点击、拖拽、按键
 - `state`：进阶读取 session 与 scene state
-- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`portal` 负责投资环境页的识别/选择/刷新/重开；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；其余分组处理局内阶段与资源，包含 `portal`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
+- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`portal` 负责开局投资环境页的识别/选择/刷新/重开；`strategy` 负责局内“请选择投资策略”页的识别/单卡刷新/选择；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口；其余分组处理局内阶段与资源，包含 `portal`、`strategy`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
 ## Window Launch
 
@@ -194,6 +198,33 @@ ok cw.portal.select idx=2 投资环境="购物区"
 shot path=.trail/shots/req-portal-select.png
 ```
 
+- `cw.strategy.detect|refresh` 的 `info 已加载攻略=0|1` 固定在所有 `opt` 行之后
+
+```text
+ok cw.strategy.detect cards=2
+shot path=.trail/shots/req-strategy-detect.png
+opt idx=1 投资策略=回蓝 攻略推荐=优选 刷新次数=0
+opt idx=1 说明=启动回转
+opt idx=2 投资策略=暴击 攻略推荐=否 刷新次数=2
+opt idx=2 说明=爆发增伤
+info 已加载攻略=1
+```
+
+```text
+ok cw.strategy.refresh cards=2
+shot path=.trail/shots/req-strategy-refresh.png
+opt idx=1 投资策略=连携 攻略推荐=否 刷新次数=1
+opt idx=1 说明=补充连段
+opt idx=2 投资策略=回蓝 攻略推荐=优选 刷新次数=0
+opt idx=2 说明=启动回转
+info 已加载攻略=1
+```
+
+```text
+ok cw.strategy.select idx=2 投资策略=回蓝
+shot path=.trail/shots/req-strategy-select.png
+```
+
 ```text
 ok cw.guide.current 攻略ID=abc 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2
 guide 攻略标签=#7级搜牌|#适用超频博弈
@@ -245,7 +276,7 @@ recover action=daemon.request_status request=req-42
 - `攻略标签`：除了原始标签外，还会把布尔类攻略特征折叠成 `#标签`，例如 `#适用超频博弈`、`#星徽攻略`、`#专家顾问`；值为 false 时省略
 - `羁绊列表`：按当前攻略各阶段阵容里出现过的羁绊去重汇总，并尽量保留层数，形如 `6贝洛伯格`，便于 Agent 直接对照攻略核心体系
 - `最低金币`：这套攻略默认要求保留的最低金币阈值；后续 shop 决策应把它当成约束，而不是可随意花完的预算
-- `优选投资策略` / `次选投资策略`：分别对应页面里的 primary / secondary investment strategy，不是战斗增益名的技术字段
+- `优选投资策略` / `次选投资策略`：是局内 `cw.strategy.detect|refresh` 里 `攻略推荐=优选|次选|否` 的来源，不用于 `cw.portal.*`
 - `简易装备优先度` / `进阶装备优先度`：分别对应页面里的 base / advanced equip priority，不是泛化的“基础顺序 / 成型顺序”
 - `优选装备` / `次选装备`：按角色展开的推荐装备列表；当前只在该角色确实配置过对应装备时才输出
 - `运营思路`：取自攻略详情原始 `description` 文本，会保留换行，适合直接作为局内运营参考

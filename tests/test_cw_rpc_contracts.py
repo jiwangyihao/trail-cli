@@ -259,6 +259,80 @@ def test_cw_portal_detect_renders_portal_cards_family(cli_runner, fake_daemon_cl
 
 
 @pytest.mark.parametrize(
+    ("args", "method", "payload", "response_data", "screenshot"),
+    [
+        (
+            ["cw", "strategy", "detect", "--session", SESSION_ID],
+            "cw.strategy.detect",
+            {},
+            {
+                "cards": [
+                    {
+                        "card_idx": 1,
+                        "strategy_title": "快攻",
+                        "strategy_description": "desc",
+                        "refresh_count": 1,
+                        "guide_match": "优选",
+                        "guide_loaded": 1,
+                    }
+                ],
+                "stale": False,
+            },
+            ".trail/shots/req-cw-strategy-detect.png",
+        ),
+        (
+            ["cw", "strategy", "select", "--session", SESSION_ID, "--card-idx", "2"],
+            "cw.strategy.select",
+            {"card_idx": 2},
+            {
+                "card_idx": 2,
+                "strategy_title": "回蓝",
+                "strategy_description": "desc",
+                "refresh_count": 1,
+                "guide_match": "次选",
+                "guide_loaded": 1,
+            },
+            ".trail/shots/req-cw-strategy-select.png",
+        ),
+        (
+            ["cw", "strategy", "refresh", "--session", SESSION_ID, "--card-idx", "3"],
+            "cw.strategy.refresh",
+            {"card_idx": 3},
+            {
+                "cards": [
+                    {
+                        "card_idx": 3,
+                        "strategy_title": "暴击",
+                        "strategy_description": "desc",
+                        "refresh_count": 2,
+                        "guide_match": "否",
+                        "guide_loaded": 1,
+                    }
+                ],
+                "stale": False,
+            },
+            ".trail/shots/req-cw-strategy-refresh.png",
+        ),
+    ],
+)
+def test_cw_strategy_rpc_contracts(cli_runner, fake_daemon_client, tmp_path, args, method: str, payload: dict, response_data: dict, screenshot: str):
+    client = fake_daemon_client(
+        {
+            method: build_success_response(
+                request_id=f"req-{method}",
+                data=response_data,
+                screenshot=screenshot,
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, args)
+
+    assert result.exit_code == 0
+    _assert_single_call(client, method=method, payload=payload, tmp_path=tmp_path)
+
+
+@pytest.mark.parametrize(
     ("args", "method", "screenshot"),
     [
         (["cw", "portal", "refresh", "--session", SESSION_ID], "cw.portal.refresh", ".trail/shots/req-cw-portal-refresh.png"),

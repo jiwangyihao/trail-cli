@@ -65,6 +65,60 @@ def _ocr_failure_payload(*, code: str, message: str, screenshot: str | None = No
     }
 
 
+def _cw_strategy_cards_payload(*, screenshot: str | None = None, cards: list[dict] | None = None) -> dict:
+    return {
+        "ok": True,
+        "data": {
+            "cards": cards
+            if cards is not None
+            else [
+                {
+                    "card_idx": 1,
+                    "strategy_title": "回蓝",
+                    "strategy_description": "启动回转",
+                    "refresh_count": 0,
+                    "guide_match": "优选",
+                    "guide_loaded": 1,
+                },
+                {
+                    "card_idx": 2,
+                    "strategy_title": "暴击",
+                    "strategy_description": "爆发增伤",
+                    "refresh_count": 2,
+                    "guide_match": "否",
+                    "guide_loaded": 0,
+                },
+            ],
+        },
+        "screenshot": screenshot,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+
+def _cw_strategy_select_payload(*, screenshot: str | None = None) -> dict:
+    return {
+        "ok": True,
+        "data": {
+            "card_idx": 2,
+            "strategy_title": "回蓝",
+            "strategy_description": "启动回转",
+            "refresh_count": 1,
+            "guide_match": "次选",
+            "guide_loaded": 0,
+        },
+        "screenshot": screenshot,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+
 @pytest.fixture(autouse=True)
 def reset_output_options():
     set_output_options(output_format="text", verbose=False)
@@ -270,6 +324,72 @@ def test_readme_and_cw_skill_document_portal_detect_recovery_contract() -> None:
     assert "detect 不会补录 `mode/difficulty/battle_mode`" in cw_skill
     assert "trail cw portal.refresh" not in cw_skill
     assert "trail cw portal.restart" not in cw_skill
+
+
+def test_readme_documents_strategy_page_boundary() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "`stage=invest` 时，不要默认走 `trail cw invest.*`" in readme
+    assert (
+        "如果 screenshot 或页面标题显示“请选择投资策略”，局内投资策略页应优先使用 `trail cw strategy detect|refresh|select`"
+        in readme
+    )
+    assert "开局投资环境页仍是 `trail cw portal.*`" in readme
+    assert "普通局内 invest 事件的兼容/粗粒度入口才是 `trail cw invest.*`" in readme
+    assert "`strategy` 负责局内“请选择投资策略”页的识别/单卡刷新/选择" in readme
+    assert "`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口" in readme
+
+
+def test_routes_stage_invest_to_strategy_in_skills() -> None:
+    cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
+    replenish_skill = (PROJECT_ROOT / "skills" / "trail-cw-replenish" / "SKILL.md").read_text(encoding="utf-8")
+    cw_guide_skill = (PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "如果 screenshot 或页面标题显示“请选择投资策略”" in cw_skill
+    assert "优先使用 `trail cw strategy detect|refresh|select`" in cw_skill
+    assert "只有普通局内 invest 事件才切到 `trail-cw-replenish`" in cw_skill
+    assert "`trail cw invest read|choose` 仅是兼容/粗粒度入口" in replenish_skill
+    assert "如果当前页面是“请选择投资策略”，不要在本 skill 内继续 choose" in replenish_skill
+    assert "应交回主 skill，改走 `trail cw strategy detect|refresh|select`" in replenish_skill
+    assert "`优选投资策略` / `次选投资策略` 会在局内 strategy 页被消费" in cw_guide_skill
+    assert "映射为 `攻略推荐=优选|次选|否`" in cw_guide_skill
+    assert "本 skill 负责提供攻略事实，不直接替 Agent 选择策略卡" in cw_guide_skill
+
+
+def test_strategy_protocol_is_frozen_in_readme_and_agents() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "`cw.strategy.detect|refresh` 的 `info 已加载攻略=0|1` 固定在所有 `opt` 行之后" in readme
+    assert (
+        "```text\nok cw.strategy.detect cards=2\nshot path=.trail/shots/req-strategy-detect.png\nopt idx=1 投资策略=回蓝 攻略推荐=优选 刷新次数=0\nopt idx=1 说明=启动回转\nopt idx=2 投资策略=暴击 攻略推荐=否 刷新次数=2\nopt idx=2 说明=爆发增伤\ninfo 已加载攻略=1\n```"
+        in readme
+    )
+    assert (
+        "```text\nok cw.strategy.select idx=2 投资策略=回蓝\nshot path=.trail/shots/req-strategy-select.png\n```"
+        in readme
+    )
+    assert (
+        "`优选投资策略` / `次选投资策略`：是局内 `cw.strategy.detect|refresh` 里 `攻略推荐=优选|次选|否` 的来源，不用于 `cw.portal.*`"
+        in readme
+    )
+    assert "`cw.strategy.detect|refresh` success 首行固定为 `ok cw.strategy.<...> cards=<n>`" in agents
+    assert "`cw.strategy.select` success 首行固定为 `ok cw.strategy.select idx=... 投资策略=...`" in agents
+    assert "`cw.strategy.detect|refresh` 的 cards family 正文字段固定使用 `投资策略/攻略推荐/刷新次数`" in agents
+    assert "`cw.strategy.detect|refresh` 必须输出 `info 已加载攻略=0|1`，且固定在所有 `opt` 行之后" in agents
+
+
+def test_readme_includes_cw_strategy_refresh_example_and_flow() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert (
+        "```text\nok cw.strategy.refresh cards=2\nshot path=.trail/shots/req-strategy-refresh.png\nopt idx=1 投资策略=连携 攻略推荐=否 刷新次数=1\nopt idx=1 说明=补充连段\nopt idx=2 投资策略=回蓝 攻略推荐=优选 刷新次数=0\nopt idx=2 说明=启动回转\ninfo 已加载攻略=1\n```"
+        in readme
+    )
+    assert (
+        "策略页显式流程示例：`trail cw stage detect --session <id>` -> `trail cw strategy detect --session <id>` -> `trail cw strategy refresh --session <id> --card-idx <n>` -> `trail cw strategy select --session <id> --card-idx <n>`"
+        in readme
+    )
 
 
 def test_render_output_renders_canonical_stage_wait_text():
@@ -1452,6 +1572,92 @@ def test_render_output_cw_start_omits_guide_tag_field_when_portal_guide_has_no_t
     assert 'opt idx=1 投资环境="No Tag Portal" score=0.42 待收集=0' in rendered
     assert 'guide idx=1 gid=1 攻略ID=plain-guide 攻略标题=无标签攻略 版本=3.2 主C=希儿' in rendered
     assert "攻略标签=" not in rendered
+
+
+def test_render_output_renders_cw_strategy_detect_text():
+    payload = _cw_strategy_cards_payload(screenshot=".trail/shots/req-strategy-detect.png")
+
+    assert render_output("cw.strategy.detect", payload).splitlines() == [
+        "ok cw.strategy.detect cards=2",
+        "shot path=.trail/shots/req-strategy-detect.png",
+        "opt idx=1 投资策略=回蓝 攻略推荐=优选 刷新次数=0",
+        "opt idx=1 说明=启动回转",
+        "opt idx=2 投资策略=暴击 攻略推荐=否 刷新次数=2",
+        "opt idx=2 说明=爆发增伤",
+        "info 已加载攻略=1",
+    ]
+
+
+def test_render_output_renders_cw_strategy_select_text():
+    payload = _cw_strategy_select_payload(screenshot=".trail/shots/req-strategy-select.png")
+
+    assert render_output("cw.strategy.select", payload).splitlines() == [
+        "ok cw.strategy.select idx=2 投资策略=回蓝",
+        "shot path=.trail/shots/req-strategy-select.png",
+    ]
+
+
+def test_render_output_cw_strategy_detect_rejects_yaml_output():
+    payload = _cw_strategy_cards_payload(screenshot=".trail/shots/req-strategy-detect-yaml.png")
+
+    assert render_output("cw.strategy.detect", payload, output_format="yaml").splitlines() == [
+        "fail cw.strategy.detect code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        "shot path=.trail/shots/req-strategy-detect-yaml.png",
+        'why msg="yaml not supported for cw.strategy.detect"',
+    ]
+
+
+def test_render_output_keeps_cw_strategy_zero_values():
+    payload = _cw_strategy_cards_payload(
+        cards=[
+            {
+                "card_idx": 1,
+                "strategy_title": "回蓝",
+                "strategy_description": "启动回转",
+                "refresh_count": 0,
+                "guide_match": "次选",
+                "guide_loaded": 0,
+            }
+        ]
+    )
+
+    assert render_output("cw.strategy.refresh", payload).splitlines() == [
+        "ok cw.strategy.refresh cards=1",
+        "opt idx=1 投资策略=回蓝 攻略推荐=次选 刷新次数=0",
+        "opt idx=1 说明=启动回转",
+        "info 已加载攻略=0",
+    ]
+
+
+def test_render_output_counts_only_valid_cw_strategy_cards():
+    payload = _cw_strategy_cards_payload(
+        cards=[
+            None,
+            "invalid-card",
+            {
+                "card_idx": 3,
+                "strategy_title": "回蓝",
+                "strategy_description": "启动回转",
+                "refresh_count": 0,
+                "guide_match": "优选",
+                "guide_loaded": 1,
+            },
+        ]
+    )
+
+    assert render_output("cw.strategy.detect", payload).splitlines() == [
+        "ok cw.strategy.detect cards=1",
+        "opt idx=3 投资策略=回蓝 攻略推荐=优选 刷新次数=0",
+        "opt idx=3 说明=启动回转",
+        "info 已加载攻略=1",
+    ]
+
+
+def test_render_output_registers_cw_strategy_renderers():
+    assert TEXT_RENDERERS["cw.strategy.detect"] is TEXT_RENDERERS["cw.strategy.refresh"]
+    assert TEXT_RENDERERS["cw.strategy.detect"] is not _render_cw_portal_cards
+    assert TEXT_RENDERERS["cw.strategy.select"] is not TEXT_RENDERERS["cw.strategy.detect"]
+    assert TEXT_RENDERERS["cw.strategy.select"] is not TEXT_RENDERERS["cw.portal.select"]
 
 
 def test_render_output_renders_cw_portal_detect_family():

@@ -24,6 +24,7 @@ CW_HELP_COMMANDS = {
     "start",
     "guide",
     "portal",
+    "strategy",
     "stage",
     "slots",
     "shop",
@@ -1749,6 +1750,51 @@ def test_cw_portal_detect_help_exposes_snapshot_only_contract(cli_runner):
     assert "只重建当前三张卡识别结果" in normalized
     assert "不点击、不刷新、不重开" in normalized
     assert "推进流程" not in normalized
+
+
+def test_strategy_group_is_visible_in_cw_help(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "--help"])
+    block = _extract_help_command_block(result.output, "strategy")
+
+    assert result.exit_code == 0
+    assert "strategy" in block
+    assert "局内投资策略页" in block
+    assert "单卡刷新" in block
+
+
+def test_strategy_group_help_describes_snapshot_and_single_card_refresh(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "strategy", "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    assert "detect" in result.output
+    assert "select" in result.output
+    assert "refresh" in result.output
+    assert "只重建当前三张策略卡快照" in normalized
+    assert "只刷新指定卡" in normalized
+    assert "不做整页刷新" in normalized
+
+
+def test_strategy_group_refresh_help_requires_card_idx(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "strategy", "refresh", "--help"])
+    normalized = _normalize_help(result.output)
+    card_idx_help = _normalize_help(_extract_help_option_block(result.output, "--card-idx"))
+
+    assert result.exit_code == 0
+    assert "--card-idx" in result.output
+    assert "只刷新指定卡" in normalized
+    assert "不做整页刷新" in normalized
+    assert "required" in card_idx_help.lower()
+
+
+def test_invest_help_marks_compatibility_entry(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "invest", "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    assert "兼容" in normalized
+    assert "粗粒度入口" in normalized
+    assert "不用于投资策略页" in normalized
 
 
 def test_cw_enter_help_exposes_home_only_contract(cli_runner):

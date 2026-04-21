@@ -77,6 +77,7 @@ from trail.scenes.cw.slots import (
     swap_cw_slots,
 )
 from trail.scenes.cw.stage import build_cw_stage_detector, detect_cw_stage, wait_cw_stage
+from trail.scenes.cw.strategy import detect_cw_strategy, refresh_cw_strategy, select_cw_strategy
 
 
 stage_detector_factory = build_cw_stage_detector
@@ -301,6 +302,22 @@ class CwService:
                 ),
             ),
             "cw.portal.restart": lambda: _restart_cw(session, runtime=runtime()),
+            "cw.strategy.detect": lambda: detect_cw_strategy(
+                session,
+                runtime=runtime(),
+                strategy_list=fetch_cw_guide_config().get("strategy_list", []),
+            ),
+            "cw.strategy.select": lambda: select_cw_strategy(
+                session,
+                card_idx=payload["card_idx"],
+                runtime=runtime(),
+            ),
+            "cw.strategy.refresh": lambda: refresh_cw_strategy(
+                session,
+                card_idx=payload["card_idx"],
+                runtime=runtime(),
+                strategy_list=fetch_cw_guide_config().get("strategy_list", []),
+            ),
             "cw.stage.detect": lambda: detect_cw_stage(
                 session,
                 detector=stage_detector_factory(runtime()),

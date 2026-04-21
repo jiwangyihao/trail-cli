@@ -456,6 +456,26 @@ def _normalize_portal_list(portal_list: object, *, require_id: bool = True) -> l
     return result
 
 
+def _normalize_strategy_list(strategy_list: object) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    if not isinstance(strategy_list, list):
+        return result
+    for item in strategy_list:
+        if not isinstance(item, Mapping):
+            continue
+        title = str(item.get("title") or item.get("name") or "").strip()
+        if not title:
+            continue
+        result.append(
+            {
+                "strategy_id": str(item.get("strategy_id") or item.get("id") or title),
+                "title": title,
+                "description": str(item.get("description") or item.get("desc") or "").strip(),
+            }
+        )
+    return result
+
+
 def _portal_similarity(query: str, *, portal: Mapping[str, str]) -> float:
     normalized_query = query.strip().lower()
     title = str(portal.get("title") or "").strip().lower()
@@ -1026,6 +1046,9 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
 
 def fetch_cw_guide_config(*, timeout: int = 10) -> dict:
     data = _fetch_cw_config_data(timeout=timeout)
+    strategy_source = data.get("fight_augment_list")
+    if not isinstance(strategy_source, list):
+        strategy_source = data.get("strategy_list")
     return {
         "meta": {
             "game": "hkrpg",
@@ -1039,6 +1062,7 @@ def fetch_cw_guide_config(*, timeout: int = 10) -> dict:
         "roles": _normalize_roles(data.get("role_list")),
         "role_tags": _normalize_role_tags(data),
         "portal_list": _normalize_portal_list(data.get("portal_list")),
+        "strategy_list": _normalize_strategy_list(strategy_source),
     }
 
 

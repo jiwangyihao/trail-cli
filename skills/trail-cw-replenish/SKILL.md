@@ -15,7 +15,7 @@ description: Use when an agent needs to read or choose replenish, invest, encoun
 - 一次只处理当前阶段
 - 不负责阶段切换和整局循环
 - `read` 命令返回的是辅助信息，不应替代 agent 对截图本身的判断
-- 这里的 `trail cw invest.read|choose` 继续只表示局内 invest 事件，不是开局投资环境页命令
+- `trail cw invest read|choose` 仅是兼容/粗粒度入口，只表示普通局内 invest 事件，不是开局投资环境页命令
 
 ## 标准流程
 
@@ -38,6 +38,7 @@ description: Use when an agent needs to read or choose replenish, invest, encoun
 - 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补额外截图命令
 - `trail ocr read` 默认走 `ocr_mode=fast`（`1280x720`）；当补给/投资/遭遇页的文字或编号读得不稳时，再显式加 `--ocr-mode high`。如需固定做高精度补跑对照，可加 `--retry-high always`；平时保持默认 `--retry-high auto`
 - `read` 返回的编号只是辅助输入，真正该选哪个仍应结合截图、攻略细节和当前局内目标判断
+- 如果当前页面是“请选择投资策略”，不要在本 skill 内继续 choose；应交回主 skill，改走 `trail cw strategy detect|refresh|select`
 - `--option` 必须显式给出
 - `choose` 之后把 `stage` 视为失效，回到 `trail-cw` 重新 `stage detect`
 - 这个 skill 不处理商店、编队和战斗逻辑
