@@ -1,3 +1,5 @@
+> 本文件已被 `docs/superpowers/specs/2026-04-21-trail-skill-system-redesign-design.md` 取代；仅供历史参考，不代表当前 active skill 拓扑。
+
 # 货币战争攻略相关命令中文输出收口设计
 
 ## 背景

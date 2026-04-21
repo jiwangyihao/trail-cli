@@ -22,12 +22,44 @@ SCREENSHOT_FIRST_RULE_SNIPPET = (
 SKILL_GUIDANCE_PATHS = (
     PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md",
     PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md",
-    PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md",
-    PROJECT_ROOT / "skills" / "trail-cw-events" / "SKILL.md",
-    PROJECT_ROOT / "skills" / "trail-cw-slots" / "SKILL.md",
-    PROJECT_ROOT / "skills" / "trail-cw-shop" / "SKILL.md",
-    PROJECT_ROOT / "skills" / "trail-cw-replenish" / "SKILL.md",
-    PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md",
+)
+SIMPLE_COMMAND_SURFACE_PATH = (
+    PROJECT_ROOT / "skills" / "trail-hsr" / "references" / "simple-command-surface.md"
+)
+OCR_AND_SCREENSHOT_REFERENCE_PATH = (
+    PROJECT_ROOT / "skills" / "trail-hsr" / "references" / "ocr-and-screenshot.md"
+)
+ADVANCED_COMMAND_SURFACE_PATH = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-hsr-advanced"
+    / "references"
+    / "advanced-command-surface.md"
+)
+REQUEST_STATUS_AND_TAINT_PATH = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-hsr-advanced"
+    / "references"
+    / "request-status-and-taint.md"
+)
+RECOVERY_LADDER_PATH = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-hsr-advanced"
+    / "references"
+    / "recovery-ladder.md"
+)
+WINDOW_LAUNCH_REFERENCE_PATH = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-hsr-advanced"
+    / "references"
+    / "window-launch.md"
+)
+SKILL_GUIDANCE_REFERENCE_PATHS = (
+    OCR_AND_SCREENSHOT_REFERENCE_PATH,
+    ADVANCED_COMMAND_SURFACE_PATH,
 )
 ACTIVE_REFERENCE_SPEC_PATHS = (
     PROJECT_ROOT / "docs" / "superpowers" / "specs" / "2026-04-17-trail-output-format-design.md",
@@ -287,7 +319,7 @@ def test_agents_document_screenshot_first_protocol_facts() -> None:
 
 
 def test_skills_document_screenshot_first_guidance_rule() -> None:
-    for path in SKILL_GUIDANCE_PATHS:
+    for path in SKILL_GUIDANCE_REFERENCE_PATHS:
         text = path.read_text(encoding="utf-8")
 
         assert SCREENSHOT_FIRST_RULE_SNIPPET in text, path.as_posix()
@@ -364,19 +396,13 @@ def test_readme_documents_trail_start_as_default_entry() -> None:
     assert "trail state dump" not in quick_start
 
 
-def test_readme_and_cw_skills_document_help_boundaries() -> None:
+def test_readme_and_active_skills_document_help_boundaries() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
     hsr_skill = (PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md").read_text(encoding="utf-8")
     hsr_advanced_skill = (PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md").read_text(encoding="utf-8")
-    cw_guide_skill = (PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md").read_text(encoding="utf-8")
-    replenish_skill = (PROJECT_ROOT / "skills" / "trail-cw-replenish" / "SKILL.md").read_text(encoding="utf-8")
-    events_skill = (PROJECT_ROOT / "skills" / "trail-cw-events" / "SKILL.md").read_text(encoding="utf-8")
-    battle_advanced_skill = (PROJECT_ROOT / "skills" / "trail-cw-battle-advanced" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    shop_skill = (PROJECT_ROOT / "skills" / "trail-cw-shop" / "SKILL.md").read_text(encoding="utf-8")
-    slots_skill = (PROJECT_ROOT / "skills" / "trail-cw-slots" / "SKILL.md").read_text(encoding="utf-8")
+    simple_command_surface = SIMPLE_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
+    advanced_command_surface = ADVANCED_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
+    request_status_and_taint = REQUEST_STATUS_AND_TAINT_PATH.read_text(encoding="utf-8")
 
     assert "货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页" in readme
     assert "常规 battle / settle 流程默认执行：`trail cw battle run --session <id> --timeout 570`" in readme
@@ -389,9 +415,10 @@ def test_readme_and_cw_skills_document_help_boundaries() -> None:
     assert "`trail cw invest read|choose` 继续只表示局内 invest 事件" in readme
     assert "`trail cw portal select --session <id> --card-idx <n>`" in readme
     assert "`trail cw portal select|detect|refresh|restart` 只用于首页之后的投资环境选择页" in readme
-    assert "`skills/trail-cw` 是整局货币战争循环的默认 owner" in readme
-    assert "`skills/trail-cw-events` 只负责 Boss 预览与特殊事件，不再承载 battle 主流程" in readme
-    assert "`skills/trail-cw-battle-advanced` 负责 CW 场景内 battle / settle 的 scene-local fallback" in readme
+    assert "`trail-hsr` 是对外总入口" in readme
+    assert "`trail-<scene>-entry` 是对外场景入口" in readme
+    assert "`trail-hsr-advanced` 是内部恢复层" in readme
+    assert "`trail-hsr-advanced` 不作为用户入口" in readme
     assert "guide 投资环境=购物区 count=1 more=1 next=group-token" in readme
     assert "guide.config.cw --format yaml" in readme
     assert "artifact=" not in readme
@@ -399,48 +426,21 @@ def test_readme_and_cw_skills_document_help_boundaries() -> None:
         "```text\nok guide.list.cw count=2 more=1 next=token-2\nguide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1\nguide id=def idx=2 hard=0 change_equip=1 expert=0\n```"
         not in readme
     )
-    assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in cw_skill
-    assert "`trail cw invest read|choose` 继续只表示局内 invest 事件" in cw_skill
-    assert "`trail cw portal select --session <id> --card-idx <n>`" in cw_skill
-    assert "`trail cw battle run --session <id> --timeout 570`" in cw_skill
-    assert (
-        "`trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断，也不代替分组动作执行"
-        in cw_skill
-    )
-    assert "`trail cw portal select|detect|refresh|restart` 只在投资环境页可用" in cw_skill
     assert (
         "通用场景判断继续走 `trail start` / `trail ocr read` / `trail input ...`，不要把 `trail cw stage` 当成登录页、大世界等非 CW 场景检测器"
-        in hsr_skill
+        in simple_command_surface
     )
-    assert (
-        "`trail cw guide apply/current` 只面向当前对局已选攻略；攻略查询与拉取继续使用顶层 `trail guide ... cw`"
-        in cw_guide_skill
-    )
-    assert "攻略快照ID" in cw_guide_skill
-    assert "artifact=" not in cw_guide_skill
-    assert "artifact=" not in cw_skill
-    assert "局内 invest 事件" in replenish_skill
-    assert "开局投资环境页命令" in replenish_skill
-    assert "处理 Boss 预览与特殊事件" in events_skill
-    assert "不负责 battle 主流程" in events_skill
-    assert "trail cw battle start --session <id>" not in events_skill
-    assert "trail cw battle continue --session <id>" not in events_skill
-    assert "trail cw settle next --session <id>" not in events_skill
-    assert "trail cw battle start --session <id>" in battle_advanced_skill
-    assert "trail cw battle continue --session <id>" in battle_advanced_skill
-    assert "trail cw settle next --session <id>" in battle_advanced_skill
-    assert "只负责 CW battle / settle 的 scene-local fallback" in battle_advanced_skill
-    assert "trail-cw-battle-advanced" in hsr_advanced_skill
-    assert "不负责商店、补给和整局循环" in events_skill
-    assert "已经完成 `trail cw start`" in shop_skill
-    assert "已经进入局内商店阶段" in shop_skill
-    assert "已经完成 `trail cw start`" in slots_skill
-    assert "已经进入局内编队/备战阶段" in slots_skill
+    assert "artifact=" not in hsr_skill
+    assert "artifact=" not in hsr_advanced_skill
+    assert "trail daemon install" not in hsr_skill
+    assert "trail daemon status" not in hsr_skill
+    assert "trail daemon request-status --request-id <id>" in request_status_and_taint
+    assert "trail daemon reconcile-session --session <id>" in request_status_and_taint
+    assert "trail state dump --session <id> --format yaml" in advanced_command_surface
 
 
-def test_readme_and_cw_skill_document_portal_detect_recovery_contract() -> None:
+def test_readme_documents_portal_detect_recovery_contract() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "`trail cw portal detect --session <id>`" in readme
     assert "已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot" in readme
@@ -452,16 +452,6 @@ def test_readme_and_cw_skill_document_portal_detect_recovery_contract() -> None:
     assert "detect 不会补录 `mode/difficulty/battle_mode`" in readme
     assert "trail cw portal.refresh" not in readme
     assert "trail cw portal.restart" not in readme
-
-    assert "`trail cw portal detect --session <id>`" in cw_skill
-    assert "已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot" in cw_skill
-    assert "不要回退到 `trail cw start`" in cw_skill
-    assert "只重建当前三张卡识别结果，不点击、不刷新、不重开" in cw_skill
-    assert "detect 后可直接 `select`" in cw_skill
-    assert "`restart` 依旧要求已有开局真值" in cw_skill
-    assert "detect 不会补录 `mode/difficulty/battle_mode`" in cw_skill
-    assert "trail cw portal.refresh" not in cw_skill
-    assert "trail cw portal.restart" not in cw_skill
 
 
 def test_readme_documents_strategy_page_boundary() -> None:
@@ -478,20 +468,14 @@ def test_readme_documents_strategy_page_boundary() -> None:
     assert "`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口" in readme
 
 
-def test_routes_stage_invest_to_strategy_in_skills() -> None:
-    cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
-    replenish_skill = (PROJECT_ROOT / "skills" / "trail-cw-replenish" / "SKILL.md").read_text(encoding="utf-8")
-    cw_guide_skill = (PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md").read_text(encoding="utf-8")
+def test_readme_routes_stage_invest_to_strategy() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "如果 screenshot 或页面标题显示“请选择投资策略”" in cw_skill
-    assert "优先使用 `trail cw strategy detect|refresh|select`" in cw_skill
-    assert "只有普通局内 invest 事件才切到 `trail-cw-replenish`" in cw_skill
-    assert "`trail cw invest read|choose` 仅是兼容/粗粒度入口" in replenish_skill
-    assert "如果当前页面是“请选择投资策略”，不要在本 skill 内继续 choose" in replenish_skill
-    assert "应交回主 skill，改走 `trail cw strategy detect|refresh|select`" in replenish_skill
-    assert "`优选投资策略` / `次选投资策略` 会在局内 strategy 页被消费" in cw_guide_skill
-    assert "映射为 `攻略推荐=优选|次选|否`" in cw_guide_skill
-    assert "本 skill 负责提供攻略事实，不直接替 Agent 选择策略卡" in cw_guide_skill
+    assert "如果 screenshot 或页面标题显示“请选择投资策略”" in readme
+    assert "优先使用 `trail cw strategy detect|refresh|select`" in readme
+    assert "开局投资环境页仍是 `trail cw portal.*`" in readme
+    assert "普通局内 invest 事件的兼容/粗粒度入口才是 `trail cw invest.*`" in readme
+    assert "`优选投资策略` / `次选投资策略`：是局内 `cw.strategy.detect|refresh` 里 `攻略推荐=优选|次选|否` 的来源，不用于 `cw.portal.*`" in readme
 
 
 def test_strategy_protocol_is_frozen_in_readme_and_agents() -> None:
@@ -537,38 +521,22 @@ def test_battle_run_as_default_entry_is_documented_across_readme_and_skills() ->
     skill_boundary_section = _markdown_section(readme, "Skill 边界")
     stage_reference = (PROJECT_ROOT / "docs" / "cw-stage-reference" / "README.md").read_text(encoding="utf-8")
     preparation_stage_section = _markdown_section(stage_reference, "06-cw-preparation-stage.jpg")
-    cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
-    events_skill = (PROJECT_ROOT / "skills" / "trail-cw-events" / "SKILL.md").read_text(encoding="utf-8")
-    advanced_skill_path = PROJECT_ROOT / "skills" / "trail-cw-battle-advanced" / "SKILL.md"
-    hsr_advanced_skill = (PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md").read_text(encoding="utf-8")
+    advanced_command_surface = ADVANCED_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
 
     assert "`trail cw battle run --session <id> --timeout 570`" in cw_flow_section
     assert "命令行工具的外部 timeout 至少调到 11 分钟" in cw_flow_section
     assert "`trail state dump --session <id> --format yaml`" in cw_flow_section
     assert "`trail cw battle start` / `trail cw battle continue` / `trail cw settle next`" in cw_flow_section
-    assert "`skills/trail-cw-battle-advanced` fallback 流程" in cw_flow_section
+    assert "只建议在内部 fallback 流程中手工拆链使用" in cw_flow_section
     assert "`battle` / `settle` 分组仍保留兼容原子命令" in command_overview_section
     assert "常规 battle / settle 默认入口是 `trail cw battle run --session <id> --timeout 570`" in command_overview_section
-    assert "只建议在 `skills/trail-cw-battle-advanced` fallback 流程使用" in command_overview_section
-    assert "`skills/trail-cw` 是整局货币战争循环的默认 owner" in skill_boundary_section
-    assert "`skills/trail-cw-events` 只负责 Boss 预览与特殊事件，不再承载 battle 主流程" in skill_boundary_section
-    assert "`skills/trail-cw-battle-advanced` 负责 CW 场景内 battle / settle 的 scene-local fallback" in skill_boundary_section
-    assert "`skills/trail-hsr-advanced` 继续负责 daemon / request-status / reconcile-session / window / session / screen / image / state 这类 control-plane 与恢复链路" in skill_boundary_section
-    assert "`trail cw battle run --session <id> --timeout 570`" in cw_skill
-    assert "不负责 battle 主流程" in events_skill
-    assert "trail cw battle start --session <id>" not in events_skill
-    assert "trail cw battle continue --session <id>" not in events_skill
-    assert "trail cw settle next --session <id>" not in events_skill
-
-    assert advanced_skill_path.exists()
-    advanced_skill = advanced_skill_path.read_text(encoding="utf-8")
-
-    assert "trail cw battle start --session <id>" in advanced_skill
-    assert "trail cw battle continue --session <id>" in advanced_skill
-    assert "trail cw settle next --session <id>" in advanced_skill
-    assert "只在 `battle.run` 报错、结果与截图矛盾、或用户要求手工拆链时使用" in advanced_skill
-    assert "`trail state dump --session <id> --format yaml`" in hsr_advanced_skill
-    assert "trail-cw-battle-advanced" in hsr_advanced_skill
+    assert "只建议在内部 fallback 流程使用" in command_overview_section
+    assert "`trail-hsr` 是对外总入口" in skill_boundary_section
+    assert "`trail-<scene>-entry` 是对外场景入口" in skill_boundary_section
+    assert "当前 scene entry 一旦命中并接管某个具体场景，该 scene entry 就成为该场景内的唯一编排 owner" in skill_boundary_section
+    assert "`trail-hsr-advanced` 是内部恢复层" in skill_boundary_section
+    assert "`trail-hsr-advanced` 不作为用户入口" in skill_boundary_section
+    assert "`trail state dump --session <id> --format yaml`" in advanced_command_surface
     assert "`trail cw battle run --session <id> --timeout 570`" in preparation_stage_section
     assert "`trail cw battle start --session <id>`" in preparation_stage_section
     assert "advanced/manual fallback" in preparation_stage_section
@@ -1607,12 +1575,11 @@ def test_readme_documents_guide_list_name_filters_and_version() -> None:
     assert "guide 攻略ID=abc 攻略标题=7群攻2银河学者 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45" in readme
 
 
-def test_skills_document_guide_list_version_as_selection_fact() -> None:
-    cw_guide_skill = (PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md").read_text(encoding="utf-8")
-    cw_skill = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
+def test_readme_documents_guide_list_version_as_selection_fact() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "`guide list cw` 已直接返回 `版本`，Agent 在 list 阶段就应把版本兼容性纳入筛选判断" in cw_guide_skill
-    assert "在 list 阶段选攻略时，同时读取 `版本` 与 `攻略标签` / `最终阵容`，不要回退到 portal / hard / change_equip / expert 这些旧字段名" in cw_skill
+    assert "`trail guide list cw` 默认文本只保留选攻略最关键的摘要：`攻略ID/攻略标题/版本/主C/攻略标签/点赞/收藏`" in readme
+    assert "`guide list cw` 列表结果现在会直接返回 `version`，list 阶段就应把版本兼容性纳入筛选判断" in readme
 
 
 def test_render_output_renders_guide_fetch_summary_text():
@@ -2415,6 +2382,7 @@ def test_render_output_renders_cw_slots_place_success_text():
     assert render_output("cw.slots.place", payload).splitlines() == [
         "ok cw.slots.place front=1 back=1 hand=0 stale=1",
         "shot path=.trail/shots/req-cw-slots-place.png",
+        "info read_image_first=1",
     ]
 
 
@@ -2461,6 +2429,7 @@ def test_render_output_renders_cw_hand_sell_success_text():
     assert render_output("cw.hand.sell", payload).splitlines() == [
         "ok cw.hand.sell front=1 back=1 hand=1 stale=1",
         "shot path=.trail/shots/req-cw-hand-sell.png",
+        "info read_image_first=1",
     ]
 
 
@@ -3272,112 +3241,73 @@ def test_readme_documents_window_launch_path_resolution_contract() -> None:
 def test_skill_docs_split_simple_and_advanced_commands() -> None:
     basic = (PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md").read_text(encoding="utf-8")
     advanced = (PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md").read_text(encoding="utf-8")
-    cw = (PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md").read_text(encoding="utf-8")
-    cw_events = (PROJECT_ROOT / "skills" / "trail-cw-events" / "SKILL.md").read_text(encoding="utf-8")
-    cw_battle_advanced = (PROJECT_ROOT / "skills" / "trail-cw-battle-advanced" / "SKILL.md").read_text(
-        encoding="utf-8"
+    simple_command_surface = SIMPLE_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
+    advanced_reference_text = "\n".join(
+        [
+            ADVANCED_COMMAND_SURFACE_PATH.read_text(encoding="utf-8"),
+            REQUEST_STATUS_AND_TAINT_PATH.read_text(encoding="utf-8"),
+            RECOVERY_LADDER_PATH.read_text(encoding="utf-8"),
+            WINDOW_LAUNCH_REFERENCE_PATH.read_text(encoding="utf-8"),
+        ]
     )
 
-    assert "trail start" in basic
-    assert "trail ocr read" in basic
-    assert "trail input" in basic
-    assert "加载 advanced skill" in basic
-    assert "trail-hsr-advanced" in basic
-    assert "trail daemon install" not in basic
-    assert "trail daemon status" not in basic
-    assert "trail daemon start" not in basic
-    assert "trail daemon request-status" not in basic
-    assert "trail daemon reconcile-session" not in basic
-    assert "trail window launch" not in basic
-    assert "trail window attach" not in basic
-    assert "trail session create" not in basic
-    assert "trail screen shot" not in basic
-    assert "trail image" not in basic
-    assert "trail state dump" not in basic
-    assert "trail daemon install" in advanced
-    assert "trail daemon status" in advanced
-    assert "trail daemon start" in advanced
-    assert "trail daemon request-status" in advanced
-    assert "trail daemon reconcile-session" in advanced
-    assert "trail window launch" in advanced
-    assert "trail window attach" in advanced
-    assert "trail session create" in advanced
-    assert "trail screen shot" in advanced
-    assert "trail image locate" in advanced
-    assert "trail image wait" in advanced
-    assert "trail state dump" in advanced
-    assert "trail state dump --session <id> --format yaml" in advanced
-    assert "trail-cw-battle-advanced" in advanced
-    assert "trail start" in cw
-    assert "trail cw battle run --session <id> --timeout 570" in cw
-    assert "trail cw battle start --session <id>" not in cw_events
-    assert "trail cw battle continue --session <id>" not in cw_events
-    assert "trail cw settle next --session <id>" not in cw_events
-    assert "trail cw battle start --session <id>" in cw_battle_advanced
-    assert "trail cw battle continue --session <id>" in cw_battle_advanced
-    assert "trail cw settle next --session <id>" in cw_battle_advanced
+    assert "references/simple-command-surface.md" in basic
+    assert "references/advanced-command-surface.md" in advanced
+    assert "trail start" in simple_command_surface
+    assert "trail ocr read" in simple_command_surface
+    assert "trail input" in simple_command_surface
+    assert "trail daemon install" not in simple_command_surface
+    assert "trail daemon status" not in simple_command_surface
+    assert "trail daemon start" not in simple_command_surface
+    assert "trail daemon request-status" not in simple_command_surface
+    assert "trail daemon reconcile-session" not in simple_command_surface
+    assert "trail window launch" not in simple_command_surface
+    assert "trail window attach" not in simple_command_surface
+    assert "trail session create" not in simple_command_surface
+    assert "trail screen shot" not in simple_command_surface
+    assert "trail image" not in simple_command_surface
+    assert "trail state dump" not in simple_command_surface
+    assert "trail daemon install" in advanced_reference_text
+    assert "trail daemon status" in advanced_reference_text
+    assert "trail daemon start" in advanced_reference_text
+    assert "trail daemon request-status" in advanced_reference_text
+    assert "trail daemon reconcile-session" in advanced_reference_text
+    assert "trail window launch" in advanced_reference_text
+    assert "trail window attach" in advanced_reference_text
+    assert "trail session create" in advanced_reference_text
+    assert "trail screen shot" in advanced_reference_text
+    assert "trail image locate" in advanced_reference_text
+    assert "trail image wait" in advanced_reference_text
+    assert "trail state dump" in advanced_reference_text
+    assert "trail state dump --session <id> --format yaml" in advanced_reference_text
 
 
-def test_readme_and_cw_slots_skill_document_batch_place_sell_contract() -> None:
+def test_readme_documents_batch_place_sell_contract() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    slots_skill = (PROJECT_ROOT / "skills" / "trail-cw-slots" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "`trail cw slots place --session <id> --action hand:0,front:0 --action hand:1,back:2`" in readme
     assert "`trail cw hand sell --session <id> --slot 0 --slot 2`" in readme
     assert "严格保序、遇错即停" in readme
     assert "重新执行 `trail cw slots read`" in readme
-    assert "place-one" not in slots_skill
-    assert "sell-one" not in slots_skill
-    assert "`trail cw slots place --session <id> --action <src,dst> ...`" in slots_skill
-    assert "`trail cw hand sell --session <id> --slot <n> --slot <m>`" in slots_skill
-    assert "`place` / `sell` 都严格保序、遇错即停；只要中途失败且前面动作可能已生效，先重新执行 `trail cw slots read --session <id>`" in slots_skill
 
 
 def test_advanced_skill_documents_window_launch_path_resolution_contract() -> None:
-    advanced = (PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md").read_text(encoding="utf-8")
+    window_launch = WINDOW_LAUNCH_REFERENCE_PATH.read_text(encoding="utf-8")
 
-    assert "`trail window launch --channel official|bilibili|global`" in advanced
-    assert "显式 `--game-path` 仍可显式提供，且优先级最高、失败时不会回退" in advanced
-    assert "历史成功路径 -> 默认路径 -> 直接问用户" in advanced
-    assert "默认路径只覆盖 `official`" in advanced
-    assert r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe" in advanced
-    assert "`bilibili` / `global` 无历史成功路径时，通常仍需显式 `--game-path`" in advanced
-    assert "Agent 不应默认乱搜路径" in advanced
-    assert "`GAME_PATH_REQUIRED`" in advanced
-    assert "`GAME_PATH_NOT_FOUND`" in advanced
-    assert "`GAME_LAUNCH_FAILED`" in advanced
-    assert "`GAME_PATH_PERSIST_FAILED`" in advanced
-    assert "session=<id>" in advanced
-    assert "trail window launch --game-path <StarRail.exe>" not in advanced
-    assert "自动搜索常见目录" not in advanced
-    assert "注册表" not in advanced
-    assert "全盘搜索" not in advanced
-
-
-def test_cw_skill_family_uses_existing_session_instead_of_old_bootstrap_chain() -> None:
-    for relative_path in (
-        Path("skills/trail-cw/SKILL.md"),
-        Path("skills/trail-cw-events/SKILL.md"),
-        Path("skills/trail-cw-guide/SKILL.md"),
-        Path("skills/trail-cw-replenish/SKILL.md"),
-        Path("skills/trail-cw-shop/SKILL.md"),
-        Path("skills/trail-cw-slots/SKILL.md"),
-    ):
-        content = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
-
-        assert "trail daemon install" not in content
-        assert "trail daemon status" not in content
-        assert "trail daemon start" not in content
-        assert "trail daemon request-status" not in content
-        assert "trail daemon reconcile-session" not in content
-        assert "trail window launch" not in content
-        assert "trail window attach" not in content
-        assert "trail session create" not in content
-        assert "trail screen shot" not in content
-        assert "trail image" not in content
-        assert "trail state dump" not in content
-        assert "使用已有 session" in content or "trail start" in content
-        assert "--session <id>" in content or "--session <session_id>" in content
+    assert "`trail window launch --channel official|bilibili|global`" in window_launch
+    assert "显式 `--game-path` 仍可显式提供，且优先级最高、失败时不会回退" in window_launch
+    assert "历史成功路径 -> 默认路径 -> 直接问用户" in window_launch
+    assert "默认路径只覆盖 `official`" in window_launch
+    assert r"C:\Program Files\miHoYo Launcher\games\Star Rail Game\StarRail.exe" in window_launch
+    assert "`bilibili` / `global` 无历史成功路径时，通常仍需显式 `--game-path`" in window_launch
+    assert "不默认乱搜路径" in window_launch
+    assert "不扫注册表" in window_launch
+    assert "不全盘搜索" in window_launch
+    assert "`GAME_PATH_REQUIRED`" in window_launch
+    assert "`GAME_PATH_NOT_FOUND`" in window_launch
+    assert "`GAME_LAUNCH_FAILED`" in window_launch
+    assert "`GAME_PATH_PERSIST_FAILED`" in window_launch
+    assert "session=<id>" in window_launch
 
 
 def test_render_output_renders_daemon_restart_summary():

@@ -1,0 +1,90 @@
+[
+  {
+    "sample_type": "direct-user-negative",
+    "prompt": "帮我继续玩星铁，刚才启动失败了，你先恢复再接着打",
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "sample_type": "direct-user-negative",
+    "prompt": "现在游戏窗口接管失败了，帮我恢复后继续推进主线",
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "sample_type": "direct-user-negative",
+    "prompt": "星铁环境有点异常，你接管一下并继续我刚才的任务",
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "sample_type": "direct-user-negative",
+    "prompt": "货币战争入口上线后，帮我直接进货币战争，黑屏了也一起处理",
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "sample_type": "direct-user-negative",
+    "prompt": "等货币战争入口能直达时，窗口异常也直接帮我打这个玩法",
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "sample_type": "direct-user-negative",
+    "prompt": "帮我看看这张星铁截图现在能不能点下一步",
+    "expected_winner": "none"
+  },
+  {
+    "sample_type": "direct-user-negative",
+    "prompt": "解释一下 tainted 在 Trail 里是什么意思",
+    "expected_winner": "none"
+  },
+  {
+    "sample_type": "direct-user-negative",
+    "prompt": "我有一条 request id，不知道结果是什么，先帮我解释怎么读",
+    "expected_winner": "none"
+  },
+  {
+    "sample_type": "internal-escalation",
+    "caller_role": "root_entry",
+    "scenario": "总入口建立游戏工作流时启动失败，已携带失败症状、最近动作与可复用上下文，需要恢复后继续由总入口推进。",
+    "expected_action": "invoke-advanced",
+    "expected_return_owner": "trail-hsr",
+    "expected_return_owner_skill": "trail-hsr"
+  },
+  {
+    "sample_type": "internal-escalation",
+    "caller_role": "root_entry",
+    "scenario": "总入口接管当前局面时窗口 attach 失败，但 session 与截图线索还在，需要恢复后回到总入口。",
+    "expected_action": "invoke-advanced",
+    "expected_return_owner": "trail-hsr",
+    "expected_return_owner_skill": "trail-hsr"
+  },
+  {
+    "sample_type": "internal-escalation",
+    "caller_role": "root_entry",
+    "scenario": "总入口只是识别到用户想继续玩星铁，没有出现启动失败、窗口异常或恢复链路断裂。",
+    "expected_action": "stop",
+    "expected_return_owner": "trail-hsr",
+    "expected_return_owner_skill": "trail-hsr"
+  },
+  {
+    "sample_type": "internal-escalation",
+    "caller_role": "scene_entry",
+    "scenario": "scene entry 发起动作后 stdout 丢失，当前是 unknown result，已保留 request id，需要恢复后回到当前 scene 编排。",
+    "expected_action": "invoke-advanced",
+    "expected_return_owner": "scene_entry",
+    "expected_return_owner_skill": "trail-cw-entry"
+  },
+  {
+    "sample_type": "internal-escalation",
+    "caller_role": "scene_entry",
+    "scenario": "scene entry 持有的 session 已 tainted，需要 request-status 与 reconcile 后再继续当前 scene。",
+    "expected_action": "invoke-advanced",
+    "expected_return_owner": "scene_entry",
+    "expected_return_owner_skill": "trail-cw-entry"
+  },
+  {
+    "sample_type": "internal-escalation",
+    "caller_role": "scene_entry",
+    "scenario": "scene entry 缺少 expected_return_owner 或最近动作，无法形成安全升级调用。",
+    "expected_action": "stop",
+    "expected_return_owner": "scene_entry",
+    "expected_return_owner_skill": "trail-cw-entry"
+  }
+]

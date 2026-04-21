@@ -1,3 +1,5 @@
+> 本文件已被 `docs/superpowers/specs/2026-04-21-trail-skill-system-redesign-design.md` 取代；仅供历史参考，不代表当前 active skill 拓扑。
+
 # CW Battle Run Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: First use superpowers:using-git-worktrees to create a project-local worktree, then use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

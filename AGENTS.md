@@ -83,3 +83,10 @@
 - `cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径；`current/apply` 只看当前已应用攻略摘要，完整攻略仍由 `guide.fetch.cw` 提供。
 - `guide.config.cw` 使用 `赛季/子赛季/大版本/搜牌档位/羁绊/角色/角色标签/投资环境`；这五个统计项即使为 `0` 也必须保留。
 - `guide.config.cw --format yaml` 仍然先输出中文摘要，再追加原英文 key 的 YAML shape，不得回退成纯英文首屏。
+
+## skill 拓扑约束
+
+- `trail-hsr` 是对外总入口；`trail-<scene>-entry` 是对外场景入口；`trail-hsr-advanced` 是内部恢复层，不作为用户直达入口。
+- 只有 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口出现在 active 文档与测试中。
+- `AGENTS.md` 的 active 拓扑说明不得出现 archive skill 名称或 legacy 场景 skill 名称。
+- 任何 active skill 都不得直接或间接调用 archive skill。
