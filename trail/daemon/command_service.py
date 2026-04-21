@@ -23,6 +23,7 @@ CW_MUTATING_METHODS = {
     "cw.slots.swap",
     "cw.slots.place_one",
     "cw.shop.open",
+    "cw.shop.scan",
     "cw.shop.buy_slot",
     "cw.shop.refresh",
     "cw.shop.close",
@@ -236,12 +237,22 @@ class CommandService:
                 request_id=request.request_id,
                 verbose=request.verbose,
             )
-            return _normalize_capture_payload(response, workspace_root=Path(request.workspace_root))
         except TrailError as error:
             if getattr(error, "completed_after_side_effect", False):
                 envelope = self._response_with_request_id(request.request_id, self._failure_envelope(error=error))
                 raise CompletedKnownFailure(envelope)
             raise
+        try:
+            return _normalize_capture_payload(response, workspace_root=Path(request.workspace_root))
+        except Exception as error:
+            raise PersistedButResponseUnknown(
+                envelope=self._unknown_result_envelope(
+                    request_id=request.request_id,
+                    response=response,
+                    error=error,
+                    last_known_stage="state_persisted",
+                )
+            ) from error
 
     def handle(self, request):
         if request.method == "daemon.ping":
@@ -765,7 +776,10 @@ class CommandService:
                 session_id=effective_session_id,
             )
         except SideEffectAppliedButStateNotPersisted as error:
-            envelope = self._response_with_request_id(request.request_id, error.envelope)
+            envelope = self._response_with_request_id(
+                request.request_id,
+                _normalize_capture_payload(error.envelope, workspace_root=Path(request.workspace_root)),
+            )
             data_payload = envelope.get("data") if isinstance(envelope.get("data"), dict) else {}
             if session_id_resolver is not None:
                 effective_session_id = session_id_resolver(data_payload) or request.session_id
@@ -786,7 +800,10 @@ class CommandService:
                 session_id=effective_session_id,
             )
         except PersistedButResponseUnknown as error:
-            envelope = self._response_with_request_id(request.request_id, error.envelope)
+            envelope = self._response_with_request_id(
+                request.request_id,
+                _normalize_capture_payload(error.envelope, workspace_root=Path(request.workspace_root)),
+            )
             data_payload = envelope.get("data") if isinstance(envelope.get("data"), dict) else {}
             if session_id_resolver is not None:
                 effective_session_id = session_id_resolver(data_payload) or request.session_id

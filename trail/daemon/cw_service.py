@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from time import sleep
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
-from trail.daemon.command_service import SideEffectAppliedButStateNotPersisted
+from trail.daemon.command_service import PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
 from trail.output.capture import with_auto_capture, with_selective_capture
 from trail.scenes.cw.entry import enter_cw, start_cw
 from trail.scenes.cw.events import (
@@ -55,6 +56,7 @@ from trail.scenes.cw.shop import (
     build_cw_shop_closer,
     build_cw_shop_opener,
     build_cw_shop_refresher,
+    build_cw_shop_scan_snapshot_reader,
     build_cw_shop_scanner,
     buy_cw_shop_slot,
     close_cw_shop,
@@ -85,6 +87,7 @@ slot_placer_factory = build_cw_slot_swapper
 hand_seller_factory = build_cw_hand_seller
 crystal_collector_factory = build_cw_crystal_collector
 shop_scanner_factory = build_cw_shop_scanner
+shop_scan_snapshot_reader_factory = build_cw_shop_scan_snapshot_reader
 shop_buyer_factory = build_cw_shop_buyer
 shop_opener_factory = build_cw_shop_opener
 shop_refresher_factory = build_cw_shop_refresher
@@ -122,7 +125,16 @@ class _SideEffectTrackingRuntime:
             return attribute
 
         def wrapped(*args, **kwargs):
-            result = attribute(*args, **kwargs)
+            try:
+                result = attribute(*args, **kwargs)
+            except TrailError as error:
+                if getattr(error, "completed_after_side_effect", False):
+                    self._tracker.mark_applied()
+                raise
+            except Exception:
+                # Input backends can raise after the UI has already reacted.
+                self._tracker.mark_applied()
+                raise
             self._tracker.mark_applied()
             return result
 
@@ -205,22 +217,38 @@ class CwService:
         try:
             result = handlers[method]()
         except CwSideEffectAppliedError as error:
-            raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
+            raise SideEffectAppliedButStateNotPersisted(
+                _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+            ) from error
         except Exception as error:
-            if getattr(error, "completed_after_side_effect", False):
-                raise
-            if tracker.side_effect_applied:
-                raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
+            if tracker.side_effect_applied or getattr(error, "completed_after_side_effect", False):
+                raise SideEffectAppliedButStateNotPersisted(
+                    _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+                ) from error
             raise
 
         try:
             session_service.save_session(session)
         except Exception as error:
-            raise SideEffectAppliedButStateNotPersisted(_unknown_result_envelope(error)) from error
+            raise SideEffectAppliedButStateNotPersisted(
+                _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+            ) from error
 
         extra_delay_seconds = PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS if method == "cw.portal.select" else 0.0
         capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id, extra_delay_seconds=extra_delay_seconds)
-        return with_auto_capture(capture_runtime, lambda: result, verbose=verbose)
+        try:
+            return with_auto_capture(capture_runtime, lambda: result, verbose=verbose)
+        except Exception as error:
+            screenshot = _safe_capture_after_action(capture_runtime)
+            raise PersistedButResponseUnknown(
+                _unknown_result_envelope(
+                    error,
+                    last_known_stage="state_persisted",
+                    screenshot=screenshot,
+                    warnings=_safe_collect_warnings(capture_runtime),
+                    references=_safe_match_references(capture_runtime, screenshot=screenshot),
+                )
+            ) from error
 
     def _context(self, *, method: str, payload: dict, workspace_root: str, session_service, track_side_effects: bool = False):
         session_id = payload.get("session_id")
@@ -239,6 +267,7 @@ class CwService:
                     window_binding=session.window_binding,
                 )
                 if track_side_effects:
+                    setattr(resolved_runtime, "raise_post_input_foreground_error", True)
                     resolved_runtime = _SideEffectTrackingRuntime(resolved_runtime, tracker)
                 runtime_holder["runtime"] = resolved_runtime
             return runtime_holder["runtime"]
@@ -331,7 +360,7 @@ class CwService:
             ).scene_state["cw"]["shop"],
             "cw.shop.scan": lambda: scan_cw_shop(
                 session,
-                scanner=shop_scanner_factory(runtime()),
+                scanner=shop_scan_snapshot_reader_factory(runtime()),
             ).scene_state["cw"]["shop"],
             "cw.shop.buy_slot": lambda: buy_cw_shop_slot(
                 session,
@@ -543,15 +572,59 @@ def _attach_guides_to_portal_snapshot(session, snapshot: dict[str, object], *, t
     return enriched
 
 
-def _unknown_result_envelope(error: Exception) -> dict:
+def _safe_capture_after_action(runtime) -> str | None:
+    capture_after_action = getattr(runtime, "capture_after_action", None)
+    if not callable(capture_after_action):
+        return None
+    try:
+        return capture_after_action(optional=False)
+    except Exception:
+        return None
+
+
+def _safe_match_references(runtime, *, screenshot) -> list[dict]:
+    if screenshot is None:
+        return []
+    match_references = getattr(runtime, "match_references", None)
+    if not callable(match_references):
+        return []
+    try:
+        references = match_references(screenshot) or []
+    except Exception:
+        return []
+    return references if isinstance(references, list) else []
+
+
+def _safe_collect_warnings(runtime) -> list[dict]:
+    collect_warnings = getattr(runtime, "collect_warnings", None)
+    if not callable(collect_warnings):
+        return []
+    try:
+        warnings = collect_warnings() or []
+    except Exception:
+        return []
+    return warnings if isinstance(warnings, list) else []
+
+
+def _unknown_result_envelope(
+    error: Exception,
+    *,
+    last_known_stage: str | None = None,
+    screenshot: str | None = None,
+    warnings: list[dict] | None = None,
+    references: list[dict] | None = None,
+) -> dict:
+    debug = {"detail": _format_exception_detail(error)}
+    if isinstance(last_known_stage, str) and last_known_stage:
+        debug["last_known_stage"] = last_known_stage
     return {
         "ok": False,
         "data": {},
-        "screenshot": None,
+        "screenshot": screenshot,
         "timing": {},
-        "warnings": [],
-        "references": [],
-        "debug": {"detail": _format_exception_detail(error)},
+        "warnings": deepcopy(warnings or []),
+        "references": deepcopy(references or []),
+        "debug": debug,
         "error": {
             "code": "DAEMON_UNAVAILABLE",
             "message": "mutation result unknown",

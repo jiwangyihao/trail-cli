@@ -96,6 +96,7 @@ class RuntimeOperator:
         self._debug_context: dict[str, Any] = {}
         self._request_local = threading.local()
         self._last_input_at: float | None = None
+        self.raise_post_input_foreground_error = False
 
     def _capture_scope_active(self) -> bool:
         return bool(getattr(self._request_local, "capture_scope_depth", 0))
@@ -191,6 +192,11 @@ class RuntimeOperator:
                 "message": "输入命令执行后窗口不在前台，本次操作可能失败；可能是窗口未在前台，或拉回前台失败",
             }
         )
+        if not self.raise_post_input_foreground_error:
+            return
+        error = TrailError("WINDOW_NOT_FOREGROUND", "窗口不在前台，无法执行输入")
+        error.completed_after_side_effect = True
+        raise error
 
     def _ensure_foreground_before_input(self) -> None:
         is_foreground = getattr(self.window, "is_foreground", None)

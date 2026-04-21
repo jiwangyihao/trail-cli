@@ -2542,6 +2542,31 @@ def test_render_output_preserves_result_unknown_recovery_contract():
     ]
 
 
+def test_render_output_preserves_cw_shop_scan_result_unknown_recovery_contract():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": ".trail/shots/req-shop-scan-unknown.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "request_id": "req-shop-scan-unknown",
+            "last_known_stage": "side_effect_applied",
+            "detail": "flush failed",
+        },
+        "error": {"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+    }
+
+    assert render_output("cw.shop.scan", payload).splitlines() == [
+        "fail cw.shop.scan code=DAEMON_UNAVAILABLE tainted=1",
+        "request id=req-shop-scan-unknown",
+        "shot path=.trail/shots/req-shop-scan-unknown.png",
+        'why msg="mutation result unknown"',
+        "recover action=daemon.request_status request=req-shop-scan-unknown",
+    ]
+
+
 def test_cli_accepts_yaml_format_option(cli_runner):
     result = cli_runner.invoke(app, ["--format", "yaml", "version"])
 
