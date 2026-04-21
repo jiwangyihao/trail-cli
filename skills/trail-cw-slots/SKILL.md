@@ -31,6 +31,7 @@ description: Use when an agent needs to inspect or mutate Currency Wars field, r
 
 - `swap` 和 `place-one` 必须显式给出源位置与目标位置
 - `sell-plan` 只提供建议，不会直接出售
+- 如果命令返回 `shot path=...` 且紧随 `info read_image_first=1`，必须先读取这张原始截图，再参考后续 `data` / `detect` / `read` / `status` 文本；不要跳过原始图直接按结构化快照行动
 - `sell-plan` 和 `slots read` 都是辅助快照，Agent 应优先看截图确认当前站位和手牌，再决定显式动作
 - 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补额外截图命令
 - `trail ocr read` 默认走 `ocr_mode=fast`（`1280x720`）；如果编队/手牌页文字密、快档结果不稳，或你需要更稳的 box，再显式加 `--ocr-mode high`。如需固定做高精度补跑对照，可加 `--retry-high always`；平时保持默认 `--retry-high auto`

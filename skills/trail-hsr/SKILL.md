@@ -33,5 +33,5 @@ description: Use when an agent needs the simple-first Trail HSR entry: run `trai
 - 如果 `trail ocr read` 已返回 OCR 结果和 `shot path=...`，不要马上再跑额外截图命令
 - `trail ocr read` 默认走 `ocr_mode=fast`（`1280x720`）；当你怀疑快档漏字、需要更稳的 box，或要做高精度对照时，再显式加 `--ocr-mode high`。如需强制做一次快档后高精度补跑，可再加 `--retry-high always`；正常情况下保持默认 `--retry-high auto`
 - 如果 `trail start` 失败、simple 层不足以定位问题，或你需要手工拆解启动/恢复链路，加载 advanced skill `trail-hsr-advanced`
-- 每次命令后优先阅读返回的 `screenshot` 与 `data`
+- 如果命令返回 `shot path=...` 且紧随 `info read_image_first=1`，必须先读取这张原始截图，再参考后续 `data` / `detect` / `read` / `status` 文本；不要跳过原始图直接行动
 - 这个 skill 不负责货币战争具体策略

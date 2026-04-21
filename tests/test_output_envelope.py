@@ -7,6 +7,7 @@ import pytest
 from trail.artifacts.store import ArtifactStore
 from trail.commands.helpers import run_session_command
 from trail.core.errors import TrailError
+from trail.daemon.command_service import success as daemon_success
 from trail.output.capture import set_capture_options, with_auto_capture
 from trail.output.envelope import command_failure, command_success
 from trail.session.store import SessionStore
@@ -38,6 +39,49 @@ def test_command_success_deep_copies_data(tmp_path):
     payload["items"].append("卡芙卡")
 
     assert result["data"] == {"items": ["银狼"]}
+
+
+def test_command_success_includes_image_guidance_when_screenshot_present():
+    result = command_success(data={"done": True}, screenshot=Path("ok.png"))
+
+    assert result["image_guidance"] == {"read_image_first": True}
+    assert "image_guidance" not in result["data"]
+
+
+def test_command_failure_includes_image_guidance_when_screenshot_present():
+    result = command_failure(
+        code="WINDOW_NOT_FOUND",
+        message="window missing",
+        screenshot=Path("fail.png"),
+    )
+
+    assert result["image_guidance"] == {"read_image_first": True}
+
+
+def test_command_success_omits_image_guidance_without_screenshot():
+    result = command_success(data={"done": True}, screenshot=None)
+
+    assert "image_guidance" not in result
+
+
+def test_command_failure_omits_image_guidance_without_screenshot():
+    result = command_failure(
+        code="WINDOW_NOT_FOUND",
+        message="window missing",
+        screenshot=None,
+    )
+
+    assert "image_guidance" not in result
+
+
+def test_daemon_success_matches_envelope_guidance_shape():
+    result = daemon_success(
+        {"done": True},
+        request_id="req-guidance",
+        screenshot="daemon.png",
+    )
+
+    assert result["image_guidance"] == {"read_image_first": True}
 
 
 class FakeRuntime:

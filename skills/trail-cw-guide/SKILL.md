@@ -40,6 +40,7 @@ description: Use when an agent needs to fetch or apply a Currency Wars guide art
 - artifact 记录发生在 apply 成功后，便于后续通过 `trail cw guide current` 回顾当前实际应用的攻略
 - `guide list cw` 已直接返回 `version`，Agent 在 list 阶段就应把版本兼容性纳入筛选判断
 - `support_hard`、`has_change_equip`、`has_expert` 这类字段主要用于“选攻略”阶段，不能替代实际截图判断
+- 如果命令返回 `shot path=...` 且紧随 `info read_image_first=1`，必须先读取这张原始截图，再参考后续 `data` / `detect` / `read` / `status` 文本；不要跳过原始图直接按压缩结果做攻略决策
 - 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补额外截图命令
 - `trail ocr read` 默认走 `ocr_mode=fast`（`1280x720`）；当攻略页或 lineup 文字你觉得读得不稳、需要更稳的 box，或要做结果对照时，再显式加 `--ocr-mode high`。如需固定补跑高精度，可加 `--retry-high always`；常规情况下保持默认 `--retry-high auto`
 - 攻略应用后，把旧的 `slots`、`shop`、`stage` 快照视为无效，交回主 skill 继续下一步

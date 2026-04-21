@@ -110,7 +110,7 @@ OCR 首版语义：
 - `retry_high=always` 在 `ocr_mode=fast` 下会先跑 `fast`，再无条件补跑一次 `high`
 - `ocr_mode=high` 下 `retry_high` 为 no-op
 - 模式与重试事实只在 `--verbose` 下出现
-- 默认成功输出协议保持不变：仍然是 `ok ocr.read hits=<n>`，有截图时先输出 `shot`，再输出 `text`
+- 默认成功输出协议保持不变：仍然是 `ok ocr.read hits=<n>`；有截图时固定按 `shot` -> `info read_image_first=1` -> `text` 输出
 
 DirectML 安装与环境 profile 说明：
 
@@ -126,14 +126,15 @@ DirectML 安装与环境 profile 说明：
 - 默认模式是常规消费层；`--format yaml` 是结构化兜底，`--verbose` 是开发/排障层，不应作为终端 Agent 的常规依赖
 - 默认模式绝不输出 YAML；只有显式指定 `--format yaml` 且命令进入 allowlist 时，才会在首行摘要后追加结构化块
 - 常见正文前缀包括 `shot`、`item`、`guide`、`text`、`info`、`why`、`warn`、`ref`、`request`、`recover`；`debug` 仅在 `--verbose` 下追加
-- `shot path=...` 表示当前命令结果对应的截图路径；只要当前命令有截图，就会输出 `shot path=...`，且位于实体行之前
+- `shot path=...` 表示当前命令结果对应的截图路径；带截图的 success 结果会先输出 `shot path=...`，再输出 `info read_image_first=1`，然后才是实体行
+- `info read_image_first=1` 只出现在带截图的 success 文本路径，表示 Agent 必须先阅读本次命令返回的原始截图，再参考后续压缩文本
 - 默认失败路径只要当前结果携带 `request_id`，就会保留 `request id=<id>`，用于恢复与排障
 - 只有结果未知或当前失败显式可恢复时，才会出现 `recover action=daemon.request_status request=<id>`；仅有 `request id=<id>` 不等于当前失败一定可恢复
 - `trail daemon request-status --request-id <id>` 用于回查某个请求的终态、关联 session、最近可见阶段与污染状态，典型输出是 `ok daemon.request_status request=req-42 session=sess-1 final_state=completed last_visible_stage=responded tainted=0`
 - `tainted=1` 表示当前 failure 或状态带有运行态污染风险；继续执行前，先确认请求终态，再决定是否执行 `trail daemon reconcile-session --session <id>`
 - `--format yaml` 仍然保留同一条首行摘要，但只在允许的命令上提供结构化视图；当前更适合 `daemon status`、`state dump`、`guide fetch cw`、`guide config cw` 这类结果体量更大或层级更深的命令
 - `--verbose` 只追加 `debug kind=...` 调试行，不改变默认文本协议里的事实集合与顺序
-- 对多模态 agent 来说，截图仍是第一手事实来源；默认文本里的 `detect/read/status` 结果是压缩后的动作信号，而不是替代截图的唯一真相
+- 对多模态 agent 来说，截图仍是第一手事实来源；看到 `shot path=...` 且紧随 `info read_image_first=1` 时，必须先读这张原始图，再参考后续 `detect/read/status` 压缩文本
 
 文本协议示例：
 
@@ -160,19 +161,22 @@ guide id=def title=事件阵容 version=3.2 idx=2 hard=0 change_equip=1 expert=0
 ```text
 ok ocr.read hits=2
 shot path=.trail/shots/req-ocr.png
+info read_image_first=1
 text value=点击进入 box=122,88,74,20 center=159,98
 text value=开始挑战 box=410,502,120,36 center=470,520
 ```
 
 ```text
-ok cw.shop.status count=2
+ok cw.shop.scan opened=1 stale=0 count=2
 shot path=.trail/shots/req-shop.png
+info read_image_first=1
 item idx=1 slot=1 name=希儿 cost=2
 item idx=2 slot=2 name=停云 cost=1
 info coins=40 level=7 reserve_full=0 max_team_size=8
 ```
 
 - 商店快照里的 `coins` / `level` / `reserve_full` / `max_team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露；`open` / `refresh` / `close` 不重复输出旧快照事实
+- `trail cw shop scan` 是当前画面读命令，所以会带 `shot path=...` 与 `info read_image_first=1`；`trail cw shop status` 仍是 session / artifact 汇总读，不默认带图
 
 ```text
 fail input.click code=INPUT_BACKEND_MISSING tainted=1

@@ -28,6 +28,7 @@ description: Use when an agent is in the Currency Wars shop stage and needs to s
 ## 执行规则
 
 - 先读 `scan` 返回的金币、等级、备战位状态，再决定是否继续动作
+- 如果命令返回 `shot path=...` 且紧随 `info read_image_first=1`，必须先读取这张原始截图，再参考后续 `data` / `detect` / `read` / `status` 文本；不要跳过商店原图只看压缩摘要
 - `buy-slot` 必须显式指定 `--slot` 和 `--expect`
 - 如果返回 `reserve_full` 或 `needs_reserve_clear`，把控制权交回主 skill 或 `trail-cw-slots` 处理卖牌，不在这里私自决定卖谁
 - 每次购买或刷新后，优先使用最新返回结果，必要时重新 `scan`

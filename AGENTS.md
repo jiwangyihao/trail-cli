@@ -16,6 +16,8 @@
 
 - 默认模式的第一行必须是 `<ok|fail> <canonical_command> <核心事实...>`。
 - 只要当前命令产出截图，就必须输出 `shot path=...`。
+- 带截图的 success 结果在 `shot path=...` 之后必须紧跟 `info read_image_first=1`，提示 Agent 先读本次原始截图，再消费后续压缩文本。
+- envelope 顶层若带 `screenshot`，同步生成 `image_guidance.read_image_first=1`；该元数据只存在于 envelope 顶层，不下沉到命令 `data`。
 - 失败结果只要带 `request_id`，就必须输出 `request id=<id>` 供恢复或排障使用。
 - 只有结果未知或当前失败显式可恢复时，才输出 `recover action=daemon.request_status request=<id>`。
 - 会影响下一步决策的 `0`、`false`、`count`、`more`、`tainted` 不能因为“看起来为空”而省略。
@@ -23,7 +25,7 @@
 
 ## 正文顺序约束
 
-- success 路径必须先输出首行，再按需要输出 `shot`，然后才是 `item`、`guide`、`text`、`slot`、`opt`、`info` 这类实体行，最后才是 `warn`、`ref`。
+- success 路径必须先输出首行，再按需要输出 `shot`；若当前结果带截图，再紧跟 `info read_image_first=1`；然后才是 `item`、`guide`、`text`、`slot`、`opt`、其余 `info` 这类实体行，最后才是 `warn`、`ref`。
 - failure 路径正文顺序固定为：`request` -> `shot` -> `why` -> `warn` -> `ref` -> `recover`；`debug` 只能在 `--verbose` 时追加在最后。
 - 不要为了单个命令“更自然”而重排 failure 行顺序；恢复链路必须稳定可扫读。
 
@@ -33,6 +35,7 @@
 - 默认文本统一使用 `key=value`；除首行的 `ok|fail` 和 `<command>` 外，不再新增位置参数。
 - 布尔值统一编码为 `0/1`；含空格、引号、反斜杠、换行、等号或逗号歧义的值必须使用双引号。
 - `box` 统一压成 `left,top,width,height`，不要回退成嵌套对象。
+- `image_guidance.read_image_first=1` 是 envelope 顶层冻结元数据，不进入默认文本业务 body，也不下沉到各命令 `data`。
 - 只省略语义缺失值，不能省略会影响下一步动作的 `0`、`false`、`count`、`more`、`tainted`。
 
 ## verbose 事件约束
@@ -40,6 +43,7 @@
 - `--verbose` 只追加开发/排障层，不改变默认文本协议的事实集合和顺序。
 - `--verbose` 事件必须统一经过 `trail.output.debug.collect_debug_events` 和 `trail.output.debug.render_debug_lines` 写入。
 - 禁止各命令直接拼接 `debug ...` stdout，也不要把临时调试信息混入默认模式。
+- `--verbose` 不为 `image_guidance` 新增独立 guidance 事件；默认模式里的 `info read_image_first=1` 仍只在 success 文本层出现。
 - 默认模式不得泄漏 verbose 事件；需要排障时才通过 `--verbose` 查看 `debug kind=...` 行。
 
 ## YAML allowlist 约束
@@ -47,6 +51,7 @@
 - `--format yaml` 是结构化兜底，不是默认主通道。
 - 只有进入 YAML allowlist 的命令才允许输出 YAML；新增命令前先确认是否真的存在结构化兜底需求。
 - 当前 YAML allowlist 是 `daemon.status`、`state.dump`、`guide.fetch.cw`、`guide.config.cw`。
+- `image_guidance` 不进入 YAML body；YAML 继续只回落命令数据本体。
 - 非 allowlist 命令不要回退到旧式结构化 envelope；保持默认文本协议，并在不支持时显式返回格式不支持错误。
 
 ## 文档与测试同步要求

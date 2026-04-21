@@ -32,6 +32,7 @@ description: Use when an agent needs to handle boss preview, special events, bat
 - `trail cw event handle` 的返回至少要看 `event_type` 和 `handled_action`
 - 这个 skill 负责固定事件处理，不负责决定何时购物、何时补给、何时换阵容，也不负责决定何时退出整局
 - 如果事件截图和 `event_type` / `handled_action` 不一致，以截图为准，并由主 skill 决定下一步是否重试或改走别的命令
+- 如果命令返回 `shot path=...` 且紧随 `info read_image_first=1`，必须先读取这张原始截图，再参考后续 `data` / `detect` / `read` / `status` 文本；不要只看 `event_type` / `handled_action` 就直接行动
 - 如果同时需要 OCR 文字和对应截图，优先只运行一次 `trail ocr read`；它已经会返回 OCR 结果和 `shot path=...`，不要紧接着再补额外截图命令
 - `trail ocr read` 默认走 `ocr_mode=fast`（`1280x720`）；如果事件页文字密、快档结果可疑，或你要对照高精度结果，再显式加 `--ocr-mode high`。如需固定做快档后高精度补跑，可加 `--retry-high always`；平时保持默认 `--retry-high auto`
 - 即使 CLI 提供了 `event_type`，也不要假设它已经穷尽所有事件分支；必要时直接根据截图做多模态判断

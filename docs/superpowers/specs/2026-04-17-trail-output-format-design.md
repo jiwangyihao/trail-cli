@@ -1,5 +1,8 @@
 # Trail CLI 输出协议重构设计
 
+> Note: 若本文旧示例与当前 screenshot-first guidance 冲突，以 `2026-04-20-screenshot-first-guidance-design.md` 为准。
+> 当前带截图 success 路径固定为 `shot path=...` -> `info read_image_first=1` -> 实体行，README / AGENTS / skills 也必须同步更新。
+
 ## 背景
 
 `trail-cli` 当前默认把所有命令结果打印为同一套 JSON envelope，固定顶层字段为：`ok`、`data`、`screenshot`、`timing`、`warnings`、`references`、`debug`、`error`。
@@ -85,7 +88,7 @@
 
 | 模式 | 首行 | 额外元信息 | 正文 | 调试信息 |
 | --- | --- | --- | --- | --- |
-| 默认成功 | 必须有 | 按需输出 `shot` | 命令族文本行 | 不输出 |
+| 默认成功 | 必须有 | 按需输出 `shot` 与 `info read_image_first=1` | 命令族文本行 | 不输出 |
 | 默认业务失败 | 必须有，至少含 `code` | 若有截图则输出 `shot` | `why`、`warn`、`ref` 等文本行 | 不输出 |
 | 默认 control-plane / 结果未知失败 | 必须有，至少含 `code`；如有 taint 则首行附 `tainted=1` | 必须输出 `request id=<id>`；若有截图则输出 `shot` | `why`；仅当当前失败显式携带恢复链路时才输出 `recover action=daemon.request_status request=<id>` | 不输出 |
 | `--format yaml` 成功 | 必须有 | `request id=<id>` / `shot` 规则与默认模式一致 | 统一首行后追加 YAML 块 | 不输出 |
@@ -210,13 +213,14 @@
 
 1. `request id=<request_id>`
 2. `shot`
-3. 领域实体行，例如 `item`、`guide`、`slot`、`text`、`opt`
-4. `why`
-5. `warn`
-6. `ref`
-7. `recover`
+3. `info read_image_first=1`（仅 success 且当前结果带截图）
+4. 领域实体行，例如 `item`、`guide`、`slot`、`text`、`opt`
+5. `why`
+6. `warn`
+7. `ref`
+8. `recover`
 
-只要该命令存在截图，正文中的 `shot` 必须出现，并且必须位于第一条领域实体行之前。
+只要该命令存在截图，正文中的 `shot` 必须出现；success 路径还要在第一条领域实体行前固定追加 `info read_image_first=1`。
 
 ### 值编码规则
 
@@ -257,7 +261,7 @@
 
 1. 首行直接表达动作结果。
 2. 如果命令天然导致状态迁移，迁移后的状态优先进入首行。
-3. 如果有截图，按全局顺序固定输出 `shot path=...`。
+3. 如果有截图，按全局顺序固定输出 `shot path=...`，success 路径再紧跟 `info read_image_first=1`。
 4. 默认不再输出“包一层 data 再包一层 value/result”的结构。
 
 ### 2. `status / read`
@@ -280,7 +284,7 @@
 2. 每个实体一行，实体类型由前缀表达。
 3. 同类实体字段顺序固定。
 4. 优先保留可驱动下一步动作的字段，例如槽位、费用、是否主 C、是否空位。
-5. 只要该命令有截图，就必须按全局顺序输出 `shot path=...`。
+5. 只要该命令有截图，就必须按全局顺序输出 `shot path=...`；success 路径还要固定追加 `info read_image_first=1`。
 
 ### 3. `list / guide search`
 
@@ -319,7 +323,7 @@
 1. 不输出 OCR 原始数组结构。
 2. 文本内容、置信度、定位框优先保留。
 3. 如果命令本质是“定位到某个可点击对象”，首行直接表达定位结果。
-4. 如果截图存在，按全局顺序固定输出 `shot path=...`。
+4. 如果截图存在，按全局顺序固定输出 `shot path=...`；success 路径再追加 `info read_image_first=1`。
 5. `ocr.read` 必须冻结命中排序规则；第一版默认按源结果顺序输出，并显式输出 `rank=`。
 
 ### 5. `error / warning / reference`
@@ -622,10 +626,13 @@ CLI 侧新增三层能力：
 
 第一批代表命令在计划阶段必须冻结以下最小保留字段集合，并用测试校验“源 payload -> 默认文本/YAML”未丢失这些事实：
 
+> Override: `cw.shop.status` 现已收紧为无图的 session / artifact 汇总读；这里不再把 `shot` 视为它的 must-keep。需要带图的商店读取示例时，改看 `cw.shop.scan`。
+
 | 命令 | 默认模式必须保留 |
 | --- | --- |
 | `cw.stage.detect` | `stage`、`stale`、`shot` |
-| `cw.shop.status` | `count`、每个 `item` 的 `slot/name/cost`、`shot` |
+| `cw.shop.status` | `count`、每个 `item` 的 `slot/name/cost`；不再要求 `shot`，带图示例改看 `cw.shop.scan` |
+| `cw.shop.scan` | `opened`、`stale`、`count`、每个 `item` 的 `slot/name/cost`、`shot` |
 | `guide.list.cw` | `count`、`more`、`next`（仅当 `more=1`）、每个 `guide` 的 `id/carry/hard/change_equip/expert` |
 | `ocr.read` | `hits`、每个 `text` 的 `rank/value/score/box`、`shot` |
 | 结果未知 / 可恢复失败 | `code`、`request id=<id>`、`recover`、`why`，以及 `tainted`（若存在） |
@@ -655,7 +662,7 @@ README 的“输出约定”章节需要整体改写，说明：
 
 ### 项目级 `AGENTS.md`
 
-仓库当前没有项目级 `AGENTS.md`。实现本设计时需要新增，但它是贡献者约束文档，不是协议真源。协议真源仍然是本 spec、README 和测试。
+这里关于“仓库当前没有项目级 `AGENTS.md`”的历史说明已被后续实现覆盖；当前仓库已有项目级 `AGENTS.md`。若本文旧示例与当前 screenshot-first guidance 冲突，以 `2026-04-20-screenshot-first-guidance-design.md` 为准。
 
 项目级 `AGENTS.md` 需要约束：
 

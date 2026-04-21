@@ -11,7 +11,7 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
 - 在关键阶段切换到攻略、编队、商店、补给、事件子 skill
 - `trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断，也不代替分组动作执行
 - 负责循环、阶段切换和失败恢复，不重写 CLI 原子动作
-- 把每条命令返回的 `screenshot` 视为第一手事实来源；CLI 自带的 `detect/read/status` 只作为辅助判断
+- 把每条命令返回的 `screenshot` 视为第一手事实来源；如果命令返回 `shot path=...` 且紧随 `info read_image_first=1`，必须先读取这张原始截图，再参考后续 `data` / `detect` / `read` / `status` 文本
 
 ## 输入
 
@@ -62,7 +62,7 @@ description: Use when an agent needs to orchestrate a full Currency Wars run by 
      - `shop` 时，切到 `trail-cw-shop`
      - `replenish`、`invest`、`encounter`、`fortune` 时，切到 `trail-cw-replenish`
       - `boss_preview`、`event`、`settle`、`game_over` 或战斗衔接时，切到 `trail-cw-events`
-    - 每次动作后优先消费当前命令返回的 `screenshot` 与 `data`，不要假设旧状态仍然有效
+    - 每次动作后如果看到 `shot path=...` 和 `info read_image_first=1`，先读图，再看返回的 `data`，不要假设旧状态仍然有效
     - 如果 `detect/read` 与截图观感冲突，以截图为准，再决定下一条显式动作命令
 10. 在 `settle` 阶段执行 `trail cw settle next --session <id>` 后继续下一轮识别；在 `game_over` 后退出
 
