@@ -426,6 +426,40 @@ def test_cw_shop_buy_slot_renders_purchase_summary_and_shot(cli_runner, fake_dae
     _assert_single_call(client, method="cw.shop.buy_slot", payload={"slot": 2, "expect": "希儿"}, tmp_path=tmp_path)
 
 
+def test_cw_shop_scan_renders_unknown_result_failure_contract(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.shop.scan": {
+                "request_id": "req-cw-shop-scan-unknown",
+                "ok": False,
+                "data": {},
+                "screenshot": ".trail/shots/req-cw-shop-scan-unknown.png",
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": {
+                    "request_id": "req-cw-shop-scan-unknown",
+                    "last_known_stage": "side_effect_applied",
+                    "detail": "flush failed",
+                },
+                "error": {"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+            }
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "shop", "scan", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.shop.scan code=DAEMON_UNAVAILABLE tainted=1",
+        "request id=req-cw-shop-scan-unknown",
+        "shot path=.trail/shots/req-cw-shop-scan-unknown.png",
+        'why msg="mutation result unknown"',
+        "recover action=daemon.request_status request=req-cw-shop-scan-unknown",
+    ]
+    _assert_single_call(client, method="cw.shop.scan", payload={}, tmp_path=tmp_path)
+
+
 def test_cw_guide_current_renders_guide_summary(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
