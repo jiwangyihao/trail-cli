@@ -16,6 +16,24 @@ OCR_VERBOSE_ONLY_KEYS = (
     "ocr_retry_reason",
 )
 CW_ACTION_STAGE_COMMANDS = ("cw.battle.start", "cw.battle.continue", "cw.settle.next")
+SCREENSHOT_FIRST_RULE_SNIPPET = (
+    "如果命令返回 `shot path=...` 且紧随 `info read_image_first=1`，必须先读取这张原始截图，再参考后续"
+)
+SKILL_GUIDANCE_PATHS = (
+    PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md",
+    PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md",
+    PROJECT_ROOT / "skills" / "trail-cw" / "SKILL.md",
+    PROJECT_ROOT / "skills" / "trail-cw-events" / "SKILL.md",
+    PROJECT_ROOT / "skills" / "trail-cw-slots" / "SKILL.md",
+    PROJECT_ROOT / "skills" / "trail-cw-shop" / "SKILL.md",
+    PROJECT_ROOT / "skills" / "trail-cw-replenish" / "SKILL.md",
+    PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md",
+)
+ACTIVE_REFERENCE_SPEC_PATHS = (
+    PROJECT_ROOT / "docs" / "superpowers" / "specs" / "2026-04-17-trail-output-format-design.md",
+    PROJECT_ROOT / "docs" / "superpowers" / "specs" / "2026-04-20-cw-battle-run-design.md",
+    PROJECT_ROOT / "docs" / "superpowers" / "specs" / "2026-04-20-cw-battle-action-buttons-design.md",
+)
 
 
 def _stage_payload() -> dict:
@@ -23,6 +41,7 @@ def _stage_payload() -> dict:
         "ok": True,
         "data": {"value": "shop", "stale": False},
         "screenshot": ".trail/shots/req-stage.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -52,6 +71,14 @@ def _daemon_status_payload() -> dict:
     }
 
 
+def _assert_text_contains_in_order(text: str, *snippets: str) -> None:
+    cursor = 0
+    for snippet in snippets:
+        index = text.find(snippet, cursor)
+        assert index != -1, snippet
+        cursor = index + len(snippet)
+
+
 def _ocr_failure_payload(*, code: str, message: str, screenshot: str | None = None, debug: dict | None = None) -> dict:
     return {
         "ok": False,
@@ -66,7 +93,7 @@ def _ocr_failure_payload(*, code: str, message: str, screenshot: str | None = No
 
 
 def _cw_strategy_cards_payload(*, screenshot: str | None = None, cards: list[dict] | None = None) -> dict:
-    return {
+    payload = {
         "ok": True,
         "data": {
             "cards": cards
@@ -97,10 +124,13 @@ def _cw_strategy_cards_payload(*, screenshot: str | None = None, cards: list[dic
         "debug": None,
         "error": None,
     }
+    if screenshot is not None:
+        payload["image_guidance"] = {"read_image_first": True}
+    return payload
 
 
 def _cw_strategy_select_payload(*, screenshot: str | None = None) -> dict:
-    return {
+    payload = {
         "ok": True,
         "data": {
             "card_idx": 2,
@@ -117,6 +147,9 @@ def _cw_strategy_select_payload(*, screenshot: str | None = None) -> dict:
         "debug": None,
         "error": None,
     }
+    if screenshot is not None:
+        payload["image_guidance"] = {"read_image_first": True}
+    return payload
 
 
 @pytest.fixture(autouse=True)
@@ -126,12 +159,38 @@ def reset_output_options():
     set_output_options(output_format="text", verbose=False)
 
 
-def test_render_output_renders_canonical_stage_text():
+def test_render_output_adds_read_image_first_after_shot_for_stage_success():
     payload = _stage_payload()
 
     assert render_output("cw.stage.detect", payload).splitlines() == [
         "ok cw.stage.detect stage=shop stale=0",
         "shot path=.trail/shots/req-stage.png",
+        "info read_image_first=1",
+    ]
+
+
+def test_render_output_failure_does_not_render_read_image_first_line():
+    payload = {
+        "request_id": "req-fail",
+        "ok": False,
+        "data": {},
+        "screenshot": ".trail/shots/req-fail.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": {"code": "WINDOW_NOT_FOUND", "message": "window missing"},
+    }
+
+    rendered = render_output("ocr.read", payload)
+
+    assert "info read_image_first=1" not in rendered
+    assert rendered.splitlines() == [
+        "fail ocr.read code=WINDOW_NOT_FOUND",
+        "request id=req-fail",
+        "shot path=.trail/shots/req-fail.png",
+        'why msg="window missing"',
     ]
 
 
@@ -148,9 +207,11 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert (
-        "- `shot path=...` 表示当前命令结果对应的截图路径；只要当前命令有截图，就会输出 `shot path=...`，且位于实体行之前"
+        "- `shot path=...` 表示当前命令结果对应的截图路径；带截图的 success 结果会先输出 `shot path=...`，再输出 `info read_image_first=1`，然后才是实体行"
         in readme
     )
+    assert "- `info read_image_first=1` 只出现在带截图的 success 文本路径，表示 Agent 必须先阅读本次命令返回的原始截图，再参考后续压缩文本" in readme
+    assert "只要当前命令有截图，就会先输出 `shot path=...`，再输出 `info read_image_first=1`" not in readme
     assert "- 默认失败路径只要当前结果携带 `request_id`，就会保留 `request id=<id>`，用于恢复与排障" in readme
     assert (
         "- 只有结果未知或当前失败显式可恢复时，才会出现 `recover action=daemon.request_status request=<id>`；仅有 `request id=<id>` 不等于当前失败一定可恢复"
@@ -175,27 +236,78 @@ def test_readme_mentions_text_output_protocol() -> None:
     assert "guide 投资环境=购物区 count=1 more=1 next=group-token" in readme
     assert "guide.config.cw --format yaml" in readme
     assert "`trail guide fetch cw` 默认文本会直接返回你选中的完整攻略字段，字段名尽量使用货币战争页面里的中文文案；现在还会补充 `羁绊列表`、`运营思路`" in readme
-    assert (
-        "```text\nok ocr.read hits=2\nshot path=.trail/shots/req-ocr.png\ntext value=点击进入 box=122,88,74,20 center=159,98\ntext value=开始挑战 box=410,502,120,36 center=470,520\n```"
-        in readme
+    _assert_text_contains_in_order(
+        readme,
+        "ok ocr.read hits=2",
+        "shot path=.trail/shots/req-ocr.png\ninfo read_image_first=1",
+        "text value=点击进入",
     )
-    assert (
-        "```text\nok cw.shop.status count=2\nshot path=.trail/shots/req-shop.png\nitem idx=1 slot=1 name=希儿 cost=2\nitem idx=2 slot=2 name=停云 cost=1\ninfo coins=40 level=7 reserve_full=0 max_team_size=8\n```"
-        in readme
+    _assert_text_contains_in_order(
+        readme,
+        "ok cw.shop.scan opened=1 stale=0 count=2",
+        "shot path=.trail/shots/req-shop.png\ninfo read_image_first=1",
+        "item idx=1 slot=1 name=希儿 cost=2",
+        "info coins=40 level=7 reserve_full=0 max_team_size=8",
     )
+    assert "```text\nok cw.shop.status count=2\nshot path=.trail/shots/req-shop.png\n" not in readme
     assert "商店快照里的 `coins` / `level` / `reserve_full` / `max_team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" in readme
     assert "`guide.fetch.cw` 现在也进入 YAML allowlist" in readme
     assert "`羁绊列表`：按当前攻略各阶段阵容里出现过的羁绊去重汇总，并尽量保留层数" in readme
     assert "`优选装备` / `次选装备`：按角色展开的推荐装备列表" in readme
     assert "`运营思路`：取自攻略详情原始 `description` 文本" in readme
     assert "`最低金币`：这套攻略默认要求保留的最低金币阈值" in readme
-    assert (
-        "```text\nfail input.click code=INPUT_BACKEND_MISSING tainted=1\nrequest id=req-42\nwhy msg=\"input backend missing\"\nrecover action=daemon.request_status request=req-42\n```"
-        in readme
+    _assert_text_contains_in_order(
+        readme,
+        "fail input.click code=INPUT_BACKEND_MISSING tainted=1",
+        "request id=req-42",
+        'why msg="input backend missing"',
+        "recover action=daemon.request_status request=req-42",
     )
     assert "trail daemon request-status --request-id <id>" in readme
     assert "默认输出结构化 envelope" not in readme
     assert "ok/data/screenshot/debug" not in readme
+
+
+def test_agents_document_screenshot_first_protocol_facts() -> None:
+    agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert (
+        "success 路径必须先输出首行，再按需要输出 `shot`；若当前结果带截图，再紧跟 `info read_image_first=1`；然后才是 `item`、`guide`、`text`、`slot`、`opt`、其余 `info` 这类实体行"
+        in agents
+    )
+    assert "envelope 顶层若带 `screenshot`，同步生成 `image_guidance.read_image_first=1`" in agents
+    assert "`image_guidance` 不进入 YAML body" in agents
+    assert "`--verbose` 不为 `image_guidance` 新增独立 guidance 事件" in agents
+
+
+def test_skills_document_screenshot_first_guidance_rule() -> None:
+    for path in SKILL_GUIDANCE_PATHS:
+        text = path.read_text(encoding="utf-8")
+
+        assert SCREENSHOT_FIRST_RULE_SNIPPET in text, path.as_posix()
+        assert "`shot path=...`" in text, path.as_posix()
+        assert "`info read_image_first=1`" in text, path.as_posix()
+
+
+def test_agents_active_specs_document_screenshot_first_override() -> None:
+    override_note = "若本文旧示例与当前 screenshot-first guidance 冲突，以 `2026-04-20-screenshot-first-guidance-design.md` 为准。"
+
+    for path in ACTIVE_REFERENCE_SPEC_PATHS:
+        text = path.read_text(encoding="utf-8")
+
+        assert override_note in text, path.as_posix()
+        assert "`info read_image_first=1`" in text, path.as_posix()
+
+        if path.name == "2026-04-20-cw-battle-run-design.md":
+            assert "主工作区" not in text, path.as_posix()
+            assert "同名设计文档" not in text, path.as_posix()
+
+        if path.name == "2026-04-17-trail-output-format-design.md":
+            assert "`cw.shop.status` 现已收紧为无图的 session / artifact 汇总读" in text, path.as_posix()
+            assert "带图示例改看 `cw.shop.scan`" in text, path.as_posix()
+            assert "| `cw.shop.status` | `count`、每个 `item` 的 `slot/name/cost`；不再要求 `shot`，带图示例改看 `cw.shop.scan` |" in text, path.as_posix()
+            assert "| `cw.shop.scan` | `opened`、`stale`、`count`、每个 `item` 的 `slot/name/cost`、`shot` |" in text, path.as_posix()
+            assert "| `cw.shop.status` | `count`、每个 `item` 的 `slot/name/cost`、`shot` |" not in text, path.as_posix()
 
 
 def test_readme_documents_ocr_provider_and_lang_contract() -> None:
@@ -398,6 +510,7 @@ def test_render_output_renders_canonical_stage_wait_text():
     assert render_output("cw.stage.wait", payload).splitlines() == [
         "ok cw.stage.wait stage=shop stale=0",
         "shot path=.trail/shots/req-stage.png",
+        "info read_image_first=1",
     ]
 
 
@@ -406,6 +519,7 @@ def test_render_output_renders_cw_action_stage_commands_with_shot(command: str):
     assert render_output(command, _stage_payload()).splitlines() == [
         f"ok {command} stage=shop stale=0",
         "shot path=.trail/shots/req-stage.png",
+        "info read_image_first=1",
     ]
 
 
@@ -429,10 +543,11 @@ def test_render_output_renders_cw_action_stage_commands_stale_only_payload_witho
     assert render_output(command, payload).splitlines() == [
         f"ok {command} stale=1",
         "shot path=.trail/shots/req-stage-stale.png",
+        "info read_image_first=1",
     ]
 
 
-def test_render_output_renders_cw_shop_status_sorted_items_and_costs():
+def test_render_output_renders_cw_shop_status_without_shot_or_guidance():
     payload = {
         "ok": True,
         "data": {
@@ -447,7 +562,7 @@ def test_render_output_renders_cw_shop_status_sorted_items_and_costs():
             "reserve_full": False,
             "max_team_size": 8,
         },
-        "screenshot": ".trail/shots/req-shop.png",
+        "screenshot": None,
         "timing": {},
         "warnings": [],
         "references": [],
@@ -457,7 +572,6 @@ def test_render_output_renders_cw_shop_status_sorted_items_and_costs():
 
     assert render_output("cw.shop.status", payload).splitlines() == [
         "ok cw.shop.status count=4",
-        "shot path=.trail/shots/req-shop.png",
         "item idx=1 slot=1 name=希儿 cost=2",
         "item idx=2 slot=2 name=停云 cost=1",
         "item idx=3 slot=3 name=布洛妮娅 cost=4",
@@ -498,7 +612,7 @@ def test_render_output_renders_cw_shop_status_sorted_items_and_costs():
                         {"slot": 1, "name": "希儿", "price": 2},
                     ]
                 },
-                "screenshot": ".trail/shots/req-shop-focused.png",
+                "screenshot": None,
                 "timing": {},
                 "warnings": [],
                 "references": [],
@@ -509,7 +623,6 @@ def test_render_output_renders_cw_shop_status_sorted_items_and_costs():
                 "ok cw.shop.status count=2",
                 "item idx=1 slot=1 name=希儿 cost=2",
                 "item idx=2 slot=2 name=停云 cost=1",
-                "shot path=.trail/shots/req-shop-focused.png",
             ],
         ),
         (
@@ -632,6 +745,7 @@ def test_render_output_ocr_read_success_does_not_expand_provider_or_lang_fields(
             ]
         },
         "screenshot": ".trail/shots/req-ocr-provider-hidden.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -651,6 +765,7 @@ def test_render_output_ocr_read_success_does_not_expand_provider_or_lang_fields(
     assert render_output("ocr.read", payload).splitlines() == [
         "ok ocr.read hits=1",
         "shot path=.trail/shots/req-ocr-provider-hidden.png",
+        "info read_image_first=1",
         "text value=点击进入 box=122,88,74,20 center=159,98",
     ]
 
@@ -668,6 +783,7 @@ def test_render_output_ocr_read_success_keeps_ocr_mode_retry_context_verbose_onl
             ]
         },
         "screenshot": ".trail/shots/req-ocr-verbose-only-success.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -687,6 +803,7 @@ def test_render_output_ocr_read_success_keeps_ocr_mode_retry_context_verbose_onl
     assert rendered.splitlines() == [
         "ok ocr.read hits=1",
         "shot path=.trail/shots/req-ocr-verbose-only-success.png",
+        "info read_image_first=1",
         "text value=点击进入 box=122,88,74,20 center=159,98",
     ]
     assert all(key not in rendered for key in OCR_VERBOSE_ONLY_KEYS)
@@ -760,6 +877,7 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
             "next_page_token": "token-2",
         },
         "screenshot": ".trail/shots/req-guide-list.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -770,6 +888,7 @@ def test_render_output_renders_guide_list_with_paging_and_frozen_fields():
     assert render_output("guide.list.cw", payload).splitlines() == [
         "ok guide.list.cw count=2 more=1 next=token-2",
         "shot path=.trail/shots/req-guide-list.png",
+        "info read_image_first=1",
         "guide 攻略ID=abc 攻略标题=购物阵容 版本=3.2 idx=1 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45",
         "guide idx=1 最终阵容=希儿/carry:1/star:5/rarity:3|布洛妮娅/star:5/rarity:3|佩拉/star:4/rarity:2",
         "guide 攻略ID=def 攻略标题=事件阵容 版本=3.2 idx=2 攻略标签=#星徽攻略 点赞=22 收藏=9",
@@ -1032,6 +1151,7 @@ def test_render_output_guide_list_renders_role_candidate_blocks_before_guides():
             ],
         },
         "screenshot": ".trail/shots/req-guide-role.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [
             {
@@ -1049,6 +1169,7 @@ def test_render_output_guide_list_renders_role_candidate_blocks_before_guides():
     assert render_output("guide.list.cw", payload).splitlines() == [
         "ok guide.list.cw count=1 more=0",
         "shot path=.trail/shots/req-guide-role.png",
+        "info read_image_first=1",
         "info role_query=黑搭 role_resolution=fuzzy resolved=黑塔 candidates=2",
         "opt query=黑搭 role=黑塔 id=1001 selected=1 score=0.96 front_back=front traits=智识 role_tags=输出|智识",
         "opt query=黑搭 role=大黑塔 id=1002 selected=0 score=0.82 front_back=front traits=智识 role_tags=输出",
@@ -1444,6 +1565,7 @@ def test_render_output_renders_cw_enter_home_text():
         "ok": True,
         "data": {"page": "home"},
         "screenshot": ".trail/shots/req-enter.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -1454,6 +1576,7 @@ def test_render_output_renders_cw_enter_home_text():
     assert render_output("cw.enter", payload).splitlines() == [
         "ok cw.enter page=home",
         "shot path=.trail/shots/req-enter.png",
+        "info read_image_first=1",
     ]
 
 
@@ -1515,6 +1638,7 @@ def test_render_output_renders_cw_start_portal_cards_family():
             "stale": False,
         },
         "screenshot": ".trail/shots/req-start.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -1525,6 +1649,7 @@ def test_render_output_renders_cw_start_portal_cards_family():
     assert render_output("cw.start", payload).splitlines() == [
         "ok cw.start cards=2",
         "shot path=.trail/shots/req-start.png",
+        "info read_image_first=1",
         'opt idx=1 投资环境="Alpha Portal" score=0.99 待收集=1',
         'opt idx=1 说明="Alpha Desc"',
         'guide idx=1 gid=1 攻略ID=alpha-guide 攻略标题=Alpha攻略 版本=3.2 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45',
@@ -1580,6 +1705,7 @@ def test_render_output_renders_cw_strategy_detect_text():
     assert render_output("cw.strategy.detect", payload).splitlines() == [
         "ok cw.strategy.detect cards=2",
         "shot path=.trail/shots/req-strategy-detect.png",
+        "info read_image_first=1",
         "opt idx=1 投资策略=回蓝 攻略推荐=优选 刷新次数=0",
         "opt idx=1 说明=启动回转",
         "opt idx=2 投资策略=暴击 攻略推荐=否 刷新次数=2",
@@ -1594,6 +1720,7 @@ def test_render_output_renders_cw_strategy_select_text():
     assert render_output("cw.strategy.select", payload).splitlines() == [
         "ok cw.strategy.select idx=2 投资策略=回蓝",
         "shot path=.trail/shots/req-strategy-select.png",
+        "info read_image_first=1",
     ]
 
 
@@ -1690,6 +1817,7 @@ def test_render_output_renders_cw_portal_detect_family():
             "stale": False,
         },
         "screenshot": ".trail/shots/req-portal-detect.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -1700,6 +1828,7 @@ def test_render_output_renders_cw_portal_detect_family():
     assert render_output("cw.portal.detect", payload).splitlines() == [
         "ok cw.portal.detect cards=1",
         "shot path=.trail/shots/req-portal-detect.png",
+        "info read_image_first=1",
         'opt idx=1 投资环境="Alpha Portal" score=0.99 待收集=0',
         'opt idx=1 说明="Alpha Desc"',
         'guide idx=1 gid=1 攻略ID=alpha-guide 攻略标题=Alpha攻略 主C=希儿 攻略标签=#适用超频博弈|#专家顾问 点赞=123 收藏=45',
@@ -1817,6 +1946,7 @@ def test_render_output_renders_cw_portal_select_summary_text():
         "ok": True,
         "data": {"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
         "screenshot": ".trail/shots/req-portal-select.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -1827,6 +1957,7 @@ def test_render_output_renders_cw_portal_select_summary_text():
     assert render_output("cw.portal.select", payload).splitlines() == [
         'ok cw.portal.select idx=2 投资环境="Beta Portal"',
         "shot path=.trail/shots/req-portal-select.png",
+        "info read_image_first=1",
     ]
 
 
@@ -1872,6 +2003,7 @@ def test_render_output_renders_cw_guide_sparse_summaries_and_omits_empty_fields(
         "ok": True,
         "data": {"lineup_id": "abc", "share_code": "##demo##"},
         "screenshot": ".trail/shots/req-cw-guide-apply.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -1885,6 +2017,7 @@ def test_render_output_renders_cw_guide_sparse_summaries_and_omits_empty_fields(
     assert render_output("cw.guide.apply", sparse_apply_payload).splitlines() == [
         "ok cw.guide.apply 攻略ID=abc 攻略码=##demo##",
         "shot path=.trail/shots/req-cw-guide-apply.png",
+        "info read_image_first=1",
     ]
     assert "guide 攻略标签=" not in render_output("cw.guide.current", sparse_payload)
     assert "攻略快照ID=" not in render_output(
@@ -1997,6 +2130,7 @@ def test_render_output_renders_cw_slots_summary_text():
             "stale": True,
         },
         "screenshot": ".trail/shots/req-slots.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -2007,6 +2141,7 @@ def test_render_output_renders_cw_slots_summary_text():
     assert render_output("cw.slots.read", payload).splitlines() == [
         "ok cw.slots.read front=1 back=1 hand=1 stale=1",
         "shot path=.trail/shots/req-slots.png",
+        "info read_image_first=1",
         "slot pos=front:0 name=希儿 star=4",
         "slot pos=front:1 empty=1",
         "slot pos=back:0 name=佩拉 rarity=2",
@@ -2015,11 +2150,40 @@ def test_render_output_renders_cw_slots_summary_text():
     ]
 
 
-def test_render_output_renders_cw_options_text():
+def test_render_output_renders_cw_slots_before_warn_and_ref():
+    payload = {
+        "ok": True,
+        "data": {
+            "front": [{"name": "希儿", "star": 4}],
+            "back": [],
+            "hand": [],
+            "stale": False,
+        },
+        "screenshot": ".trail/shots/req-slots-order.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [{"code": "SLOTS_STALE", "message": "slots may be stale"}],
+        "references": [{"path": "refs/slots.png", "similarity": 0.88}],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.slots.read", payload).splitlines() == [
+        "ok cw.slots.read front=1 back=0 hand=0 stale=0",
+        "shot path=.trail/shots/req-slots-order.png",
+        "info read_image_first=1",
+        "slot pos=front:0 name=希儿 star=4",
+        'warn code=SLOTS_STALE msg="slots may be stale"',
+        "ref path=refs/slots.png sim=0.88",
+    ]
+
+
+def test_render_output_adds_read_image_first_after_shot_for_cw_options_success():
     payload = {
         "ok": True,
         "data": {"options": [{"id": 1, "name": "量子力学"}, 2]},
         "screenshot": ".trail/shots/req-options.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -2030,6 +2194,7 @@ def test_render_output_renders_cw_options_text():
     assert render_output("cw.invest.read", payload).splitlines() == [
         "ok cw.invest.read count=2",
         "shot path=.trail/shots/req-options.png",
+        "info read_image_first=1",
         "opt idx=1 id=1 name=量子力学",
         "opt idx=2 value=2",
     ]
@@ -2045,6 +2210,7 @@ def test_render_output_renders_cw_shop_buy_slot_summary_text():
             "guide_summary": {"remaining_purchases": {"银狼": 0}},
         },
         "screenshot": ".trail/shots/req-buy-slot.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -2055,6 +2221,7 @@ def test_render_output_renders_cw_shop_buy_slot_summary_text():
     assert render_output("cw.shop.buy_slot", payload).splitlines() == [
         "ok cw.shop.buy_slot opened=1 stale=0 count=2",
         "shot path=.trail/shots/req-buy-slot.png",
+        "info read_image_first=1",
         "item idx=1 slot=1 name=银狼 cost=20",
         "item idx=2 slot=2 name=停云 cost=10",
     ]
@@ -2073,6 +2240,7 @@ def test_render_output_renders_cw_shop_scan_snapshot_info_text():
             "max_team_size": 8,
         },
         "screenshot": ".trail/shots/req-shop-scan.png",
+        "image_guidance": {"read_image_first": True},
         "timing": {},
         "warnings": [],
         "references": [],
@@ -2083,6 +2251,7 @@ def test_render_output_renders_cw_shop_scan_snapshot_info_text():
     assert render_output("cw.shop.scan", payload).splitlines() == [
         "ok cw.shop.scan opened=1 stale=0 count=1",
         "shot path=.trail/shots/req-shop-scan.png",
+        "info read_image_first=1",
         "item idx=1 slot=1 name=银狼 cost=20",
         "info coins=40 level=7 reserve_full=0 max_team_size=8",
     ]
@@ -2370,6 +2539,7 @@ def test_render_output_verbose_includes_ocr_mode_effective_ocr_scale_applied_and
     assert render_output("ocr.read", payload, verbose=True).splitlines() == [
         "ok ocr.read hits=1",
         f'shot path="{encoded_screenshot}"',
+        "info read_image_first=1",
         "text value=点击进入",
         "debug kind=context key=ocr_mode_requested value=fast",
         "debug kind=context key=ocr_mode_effective value=high",
@@ -2412,6 +2582,7 @@ def test_render_output_verbose_includes_ocr_retry_high_zero_and_retry_reason_non
     assert render_output("ocr.read", payload, verbose=True).splitlines() == [
         "ok ocr.read hits=1",
         f'shot path="{encoded_screenshot}"',
+        "info read_image_first=1",
         "text value=点击进入",
         "debug kind=context key=ocr_mode_requested value=fast",
         "debug kind=context key=ocr_mode_effective value=fast",

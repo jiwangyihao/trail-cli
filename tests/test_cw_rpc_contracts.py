@@ -3,10 +3,17 @@ from __future__ import annotations
 import pytest
 
 from trail.cli import app
-from tests.support.fake_daemon import build_success_response
+from tests.support.fake_daemon import build_success_response as _build_success_response
 
 
 SESSION_ID = "a" * 32
+
+
+def build_success_response(*, request_id: str, data: dict, screenshot: str | None = None) -> dict:
+    response = _build_success_response(request_id=request_id, data=data, screenshot=screenshot)
+    if screenshot is not None:
+        response["image_guidance"] = {"read_image_first": True}
+    return response
 
 
 @pytest.fixture(autouse=True)
@@ -36,6 +43,7 @@ def _expected_lines(summary: str, *, screenshot: str | None = None, body: list[s
     lines = [summary]
     if screenshot:
         lines.append(f"shot path={screenshot}")
+        lines.append("info read_image_first=1")
     if body:
         lines.extend(body)
     return lines
@@ -596,7 +604,7 @@ def test_cw_shop_status_renders_items_in_slot_order(cli_runner, fake_daemon_clie
                         {"slot": 1, "name": "希儿", "price": 2},
                     ]
                 },
-                screenshot=".trail/shots/req-cw-shop-status.png",
+                screenshot=None,
             )
         }
     )
@@ -606,7 +614,6 @@ def test_cw_shop_status_renders_items_in_slot_order(cli_runner, fake_daemon_clie
     assert result.exit_code == 0
     assert result.stdout.splitlines() == _expected_lines(
         "ok cw.shop.status count=2",
-        screenshot=".trail/shots/req-cw-shop-status.png",
         body=[
             "item idx=1 slot=1 name=希儿 cost=2",
             "item idx=2 slot=2 name=停云 cost=1",
@@ -795,8 +802,12 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
             "cw.encounter.read",
             {},
             {"options": [1, 2]},
-            None,
-            ["ok cw.encounter.read count=2", "opt idx=1 value=1", "opt idx=2 value=2"],
+            ".trail/shots/req-cw-encounter-read.png",
+            _expected_lines(
+                "ok cw.encounter.read count=2",
+                screenshot=".trail/shots/req-cw-encounter-read.png",
+                body=["opt idx=1 value=1", "opt idx=2 value=2"],
+            ),
         ),
         (
             ["cw", "encounter", "choose", "--session", SESSION_ID, "--option", "1"],
@@ -811,8 +822,12 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
             "cw.fortune.read",
             {},
             {"options": [1, 2]},
-            None,
-            ["ok cw.fortune.read count=2", "opt idx=1 value=1", "opt idx=2 value=2"],
+            ".trail/shots/req-cw-fortune-read.png",
+            _expected_lines(
+                "ok cw.fortune.read count=2",
+                screenshot=".trail/shots/req-cw-fortune-read.png",
+                body=["opt idx=1 value=1", "opt idx=2 value=2"],
+            ),
         ),
         (
             ["cw", "fortune", "choose", "--session", SESSION_ID, "--option", "1"],
@@ -852,6 +867,26 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
                 screenshot=".trail/shots/req-cw-settle-next.png",
             ),
         ),
+    ],
+    ids=[
+        "cw_slots_read",
+        "cw_slots_swap",
+        "cw_replenish_read",
+        "cw_replenish_choose",
+        "cw_crystals_collect",
+        "cw_hand_sell_one",
+        "cw_hand_sell_plan",
+        "cw_shop_open",
+        "cw_shop_scan",
+        "cw_shop_refresh",
+        "cw_shop_close",
+        "cw_encounter_read",
+        "cw_encounter_choose",
+        "cw_fortune_read",
+        "cw_fortune_choose",
+        "cw_boss_preview_confirm",
+        "cw_battle_start",
+        "cw_settle_next",
     ],
 )
 def test_cw_rpc_wrapper_matrix(

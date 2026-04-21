@@ -1,5 +1,8 @@
 # 货币战争战斗/结算按钮收口设计
 
+> Note: 若本文旧示例与当前 screenshot-first guidance 冲突，以 `2026-04-20-screenshot-first-guidance-design.md` 为准。
+> 当前带截图 success 路径固定为 `shot path=...` -> `info read_image_first=1` -> 实体行，README / AGENTS / skills 也必须同步更新。
+
 ## 目标
 
 收口 `cw.battle.start`、`cw.battle.continue`、`cw.settle.next` 这一组动作命令，使它们：
@@ -211,13 +214,13 @@ OCR 文本白名单固定为：
 - `cw.battle.continue`
 - `cw.settle.next`
 
-在成功路径下都要稳定输出 `shot path=...`。
+在成功路径下都要稳定输出 `shot path=...`，并在 success 文本里紧跟 `info read_image_first=1`。
 
 这里把截图约束明确收紧为：
 
 1. 这三条命令继续走现有 `_render_cw_stage` renderer，不新增 renderer 家族、前缀或 YAML 行为。
 2. 成功文本首行继续沿用 `_render_cw_stage` 的现有摘要逻辑：`stale=<0|1>` 必须保留；如果 payload 带 `value`，则继续输出 `stage=<value>`。
-3. `shot path=...` 固定作为第二行出现。
+3. `shot path=...` 固定作为第二行出现，`info read_image_first=1` 固定作为第三行出现，并位于任何实体行之前。
 4. daemon 返回的 `screenshot` 必须是非空值，且经现有 normalize 后写成 workspace-relative 的 `.trail/shots/...` 路径。
 5. 对这三条命令来说，“success 但没有 `screenshot` / `shot path`”视为回归，不再把它当作可接受的 best-effort 结果。
 
@@ -249,7 +252,7 @@ OCR 文本白名单固定为：
 
 在 `tests/test_cw_rpc_contracts.py` 补或改这组命令的 stdout 断言，明确要求：
 
-- success 首行后出现 `shot path=...`
+- success 首行后先出现 `shot path=...`，再出现 `info read_image_first=1`
 
 尤其是 `cw.battle.start` 与 `cw.settle.next`，当前契约测试没有把 `shot` 锁住，这次需要补齐；`cw.battle.continue` 也要继续保持显式覆盖。
 
@@ -261,15 +264,15 @@ OCR 文本白名单固定为：
 - `cw.battle.continue`
 - `cw.settle.next`
 
-确认它们仍然走 `_render_cw_stage` 家族，且 `shot path=...` 排在首行之后；另外补一条 stale-only payload 回归，显式锁住“当 payload 不带 `value` 时，success 首行只保留 `stale=<0|1>`，不会凭空生成 `stage=`”。
+确认它们仍然走 `_render_cw_stage` 家族，且 `shot path=...` 与 `info read_image_first=1` 排在首行之后、实体行之前；另外补一条 stale-only payload 回归，显式锁住“当 payload 不带 `value` 时，success 首行只保留 `stale=<0|1>`，不会凭空生成 `stage=`”。
 
 ## 文档同步
 
 这次文档同步决议固定为：
 
 1. `trail/scenes/cw/assets/README.md` 必须更新，因为会新增本项目自管模板。
-2. `README.md` 默认不新增描述，因为通用 `shot path=...` 规则已经覆盖，这次是实现补齐，不是协议扩面。
-3. `skills/trail-cw-events/SKILL.md` 默认不改文案，因为命令名和使用顺序不变；如果实现阶段新增了依赖截图的明确操作建议，再单独补文档。
+2. `README.md` 必须同步更新，明确带截图 success 统一按 `shot path=...` -> `info read_image_first=1` -> 实体行输出。
+3. `skills/trail-cw-events/SKILL.md` 也必须同步更新，把“优先看图”升级成看到新 guidance 词面时必须先读图的硬规则。
 
 ## 非目标
 

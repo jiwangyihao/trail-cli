@@ -9,6 +9,7 @@ from trail.artifacts.store import ArtifactStore
 from trail.commands.helpers import to_jsonable
 from trail.core.errors import TrailError
 from trail.daemon.client import daemon_transport_failure
+from trail.output.envelope import build_image_guidance
 from trail.output.capture import with_auto_capture
 from trail.runtime.ocr_config import OCR_LANG_UNSUPPORTED, split_ocr_call
 
@@ -48,6 +49,16 @@ CW_CAPTURE_METHODS = {
     "cw.strategy.detect",
 }
 
+CW_CAPTURED_READ_METHODS = {
+    "cw.stage.detect",
+    "cw.stage.wait",
+    "cw.shop.scan",
+    "cw.replenish.read",
+    "cw.invest.read",
+    "cw.encounter.read",
+    "cw.fortune.read",
+}
+
 def success(
     data: dict[str, Any],
     *,
@@ -56,19 +67,21 @@ def success(
     references: list[dict[str, Any]] | None = None,
     debug: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return _bind_references_to_screenshot(
-        {
-            "request_id": request_id,
-            "ok": True,
-            "data": deepcopy(data),
-            "screenshot": screenshot,
-            "timing": {},
-            "warnings": [],
-            "references": deepcopy(references or []),
-            "debug": deepcopy(debug),
-            "error": None,
-        }
-    )
+    payload = {
+        "request_id": request_id,
+        "ok": True,
+        "data": deepcopy(data),
+        "screenshot": screenshot,
+        "timing": {},
+        "warnings": [],
+        "references": deepcopy(references or []),
+        "debug": deepcopy(debug),
+        "error": None,
+    }
+    guidance = build_image_guidance(screenshot)
+    if guidance is not None:
+        payload["image_guidance"] = guidance
+    return _bind_references_to_screenshot(payload)
 
 
 def _normalize_workspace_path(path_value, *, workspace_root: Path) -> str | None:
@@ -391,7 +404,7 @@ class CommandService:
 
         if request.method.startswith("cw."):
             service = self._session_service(request)
-            if request.method in CW_CAPTURE_METHODS:
+            if request.method in CW_CAPTURE_METHODS or request.method in CW_CAPTURED_READ_METHODS:
                 return self._run_cw_with_capture(request, service=service)
             if request.method in CW_MUTATING_METHODS:
                 session_id = request.session_id or request.payload.get("session_id")
@@ -579,14 +592,15 @@ class CommandService:
         last_known_stage: str,
     ) -> dict[str, Any]:
         previous = deepcopy(response or {})
+        screenshot = previous.get("screenshot")
         debug = deepcopy(previous.get("debug") or {})
         debug["detail"] = self._format_exception_detail(error)
         debug["last_known_stage"] = last_known_stage
-        return {
+        payload = {
             "request_id": request_id,
             "ok": False,
             "data": {},
-            "screenshot": previous.get("screenshot"),
+            "screenshot": screenshot,
             "timing": deepcopy(previous.get("timing") or {}),
             "warnings": deepcopy(previous.get("warnings") or []),
             "references": deepcopy(previous.get("references") or []),
@@ -596,6 +610,10 @@ class CommandService:
                 "message": "mutation result unknown",
             },
         }
+        guidance = build_image_guidance(screenshot)
+        if guidance is not None:
+            payload["image_guidance"] = guidance
+        return payload
 
     def _attach_recovery_detail(self, envelope: dict[str, Any], recovery_error: Exception) -> dict[str, Any]:
         payload = deepcopy(envelope)

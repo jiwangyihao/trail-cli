@@ -46,4 +46,5 @@ description: Use when `trail start` fails or when an agent needs advanced Trail 
 - 需要重建会话时，运行 `trail session create`
 - 如果命令结果未知，先记录默认文本里的 `request id=<id>`，再执行 `trail daemon request-status --request-id <id>`，从默认文本里的 `session=<id>` 获取需要恢复的 session
 - 如果 session 已被标记为 `tainted`，先确认请求终态，再执行 `trail daemon reconcile-session --session <id>`
+- 如果命令返回 `shot path=...` 且紧随 `info read_image_first=1`，必须先读取这张原始截图，再参考后续 `data` / `detect` / `read` / `status` 文本；不要跳过原始图直接做恢复判断
 - 只有在 simple 层无法满足需求时，才使用这些进阶命令

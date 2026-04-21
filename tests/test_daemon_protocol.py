@@ -582,12 +582,152 @@ def test_start_run_unknown_result_keeps_request_and_taints_created_session(tmp_p
     assert session_services.for_workspace(tmp_path).is_session_tainted(created_session_id) is True
 
 
-def test_command_service_handles_cw_stage_detect(tmp_path: Path, monkeypatch):
-    from trail.daemon.cw_service import CwService
+@pytest.mark.parametrize(
+    ("method", "payload", "response_data"),
+    [
+        ("cw.stage.detect", {}, {"value": "preparation", "stale": False}),
+        ("cw.stage.wait", {"timeout": 120}, {"value": "settle", "stale": False}),
+        ("cw.shop.scan", {}, {"items": [{"slot": 1, "name": "银狼", "price": 20}], "opened": True, "stale": False}),
+        ("cw.replenish.read", {}, {"options": [1, 2, 3]}),
+        ("cw.invest.read", {}, {"options": [1, 2]}),
+        ("cw.encounter.read", {}, {"options": [1, 2]}),
+        ("cw.fortune.read", {}, {"options": [1, 2]}),
+    ],
+)
+def test_command_service_routes_cw_captured_reads_through_handle_with_capture(
+    tmp_path: Path,
+    method: str,
+    payload: dict[str, object],
+    response_data: dict[str, object],
+):
+    class StubCwService:
+        def __init__(self):
+            self.capture_calls: list[dict[str, object]] = []
+
+        def handle(self, **kwargs):
+            raise AssertionError("captured cw reads must not use plain handle()")
+
+        def handle_mutation(self, **kwargs):
+            raise AssertionError("captured cw reads must not use mutation journal")
+
+        def handle_with_capture(self, **kwargs):
+            self.capture_calls.append(dict(kwargs))
+            request_id = kwargs["request_id"]
+            return {
+                "ok": True,
+                "data": response_data,
+                "screenshot": tmp_path / ".trail" / "shots" / f"{request_id}.png",
+                "image_guidance": {"read_image_first": True},
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": None,
+                "error": None,
+            }
 
     registry = SessionServiceRegistry()
-    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = StubCwService()
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id=f"req-{method.replace('.', '-')}",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method=method,
+        payload={"session_id": session.session_id, **payload},
+    )
+
+    response = command_service.handle(request)
+
+    assert response["ok"] is True
+    assert response["data"] == response_data
+    assert response["screenshot"] == f".trail/shots/{request.request_id}.png"
+    assert cw_service.capture_calls == [
+        {
+            "method": method,
+            "payload": {"session_id": session.session_id, **payload},
+            "workspace_root": str(tmp_path),
+            "session_service": service,
+            "request_id": request.request_id,
+            "verbose": False,
+        }
+    ]
+
+
+def test_command_service_routes_cw_shop_status_through_plain_handle(tmp_path: Path):
+    class StubCwService:
+        def __init__(self):
+            self.handle_calls: list[dict[str, object]] = []
+
+        def handle(self, **kwargs):
+            self.handle_calls.append(dict(kwargs))
+            return {"items": [{"slot": 1, "name": "银狼", "price": 20}]}
+
+        def handle_mutation(self, **kwargs):
+            raise AssertionError("cw.shop.status must not use mutation journal")
+
+        def handle_with_capture(self, **kwargs):
+            raise AssertionError("cw.shop.status must not use captured read routing")
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = StubCwService()
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-shop-status",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.shop.status",
+        payload={"session_id": session.session_id},
+    )
+
+    response = command_service.handle(request)
+
+    assert response["ok"] is True
+    assert response["data"] == {"items": [{"slot": 1, "name": "银狼", "price": 20}]}
+    assert response["screenshot"] is None
+    assert "image_guidance" not in response
+    assert cw_service.handle_calls == [
+        {
+            "method": "cw.shop.status",
+            "payload": {"session_id": session.session_id},
+            "workspace_root": str(tmp_path),
+            "session_service": service,
+        }
+    ]
+
+
+def test_command_service_handles_cw_stage_detect_with_request_scoped_capture(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / f"{request_id}.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
     cw_service = CwService(runtime_service=runtime_service)
     monkeypatch.setattr("trail.daemon.cw_service.stage_detector_factory", lambda runtime: object())
     monkeypatch.setattr(
@@ -608,7 +748,12 @@ def test_command_service_handles_cw_stage_detect(tmp_path: Path, monkeypatch):
     payload = command_service.handle(request)
 
     assert payload["ok"] is True
-    assert registry.for_workspace(str(tmp_path)).load_session(session.session_id).scene_state["cw"]["stage"]["value"] == "preparation"
+    assert payload["screenshot"] == ".trail/shots/req-cw-stage-detect.png"
+    assert service.load_session(session.session_id).scene_state["cw"]["stage"]["value"] == "preparation"
+    assert runtime.capture_requests == [(False, "req-cw-stage-detect")]
+    with pytest.raises(TrailError) as exc_info:
+        service.request_status(request.request_id)
+    assert exc_info.value.code == "REQUEST_NOT_FOUND"
 
 
 def test_command_service_handles_cw_enter_world_to_home(tmp_path: Path):
@@ -2789,6 +2934,27 @@ def test_server_handle_payload_preserves_unknown_result_envelope(
     assert response["debug"] == envelope["debug"]
     assert status["final_state"] == final_state
     assert loaded.scene_state["daemon"]["tainted"] is True
+
+
+def test_command_service_unknown_result_envelope_includes_image_guidance_when_screenshot_present(tmp_path: Path):
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+
+    envelope = command_service._unknown_result_envelope(
+        request_id="req-unknown-guidance",
+        response={
+            "screenshot": ".trail/shots/req-unknown-guidance.png",
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": {"detail": "previous"},
+        },
+        error=OSError("state persisted marker failed"),
+        last_known_stage="state_persisted",
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["screenshot"] == ".trail/shots/req-unknown-guidance.png"
+    assert envelope["image_guidance"] == {"read_image_first": True}
 
 
 def test_server_handle_payload_keeps_unknown_result_envelope_for_post_handler_failure(tmp_path: Path, monkeypatch):

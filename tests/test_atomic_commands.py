@@ -41,6 +41,13 @@ CW_HELP_COMMANDS = {
 }
 
 
+def _build_success_response_with_guidance(*, request_id: str, data: dict, screenshot: str | None = None) -> dict:
+    response = build_success_response(request_id=request_id, data=data, screenshot=screenshot)
+    if screenshot is not None:
+        response["image_guidance"] = {"read_image_first": True}
+    return response
+
+
 def _normalize_help(output: str) -> str:
     return " ".join(output.split())
 
@@ -151,7 +158,7 @@ def _install_real_daemon_client(monkeypatch, tmp_path, transport) -> TrailDaemon
 def test_window_attach_renders_text_output(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
-            "window.attach": build_success_response(
+            "window.attach": _build_success_response_with_guidance(
                 request_id="req-window-attach",
                 data={"title": "Demo Window", "hwnd": 123},
                 screenshot=".trail/shots/req-window-attach.png",
@@ -165,6 +172,7 @@ def test_window_attach_renders_text_output(cli_runner, fake_daemon_client, tmp_p
     assert result.stdout.splitlines() == [
         'ok window.attach title="Demo Window" hwnd=123',
         "shot path=.trail/shots/req-window-attach.png",
+        "info read_image_first=1",
     ]
     assert client.calls == [
         {
@@ -498,7 +506,7 @@ def test_guide_list_help_mentions_boolean_filter_semantics(cli_runner):
 def test_screen_shot_returns_envelope_and_screenshot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
-            "screen.shot": build_success_response(
+            "screen.shot": _build_success_response_with_guidance(
                 request_id="req-screen-shot",
                 data={"captured": True},
                 screenshot=".trail/shots/req-screen-shot.png",
@@ -512,6 +520,7 @@ def test_screen_shot_returns_envelope_and_screenshot(cli_runner, fake_daemon_cli
     assert result.stdout.splitlines() == [
         "ok screen.shot captured=1",
         "shot path=.trail/shots/req-screen-shot.png",
+        "info read_image_first=1",
     ]
     assert client.calls == [
         {
@@ -527,7 +536,7 @@ def test_screen_shot_returns_envelope_and_screenshot(cli_runner, fake_daemon_cli
 def test_ocr_read_returns_runtime_payload_with_ocr_mode_and_retry_high_defaults(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
-            "ocr.read": build_success_response(
+            "ocr.read": _build_success_response_with_guidance(
                 request_id="req-ocr-read",
                 data={"result": [{"text": "银狼"}]},
                 screenshot=".trail/shots/req-ocr-read.png",
@@ -541,6 +550,7 @@ def test_ocr_read_returns_runtime_payload_with_ocr_mode_and_retry_high_defaults(
     assert result.stdout.splitlines() == [
         "ok ocr.read hits=1",
         "shot path=.trail/shots/req-ocr-read.png",
+        "info read_image_first=1",
         "text value=银狼",
     ]
     assert client.calls == [
@@ -1129,7 +1139,7 @@ def test_ocr_read_verbose_preserves_provider_trace_debug_pipeline(cli_runner, fa
 def test_image_locate_returns_box_payload(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
-            "image.locate": build_success_response(
+            "image.locate": _build_success_response_with_guidance(
                 request_id="req-image-locate",
                 data={"box": {"left": 1, "top": 2, "width": 3, "height": 4}},
                 screenshot=".trail/shots/req-image-locate.png",
@@ -1143,6 +1153,7 @@ def test_image_locate_returns_box_payload(cli_runner, fake_daemon_client, tmp_pa
     assert result.stdout.splitlines() == [
         "ok image.locate box=1,2,3,4",
         "shot path=.trail/shots/req-image-locate.png",
+        "info read_image_first=1",
     ]
     assert client.calls == [
         {
@@ -1213,17 +1224,17 @@ def test_image_wait_returns_error_when_template_missing(cli_runner, fake_daemon_
 def test_input_click_drag_and_key_return_envelopes(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
-            "input.click": build_success_response(
+            "input.click": _build_success_response_with_guidance(
                 request_id="req-input-click",
                 data={"clicked": [10, 20]},
                 screenshot=".trail/shots/req-input-click.png",
             ),
-            "input.drag": build_success_response(
+            "input.drag": _build_success_response_with_guidance(
                 request_id="req-input-drag",
                 data={"dragged": [1, 2, 3, 4]},
                 screenshot=".trail/shots/req-input-drag.png",
             ),
-            "input.key": build_success_response(
+            "input.key": _build_success_response_with_guidance(
                 request_id="req-input-key",
                 data={"key": "space", "presses": 2},
                 screenshot=".trail/shots/req-input-key.png",
@@ -1241,14 +1252,17 @@ def test_input_click_drag_and_key_return_envelopes(cli_runner, fake_daemon_clien
     assert click_result.stdout.splitlines() == [
         "ok input.click",
         "shot path=.trail/shots/req-input-click.png",
+        "info read_image_first=1",
     ]
     assert drag_result.stdout.splitlines() == [
         "ok input.drag",
         "shot path=.trail/shots/req-input-drag.png",
+        "info read_image_first=1",
     ]
     assert key_result.stdout.splitlines() == [
         "ok input.key",
         "shot path=.trail/shots/req-input-key.png",
+        "info read_image_first=1",
     ]
     assert client.calls == [
         {
@@ -1408,7 +1422,7 @@ def test_state_dump_renders_summary_before_yaml(cli_runner, fake_daemon_client, 
     monkeypatch.setattr("trail.commands.state.run_session_command", fail_local_state_dump, raising=False)
     client = fake_daemon_client(
         {
-            "state.dump": build_success_response(
+            "state.dump": _build_success_response_with_guidance(
                 request_id="req-state-dump",
                 data={
                     "session_id": session_id,
@@ -1431,10 +1445,12 @@ def test_state_dump_renders_summary_before_yaml(cli_runner, fake_daemon_client, 
     assert text_result.stdout.splitlines() == [
         "ok state.dump session=session-1 scene=cw last_stage=shop tainted=0",
         "shot path=.trail/shots/req-state-dump.png",
+        "info read_image_first=1",
     ]
-    assert yaml_result.stdout.splitlines()[0:2] == [
+    assert yaml_result.stdout.splitlines()[0:3] == [
         "ok state.dump session=session-1 scene=cw last_stage=shop tainted=0",
         "shot path=.trail/shots/req-state-dump.png",
+        "info read_image_first=1",
     ]
     assert "scene_state:" in yaml_result.stdout
     assert client.calls == [

@@ -33,6 +33,7 @@ description: Use when an agent needs to inspect or mutate Currency Wars field, r
 
 - `swap` 和 `place-one` 必须显式给出源位置与目标位置
 - `sell-plan` 只提供建议，不会直接出售
+- 如果命令返回 `shot path=...` 且紧随 `info read_image_first=1`，必须先读取这张原始截图，再参考后续 `data` / `detect` / `read` / `status` 文本；不要跳过原始图直接按结构化快照行动
 - `sell-plan` 和 `slots read` 都是辅助快照，Agent 应优先看截图确认当前站位和手牌，再决定显式动作
 - 槽位名字确认前先看当前 screenshot；若只需确认个别槽位，优先显式传 `--slot` 做定向读取，不要默认全量扫
 - 不传 `--slot` 时，`trail cw slots read --session <id>` 仍是完整快照兜底，不是已废弃路径；若局部读取结果带 `stale=1`，不要把它当成新的完整 fresh 快照

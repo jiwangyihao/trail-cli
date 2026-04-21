@@ -55,6 +55,26 @@ def _append_shot(lines: list[str], payload: dict[str, Any]) -> None:
         lines.append(f"shot path={_encode_value(screenshot)}")
 
 
+def _has_success_image_guidance(payload: dict[str, Any]) -> bool:
+    guidance = payload.get("image_guidance")
+    return (
+        payload.get("ok") is True
+        and bool(payload.get("screenshot"))
+        and isinstance(guidance, dict)
+        and guidance.get("read_image_first") is True
+    )
+
+
+def _append_success_image_guidance(lines: list[str], payload: dict[str, Any]) -> None:
+    if _has_success_image_guidance(payload):
+        lines.append("info read_image_first=1")
+
+
+def _append_success_capture_block(lines: list[str], payload: dict[str, Any]) -> None:
+    _append_shot(lines, payload)
+    _append_success_image_guidance(lines, payload)
+
+
 def _append_warnings(lines: list[str], payload: dict[str, Any]) -> None:
     warnings = payload.get("warnings") or []
     for warning in warnings:
@@ -95,7 +115,7 @@ def _append_references(lines: list[str], payload: dict[str, Any]) -> None:
 
 
 def _append_common_success_lines(lines: list[str], payload: dict[str, Any]) -> list[str]:
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
@@ -413,7 +433,7 @@ def _render_cw_stage(command: str, payload: dict[str, Any]) -> list[str]:
 def _render_cw_entry(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     lines = [f"ok {command} page=home"]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     if data.get("already_home") is True:
         lines.append("info already_home=1")
     _append_warnings(lines, payload)
@@ -425,7 +445,7 @@ def _render_cw_portal_cards(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     cards = _as_list(data.get("cards"))
     lines = [f"ok {command} cards={_encode_value(len(cards))}"]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     for card in cards:
         if not isinstance(card, dict):
             continue
@@ -465,7 +485,7 @@ def _render_cw_portal_select(command: str, payload: dict[str, Any]) -> list[str]
     lines = [
         f"ok {command} {summary}" if summary else f"ok {command}"
     ]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
@@ -475,7 +495,7 @@ def _render_cw_strategy_cards(command: str, payload: dict[str, Any]) -> list[str
     data = _as_dict(payload.get("data"))
     cards = [card for card in _as_list(data.get("cards")) if isinstance(card, dict)]
     lines = [f"ok {command} cards={_encode_value(len(cards))}"]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
 
     loaded_guide = 0
     for card in cards:
@@ -511,7 +531,7 @@ def _render_cw_strategy_select(command: str, payload: dict[str, Any]) -> list[st
         ("投资策略", _non_empty(data.get("strategy_title"))),
     )
     lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
@@ -526,7 +546,7 @@ def _render_cw_guide_summary(command: str, payload: dict[str, Any]) -> list[str]
         ("版本", _non_empty(data.get("version"))),
     )
     lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     _append_fact_line(lines, "guide", ("攻略标签", _guide_tags(data)))
     _append_fact_line(
         lines,
@@ -538,16 +558,19 @@ def _render_cw_guide_summary(command: str, payload: dict[str, Any]) -> list[str]
     return lines
 
 
-def _render_cw_slots(command: str, payload: dict[str, Any]) -> list[str]:
-    data = _as_dict(payload.get("data"))
-    return _render_success_summary(
-        command,
-        payload,
+def _render_cw_slots_summary_line(command: str, data: dict[str, Any]) -> str:
+    summary = _format_fact_sequence(
         ("front", _filled_count(data.get("front"))),
         ("back", _filled_count(data.get("back"))),
         ("hand", _filled_count(data.get("hand"))),
         ("stale", bool(data.get("stale")) if "stale" in data else None),
     )
+    return f"ok {command} {summary}" if summary else f"ok {command}"
+
+
+def _render_cw_slots(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    return _append_common_success_lines([_render_cw_slots_summary_line(command, data)], payload)
 
 
 def _append_cw_slot_lines(lines: list[str], data: dict[str, Any]) -> None:
@@ -578,11 +601,11 @@ def _append_cw_slot_lines(lines: list[str], data: dict[str, Any]) -> None:
 
 def _render_cw_slots_read(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
-    lines = _render_cw_slots(command, payload)
-    insert_at = 2 if payload.get("screenshot") else 1
-    slot_lines: list[str] = []
-    _append_cw_slot_lines(slot_lines, data)
-    lines[insert_at:insert_at] = slot_lines
+    lines = [_render_cw_slots_summary_line(command, data)]
+    _append_success_capture_block(lines, payload)
+    _append_cw_slot_lines(lines, data)
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
     return lines
 
 
@@ -609,7 +632,7 @@ def _render_cw_shop_status(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     items = _as_list(data.get("items"))
     lines = [f"ok {command} count={_encode_value(len(items))}"]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     _append_cw_shop_items(lines, data)
     _append_cw_shop_snapshot_info(lines, data)
     _append_warnings(lines, payload)
@@ -629,7 +652,7 @@ def _render_cw_shop_action(command: str, payload: dict[str, Any]) -> list[str]:
         ("got", data.get("got")),
     )
     lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     if items is not None:
         _append_cw_shop_items(lines, data)
     if command == "cw.shop.scan":
@@ -657,7 +680,7 @@ def _render_cw_options(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     options = _as_list(data.get("options"))
     lines = [f"ok {command} count={_encode_value(len(options))}"]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     for index, option in enumerate(options, start=1):
         if isinstance(option, dict):
             facts: list[tuple[str, Any]] = [("idx", index)]
@@ -781,7 +804,7 @@ def _render_guide_fetch(command: str, payload: dict[str, Any]) -> list[str]:
         ("中期等级", data.get("mid_level")),
     )
     lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     _append_fact_line(
         lines,
         "guide",
@@ -925,7 +948,7 @@ def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:
             ("more", bool(data.get("more"))),
         )
         lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
-        _append_shot(lines, payload)
+        _append_success_capture_block(lines, payload)
         _append_guide_role_candidate_blocks(lines, data)
         for group in portal_groups:
             if not isinstance(group, dict):
@@ -962,7 +985,7 @@ def _render_guide_list(command: str, payload: dict[str, Any]) -> list[str]:
         ("next", next_page_token if next_page_token else None),
     )
     lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     _append_guide_role_candidate_blocks(lines, data)
     for index, item in enumerate(items, start=1):
         if not isinstance(item, dict):
@@ -1029,7 +1052,7 @@ def _render_ocr_read(command: str, payload: dict[str, Any]) -> list[str]:
     data = payload.get("data") or {}
     result = data.get("result") or []
     lines = [f"ok {command} hits={_encode_value(len(result))}"]
-    _append_shot(lines, payload)
+    _append_success_capture_block(lines, payload)
     for item in result:
         normalized = _normalize_ocr_item(item)
         if normalized is None:
