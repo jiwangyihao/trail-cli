@@ -20,6 +20,8 @@ CW_MUTATING_METHODS = {
     "cw.portal.refresh",
     "cw.portal.restart",
     "cw.guide.apply",
+    "cw.strategy.select",
+    "cw.strategy.refresh",
     "cw.slots.swap",
     "cw.slots.place_one",
     "cw.shop.open",
@@ -43,6 +45,7 @@ CW_MUTATING_METHODS = {
 CW_CAPTURE_METHODS = {
     "cw.slots.read",
     "cw.portal.detect",
+    "cw.strategy.detect",
 }
 
 def success(

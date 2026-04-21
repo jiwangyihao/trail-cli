@@ -70,6 +70,10 @@
 - `guide.list.cw` 分组视图固定使用 `guide 投资环境=... count=... more=...`；只有分组行允许携带 `next=...`，顶层 grouped 首行不带 `next`。
 - `cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`；`待收集` 必须统一编码为 `0/1`，即使为 `0` 也不能省略。
 - `cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`；`cw.start` / `cw.portal.*` 下挂攻略摘要继续复用 `guide.list.cw` 的中文条目与 `最终阵容` 语义。
+- `cw.strategy.detect|refresh` success 首行固定为 `ok cw.strategy.<...> cards=<n>`。
+- `cw.strategy.select` success 首行固定为 `ok cw.strategy.select idx=... 投资策略=...`。
+- `cw.strategy.detect|refresh` 的 cards family 正文字段固定使用 `投资策略/攻略推荐/刷新次数`；说明继续使用 `opt idx=... 说明=...`。
+- `cw.strategy.detect|refresh` 必须输出 `info 已加载攻略=0|1`，且固定在所有 `opt` 行之后。
 - `cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id。
 - `cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径；`current/apply` 只看当前已应用攻略摘要，完整攻略仍由 `guide.fetch.cw` 提供。
 - `guide.config.cw` 使用 `赛季/子赛季/大版本/搜牌档位/羁绊/角色/角色标签/投资环境`；这五个统计项即使为 `0` 也必须保留。

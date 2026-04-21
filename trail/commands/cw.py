@@ -21,13 +21,17 @@ CW_PORTAL_HELP = (
     "detect 重新识别并保存当前三张卡；refresh 点击刷新后生成新的三张卡。"
     "投资环境卡片会输出 投资环境、说明、待收集、score，以及下挂攻略摘要。"
 )
+CW_STRATEGY_HELP = (
+    "局内投资策略页的识别/选择/单卡刷新动作。"
+    "detect 只重建当前三张策略卡快照；refresh 只刷新指定卡，不做整页刷新。"
+)
 CW_STAGE_HELP = "仅用于货币战争内部阶段的快速检测或等待；不适用于登录页、大世界等非 CW 场景。"
 CW_SLOTS_HELP = "读取编队槽位并执行换位或上场。"
 CW_SHOP_HELP = "读取商店、购买槽位并刷新或关闭。"
 CW_CRYSTALS_HELP = "收取当前局内结晶产出。"
 CW_HAND_HELP = "出售手牌或生成出售候选。"
 CW_REPLENISH_HELP = "读取或选择局内补给事件。"
-CW_INVEST_HELP = "读取或选择局内 invest 事件。"
+CW_INVEST_HELP = "读取或选择局内 invest 事件的兼容/粗粒度入口，不用于投资策略页。"
 CW_ENCOUNTER_HELP = "读取或选择局内遭遇事件。"
 CW_FORTUNE_HELP = "读取或选择局内命运卜者事件。"
 CW_BOSS_PREVIEW_HELP = "确认首领预览并继续战斗前阶段。"
@@ -38,6 +42,7 @@ CW_EVENT_HELP = "处理其余通用/特殊事件节点。"
 cw_app = typer.Typer(no_args_is_help=True, help=CW_APP_HELP)
 cw_guide_app = typer.Typer(no_args_is_help=True, help=CW_GUIDE_HELP)
 portal_app = typer.Typer(no_args_is_help=True, help=CW_PORTAL_HELP)
+strategy_app = typer.Typer(no_args_is_help=True, help=CW_STRATEGY_HELP)
 stage_app = typer.Typer(no_args_is_help=True, help=CW_STAGE_HELP)
 slots_app = typer.Typer(no_args_is_help=True, help=CW_SLOTS_HELP)
 shop_app = typer.Typer(no_args_is_help=True, help=CW_SHOP_HELP)
@@ -71,6 +76,7 @@ class BattleMode(StrEnum):
 
 cw_app.add_typer(cw_guide_app, name="guide")
 cw_app.add_typer(portal_app, name="portal")
+cw_app.add_typer(strategy_app, name="strategy")
 cw_app.add_typer(stage_app, name="stage")
 cw_app.add_typer(slots_app, name="slots")
 cw_app.add_typer(shop_app, name="shop")
@@ -144,6 +150,30 @@ def cw_portal_refresh(session: str = typer.Option(..., "--session")) -> None:
 @portal_app.command("restart", help="按已有开局真值重开投资环境页并生成新一轮三张卡。")
 def cw_portal_restart(session: str = typer.Option(..., "--session")) -> None:
     _print_cw("cw.portal.restart", session_id=session)
+
+
+@strategy_app.command(
+    "detect",
+    help="当前已在投资策略页时重建并保存策略 snapshot；只重建当前三张策略卡快照，不点击、不刷新。",
+)
+def cw_strategy_detect(session: str = typer.Option(..., "--session")) -> None:
+    _print_cw("cw.strategy.detect", session_id=session)
+
+
+@strategy_app.command("select", help="选择当前投资策略页上的一张策略卡。")
+def cw_strategy_select(
+    session: str = typer.Option(..., "--session"),
+    card_idx: int = typer.Option(..., "--card-idx"),
+) -> None:
+    _print_cw("cw.strategy.select", session_id=session, payload={"card_idx": card_idx})
+
+
+@strategy_app.command("refresh", help="只刷新指定卡并重建策略 snapshot，不做整页刷新。")
+def cw_strategy_refresh(
+    session: str = typer.Option(..., "--session"),
+    card_idx: int = typer.Option(..., "--card-idx"),
+) -> None:
+    _print_cw("cw.strategy.refresh", session_id=session, payload={"card_idx": card_idx})
 
 
 @cw_guide_app.command("apply")

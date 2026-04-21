@@ -162,6 +162,9 @@ def test_guide_config_renders_summary_and_yaml(cli_runner, fake_daemon_client, t
                         {"portal_id": "shop", "title": "购物区", "description": "花金币买角色和升级"},
                         {"portal_id": "event", "title": "事件区", "description": "处理事件、补给与遭遇"},
                     ],
+                    "strategy_list": [
+                        {"strategy_id": "rush", "title": "快攻", "description": "desc1"},
+                    ],
                 },
             )
         }
@@ -182,6 +185,7 @@ def test_guide_config_renders_summary_and_yaml(cli_runner, fake_daemon_client, t
     ]
     assert "meta:" in yaml_result.stdout
     assert "portal_list:" in yaml_result.stdout
+    assert "strategy_list:" in yaml_result.stdout
     assert client.calls == [
         {
             "method": "guide.config.cw",

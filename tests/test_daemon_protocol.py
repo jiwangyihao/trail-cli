@@ -1651,6 +1651,196 @@ def test_command_service_cw_portal_detect_failure_returns_capture_envelope(tmp_p
     assert exc_info.value.code == "REQUEST_NOT_FOUND"
 
 
+def test_strategy_methods_are_classified_between_capture_and_mutation_sets():
+    from trail.daemon.command_service import CW_CAPTURE_METHODS, CW_MUTATING_METHODS
+
+    assert "cw.strategy.detect" in CW_CAPTURE_METHODS
+    assert "cw.strategy.detect" not in CW_MUTATING_METHODS
+    assert "cw.strategy.select" in CW_MUTATING_METHODS
+    assert "cw.strategy.refresh" in CW_MUTATING_METHODS
+
+
+def test_cw_strategy_detect_handler_uses_capture_route_and_strategy_list(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-strategy-detect.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    snapshot = {
+        "cards": [{"card_idx": 1, "strategy_title": "快攻", "strategy_description": "desc", "refresh_count": 1}],
+        "stale": False,
+    }
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    recorded: dict[str, object] = {}
+
+    def fake_detect(session, *, runtime, strategy_list):
+        recorded["runtime"] = runtime
+        recorded["strategy_list"] = strategy_list
+        session.scene_state.setdefault("cw", {})["strategy"] = snapshot
+        return snapshot
+
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda: {"strategy_list": [{"title": "快攻"}]})
+    monkeypatch.setattr("trail.daemon.cw_service.detect_cw_strategy", fake_detect)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-strategy-detect",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.strategy.detect",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"] == snapshot
+    assert payload["screenshot"] == ".trail/shots/req-cw-strategy-detect.png"
+    assert runtime.capture_requests == [(False, "req-cw-strategy-detect")]
+    assert recorded == {"runtime": runtime, "strategy_list": [{"title": "快攻"}]}
+    assert service.load_session(session.session_id).scene_state["cw"]["strategy"] == snapshot
+
+
+def test_cw_strategy_select_handler_routes_through_mutation_journal(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-strategy-select.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    recorded: dict[str, object] = {}
+
+    def fake_select(session, *, card_idx, runtime):
+        recorded["card_idx"] = card_idx
+        recorded["runtime"] = runtime
+        session.scene_state.setdefault("cw", {})["strategy"] = {"cards": [], "stale": True}
+        return {"card_idx": card_idx, "strategy_title": "回蓝"}
+
+    monkeypatch.setattr("trail.daemon.cw_service.select_cw_strategy", fake_select)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-strategy-select",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.strategy.select",
+        payload={"session_id": session.session_id, "card_idx": 2},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"] == {"card_idx": 2, "strategy_title": "回蓝"}
+    assert payload["screenshot"] == ".trail/shots/req-cw-strategy-select.png"
+    assert runtime.capture_requests == [(False, "req-cw-strategy-select")]
+    assert recorded["card_idx"] == 2
+    assert recorded["runtime"] is not None
+    assert service.request_status("req-cw-strategy-select")["final_state"] == "completed"
+    assert service.load_session(session.session_id).scene_state["cw"]["strategy"] == {"cards": [], "stale": True}
+
+
+def test_cw_strategy_refresh_handler_routes_strategy_list_through_mutation_journal(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-strategy-refresh.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    snapshot = {
+        "cards": [{"card_idx": 3, "strategy_title": "暴击", "strategy_description": "desc", "refresh_count": 2}],
+        "stale": False,
+    }
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    recorded: dict[str, object] = {}
+
+    def fake_refresh(session, *, card_idx, runtime, strategy_list):
+        recorded["card_idx"] = card_idx
+        recorded["runtime"] = runtime
+        recorded["strategy_list"] = strategy_list
+        session.scene_state.setdefault("cw", {})["strategy"] = snapshot
+        return snapshot
+
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda: {"strategy_list": [{"title": "暴击"}]})
+    monkeypatch.setattr("trail.daemon.cw_service.refresh_cw_strategy", fake_refresh)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-strategy-refresh",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.strategy.refresh",
+        payload={"session_id": session.session_id, "card_idx": 3},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"] == snapshot
+    assert payload["screenshot"] == ".trail/shots/req-cw-strategy-refresh.png"
+    assert runtime.capture_requests == [(False, "req-cw-strategy-refresh")]
+    assert recorded["card_idx"] == 3
+    assert recorded["runtime"] is not None
+    assert recorded["strategy_list"] == [{"title": "暴击"}]
+    assert service.request_status("req-cw-strategy-refresh")["final_state"] == "completed"
+    assert service.load_session(session.session_id).scene_state["cw"]["strategy"] == snapshot
+
+
 def test_command_service_handles_cw_portal_select_and_marks_snapshot_stale(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 

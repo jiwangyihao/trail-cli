@@ -31,11 +31,13 @@ description: Use when an agent needs to fetch or apply a Currency Wars guide for
 
 - `trail guide fetch cw` 直接返回完整攻略内容，不自动修改 session；用户面向的主术语是 `攻略标题/攻略标签/羁绊列表/投资环境/运营思路`，不是 artifact
 - `trail guide fetch cw` 的默认文本会直接暴露中文字段名的完整攻略摘要；其中 `适用超频博弈` / `星徽攻略` / `专家顾问` 会折叠进 `攻略标签` 同一行，`羁绊列表`、`运营思路` 与按角色展开的推荐装备也会直接给出；不够时可直接用 `--format yaml` 获取完整结构化 `data`
+- `优选投资策略` / `次选投资策略` 会在局内 strategy 页被消费，映射为 `攻略推荐=优选|次选|否`
 - `trail guide list cw --portal ...` / `--portal-id ...` 适合在“环境优先”流程里，根据投资环境页三卡摘要反查更合适的攻略；默认摘要看 `攻略ID/攻略标题/版本/主C/攻略标签/点赞/收藏`，下一行看 `最终阵容`
 - 按羁绊或角色筛时，优先使用 `--trait <name>` / `--role <name>`
 - `--role <name>` 在名称不精确或存在高相似角色时，可能先返回候选块与 warning；看到 `info role_query=...` / `opt ...` 时，先核对 resolved 角色是否符合当前计划
 - `trail cw guide apply/current` 只面向当前对局已选攻略；攻略查询与拉取继续使用顶层 `trail guide ... cw`
 - 需要完整攻略内容时回到 `trail guide fetch cw`；`current/apply` 只负责当前已应用攻略摘要
+- 本 skill 负责提供攻略事实，不直接替 Agent 选择策略卡
 - `trail cw guide apply` 必须显式传入 `--lineup-id`（兼容旧 `--guide` 别名时，也应优先把它理解成 lineup_id）
 - 不要把 `trail cw enter` 视为可以立刻 apply 攻略的时机；`cw enter` 现在只到首页，真正进入游戏前还需要 `trail cw start` 和 `trail cw portal.select`
 - 攻略快照ID记录发生在 apply 成功后，便于后续通过 `trail cw guide current` 回顾当前实际应用的攻略

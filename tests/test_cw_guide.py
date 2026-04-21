@@ -543,7 +543,34 @@ def test_fetch_cw_guide_config_returns_minimal_catalog(monkeypatch):
             {"portal_id": "shop", "title": "购物区", "description": "花金币买角色和升级"},
             {"portal_id": "event", "title": "事件区", "description": "处理事件、补给与遭遇"},
         ],
+        "strategy_list": [],
     }
+
+
+def test_fetch_cw_guide_config_includes_strategy_list_without_changing_existing_shape(monkeypatch):
+    guide_module = load_cw_guide_module()
+
+    def fake_urlopen(request, timeout=10):
+        del request, timeout
+        payload = fake_cw_config_response()
+        payload["data"]["fight_augment_list"] = [
+            {"id": "rush", "name": "快攻", "description": "desc1"},
+            {"id": "mana", "name": "回蓝", "description": "desc2"},
+        ]
+        return FakeHttpResponse(payload)
+
+    monkeypatch.setattr(guide_module, "urlopen", fake_urlopen, raising=False)
+
+    payload = guide_module.fetch_cw_guide_config()
+
+    assert payload["strategy_list"] == [
+        {"strategy_id": "rush", "title": "快攻", "description": "desc1"},
+        {"strategy_id": "mana", "title": "回蓝", "description": "desc2"},
+    ]
+    assert payload["portal_list"] == [
+        {"portal_id": "shop", "title": "购物区", "description": "花金币买角色和升级"},
+        {"portal_id": "event", "title": "事件区", "description": "处理事件、补给与遭遇"},
+    ]
 
 
 def test_build_guide_list_request_payload_includes_role_ids():

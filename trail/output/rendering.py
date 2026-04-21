@@ -471,6 +471,52 @@ def _render_cw_portal_select(command: str, payload: dict[str, Any]) -> list[str]
     return lines
 
 
+def _render_cw_strategy_cards(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    cards = [card for card in _as_list(data.get("cards")) if isinstance(card, dict)]
+    lines = [f"ok {command} cards={_encode_value(len(cards))}"]
+    _append_shot(lines, payload)
+
+    loaded_guide = 0
+    for card in cards:
+        if card.get("guide_loaded") is True or _coerce_int(card.get("guide_loaded")) == 1:
+            loaded_guide = 1
+        _append_fact_line(
+            lines,
+            "opt",
+            ("idx", card.get("card_idx")),
+            ("投资策略", _non_empty(card.get("strategy_title"))),
+            ("攻略推荐", _non_empty(card.get("guide_match"))),
+            ("刷新次数", card.get("refresh_count")),
+        )
+        description = _non_empty(card.get("strategy_description"))
+        if description is not None:
+            _append_fact_line(
+                lines,
+                "opt",
+                ("idx", card.get("card_idx")),
+                ("说明", description),
+            )
+
+    _append_fact_line(lines, "info", ("已加载攻略", loaded_guide))
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
+
+
+def _render_cw_strategy_select(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    summary = _format_fact_sequence(
+        ("idx", data.get("card_idx")),
+        ("投资策略", _non_empty(data.get("strategy_title"))),
+    )
+    lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
+    _append_shot(lines, payload)
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
+
+
 def _render_cw_guide_summary(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     summary = _format_fact_sequence(
@@ -1145,6 +1191,9 @@ TEXT_RENDERERS = {
     "cw.portal.detect": _render_cw_portal_cards,
     "cw.portal.refresh": _render_cw_portal_cards,
     "cw.portal.restart": _render_cw_portal_cards,
+    "cw.strategy.detect": _render_cw_strategy_cards,
+    "cw.strategy.refresh": _render_cw_strategy_cards,
+    "cw.strategy.select": _render_cw_strategy_select,
     "cw.guide.apply": _render_cw_guide_summary,
     "cw.guide.current": _render_cw_guide_summary,
     "cw.stage.detect": _render_cw_stage,
