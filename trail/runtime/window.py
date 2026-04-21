@@ -660,6 +660,7 @@ class WindowsWindowController:
         hwnd = getattr(window, "_hWnd", None)
         capture_hwnd = int(hwnd) if hwnd is not None else None
         capture_region = region
+        target_size = _target_capture_size(region, capture_hwnd)
         if capture_hwnd is not None and all(value is None for value in (from_x, from_y, to_x, to_y)):
             overlay_target = _find_owned_overlay_target(capture_hwnd, region)
             if overlay_target is not None:
@@ -689,10 +690,7 @@ class WindowsWindowController:
         else:
             image = _grab_region_with_imagegrab(region)
         if normalize:
-            image = self._normalize_captured_image(
-                image,
-                target_size=_target_capture_size(region, int(hwnd) if hwnd is not None else None),
-            )
+            image = self._normalize_captured_image(image, target_size=target_size)
         return image
 
     def capture(self, *, from_x=None, from_y=None, to_x=None, to_y=None) -> bytes:

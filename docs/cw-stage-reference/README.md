@@ -4,7 +4,6 @@
 
 当前约定：
 - 每张图都用顺序号命名，便于后续持续追加。
-- 所有纳入仓库的截图都要先做隐私脱敏；当前图片已把左下角 UID 区域遮盖。
 - 推荐统一使用脚本：`python docs/cw-stage-reference/sanitize_stage_reference.py <input> --box 27,1050,123,25 --output <output>`
 - 说明里要明确：
   - 这张图对应的页面/阶段
@@ -57,7 +56,6 @@
      - 还是稍后再开新局
   2. 在用户没明确前，不应自动继续执行 `cw start`
 - 额外说明：
-  - 这页之所以要单独存档，是因为它很容易被误认成普通首页或 `entry.continue` 中间页
   - 当前 feature 的关键语义之一就是：在这页上 `cw start` 要稳定报 `CW_START_PROGRESS_PENDING`，把决策权交给 Agent 去问用户
 
 ## 03-cw-invest-portal-page.jpg
@@ -84,7 +82,6 @@
   3. 如果要按当前环境反查攻略，运行：
      - `trail guide list cw --portal <portal_title> --limit 3`
 - 额外说明：
-  - 这页和首页最重要的区别是：已经没有 `开始「货币战争」`，而是明确出现三张投资环境卡和底部 `确认`
   - `剩余次数` 指的是当前投资环境页还能执行几次 `cw portal.refresh`
   - 当 `剩余次数` 归零后，继续运行 `cw portal.refresh` 不会再改变卡片内容，应优先考虑 `cw portal.select` 或 `cw portal.restart`
   - `cw portal.restart` 不是默认下一步；它更适合在**用户已经选定攻略、并且明确表示接受刷开局**时使用
@@ -94,7 +91,6 @@
     3. 若未命中，则在当前页优先尝试 `trail cw portal.refresh --session <id>`
     4. 刷新次数耗尽仍未命中时，再执行 `trail cw portal.restart --session <id>` 回到新一轮投资环境页
     5. 之后继续按 `refresh -> restart` 的顺序循环，直到出现目标投资环境为止
-  - 这张图已按左下 UID OCR 框做马赛克脱敏
 
 ## 04-world-chaoluguan.jpg
 
@@ -143,8 +139,7 @@
      去点 `下一步` 并推进到真正的投资环境页
 - 额外说明：
   - **这页不是投资环境页**
-  - 它和 `03-cw-invest-portal-page.jpg` 的根本区别是：这里显示的是本场对局首领/阵营信息，还没有出现真正的投资环境卡片与 `剩余次数`
-  - 当前这张图同样已按左下 UID OCR 框做马赛克脱敏
+  - 这里显示的是本场对局首领/阵营信息，还没有出现真正的投资环境卡片与 `剩余次数`
 
 ## 06-cw-preparation-stage.jpg
 
@@ -170,5 +165,86 @@
   3. 准备完成后再运行：
      - `trail cw battle start --session <id>`
 - 额外说明：
-  - 它和 `03-cw-invest-portal-page.jpg` 的区别是：这里已经进入局内，出现了 `备战阶段`、`出战`、`商店` 和手牌栏
-  - 当前这张图同样已按左下 UID OCR 框做马赛克脱敏
+  - 这里已经进入局内，出现了 `备战阶段`、`出战`、`商店` 和手牌栏
+
+## 07-cw-shop-open-page.jpg
+
+- 文件：`docs/cw-stage-reference/07-cw-shop-open-page.jpg`
+- 阶段名称：`备战阶段 + 商店展开页`
+- 关键视觉特征：
+  - 顶部仍是 `备战阶段`，例如这张图里是 `1-3`
+  - 上方会弹出一整排商店角色卡
+  - 右侧有刷新按钮和当前金币/刷新次数
+  - 中间仍能看到前台/后台槽位与已上阵角色
+  - 右下主按钮仍是 `出战`
+- 对应命令语义：
+  - 这是局内准备页中，`trail cw shop open --session <id>` 之后的典型结果页之一
+  - 也可能在商店已展开的情况下，继续接 `trail cw shop scan` / `trail cw shop buy-slot` / `trail cw shop refresh`
+- 到达该页面后的推荐下一步：
+  1. 若要读取当前商店内容，运行：
+     - `trail cw shop scan --session <id>`
+  2. 若要直接买牌，运行：
+     - `trail cw shop buy-slot --session <id> --slot <n> --expect <角色名>`
+  3. 若要收起商店回到普通备战页，运行：
+     - `trail cw shop close --session <id>`
+- 额外说明：
+  - 这页仍属于局内 `备战阶段`，不是投资环境页，也不是结算页
+  - 商店已经在顶部展开，且右侧出现了刷新按钮与相关货币信息
+
+## 08-cw-round-settle-success.jpg
+
+- 文件：`docs/cw-stage-reference/08-cw-round-settle-success.jpg`
+- 阶段名称：`局内单局结算页（挑战成功 / 继续挑战）`
+- 关键视觉特征：
+  - 大标题是 `挑战成功`
+  - 会显示当前小局关卡号，例如这张图里是 `1-4`
+  - 底部主按钮是 `继续挑战`
+  - 中间区域展示本小局的收益与数据统计
+- 对应命令语义：
+  - 这是局内战斗结束后的单局结算页，不是整局结算链
+  - 当前命令链里，它通常是 `trail cw stage wait --session <id>` 之后可能停下来的页面之一
+- 到达该页面后的推荐下一步：
+  1. 若要继续当前对局的下一小节，运行：
+     - `trail cw settle next --session <id>`
+  2. 若只是做阶段确认，可先记录截图/OCR，再继续后续局内链路
+- 额外说明：
+  - 这页和整局结算链的区别在于：这里的主按钮是 `继续挑战`，而不是 `下一步 / 下一页 / 返回货币战争`
+
+## 09-cw-preparation-full-warning.jpg
+
+- 文件：`docs/cw-stage-reference/09-cw-preparation-full-warning.jpg`
+- 阶段名称：`备战阶段满员提示页`
+- 关键视觉特征：
+  - 中间会出现红条：`备战席已满，请出售角色或提升等级`
+  - 背景仍然是正常的局内 `备战阶段` 布局
+  - 右下仍有 `出战` 和 `商店`
+- 对应命令语义：
+  - 这更像局内准备态上的**限制提示状态**，不是独立的大页面跳转
+  - 通常出现在继续上阵、拖牌或摆放角色时超过当前可用席位
+- 到达该页面后的推荐下一步：
+  1. 先不要继续上阵更多角色
+  2. 优先考虑：
+     - `trail cw hand sell-one|sell-plan --session <id>`
+     - `trail cw slots swap --session <id> --source ... --target ...`
+     - 或先提升等级 / 扩容
+- 额外说明：
+  - 这页本质上仍属于局内 `备战阶段`，只是带了一个明确的容量限制警告
+
+## 10-cw-mode-select-clean.jpg
+
+- 文件：`docs/cw-stage-reference/10-cw-mode-select-clean.jpg`
+- 阶段名称：`开始货币战争后的模式选择页（干净版）`
+- 关键视觉特征：
+  - 页面左侧是三张模式/入口卡
+  - 页面上**没有** `继续进度 / 结束并结算`
+  - 底部有继续按钮
+- 对应命令语义：
+  - 这属于 `trail cw start --session <id> --mode new --difficulty ... --battle-mode ...` 的中间态之一
+  - 正常命令链里不应在这里停给 Agent 决策，而应继续推进到投资环境页
+- 到达该页面后的推荐下一步：
+  1. 若是手动观测阶段，不要在这里跑 `cw portal.select|refresh|restart`
+  2. 正常命令链里，应继续让：
+     - `trail cw start --session <id> --mode new --difficulty ... --battle-mode ...`
+     去完成模式选择并进入投资环境页
+- 额外说明：
+  - 这页和 `02-cw-mode-select-with-progress.jpg` 同属“点了开始之后的模式选择页”，但这一张是**没有未收尾进度**的干净版本

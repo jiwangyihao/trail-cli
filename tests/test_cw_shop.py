@@ -684,6 +684,102 @@ def test_shop_scan_refreshes_store_snapshot(tmp_path):
     }
 
 
+def test_parse_shop_items_uses_rapidocr_tuple_text_instead_of_confidence():
+    shop_module = load_cw_shop_module()
+    parse_shop_items = getattr(shop_module, "_parse_shop_items", None)
+    assert parse_shop_items is not None
+
+    raw_items = [
+        [[0, 0], "黑塔", 0.9996806085109711],
+        [[0, 0], "1", 0.9982701539993286],
+        [[0, 0], "阿格莱雅", 0.9880169034004211],
+        [[0, 0], "1", 0.9931700229644775],
+    ]
+
+    assert parse_shop_items(raw_items) == (
+        [
+            {"name": "黑塔", "price": 1},
+            {"name": "阿格莱雅", "price": 1},
+        ],
+        False,
+    )
+
+
+def test_build_cw_shop_scanner_reads_rapidocr_tuple_snapshot_fields():
+    shop_module = load_cw_shop_module()
+    build_cw_shop_scanner = getattr(shop_module, "build_cw_shop_scanner", None)
+    assert build_cw_shop_scanner is not None
+
+    ocr_payloads = {
+        tuple(shop_module.SHOP_SCAN_REGION.values()): [
+            [[0, 0], "黑塔", 0.9996806085109711],
+            [[0, 0], "1", 0.9982701539993286],
+        ],
+        tuple(shop_module.SHOP_COINS_REGION.values()): [
+            [[0, 0], "40", 0.9982701539993286],
+        ],
+        tuple(shop_module.SHOP_LEVEL_REGION.values()): [
+            [[0, 0], "Lv.7", 0.9982701539993286],
+        ],
+        tuple(shop_module.SHOP_MAX_TEAM_SIZE_REGION.values()): [
+            [[0, 0], "8", 0.9982701539993286],
+        ],
+    }
+
+    class RuntimeStub:
+        def ocr(self, *, capture):
+            return ocr_payloads[tuple(capture.values())]
+
+    assert build_cw_shop_scanner(RuntimeStub())() == ([{"name": "黑塔", "price": 1}], 40, 7, False, 8)
+
+
+def test_parse_shop_level_prefers_level_text_over_progress_counter():
+    shop_module = load_cw_shop_module()
+    parse_shop_level = getattr(shop_module, "_parse_shop_level", None)
+    assert parse_shop_level is not None
+
+    raw_items = [
+        [[0, 0], "购买经验", 0.9986591637134552],
+        [[0, 0], "LV.", 0.9367905457814535],
+        [[0, 0], "3", 0.9983842372894287],
+        [[0, 0], "0/4", 0.9961388905843099],
+    ]
+
+    assert parse_shop_level(raw_items, default=None) == 3
+
+
+def test_parse_shop_level_does_not_treat_progress_counter_as_level():
+    shop_module = load_cw_shop_module()
+    parse_shop_level = getattr(shop_module, "_parse_shop_level", None)
+    assert parse_shop_level is not None
+
+    raw_items = [
+        [[0, 0], "LV.", 0.9367905457814535],
+        [[0, 0], "0/4", 0.9961388905843099],
+    ]
+
+    assert parse_shop_level(raw_items, default=None) is None
+
+
+@pytest.mark.parametrize(
+    "raw_items",
+    [
+        [
+            [[0, 0], "LV.0/4", 0.9961388905843099],
+        ],
+        [
+            [[0, 0], "0", 0.9961388905843099],
+        ],
+    ],
+)
+def test_parse_shop_level_rejects_merged_or_orphan_progress_digits(raw_items):
+    shop_module = load_cw_shop_module()
+    parse_shop_level = getattr(shop_module, "_parse_shop_level", None)
+    assert parse_shop_level is not None
+
+    assert parse_shop_level(raw_items, default=None) is None
+
+
 def test_shop_scan_without_guide_keeps_opened_and_filters_guide_summary(tmp_path):
     shop_module = load_cw_shop_module()
     open_cw_shop = getattr(shop_module, "open_cw_shop", None)
