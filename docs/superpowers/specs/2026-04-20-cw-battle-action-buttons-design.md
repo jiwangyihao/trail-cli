@@ -1,3 +1,5 @@
+> 本文件已被 `docs/superpowers/specs/2026-04-21-trail-skill-system-redesign-design.md` 取代；仅供历史参考，不代表当前 active skill 拓扑。
+
 # 货币战争战斗/结算按钮收口设计
 
 > Note: 若本文旧示例与当前 screenshot-first guidance 冲突，以 `2026-04-20-screenshot-first-guidance-design.md` 为准。

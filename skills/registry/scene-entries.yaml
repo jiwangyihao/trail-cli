@@ -1,0 +1,19 @@
+root_entry_skill: trail-hsr
+
+entries:
+  - scene: cw
+    entry_skill: trail-cw-entry
+    status: planned
+    exposure: public
+    aliases:
+      - 货币战争
+      - Currency Wars
+      - cw
+
+internal_skills:
+  - name: trail-hsr-advanced
+    status: active
+    exposure: internal
+    caller_roles:
+      - root_entry
+      - scene_entry

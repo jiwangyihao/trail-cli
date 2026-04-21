@@ -1,0 +1,44 @@
+[
+  {
+    "prompt": "帮我继续玩星铁",
+    "sample_type": "root-vs-scene",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "帮我接管星铁主线",
+    "sample_type": "root-vs-scene",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "货币战争入口已经上线后，直接带我进货币战争",
+    "sample_type": "root-vs-scene",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "帮我玩货币战争",
+    "sample_type": "planned-scene-fallback",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "进入货币战争玩法",
+    "sample_type": "planned-scene-fallback",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "星铁启动失败了，帮我继续玩",
+    "sample_type": "root-vs-advanced",
+    "candidates": ["trail-hsr", "trail-hsr-advanced"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "游戏窗口不对，帮我恢复后继续玩",
+    "sample_type": "root-vs-advanced",
+    "candidates": ["trail-hsr", "trail-hsr-advanced"],
+    "expected_winner": "trail-hsr"
+  }
+]

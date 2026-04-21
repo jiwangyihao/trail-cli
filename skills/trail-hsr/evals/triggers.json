@@ -1,0 +1,153 @@
+[
+  {
+    "prompt": "帮我继续玩星铁",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "接管当前星铁任务，从这个界面继续",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "接管并继续推进我现在的星铁进度",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "我把星铁开着了，你接着玩下去",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "从当前局面继续推进星铁主线",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "帮我接管星铁里的日常流程",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "星铁窗口已经在前台，继续帮我玩",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "把星铁接管过来并自动推进当前任务",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "帮我总结这个 PDF 的重点",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "把这份表格整理成按部门汇总的版本",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "帮我起草一封邮件回复客户",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "写个 Python 脚本批量改文件名",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "把会议纪要提炼成三条结论",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "帮我查一下这周去上海的机票",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "把这段录音转成逐字稿",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "帮我设计一页产品发布海报",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "解释这张星铁截图和 OCR 文本里现在发生了什么",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "查一下星铁货币战争攻略，顺便给我玩法说明",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "解释一下 trail daemon status 输出是什么意思",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "帮我继续玩星铁，顺着当前局面往下推进",
+    "sample_type": "competition",
+    "scene_status": "active",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "现在就接管星铁里的货币战争玩法",
+    "sample_type": "competition",
+    "scene_status": "planned",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "货币战争场景尚未 active，仍在 planned 状态时，也先帮我继续推进这一局",
+    "sample_type": "competition",
+    "scene_status": "planned",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "星铁启动失败了，但我还是想继续玩，你先接管处理",
+    "sample_type": "competition",
+    "scene_status": "active",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "游戏窗口异常了，恢复之后继续推进当前任务",
+    "sample_type": "competition",
+    "scene_status": "active",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "等货币战争入口上线后，直接带我直达入口",
+    "sample_type": "competition",
+    "scene_status": "active",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "如果货币战争玩法入口已经上线，就直接走对应入口",
+    "sample_type": "competition",
+    "scene_status": "active",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "货币战争的专用入口上线以后，我要直达那个玩法",
+    "sample_type": "competition",
+    "scene_status": "active",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-cw-entry"
+  }
+]

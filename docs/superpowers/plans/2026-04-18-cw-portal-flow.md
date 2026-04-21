@@ -1,3 +1,5 @@
+> 本文件已被 `docs/superpowers/specs/2026-04-21-trail-skill-system-redesign-design.md` 取代；仅供历史参考，不代表当前 active skill 拓扑。
+
 # 货币战争首页与投资环境流程 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven development. Steps use checkbox syntax for tracking.

@@ -8,7 +8,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 常驻 `traild` daemon 持有 runtime、截图、OCR、找图、输入、guide、`cw` 场景执行和 session 热状态
 - 默认 simple 层只教 3 个起手能力：`trail start`、`trail ocr read`、`trail input ...`
 - `trail start` 会自动收口 daemon、游戏、窗口与 session，并返回可继续使用的 `session=<id>`
-- 如果 `trail start` 失败，或 simple 层不能满足定位需求，再切到 `skills/trail-hsr-advanced` 处理 daemon / window / session / screen / image / state 等进阶命令
+- 如果 `trail start` 失败，或 simple 层不能满足定位需求，再由上层 skill 内部升级到 `trail-hsr-advanced` 处理 daemon / window / session / screen / image / state 等进阶命令
 
 ## Quick Start
 
@@ -17,7 +17,15 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 启动并拿到可用 session：`trail start`
 - 观察当前画面：`trail ocr read`
 - 执行明确动作：`trail input click ...`、`trail input drag ...`、`trail input key ...`
-- 需要进入具体场景 skill 时，先用 `trail-hsr` 跑 simple 层，再切到 `trail-cw`
+- 需要进入具体场景 skill 时，先由 `trail-hsr` 接管，再按 registry 交给当前已上线的 scene entry
+
+## Skill 拓扑
+
+- `trail-hsr` 是对外总入口，用于接管并继续推进《崩坏：星穹铁道》常规游玩。
+- `trail-<scene>-entry` 是对外场景入口；只有 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口。
+- `trail-hsr-advanced` 是内部恢复层，用于启动失败、窗口接管异常、daemon / session 恢复等底层问题。
+- `trail-hsr-advanced` 不作为用户入口；只有 `trail-hsr` 或当前 active 的 scene entry 需要恢复链路时才会内部升级到它。
+- 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。
 
 手工 CLI 冒烟顺序：
 
@@ -27,7 +35,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 
 ## Advanced 启动与排障
 
-- simple 层失败或不够用时，加载 `skills/trail-hsr-advanced`
+- simple 层失败或不够用时，由上层 active skill 内部升级到 `trail-hsr-advanced`
 - 进阶原子命令包括：`trail daemon install`、`trail daemon status`、`trail daemon start`
 - 结果未知或需要恢复时，使用：`trail daemon request-status --request-id <id>`、`trail daemon reconcile-session --session <id>`
 - 需要手工控制游戏与窗口时，使用：`trail window launch --channel official|bilibili|global`、`trail window attach --window-title "崩坏：星穹铁道"`
@@ -70,7 +78,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 常规 battle / settle 流程默认执行：`trail cw battle run --session <id> --timeout 570`
 - `trail cw battle run` 可能耗时接近 10 分钟，命令行工具的外部 timeout 至少调到 11 分钟
 - 如果 `trail cw battle run` 已在 daemon 内成功收口但当前 stdout 丢失，立刻执行：`trail state dump --session <id> --format yaml`
-- `trail cw battle start` / `trail cw battle continue` / `trail cw settle next` 仍保留为 CLI 兼容命令，但只建议在 `skills/trail-cw-battle-advanced` fallback 流程中手工拆链使用
+- `trail cw battle start` / `trail cw battle continue` / `trail cw settle next` 仍保留为 CLI 兼容命令，但只建议在内部 fallback 流程中手工拆链使用
 
 编队槽位读取建议：
 
@@ -92,7 +100,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `image`：进阶模板识别与等待
 - `input`：点击、拖拽、按键
 - `state`：进阶读取 session 与 scene state
-- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`portal` 负责开局投资环境页的识别/选择/刷新/重开；`strategy` 负责局内“请选择投资策略”页的识别/单卡刷新/选择；常规 battle / settle 默认入口是 `trail cw battle run --session <id> --timeout 570`；`battle` / `settle` 分组仍保留兼容原子命令，但只建议在 `skills/trail-cw-battle-advanced` fallback 流程使用；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口；其余分组处理局内阶段与资源，包含 `portal`、`strategy`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
+- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`portal` 负责开局投资环境页的识别/选择/刷新/重开；`strategy` 负责局内“请选择投资策略”页的识别/单卡刷新/选择；常规 battle / settle 默认入口是 `trail cw battle run --session <id> --timeout 570`；`battle` / `settle` 分组仍保留兼容原子命令，但只建议在内部 fallback 流程使用；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口；其余分组处理局内阶段与资源，包含 `portal`、`strategy`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
 ## Window Launch
 
@@ -303,8 +311,8 @@ recover action=daemon.request_status request=req-42
 - skill 负责整局编排、阶段切换、策略判断与失败恢复
 - 本项目不追求“内建识别穷尽所有状态”，而是优先把真实动作链和最小可靠检测做出来，把复杂画面判断留给 agent 的多模态能力
 - 货币战争里，攻略应用应放在“进入游戏并完成投资环境选择之后”执行，不建议在更早的入口阶段导入攻略
-- `skills/trail-hsr` 负责 `trail start`、`trail ocr read`、`trail input ...` 的 simple-first 起手与场景切换
-- `skills/trail-hsr-advanced` 负责 daemon / window / session / screen / image / state 等进阶命令
+- `trail-hsr` 是对外总入口，负责 `trail start`、`trail ocr read`、`trail input ...` 的 simple-first 起手、总入口接管与 scene 路由判断
+- `trail-<scene>-entry` 是对外场景入口；只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口
 - `trail cw enter` 只负责把页面带到货币战争首页；真正进入投资环境页要用 `trail cw start`
 - `trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断
 - `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
@@ -312,15 +320,14 @@ recover action=daemon.request_status request=req-42
 - `trail cw invest read|choose` 继续表示局内 invest 事件，不是开局投资环境页命令
 - `trail cw slots place` 用重复 `--action <source,target>` 显式批量上场；`trail cw hand sell` 用重复 `--slot <n>` 显式批量卖牌
 - 这两类批量命令都严格保序、遇错即停；如果中途失败且前面动作可能已生效，先重新执行 `trail cw slots read --session <id>` 再继续后续判断
-- `skills/trail-hsr` 负责 session、窗口检查与场景切换
-- `skills/trail-cw` 是整局货币战争循环的默认 owner；常规 battle / settle 链默认执行 `trail cw battle run --session <id> --timeout 570`
-- `skills/trail-cw-events` 只负责 Boss 预览与特殊事件，不再承载 battle 主流程
-- `skills/trail-cw-battle-advanced` 负责 CW 场景内 battle / settle 的 scene-local fallback；旧 `trail cw battle start|continue` 与 `trail cw settle next` 只建议在这里使用
-- `skills/trail-hsr-advanced` 继续负责 daemon / request-status / reconcile-session / window / session / screen / image / state 这类 control-plane 与恢复链路；如果 `trail cw battle run` 的 stdout 丢失但 `session=<id>` 还在，立刻执行 `trail state dump --session <id> --format yaml`
-- 其余 `skills/trail-cw-*` 继续负责攻略、商店、补给、编队等子流程；如果需要手工拆 battle / settle 链，切到 `trail-cw-battle-advanced`，不要回退到 `trail-cw-events`
+- `trail-hsr` 负责 session、窗口检查与场景切换，并在没有已上线 scene entry 时继续承担总入口 owner
+- 当前 scene entry 一旦命中并接管某个具体场景，该 scene entry 就成为该场景内的唯一编排 owner；常规 battle / settle 链默认执行 `trail cw battle run --session <id> --timeout 570`
+- `trail-hsr-advanced` 是内部恢复层，继续负责 daemon / request-status / reconcile-session / window / session / screen / image / state 这类 control-plane 与恢复链路；如果 `trail cw battle run` 的 stdout 丢失但 `session=<id>` 还在，立刻执行 `trail state dump --session <id> --format yaml`
+- `trail-hsr-advanced` 不作为用户入口；它完成恢复后必须把控制权交回调用它的上层 active skill
+- 归档 skill 不再作为 active owner 或推荐入口
 - README 里的 simple 层序列是默认入口；advanced 段落只在 simple 层失败或不够用时启用
 
 ## 项目边界
 
 - `trail-cli` 是独立项目，不在运行时依赖 `StarRailAssistant` 的场景模块
-- CLI 不提供“一键自动跑完整局”的单命令，完整对局由 `trail-cw` skill 编排
+- CLI 不提供“一键自动跑完整局”的单命令，完整对局由 `trail-hsr` 或当前 active 的 scene entry skill 编排
