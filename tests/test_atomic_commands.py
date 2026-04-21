@@ -935,11 +935,16 @@ def test_ocr_read_rejects_invalid_retry_high_env_before_daemon_call(cli_runner, 
 def test_readme_documents_windows_directml_profile_contract() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "DirectML 目前只作为 Windows 定向的可选加速 profile" in readme
-    assert "需要使用项目明确支持的 DirectML 环境 profile" in readme
-    assert "默认安装仍以 CPU 基线依赖为准" in readme
+    assert "Windows 默认安装就是 DML 基线" in readme
+    assert "CPU 现在只作为显式兼容/排障路径" in readme
     assert "不要在同一环境里模糊共存 `onnxruntime` 与 `onnxruntime-directml`" in readme
     assert "确认当前环境最终只保留预期的 ONNX Runtime 变体" in readme
+
+
+def test_pyproject_declares_windows_directml_runtime_dependency() -> None:
+    pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert '"onnxruntime-directml' in pyproject
 
 
 def test_ocr_read_renders_OCR_PROVIDER_UNAVAILABLE_failure(cli_runner, monkeypatch, tmp_path):

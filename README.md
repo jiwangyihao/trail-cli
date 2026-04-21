@@ -138,9 +138,9 @@ OCR 首版语义：
 
 DirectML 安装与环境 profile 说明：
 
-- DirectML 目前只作为 Windows 定向的可选加速 profile，不承诺为通用跨平台 GPU 方案
-- 需要使用项目明确支持的 DirectML 环境 profile，而不是在任意现有 OCR 环境上直接叠加依赖
-- 默认安装仍以 CPU 基线依赖为准；只有需要 DirectML 时，才切换到单独准备好的 Windows DirectML profile
+- Windows 默认安装就是 DML 基线；`provider=auto` 的默认行为与默认依赖保持一致
+- CPU 现在只作为显式兼容/排障路径；需要 CPU 时，使用 `provider=cpu` 强制回落
+- DirectML 仍然是 Windows 定向方案，不承诺为通用跨平台 GPU 方案
 - 不要在同一环境里模糊共存 `onnxruntime` 与 `onnxruntime-directml`；应确认当前环境最终只保留预期的 ONNX Runtime 变体
 - 排障时先确认当前 profile、已安装的 ORT 变体和 `trail ocr read --provider dml` 的实际 failure/success 结果，再判断是否属于环境不满足或运行期 DML 失败
 
@@ -266,10 +266,10 @@ shot path=.trail/shots/req-shop.png
 info read_image_first=1
 item idx=1 slot=1 name=希儿 cost=2
 item idx=2 slot=2 name=停云 cost=1
-info coins=40 level=7 reserve_full=0 max_team_size=8
+info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7
 ```
 
-- 商店快照里的 `coins` / `level` / `reserve_full` / `max_team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露；`open` / `refresh` / `close` 不重复输出旧快照事实
+- 商店快照里的 `coins` / `level` / `exp` / `reserve_full` / `team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露；`open` / `refresh` / `close` 不重复输出旧快照事实
 - `trail cw shop scan` 是当前画面读命令，所以会带 `shot path=...` 与 `info read_image_first=1`；`trail cw shop status` 仍是 session / artifact 汇总读，不默认带图
 
 ```text

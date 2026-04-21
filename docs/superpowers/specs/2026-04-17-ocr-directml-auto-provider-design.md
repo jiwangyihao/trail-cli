@@ -41,7 +41,7 @@
 
 ## 文档/安装口径
 
-- 默认 CPU baseline 仍由当前 `rapidocr-onnxruntime` 路线提供
+- Windows 默认安装改为 DirectML 基线，CPU 只保留为显式兼容/排障路径
 - DirectML 是 Windows 定向的受支持 profile
 - 使用 DirectML 时，需要保证环境里的 ORT 变体是明确的，不能让 `onnxruntime` 与 `onnxruntime-directml` 处于模糊共存状态
 
