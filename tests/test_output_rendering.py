@@ -2,8 +2,17 @@ from pathlib import Path
 
 import pytest
 
+import trail.output.rendering as rendering_module
 from trail.cli import app
-from trail.output.rendering import TEXT_RENDERERS, _render_cw_portal_cards, print_output, render_output, set_output_options
+from trail.output.rendering import (
+    TEXT_RENDERERS,
+    _append_common_success_lines,
+    _render_cw_entry,
+    _render_cw_portal_cards,
+    print_output,
+    render_output,
+    set_output_options,
+)
 from tests.support.fake_daemon import build_success_response
 
 
@@ -313,6 +322,10 @@ def test_agents_document_screenshot_first_protocol_facts() -> None:
         "success 路径必须先输出首行，再按需要输出 `shot`；若当前结果带截图，再紧跟 `info read_image_first=1`；然后才是 `item`、`guide`、`text`、`slot`、`opt`、其余 `info` 这类实体行"
         in agents
     )
+    assert (
+        "若命令命中已配置 workflow handoff，success 路径允许在 `warn`、`ref` 之后追加一行尾行强提示 `info handoff_skill=... handoff_strength=... handoff_reason=...`，且该行必须是 success 输出最后一行。"
+        in agents
+    )
     assert "envelope 顶层若带 `screenshot`，同步生成 `image_guidance.read_image_first=1`" in agents
     assert "`image_guidance` 不进入 YAML body" in agents
     assert "`--verbose` 不为 `image_guidance` 新增独立 guidance 事件" in agents
@@ -452,6 +465,15 @@ def test_readme_documents_portal_detect_recovery_contract() -> None:
     assert "detect 不会补录 `mode/difficulty/battle_mode`" in readme
     assert "trail cw portal.refresh" not in readme
     assert "trail cw portal.restart" not in readme
+
+
+def test_readme_documents_handoff_tail_rule() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert (
+        "- 已配置 workflow handoff 的 success 结果会在正常 success 内容、`warn`、`ref` 之后，额外追加一行尾行强提示：`info handoff_skill=... handoff_strength=... handoff_reason=...`；它始终是 success 输出最后一行"
+        in readme
+    )
 
 
 def test_readme_documents_strategy_page_boundary() -> None:
@@ -1760,6 +1782,28 @@ def test_render_output_renders_cw_enter_home_text():
         "ok cw.enter page=home",
         "shot path=.trail/shots/req-enter.png",
         "info read_image_first=1",
+        "info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered",
+    ]
+
+
+def test_render_output_renders_cw_enter_handoff_line():
+    payload = {
+        "ok": True,
+        "data": {"page": "home"},
+        "screenshot": ".trail/shots/req-enter-handoff.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.enter", payload).splitlines() == [
+        "ok cw.enter page=home",
+        "shot path=.trail/shots/req-enter-handoff.png",
+        "info read_image_first=1",
+        "info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered",
     ]
 
 
@@ -1780,6 +1824,381 @@ def test_render_output_renders_cw_enter_already_home_info():
         "shot path=.trail/shots/req-enter-home.png",
         "info read_image_first=1",
         "info already_home=1",
+        "info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered",
+    ]
+
+
+def test_render_output_renders_cw_enter_handoff_after_already_home_info():
+    payload = {
+        "ok": True,
+        "data": {"page": "home", "already_home": True},
+        "screenshot": ".trail/shots/req-enter-handoff-home.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.enter", payload).splitlines() == [
+        "ok cw.enter page=home",
+        "shot path=.trail/shots/req-enter-handoff-home.png",
+        "info read_image_first=1",
+        "info already_home=1",
+        "info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered",
+    ]
+
+
+def test_render_output_renders_cw_enter_handoff_after_warnings_and_references():
+    payload = {
+        "ok": True,
+        "data": {"page": "home", "already_home": True},
+        "screenshot": ".trail/shots/req-enter-handoff-tail.png",
+        "timing": {},
+        "warnings": [
+            {"code": "PORTAL_STALE", "message": "portal snapshot stale"},
+        ],
+        "references": [
+            {"path": ".trail/artifacts/portal.json", "similarity": 0.88},
+        ],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.enter", payload).splitlines() == [
+        "ok cw.enter page=home",
+        "shot path=.trail/shots/req-enter-handoff-tail.png",
+        "info read_image_first=1",
+        "info already_home=1",
+        'warn code=PORTAL_STALE msg="portal snapshot stale"',
+        "ref path=.trail/artifacts/portal.json sim=0.88",
+        "info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered",
+    ]
+
+
+def test_workflow_handoff_common_success_lines_leave_handoff_for_finalize(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        rendering_module,
+        "_load_workflow_handoffs",
+        lambda: {
+            "unknown.success": {
+                "default": {
+                    "handoff_skill": "trail-generic-entry",
+                    "handoff_strength": "strong",
+                    "handoff_reason": "generic_ready",
+                }
+            }
+        },
+    )
+    payload = {
+        "ok": True,
+        "data": {},
+        "screenshot": ".trail/shots/req-common-handoff.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [{"code": "GENERIC_WARN", "message": "generic warning"}],
+        "references": [{"path": ".trail/artifacts/generic.json", "similarity": 0.66}],
+        "debug": None,
+        "error": None,
+    }
+
+    assert _append_common_success_lines(["ok unknown.success"], payload, "unknown.success") == [
+        "ok unknown.success",
+        "shot path=.trail/shots/req-common-handoff.png",
+        "info read_image_first=1",
+        'warn code=GENERIC_WARN msg="generic warning"',
+        'ref path=.trail/artifacts/generic.json sim=0.66',
+    ]
+
+
+def test_cw_enter_handoff_renderer_leaves_handoff_for_success_finalize(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        rendering_module,
+        "_load_workflow_handoffs",
+        lambda: {
+            "cw.enter": {
+                "default": {
+                    "handoff_skill": "trail-cw-entry",
+                    "handoff_strength": "strong",
+                    "handoff_reason": "scene_entered",
+                }
+            }
+        },
+    )
+    payload = {
+        "ok": True,
+        "data": {"page": "home", "already_home": True},
+        "screenshot": ".trail/shots/req-enter-renderer.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [{"code": "PORTAL_STALE", "message": "portal snapshot stale"}],
+        "references": [{"path": ".trail/artifacts/portal.json", "similarity": 0.88}],
+        "debug": None,
+        "error": None,
+    }
+
+    assert _render_cw_entry("cw.enter", payload) == [
+        "ok cw.enter page=home",
+        "shot path=.trail/shots/req-enter-renderer.png",
+        "info read_image_first=1",
+        "info already_home=1",
+        'warn code=PORTAL_STALE msg="portal snapshot stale"',
+        'ref path=.trail/artifacts/portal.json sim=0.88',
+    ]
+
+
+def test_render_output_handoff_status_prefers_status_mapping_over_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        rendering_module,
+        "_load_workflow_handoffs",
+        lambda: {
+            "cw.enter": {
+                "default": {
+                    "handoff_skill": "trail-cw-entry",
+                    "handoff_strength": "strong",
+                    "handoff_reason": "scene_entered",
+                },
+                "statuses": {
+                    "portal_ready": {
+                        "handoff_skill": "trail-portal-entry",
+                        "handoff_strength": "strong",
+                        "handoff_reason": "portal_ready",
+                    }
+                },
+            }
+        },
+    )
+    payload = {
+        "ok": True,
+        "data": {"page": "home", "status": "portal_ready"},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.enter", payload).splitlines() == [
+        "ok cw.enter page=home",
+        "info handoff_skill=trail-portal-entry handoff_strength=strong handoff_reason=portal_ready",
+    ]
+
+
+def test_render_output_handoff_status_omits_line_without_status_match_or_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        rendering_module,
+        "_load_workflow_handoffs",
+        lambda: {
+            "cw.enter": {
+                "statuses": {
+                    "portal_ready": {
+                        "handoff_skill": "trail-portal-entry",
+                        "handoff_strength": "strong",
+                        "handoff_reason": "portal_ready",
+                    }
+                }
+            }
+        },
+    )
+    payload = {
+        "ok": True,
+        "data": {"page": "home", "status": "unknown"},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.enter", payload).splitlines() == [
+        "ok cw.enter page=home",
+    ]
+
+
+def test_render_output_handoff_status_survives_invalid_default_branch(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        rendering_module,
+        "_load_workflow_handoffs",
+        lambda: {
+            "cw.enter": {
+                "default": "broken",
+                "statuses": {
+                    "portal_ready": {
+                        "handoff_skill": "trail-portal-entry",
+                        "handoff_strength": "strong",
+                        "handoff_reason": "portal_ready",
+                    }
+                },
+            }
+        },
+    )
+    payload = {
+        "ok": True,
+        "data": {"page": "home", "status": "portal_ready"},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.enter", payload).splitlines() == [
+        "ok cw.enter page=home",
+        "info handoff_skill=trail-portal-entry handoff_strength=strong handoff_reason=portal_ready",
+    ]
+
+
+def test_render_output_handoff_status_survives_invalid_statuses_branch(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        rendering_module,
+        "_load_workflow_handoffs",
+        lambda: {
+            "cw.enter": {
+                "default": {
+                    "handoff_skill": "trail-cw-entry",
+                    "handoff_strength": "strong",
+                    "handoff_reason": "scene_entered",
+                },
+                "statuses": "broken",
+            }
+        },
+    )
+    payload = {
+        "ok": True,
+        "data": {"page": "home", "status": "portal_ready"},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.enter", payload).splitlines() == [
+        "ok cw.enter page=home",
+        "info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered",
+    ]
+
+
+def test_render_output_generic_success_has_no_workflow_handoff():
+    payload = {
+        "ok": True,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("unknown.success", payload).splitlines() == [
+        "ok unknown.success",
+    ]
+
+
+def test_render_output_cw_start_has_no_workflow_handoff():
+    payload = {
+        "ok": True,
+        "data": {"cards": []},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.start", payload).splitlines() == [
+        "ok cw.start cards=0",
+    ]
+
+
+def test_render_output_cw_start_handoff_tail_for_configured_custom_renderer(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        rendering_module,
+        "_load_workflow_handoffs",
+        lambda: {
+            "cw.start": {
+                "default": {
+                    "handoff_skill": "trail-cw-entry",
+                    "handoff_strength": "strong",
+                    "handoff_reason": "portal_ready",
+                }
+            }
+        },
+    )
+    payload = {
+        "ok": True,
+        "data": {
+            "cards": [
+                {
+                    "card_idx": 1,
+                    "portal_title": "Alpha Portal",
+                    "portal_description": "Alpha Desc",
+                    "score": 0.99,
+                    "new": 1,
+                    "guides": [],
+                }
+            ]
+        },
+        "screenshot": ".trail/shots/req-start-handoff.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [{"code": "PORTAL_STALE", "message": "portal snapshot stale"}],
+        "references": [{"path": ".trail/artifacts/portal.json", "similarity": 0.88}],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.start", payload).splitlines() == [
+        "ok cw.start cards=1",
+        "shot path=.trail/shots/req-start-handoff.png",
+        "info read_image_first=1",
+        'opt idx=1 投资环境="Alpha Portal" score=0.99 待收集=1',
+        'opt idx=1 说明="Alpha Desc"',
+        'warn code=PORTAL_STALE msg="portal snapshot stale"',
+        'ref path=.trail/artifacts/portal.json sim=0.88',
+        'info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=portal_ready',
+    ]
+
+
+def test_render_output_workflow_handoff_tail_for_configured_generic_success(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        rendering_module,
+        "_load_workflow_handoffs",
+        lambda: {
+            "unknown.success": {
+                "default": {
+                    "handoff_skill": "trail-generic-entry",
+                    "handoff_strength": "strong",
+                    "handoff_reason": "generic_ready",
+                }
+            }
+        },
+    )
+    payload = {
+        "ok": True,
+        "data": {},
+        "screenshot": ".trail/shots/req-generic-handoff.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [{"code": "GENERIC_WARN", "message": "generic warning"}],
+        "references": [{"path": ".trail/artifacts/generic.json", "similarity": 0.66}],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("unknown.success", payload).splitlines() == [
+        "ok unknown.success",
+        "shot path=.trail/shots/req-generic-handoff.png",
+        "info read_image_first=1",
+        'warn code=GENERIC_WARN msg="generic warning"',
+        'ref path=.trail/artifacts/generic.json sim=0.66',
+        'info handoff_skill=trail-generic-entry handoff_strength=strong handoff_reason=generic_ready',
     ]
 
 

@@ -47,7 +47,7 @@ def test_scene_entries_registry_declares_root_entry_and_internal_roles() -> None
         {
             "scene": "cw",
             "entry_skill": "trail-cw-entry",
-            "status": "planned",
+            "status": "active",
             "exposure": "public",
             "aliases": ["货币战争", "Currency Wars", "cw"],
         }
@@ -101,3 +101,28 @@ def test_active_skills_directory_no_longer_contains_legacy_cw_dirs() -> None:
     assert _active_public_scene_entry_skills(registry_data).isdisjoint(LEGACY_CW_SKILL_DIRS)
     assert active_skill_dirs.isdisjoint(LEGACY_CW_SKILL_DIRS)
     assert active_skill_dirs == allowed_active_skill_dirs
+
+
+def test_cw_entry_registry_is_active_public_scene_entry() -> None:
+    data = _load_registry()
+
+    assert data["entries"] == [
+        {
+            "scene": "cw",
+            "entry_skill": "trail-cw-entry",
+            "status": "active",
+            "exposure": "public",
+            "aliases": ["货币战争", "Currency Wars", "cw"],
+        }
+    ]
+    assert _active_public_scene_entry_skills(data) == {"trail-cw-entry"}
+
+
+def test_cw_entry_active_skill_directory_contract_allows_only_registry_public_entries() -> None:
+    registry_data = _load_registry()
+    active_skill_dirs = {path.name for path in SKILLS_ROOT.iterdir() if path.is_dir()}
+
+    assert "trail-cw-entry" in _active_public_scene_entry_skills(registry_data)
+    assert "trail-cw-entry" in active_skill_dirs
+    assert active_skill_dirs == CORE_ACTIVE_SKILL_DIRS | {"trail-cw-entry"}
+    assert not any(name.startswith("trail-cw") and name != "trail-cw-entry" for name in active_skill_dirs)

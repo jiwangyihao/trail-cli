@@ -18,11 +18,13 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 观察当前画面：`trail ocr read`
 - 执行明确动作：`trail input click ...`、`trail input drag ...`、`trail input key ...`
 - 需要进入具体场景 skill 时，先由 `trail-hsr` 接管，再按 registry 交给当前已上线的 scene entry
+- 部分已配置命令在 success 后会直接输出 handoff `info`，提示 Agent 切到对应 scene entry；当前第一批是 `trail cw enter`
 
 ## Skill 拓扑
 
 - `trail-hsr` 是对外总入口，用于接管并继续推进《崩坏：星穹铁道》常规游玩。
 - `trail-<scene>-entry` 是对外场景入口；只有 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口。
+- `trail-cw-entry` 是货币战争当前入口 skill / scene entry；它只负责该玩法入口后的编排，不是旧 `trail-cw` 那种整局 owner。
 - `trail-hsr-advanced` 是内部恢复层，用于启动失败、窗口接管异常、daemon / session 恢复等底层问题。
 - `trail-hsr-advanced` 不作为用户入口；只有 `trail-hsr` 或当前 active 的 scene entry 需要恢复链路时才会内部升级到它。
 - 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。
@@ -46,6 +48,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 
 - 先通过 `trail start` 或 `trail session create` 拿到可用 `session`
 - `trail cw enter --session <id>` 只负责把页面带到货币战争首页
+- `trail cw enter --session <id>` success 尾行会返回 `info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered`，表示下一步应优先切到 `trail-cw-entry`
 - 到首页后先确认本局偏好：
   - `攻略优先` / `环境优先`
   - `standard` / `overclock`
@@ -160,6 +163,7 @@ DirectML 安装与环境 profile 说明：
 - 常见正文前缀包括 `shot`、`item`、`guide`、`text`、`info`、`why`、`warn`、`ref`、`request`、`recover`；`debug` 仅在 `--verbose` 下追加
 - `shot path=...` 表示当前命令结果对应的截图路径；带截图的 success 结果会先输出 `shot path=...`，再输出 `info read_image_first=1`，然后才是实体行
 - `info read_image_first=1` 只出现在带截图的 success 文本路径，表示 Agent 必须先阅读本次命令返回的原始截图，再参考后续压缩文本
+- 已配置 workflow handoff 的 success 结果会在正常 success 内容、`warn`、`ref` 之后，额外追加一行尾行强提示：`info handoff_skill=... handoff_strength=... handoff_reason=...`；它始终是 success 输出最后一行
 - 默认失败路径只要当前结果携带 `request_id`，就会保留 `request id=<id>`，用于恢复与排障
 - 只有结果未知或当前失败显式可恢复时，才会出现 `recover action=daemon.request_status request=<id>`；仅有 `request id=<id>` 不等于当前失败一定可恢复
 - `trail daemon request-status --request-id <id>` 用于回查某个请求的终态、关联 session、最近可见阶段与污染状态，典型输出是 `ok daemon.request_status request=req-42 session=sess-1 final_state=completed last_visible_stage=responded tainted=0`

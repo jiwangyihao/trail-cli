@@ -3,7 +3,7 @@ root_entry_skill: trail-hsr
 entries:
   - scene: cw
     entry_skill: trail-cw-entry
-    status: planned
+    status: active
     exposure: public
     aliases:
       - 货币战争
