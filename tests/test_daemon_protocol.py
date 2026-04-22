@@ -10,6 +10,7 @@ from trail.core.errors import TrailError
 import trail.daemon.server as daemon_server_module
 from trail.daemon.command_service import CommandService, PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
 from trail.daemon.client import TrailDaemonClient, resolve_response_timeout, send_daemon_request
+from trail.daemon.command_timeouts import resolve_command_execution_timeout
 from trail.daemon.models import DaemonRequest
 from trail.daemon.protocol import PROTOCOL_VERSION
 from trail.daemon.server import TrailDaemonServer
@@ -92,6 +93,47 @@ class ProtocolRuntimeService:
         return dict(self.launch_result)
 
 
+class StartRunCaptureRuntime:
+    def __init__(self, *, workspace_root: Path | None = None, probe_values: list[object] | None = None):
+        self.workspace_root = workspace_root
+        self.capture_requests: list[tuple[bool, str | None]] = []
+        self.probe_values = list(probe_values or [])
+        self.probe_requests: list[dict[str, object]] = []
+
+    def set_workspace_root(self, workspace_root: str | Path):
+        self.workspace_root = Path(workspace_root)
+        return self
+
+    def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+        self.capture_requests.append((optional, request_id))
+        if self.workspace_root is None:
+            raise AssertionError("workspace_root missing for capture")
+        capture_request_id = request_id or "capture"
+        return str(self.workspace_root / ".trail" / "shots" / f"{capture_request_id}.png")
+
+    def capture_image(self, **kwargs):
+        self.probe_requests.append(dict(kwargs))
+        if self.probe_values:
+            return self.probe_values.pop(0)
+        return "bright"
+
+    def collect_warnings(self):
+        return []
+
+    def match_references(self, screenshot_path, limit: int = 3):
+        del screenshot_path, limit
+        return []
+
+    def consume_debug_trace(self):
+        return []
+
+
+class StartRunMissingCaptureRuntime(StartRunCaptureRuntime):
+    def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+        del optional, request_id
+        return None
+
+
 class StartRuntimeServiceStub:
     def __init__(
         self,
@@ -99,6 +141,8 @@ class StartRuntimeServiceStub:
         attach_binding: dict[str, object] | None = None,
         launch_result: dict[str, object] | None = None,
         attach_failures_before_success: int = 0,
+        launch_status: str = "launched_needs_check",
+        runtime=None,
     ):
         self.attach_binding = attach_binding or {"title": "崩坏：星穹铁道", "hwnd": 123}
         self.launch_result = launch_result or {
@@ -109,8 +153,11 @@ class StartRuntimeServiceStub:
             "args": [],
         }
         self.attach_failures_before_success = attach_failures_before_success
+        self.launch_status = launch_status
+        self.runtime = runtime or StartRunCaptureRuntime()
         self.attach_attempts = 0
         self.launch_calls: list[dict[str, object]] = []
+        self.start_run_calls: list[dict[str, object]] = []
 
     def attach_window(self, *, window_title: str):
         self.attach_attempts += 1
@@ -122,9 +169,34 @@ class StartRuntimeServiceStub:
         self.launch_calls.append(dict(payload))
         return dict(self.launch_result)
 
-    def start_run(self, *, window_title: str, game_path: str | None = None, channel: str = "official"):
+    def get_runtime(self, *, workspace_root: str, window_binding):
+        del window_binding
+        if hasattr(self.runtime, "set_workspace_root"):
+            self.runtime.set_workspace_root(workspace_root)
+        return self.runtime
+
+    def start_run(
+        self,
+        *,
+        workspace_root: str | None = None,
+        window_title: str,
+        game_path: str | None = None,
+        channel: str = "official",
+        timeout_seconds: int = 30,
+        interval_seconds: int = 1,
+    ):
+        self.start_run_calls.append(
+            {
+                "workspace_root": workspace_root,
+                "window_title": window_title,
+                "game_path": game_path,
+                "channel": channel,
+                "timeout_seconds": timeout_seconds,
+                "interval_seconds": interval_seconds,
+            }
+        )
         try:
-            return self.attach_window(window_title=window_title)
+            return {**self.attach_window(window_title=window_title), "status": "attached"}
         except TrailError as error:
             if error.code != "WINDOW_NOT_FOUND":
                 raise
@@ -134,10 +206,25 @@ class StartRuntimeServiceStub:
             raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
         while True:
             try:
-                return self.attach_window(window_title=window_title)
+                return {**self.attach_window(window_title=window_title), "status": self.launch_status}
             except TrailError as error:
                 if error.code != "WINDOW_NOT_FOUND":
                     raise
+
+
+class StartRunDetectionRuntime:
+    def __init__(self, *, ocr_results: list[list[object]]):
+        self._ocr_results = [list(result) for result in ocr_results]
+        self.clicks: list[tuple[int, int]] = []
+
+    def ocr(self, *, capture=None, ocr=None, **kwargs):
+        del capture, ocr, kwargs
+        if self._ocr_results:
+            return self._ocr_results.pop(0)
+        return []
+
+    def click_point(self, x: int, y: int):
+        self.clicks.append((x, y))
 
 
 class FailingProtocolRuntimeService:
@@ -423,7 +510,7 @@ def test_command_service_handles_state_dump(tmp_path: Path):
     assert payload["data"]["session_id"] == session.session_id
 
 
-def test_command_service_start_run_returns_session_and_window_facts(tmp_path: Path):
+def test_command_service_start_run_returns_status_and_window_facts(tmp_path: Path):
     runtime_service = StartRuntimeServiceStub()
     session_services = SessionServiceRegistry()
     service = CommandService(runtime_service=runtime_service, session_service=session_services)
@@ -441,10 +528,45 @@ def test_command_service_start_run_returns_session_and_window_facts(tmp_path: Pa
     )
 
     assert payload["ok"] is True
+    assert payload["screenshot"] == ".trail/shots/req-start-1.png"
+    assert payload["data"]["status"] == "attached"
     assert payload["data"]["session"]
     assert payload["data"]["reused"] in {0, 1}
     assert payload["data"]["title"] == "崩坏：星穹铁道"
     assert payload["data"]["hwnd"] == 123
+
+
+def test_command_service_start_run_uses_command_execution_timeout_from_policy(tmp_path: Path):
+    runtime_service = StartRuntimeServiceStub()
+    session_services = SessionServiceRegistry()
+    service = CommandService(runtime_service=runtime_service, session_service=session_services)
+    request_payload = {"window_title": "崩坏：星穹铁道", "channel": "official"}
+
+    payload = service.handle(
+        SimpleNamespace(
+            request_id="req-start-timeout-policy",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload=request_payload,
+        )
+    )
+
+    assert payload["ok"] is True
+    assert runtime_service.start_run_calls == [
+        {
+            "workspace_root": str(tmp_path),
+            "window_title": "崩坏：星穹铁道",
+            "game_path": None,
+            "channel": "official",
+            "timeout_seconds": 180,
+            "interval_seconds": 1,
+        }
+    ]
+    assert runtime_service.start_run_calls[0]["timeout_seconds"] == resolve_command_execution_timeout("start.run", request_payload)
+    assert resolve_response_timeout("start.run", request_payload) == float(runtime_service.start_run_calls[0]["timeout_seconds"])
 
 
 @pytest.mark.parametrize(
@@ -474,8 +596,57 @@ def test_start_run_waits_for_attach_after_window_launch_started_or_already_runni
     result = service.handle(request)
 
     assert result["ok"] is True
+    assert result["data"]["status"] == "launched_needs_check"
+    assert result["screenshot"] == ".trail/shots/req-start-wait.png"
     assert runtime.attach_attempts == 3
     assert runtime.launch_calls == [{"game_path": None, "channel": "official"}]
+
+
+def test_runtime_service_start_run_immediate_attach_reports_attached_status(monkeypatch, tmp_path: Path):
+    from trail.daemon.runtime_service import RuntimeService
+
+    monkeypatch.setattr(RuntimeService, "attach_window", lambda self, *, window_title: {"title": window_title, "hwnd": 123})
+    monkeypatch.setattr(
+        RuntimeService,
+        "launch_game",
+        lambda self, **payload: (_ for _ in ()).throw(AssertionError("launch should not run when attach succeeds immediately")),
+    )
+
+    result = RuntimeService().start_run(
+        workspace_root=str(tmp_path),
+        window_title="崩坏：星穹铁道",
+        channel="official",
+        timeout_seconds=0,
+        interval_seconds=0,
+    )
+
+    assert result == {"title": "崩坏：星穹铁道", "hwnd": 123, "status": "attached"}
+
+
+def test_runtime_service_start_run_immediate_attach_accepts_window_binding(monkeypatch, tmp_path: Path):
+    from trail.daemon.runtime_service import RuntimeService
+    from trail.runtime.model import WindowBinding
+
+    monkeypatch.setattr(
+        RuntimeService,
+        "attach_window",
+        lambda self, *, window_title: WindowBinding(title=window_title, hwnd=123),
+    )
+    monkeypatch.setattr(
+        RuntimeService,
+        "launch_game",
+        lambda self, **payload: (_ for _ in ()).throw(AssertionError("launch should not run when attach succeeds immediately")),
+    )
+
+    result = RuntimeService().start_run(
+        workspace_root=str(tmp_path),
+        window_title="崩坏：星穹铁道",
+        channel="official",
+        timeout_seconds=0,
+        interval_seconds=0,
+    )
+
+    assert result == {"title": "崩坏：星穹铁道", "hwnd": 123, "status": "attached"}
 
 
 def test_runtime_service_start_run_accepts_attach_on_last_allowed_attempt(monkeypatch):
@@ -497,14 +668,256 @@ def test_runtime_service_start_run_accepts_attach_on_last_allowed_attempt(monkey
 
     result = RuntimeService().start_run(window_title="崩坏：星穹铁道", channel="official", timeout_seconds=1, interval_seconds=1)
 
-    assert result == {"title": "崩坏：星穹铁道", "hwnd": 123}
+    assert result == {"title": "崩坏：星穹铁道", "hwnd": 123, "status": "launched_needs_check"}
+
+
+def test_runtime_service_start_run_reports_launched_clicked_enter_after_click_enter_detected(monkeypatch, tmp_path: Path):
+    from trail.daemon.runtime_service import RuntimeService
+
+    attach_attempts = {"count": 0}
+    runtime = StartRunDetectionRuntime(
+        ocr_results=[
+            [
+                {
+                    "text": "点击进入",
+                    "box": {"left": 10, "top": 20, "width": 30, "height": 40},
+                }
+            ]
+        ]
+    )
+    sleep_calls: list[float] = []
+
+    def fake_attach_window(self, *, window_title: str):
+        attach_attempts["count"] += 1
+        if attach_attempts["count"] == 1:
+            raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
+        return {"title": window_title, "hwnd": 123}
+
+    monkeypatch.setattr(RuntimeService, "attach_window", fake_attach_window)
+    monkeypatch.setattr(
+        RuntimeService,
+        "launch_game",
+        lambda self, **payload: {"started": True, "already_running": False, "path": "demo.exe", "channel": payload.get("channel", "official"), "args": []},
+    )
+    monkeypatch.setattr(RuntimeService, "get_runtime", lambda self, *, workspace_root, window_binding: runtime)
+    monkeypatch.setattr("trail.daemon.runtime_service.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    result = RuntimeService().start_run(
+        workspace_root=str(tmp_path),
+        window_title="崩坏：星穹铁道",
+        channel="official",
+        timeout_seconds=0,
+        interval_seconds=0,
+    )
+
+    assert result == {"title": "崩坏：星穹铁道", "hwnd": 123, "status": "launched_clicked_enter"}
+    assert runtime.clicks == [(25, 40)]
+    assert sleep_calls == []
+
+
+def test_runtime_service_start_run_launched_path_accepts_window_binding(monkeypatch, tmp_path: Path):
+    from trail.daemon.runtime_service import RuntimeService
+    from trail.runtime.model import WindowBinding
+
+    attach_attempts = {"count": 0}
+    runtime = StartRunDetectionRuntime(
+        ocr_results=[
+            [
+                {
+                    "text": "点击进入",
+                    "box": {"left": 10, "top": 20, "width": 30, "height": 40},
+                }
+            ]
+        ]
+    )
+    sleep_calls: list[float] = []
+
+    def fake_attach_window(self, *, window_title: str):
+        attach_attempts["count"] += 1
+        if attach_attempts["count"] == 1:
+            raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
+        return WindowBinding(title=window_title, hwnd=123)
+
+    def fake_get_runtime(self, *, workspace_root: str, window_binding):
+        assert workspace_root == str(tmp_path)
+        assert window_binding == {"title": "崩坏：星穹铁道", "hwnd": 123}
+        return runtime
+
+    monkeypatch.setattr(RuntimeService, "attach_window", fake_attach_window)
+    monkeypatch.setattr(
+        RuntimeService,
+        "launch_game",
+        lambda self, **payload: {"started": True, "already_running": False, "path": "demo.exe", "channel": payload.get("channel", "official"), "args": []},
+    )
+    monkeypatch.setattr(RuntimeService, "get_runtime", fake_get_runtime)
+    monkeypatch.setattr("trail.daemon.runtime_service.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    result = RuntimeService().start_run(
+        workspace_root=str(tmp_path),
+        window_title="崩坏：星穹铁道",
+        channel="official",
+        timeout_seconds=0,
+        interval_seconds=0,
+    )
+
+    assert result == {"title": "崩坏：星穹铁道", "hwnd": 123, "status": "launched_clicked_enter"}
+    assert runtime.clicks == [(25, 40)]
+    assert sleep_calls == []
+
+
+def test_runtime_service_start_run_reports_launched_clicked_enter_for_tuple_polygon_ocr_piece(monkeypatch, tmp_path: Path):
+    from trail.daemon.runtime_service import RuntimeService
+
+    attach_attempts = {"count": 0}
+    runtime = StartRunDetectionRuntime(
+        ocr_results=[
+            [
+                (
+                    ((10, 20), (40, 20), (40, 60), (10, 60)),
+                    "点击进入",
+                    0.99,
+                )
+            ]
+        ]
+    )
+    sleep_calls: list[float] = []
+
+    def fake_attach_window(self, *, window_title: str):
+        attach_attempts["count"] += 1
+        if attach_attempts["count"] == 1:
+            raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
+        return {"title": window_title, "hwnd": 123}
+
+    monkeypatch.setattr(RuntimeService, "attach_window", fake_attach_window)
+    monkeypatch.setattr(
+        RuntimeService,
+        "launch_game",
+        lambda self, **payload: {"started": True, "already_running": False, "path": "demo.exe", "channel": payload.get("channel", "official"), "args": []},
+    )
+    monkeypatch.setattr(RuntimeService, "get_runtime", lambda self, *, workspace_root, window_binding: runtime)
+    monkeypatch.setattr("trail.daemon.runtime_service.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    result = RuntimeService().start_run(
+        workspace_root=str(tmp_path),
+        window_title="崩坏：星穹铁道",
+        channel="official",
+        timeout_seconds=0,
+        interval_seconds=0,
+    )
+
+    assert result == {"title": "崩坏：星穹铁道", "hwnd": 123, "status": "launched_clicked_enter"}
+    assert runtime.clicks == [(25, 40)]
+    assert sleep_calls == []
+
+
+@pytest.mark.parametrize(
+    ("ocr_piece", "expected_click"),
+    [
+        (
+            {
+                "text": "点击进入",
+                "polygon": ((10, 20), (40, 20), (40, 60), (10, 60)),
+            },
+            (25, 40),
+        ),
+        (
+            {
+                "text": "点击进入",
+                "points": ((10, 20), (40, 20), (40, 60), (10, 60)),
+            },
+            (25, 40),
+        ),
+        (
+            {
+                "text": "点击进入",
+                "center": {"x": 25, "y": 40},
+            },
+            (25, 40),
+        ),
+    ],
+)
+def test_runtime_service_start_run_reports_launched_clicked_enter_for_mapping_ocr_shapes(
+    monkeypatch,
+    tmp_path: Path,
+    ocr_piece: dict[str, object],
+    expected_click: tuple[int, int],
+):
+    from trail.daemon.runtime_service import RuntimeService
+
+    attach_attempts = {"count": 0}
+    runtime = StartRunDetectionRuntime(ocr_results=[[ocr_piece]])
+    sleep_calls: list[float] = []
+
+    def fake_attach_window(self, *, window_title: str):
+        attach_attempts["count"] += 1
+        if attach_attempts["count"] == 1:
+            raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
+        return {"title": window_title, "hwnd": 123}
+
+    monkeypatch.setattr(RuntimeService, "attach_window", fake_attach_window)
+    monkeypatch.setattr(
+        RuntimeService,
+        "launch_game",
+        lambda self, **payload: {"started": True, "already_running": False, "path": "demo.exe", "channel": payload.get("channel", "official"), "args": []},
+    )
+    monkeypatch.setattr(RuntimeService, "get_runtime", lambda self, *, workspace_root, window_binding: runtime)
+    monkeypatch.setattr("trail.daemon.runtime_service.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    result = RuntimeService().start_run(
+        workspace_root=str(tmp_path),
+        window_title="崩坏：星穹铁道",
+        channel="official",
+        timeout_seconds=0,
+        interval_seconds=0,
+    )
+
+    assert result == {"title": "崩坏：星穹铁道", "hwnd": 123, "status": "launched_clicked_enter"}
+    assert runtime.clicks == [expected_click]
+    assert sleep_calls == []
+
+
+def test_runtime_service_start_run_reports_launched_needs_check_when_click_enter_not_found(monkeypatch, tmp_path: Path):
+    from trail.daemon.runtime_service import RuntimeService
+
+    attach_attempts = {"count": 0}
+    runtime = StartRunDetectionRuntime(ocr_results=[[{"text": "开始游戏"}]])
+    sleep_calls: list[float] = []
+
+    def fake_attach_window(self, *, window_title: str):
+        attach_attempts["count"] += 1
+        if attach_attempts["count"] == 1:
+            raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
+        return {"title": window_title, "hwnd": 123}
+
+    monkeypatch.setattr(RuntimeService, "attach_window", fake_attach_window)
+    monkeypatch.setattr(
+        RuntimeService,
+        "launch_game",
+        lambda self, **payload: {"started": True, "already_running": False, "path": "demo.exe", "channel": payload.get("channel", "official"), "args": []},
+    )
+    monkeypatch.setattr(RuntimeService, "get_runtime", lambda self, *, workspace_root, window_binding: runtime)
+    monkeypatch.setattr("trail.daemon.runtime_service.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    result = RuntimeService().start_run(
+        workspace_root=str(tmp_path),
+        window_title="崩坏：星穹铁道",
+        channel="official",
+        timeout_seconds=0,
+        interval_seconds=0,
+    )
+
+    assert result == {"title": "崩坏：星穹铁道", "hwnd": 123, "status": "launched_needs_check"}
+    assert runtime.clicks == []
+    assert sleep_calls == []
 
 
 def test_command_service_start_run_reuses_existing_session_on_second_call_with_real_runtime_service(tmp_path: Path, monkeypatch):
     from trail.daemon.runtime_service import RuntimeService
 
+    capture_runtime = StartRunCaptureRuntime(workspace_root=tmp_path)
     monkeypatch.setattr("trail.runtime.window.attach_window", lambda window_title: {"title": window_title, "hwnd": 123})
     monkeypatch.setattr("trail.runtime.window.launch_game", lambda **payload: {"started": False, "already_running": False, "path": "demo.exe", "channel": payload.get("channel", "official"), "args": []})
+    monkeypatch.setattr(RuntimeService, "get_runtime", lambda self, *, workspace_root, window_binding: capture_runtime)
 
     command_service = CommandService(
         runtime_service=RuntimeService(),
@@ -541,6 +954,209 @@ def test_command_service_start_run_reuses_existing_session_on_second_call_with_r
     assert second["data"]["session"] == first["data"]["session"]
 
 
+def test_command_service_start_run_delays_capture_for_launched_clicked_enter(tmp_path: Path, monkeypatch):
+    runtime = StartRunCaptureRuntime(
+        workspace_root=tmp_path,
+        probe_values=["bright", "black", "black", "bright"],
+    )
+    runtime_service = StartRuntimeServiceStub(
+        attach_failures_before_success=1,
+        launch_status="launched_clicked_enter",
+        runtime=runtime,
+    )
+    session_services = SessionServiceRegistry()
+    service = CommandService(runtime_service=runtime_service, session_service=session_services)
+    events: list[tuple[object, ...]] = []
+    clock = {"now": 0.0}
+
+    original_capture = runtime.capture_after_action
+
+    def capture_after_action(optional: bool = False, request_id: str | None = None):
+        events.append(("capture", optional, request_id))
+        return original_capture(optional=optional, request_id=request_id)
+
+    monkeypatch.setattr(runtime, "capture_after_action", capture_after_action)
+    monkeypatch.setattr("trail.daemon.command_service._is_start_run_black_frame", lambda image: image == "black")
+    monkeypatch.setattr("trail.daemon.command_service.monotonic", lambda: clock["now"], raising=False)
+
+    def fake_sleep(seconds: float):
+        events.append(("sleep", seconds))
+        clock["now"] += seconds
+
+    monkeypatch.setattr("trail.daemon.command_service.sleep", fake_sleep, raising=False)
+
+    payload = service.handle(
+        SimpleNamespace(
+            request_id="req-start-clicked-delay",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["data"]["status"] == "launched_clicked_enter"
+    assert events == [
+        ("sleep", 0.5),
+        ("sleep", 0.5),
+        ("sleep", 0.5),
+        ("sleep", 3.0),
+        ("capture", False, "req-start-clicked-delay"),
+    ]
+    assert runtime.capture_requests == [(False, "req-start-clicked-delay")]
+    assert len(runtime.probe_requests) == 4
+
+
+def test_command_service_start_run_black_polling_times_out_without_entering_black(tmp_path: Path, monkeypatch):
+    runtime = StartRunCaptureRuntime(workspace_root=tmp_path, probe_values=["bright"] * 40)
+    runtime_service = StartRuntimeServiceStub(
+        attach_failures_before_success=1,
+        launch_status="launched_clicked_enter",
+        runtime=runtime,
+    )
+    session_services = SessionServiceRegistry()
+    service = CommandService(runtime_service=runtime_service, session_service=session_services)
+    events: list[tuple[object, ...]] = []
+    clock = {"now": 0.0}
+
+    original_capture = runtime.capture_after_action
+
+    def capture_after_action(optional: bool = False, request_id: str | None = None):
+        events.append(("capture", optional, request_id))
+        return original_capture(optional=optional, request_id=request_id)
+
+    monkeypatch.setattr(runtime, "capture_after_action", capture_after_action)
+    monkeypatch.setattr("trail.daemon.command_service._is_start_run_black_frame", lambda image: image == "black")
+    monkeypatch.setattr("trail.daemon.command_service.monotonic", lambda: clock["now"], raising=False)
+
+    def fake_sleep(seconds: float):
+        events.append(("sleep", seconds))
+        clock["now"] += seconds
+
+    monkeypatch.setattr("trail.daemon.command_service.sleep", fake_sleep, raising=False)
+
+    payload = service.handle(
+        SimpleNamespace(
+            request_id="req-start-black-timeout-no-enter",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        )
+    )
+
+    sleep_values = [value for kind, value, *rest in events if kind == "sleep"]
+    assert payload["ok"] is True
+    assert payload["data"]["status"] == "launched_clicked_enter"
+    assert abs(sum(sleep_values) - 15.0) < 1e-9
+    assert 3.0 not in sleep_values
+    assert events[-1] == ("capture", False, "req-start-black-timeout-no-enter")
+
+
+def test_command_service_start_run_black_polling_times_out_without_leaving_black(tmp_path: Path, monkeypatch):
+    runtime = StartRunCaptureRuntime(workspace_root=tmp_path, probe_values=["black"] * 40)
+    runtime_service = StartRuntimeServiceStub(
+        attach_failures_before_success=1,
+        launch_status="launched_clicked_enter",
+        runtime=runtime,
+    )
+    session_services = SessionServiceRegistry()
+    service = CommandService(runtime_service=runtime_service, session_service=session_services)
+    events: list[tuple[object, ...]] = []
+    clock = {"now": 0.0}
+
+    original_capture = runtime.capture_after_action
+
+    def capture_after_action(optional: bool = False, request_id: str | None = None):
+        events.append(("capture", optional, request_id))
+        return original_capture(optional=optional, request_id=request_id)
+
+    monkeypatch.setattr(runtime, "capture_after_action", capture_after_action)
+    monkeypatch.setattr("trail.daemon.command_service._is_start_run_black_frame", lambda image: image == "black")
+    monkeypatch.setattr("trail.daemon.command_service.monotonic", lambda: clock["now"], raising=False)
+
+    def fake_sleep(seconds: float):
+        events.append(("sleep", seconds))
+        clock["now"] += seconds
+
+    monkeypatch.setattr("trail.daemon.command_service.sleep", fake_sleep, raising=False)
+
+    payload = service.handle(
+        SimpleNamespace(
+            request_id="req-start-black-timeout-no-exit",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        )
+    )
+
+    sleep_values = [value for kind, value, *rest in events if kind == "sleep"]
+    assert payload["ok"] is True
+    assert payload["data"]["status"] == "launched_clicked_enter"
+    assert abs(sum(sleep_values) - 15.0) < 1e-9
+    assert 3.0 not in sleep_values
+    assert events[-1] == ("capture", False, "req-start-black-timeout-no-exit")
+
+
+@pytest.mark.parametrize(
+    ("attach_failures_before_success", "launch_status"),
+    [
+        (0, "launched_needs_check"),
+        (1, "launched_needs_check"),
+    ],
+)
+def test_command_service_start_run_does_not_delay_capture_for_other_statuses(
+    tmp_path: Path,
+    monkeypatch,
+    attach_failures_before_success: int,
+    launch_status: str,
+):
+    runtime = StartRunCaptureRuntime(workspace_root=tmp_path)
+    runtime_service = StartRuntimeServiceStub(
+        attach_failures_before_success=attach_failures_before_success,
+        launch_status=launch_status,
+        runtime=runtime,
+    )
+    session_services = SessionServiceRegistry()
+    service = CommandService(runtime_service=runtime_service, session_service=session_services)
+    events: list[tuple[object, ...]] = []
+
+    original_capture = runtime.capture_after_action
+
+    def capture_after_action(optional: bool = False, request_id: str | None = None):
+        events.append(("capture", optional, request_id))
+        return original_capture(optional=optional, request_id=request_id)
+
+    monkeypatch.setattr(runtime, "capture_after_action", capture_after_action)
+    monkeypatch.setattr("trail.daemon.command_service.sleep", lambda seconds: events.append(("sleep", seconds)), raising=False)
+
+    payload = service.handle(
+        SimpleNamespace(
+            request_id=f"req-start-no-delay-{attach_failures_before_success}",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        )
+    )
+
+    expected_status = "attached" if attach_failures_before_success == 0 else launch_status
+    assert payload["ok"] is True
+    assert payload["data"]["status"] == expected_status
+    assert events == [("capture", False, f"req-start-no-delay-{attach_failures_before_success}")]
+    assert runtime.capture_requests == [(False, f"req-start-no-delay-{attach_failures_before_success}")]
+
+
 def test_start_run_unknown_result_keeps_request_and_taints_created_session(tmp_path: Path):
     runtime = StartRuntimeServiceStub()
     session_services = SessionServiceRegistry()
@@ -555,7 +1171,7 @@ def test_start_run_unknown_result_keeps_request_and_taints_created_session(tmp_p
             screenshot=None,
             debug={"last_known_stage": "state_persisted", "tainted": True},
         )
-        envelope["data"] = result
+        envelope["data"] = result["data"]
         raise PersistedButResponseUnknown(envelope)
 
     service._start_run = exploding
@@ -582,12 +1198,111 @@ def test_start_run_unknown_result_keeps_request_and_taints_created_session(tmp_p
     assert session_services.for_workspace(tmp_path).is_session_tainted(created_session_id) is True
 
 
+def test_command_service_start_run_requires_success_screenshot(tmp_path: Path):
+    runtime_service = StartRuntimeServiceStub(runtime=StartRunMissingCaptureRuntime())
+    session_services = SessionServiceRegistry()
+    service = CommandService(runtime_service=runtime_service, session_service=session_services)
+
+    payload = service.handle(
+        SimpleNamespace(
+            request_id="req-start-no-shot",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "START_RESULT_SCREENSHOT_REQUIRED",
+        "message": "start.run success requires screenshot",
+    }
+    assert payload["screenshot"] is None
+    assert payload["debug"]["last_known_stage"] == "side_effect_applied"
+    assert payload["debug"]["tainted"] is True
+
+    status = session_services.for_workspace(tmp_path).request_status("req-start-no-shot")
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True
+    created_session_id = status["session_id"]
+    assert created_session_id is not None
+    assert session_services.for_workspace(tmp_path).is_session_tainted(created_session_id) is True
+
+
+def test_command_service_start_run_rejects_status_outside_allowlist_as_applied_side_effect(tmp_path: Path):
+    runtime_service = StartRuntimeServiceStub(attach_failures_before_success=1, launch_status="mystery")
+    session_services = SessionServiceRegistry()
+    service = CommandService(runtime_service=runtime_service, session_service=session_services)
+
+    payload = service.handle(
+        SimpleNamespace(
+            request_id="req-start-invalid-status",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "START_RESULT_INVALID",
+        "message": "start.run returned invalid status",
+    }
+    assert payload["debug"]["last_known_stage"] == "side_effect_applied"
+    assert payload["debug"]["tainted"] is True
+
+    status = session_services.for_workspace(tmp_path).request_status("req-start-invalid-status")
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True
+    assert status["session_id"] is None
+
+
+def test_command_service_start_run_rejects_non_dict_result_as_applied_side_effect(tmp_path: Path):
+    class RuntimeService:
+        def start_run(self, **kwargs):
+            del kwargs
+            return None
+
+    session_services = SessionServiceRegistry()
+    service = CommandService(runtime_service=RuntimeService(), session_service=session_services)
+
+    payload = service.handle(
+        SimpleNamespace(
+            request_id="req-start-invalid-result",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="start.run",
+            payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "START_RESULT_INVALID",
+        "message": "start.run returned invalid result",
+    }
+    assert payload["debug"]["last_known_stage"] == "side_effect_applied"
+    assert payload["debug"]["tainted"] is True
+
+    status = session_services.for_workspace(tmp_path).request_status("req-start-invalid-result")
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True
+    assert status["session_id"] is None
+
+
 @pytest.mark.parametrize(
     ("method", "payload", "response_data"),
     [
         ("cw.stage.detect", {}, {"value": "preparation", "stale": False}),
         ("cw.stage.wait", {"timeout": 120}, {"value": "settle", "stale": False}),
-        ("cw.shop.scan", {}, {"items": [{"slot": 1, "name": "银狼", "price": 20}], "opened": True, "stale": False}),
         ("cw.replenish.read", {}, {"options": [1, 2, 3]}),
         ("cw.invest.read", {}, {"options": [1, 2]}),
         ("cw.encounter.read", {}, {"options": [1, 2]}),
@@ -1040,7 +1755,7 @@ def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path:
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
     cw_service = CwService(runtime_service=runtime_service)
     monkeypatch.setattr("trail.daemon.cw_service.start_cw", fake_start_cw)
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
     monkeypatch.setattr(
         "trail.daemon.cw_service.fetch_cw_guide_list",
@@ -1137,6 +1852,7 @@ def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path:
             "match_hard": None,
             "portal": ["Alpha Portal", "Beta Portal", "Gamma Portal"],
             "timeout": 10,
+            "workspace_root": str(tmp_path),
         }
     ]
 
@@ -1309,17 +2025,17 @@ def test_command_service_handles_cw_start_reports_completed_known_failure_when_p
     loaded = service.load_session(session.session_id)
 
     assert payload["ok"] is False
-    assert payload["data"] == {"page": "home"}
+    assert payload["data"] == {}
     assert payload["error"] == {
-        "code": "CW_START_PROGRESS_PENDING",
-        "message": "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run",
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
     }
-    assert status["final_state"] == "completed"
-    assert status["tainted"] is False
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True
     assert runtime.clicks == [(104, 106)]
     assert runtime.wait_calls == []
     assert runtime.ocr_calls == [{}, {}, {}]
-    assert loaded.scene_state.get("daemon", {}).get("tainted", False) is False
+    assert loaded.scene_state.get("daemon", {}).get("tainted", False) is True
 
 
 def test_command_service_handles_cw_slots_place_known_failure_as_completed(tmp_path: Path, monkeypatch):
@@ -1690,7 +2406,7 @@ def test_command_service_handles_cw_start_continue_from_whole_run_settlement_cha
     runtime = Runtime()
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
     cw_service = CwService(runtime_service=runtime_service)
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
@@ -1823,7 +2539,7 @@ def _build_cw_portal_detect_harness(tmp_path: Path, monkeypatch, *, detect_impl,
     runtime = Runtime()
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
     cw_service = CwService(runtime_service=runtime_service)
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.detect_cw_portal", detect_impl, raising=False)
     monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_list", guide_fetcher)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
@@ -2003,7 +2719,7 @@ def test_cw_strategy_detect_handler_uses_capture_route_and_strategy_list(tmp_pat
         session.scene_state.setdefault("cw", {})["strategy"] = snapshot
         return snapshot
 
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda: {"strategy_list": [{"title": "快攻"}]})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"strategy_list": [{"title": "快攻"}]})
     monkeypatch.setattr("trail.daemon.cw_service.detect_cw_strategy", fake_detect)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
@@ -2121,7 +2837,7 @@ def test_cw_strategy_refresh_handler_routes_strategy_list_through_mutation_journ
         session.scene_state.setdefault("cw", {})["strategy"] = snapshot
         return snapshot
 
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda: {"strategy_list": [{"title": "暴击"}]})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"strategy_list": [{"title": "暴击"}]})
     monkeypatch.setattr("trail.daemon.cw_service.refresh_cw_strategy", fake_refresh)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
@@ -2530,6 +3246,7 @@ def _run_cw_battle_run_timeout_capture(tmp_path: Path, monkeypatch, raw_timeout=
     payload = command_service.handle(request)
 
     assert payload["ok"] is True
+    assert captured[0] == resolve_command_execution_timeout("cw.battle.run", request_payload)
     assert payload["data"]["timeout_seconds"] == captured[0]
     return captured[0]
 
@@ -3483,7 +4200,10 @@ def test_server_handle_payload_keeps_cw_unknown_result_envelope_for_late_ui_fail
         "code": "DAEMON_UNAVAILABLE",
         "message": "mutation result unknown",
     }
-    assert response["debug"] == {"detail": "TrailError: late failure after ui action"}
+    assert response["debug"] == {
+        "detail": "TrailError: late failure after ui action",
+        "last_known_stage": "side_effect_applied",
+    }
     assert status["final_state"] == "applied_but_not_persisted"
     assert status["tainted"] is True
 
@@ -3705,8 +4425,17 @@ def test_daemon_socket_timeout_budget_covers_long_running_scene_commands():
     assert client_module.SOCKET_RESPONSE_TIMEOUT_SECONDS >= 120.0
 
 
-def test_resolve_response_timeout_defaults_for_battle_run():
+def test_start_run_and_battle_run_timeouts_share_unified_command_policy():
     assert resolve_response_timeout("ocr.read", {}) == 120.0
+    assert resolve_command_execution_timeout("start.run", {}) == 180
+    assert resolve_response_timeout("start.run", {}) == 180.0
+    assert resolve_response_timeout("start.run", {"window_title": "崩坏：星穹铁道"}) == 180.0
+    assert resolve_command_execution_timeout("cw.battle.run", {}) == 570
+    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": 42}) == 42
+    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": 0}) == 570
+    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": -1}) == 570
+    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": False}) == 570
+    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": "42"}) == 570
     assert resolve_response_timeout("cw.battle.run", {}) == 600.0
     assert resolve_response_timeout("cw.battle.run", {"timeout": 42}) == 72.0
     assert resolve_response_timeout("cw.battle.run", {"timeout": 0}) == 600.0

@@ -3,12 +3,17 @@ from __future__ import annotations
 from copy import deepcopy
 import inspect
 from pathlib import Path
+from time import monotonic
+from time import sleep
 from typing import Any
+
+from PIL import ImageStat
 
 from trail.artifacts.store import ArtifactStore
 from trail.commands.helpers import to_jsonable
 from trail.core.errors import TrailError
 from trail.daemon.client import daemon_transport_failure
+from trail.daemon.command_timeouts import resolve_command_execution_timeout
 from trail.output.envelope import build_image_guidance
 from trail.output.capture import with_auto_capture
 from trail.runtime.ocr_config import OCR_LANG_UNSUPPORTED, split_ocr_call
@@ -59,6 +64,16 @@ CW_CAPTURED_READ_METHODS = {
     "cw.encounter.read",
     "cw.fortune.read",
 }
+
+START_RUN_STATUS_ALLOWLIST = {
+    "attached",
+    "launched_needs_check",
+    "launched_clicked_enter",
+}
+START_RUN_BLACK_TRANSITION_TIMEOUT_SECONDS = 15.0
+START_RUN_BLACK_TRANSITION_POLL_INTERVAL_SECONDS = 0.5
+START_RUN_BLACK_TRANSITION_SETTLE_SECONDS = 3.0
+_START_RUN_PROBE_UNAVAILABLE = object()
 
 def success(
     data: dict[str, Any],
@@ -158,9 +173,81 @@ def _parse_optional_bool(value: str | bool | None, *, option_name: str) -> bool 
     raise TrailError("GUIDE_INPUT_INVALID", f"guide option '{option_name}' must be true or false")
 
 
+def _capture_start_run_probe_image(runtime):
+    capture_image = getattr(runtime, "capture_image", None)
+    if callable(capture_image):
+        try:
+            return capture_image(normalize=False)
+        except TypeError:
+            return capture_image()
+        except Exception:
+            return _START_RUN_PROBE_UNAVAILABLE
+
+    window = getattr(runtime, "window", None)
+    if window is not None:
+        capture_image = getattr(window, "capture_image", None)
+        if callable(capture_image):
+            try:
+                return capture_image(normalize=False)
+            except TypeError:
+                return capture_image()
+            except Exception:
+                return _START_RUN_PROBE_UNAVAILABLE
+
+    return _START_RUN_PROBE_UNAVAILABLE
+
+
+def _is_start_run_black_frame(image) -> bool:
+    if image is None or not hasattr(image, "convert"):
+        return False
+    try:
+        grayscale = image.convert("L")
+        histogram = grayscale.histogram()
+        total = sum(histogram) or 1
+        mean = float(ImageStat.Stat(grayscale).mean[0])
+    except Exception:
+        return False
+
+    bright_ratio = sum(histogram[200:]) / total
+    non_dark_ratio = sum(histogram[48:]) / total
+    return mean <= 12.0 and bright_ratio <= 0.01 and non_dark_ratio <= 0.04
+
+
+def _wait_for_start_run_black_transition(
+    runtime,
+    *,
+    timeout_seconds: float = START_RUN_BLACK_TRANSITION_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = START_RUN_BLACK_TRANSITION_POLL_INTERVAL_SECONDS,
+    settle_seconds: float = START_RUN_BLACK_TRANSITION_SETTLE_SECONDS,
+) -> None:
+    deadline = monotonic() + timeout_seconds
+    seen_black = False
+
+    while monotonic() < deadline:
+        probe_image = _capture_start_run_probe_image(runtime)
+        if probe_image is _START_RUN_PROBE_UNAVAILABLE:
+            return
+
+        if _is_start_run_black_frame(probe_image):
+            seen_black = True
+        elif seen_black:
+            remaining = deadline - monotonic()
+            if remaining > 0:
+                sleep(min(settle_seconds, remaining))
+            return
+
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return
+        sleep(min(poll_interval_seconds, remaining))
+
+
 def _resolve_start_session_id(result: dict[str, Any] | None) -> str | None:
     if not isinstance(result, dict):
         return None
+    data = result.get("data")
+    if isinstance(data, dict):
+        return _resolve_start_session_id(data)
     session_id = result.get("session")
     if isinstance(session_id, str) and session_id:
         return session_id
@@ -168,9 +255,11 @@ def _resolve_start_session_id(result: dict[str, Any] | None) -> str | None:
 
 
 class _RequestScopedCaptureRuntime:
-    def __init__(self, runtime, request_id: str):
+    def __init__(self, runtime, request_id: str, *, extra_delay_seconds: float = 0.0, pre_capture_hook=None):
         self._runtime = runtime
         self._request_id = request_id
+        self._extra_delay_seconds = extra_delay_seconds
+        self._pre_capture_hook = pre_capture_hook
 
     def _resolve(self):
         if callable(self._runtime) and not hasattr(self._runtime, "capture_after_action"):
@@ -181,6 +270,10 @@ class _RequestScopedCaptureRuntime:
         runtime = self._resolve()
         if runtime is None:
             return None
+        if callable(self._pre_capture_hook):
+            self._pre_capture_hook(runtime)
+        if self._extra_delay_seconds > 0:
+            sleep(self._extra_delay_seconds)
         capture_after_action = getattr(runtime, "capture_after_action", None)
         if not callable(capture_after_action):
             return None
@@ -307,7 +400,7 @@ class CommandService:
                 request,
                 "start.run",
                 lambda service: self._start_run(request, request.payload, service),
-                response_builder=success,
+                response_builder=lambda payload: self._capture_start_run_response(request, payload),
                 session_id_resolver=_resolve_start_session_id,
             )
 
@@ -545,8 +638,17 @@ class CommandService:
             response["warnings"] = promoted_warnings
         return response
 
-    def _capture_response(self, request, runtime, action):
-        capture_runtime = None if runtime is None else _RequestScopedCaptureRuntime(runtime, request.request_id)
+    def _capture_response(self, request, runtime, action, *, extra_delay_seconds: float = 0.0, pre_capture_hook=None):
+        capture_runtime = (
+            None
+            if runtime is None
+            else _RequestScopedCaptureRuntime(
+                runtime,
+                request.request_id,
+                extra_delay_seconds=extra_delay_seconds,
+                pre_capture_hook=pre_capture_hook,
+            )
+        )
         response = with_auto_capture(capture_runtime, action, verbose=request.verbose)
         response = _normalize_capture_payload(response, workspace_root=Path(request.workspace_root))
         return self._response_with_request_id(request.request_id, response)
@@ -583,6 +685,53 @@ class CommandService:
     def _capture_mutation_with_runtime(self, request, action):
         runtime = self._runtime(request)
         return self._mutating_capture(request, runtime, lambda: action(runtime))
+
+    def _capture_start_run_response(self, request, payload):
+        runtime = None
+        data = payload
+        if isinstance(payload, dict):
+            runtime = payload.get("runtime")
+            maybe_data = payload.get("data")
+            if isinstance(maybe_data, dict):
+                data = maybe_data
+        status = data.get("status") if isinstance(data, dict) else None
+        response = self._capture_response(
+            request,
+            runtime,
+            lambda: deepcopy(data),
+            pre_capture_hook=_wait_for_start_run_black_transition if status == "launched_clicked_enter" else None,
+        )
+        if response.get("ok") is True and not response.get("screenshot"):
+            envelope = self._mark_start_run_post_side_effect_failure(
+                deepcopy(response),
+                request_id=request.request_id,
+            )
+            envelope["ok"] = False
+            envelope["error"] = {
+                "code": "START_RESULT_SCREENSHOT_REQUIRED",
+                "message": "start.run success requires screenshot",
+            }
+            raise SideEffectAppliedButStateNotPersisted(envelope)
+        return response
+
+    def _raise_start_run_post_side_effect_failure(self, error: Exception) -> None:
+        envelope = self._mark_start_run_post_side_effect_failure(self._failure_envelope(error=error))
+        raise SideEffectAppliedButStateNotPersisted(envelope) from error
+
+    def _mark_start_run_post_side_effect_failure(
+        self,
+        envelope: dict[str, Any],
+        *,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload = deepcopy(envelope)
+        debug = deepcopy(payload.get("debug") or {})
+        if request_id is not None and not debug.get("request_id"):
+            debug["request_id"] = request_id
+        debug["last_known_stage"] = "side_effect_applied"
+        debug["tainted"] = True
+        payload["debug"] = debug
+        return payload
 
     def _response_with_request_id(self, request_id: str, response: dict[str, Any]) -> dict[str, Any]:
         payload = deepcopy(response)
@@ -677,28 +826,54 @@ class CommandService:
 
     def _start_run(self, request, payload, service):
         window_title = str(payload.get("window_title") or "崩坏：星穹铁道")
-        binding = to_jsonable(
+        execution_timeout = resolve_command_execution_timeout("start.run", request.payload)
+        start_result = to_jsonable(
             self.runtime_service.start_run(
+                workspace_root=request.workspace_root,
                 window_title=window_title,
                 game_path=payload.get("game_path"),
                 channel=str(payload.get("channel") or "official"),
+                timeout_seconds=execution_timeout if execution_timeout is not None else 30,
             )
         )
-        session = service.find_reusable_session(window_binding=binding)
-        if session is not None:
+        try:
+            if not isinstance(start_result, dict):
+                raise TrailError("START_RESULT_INVALID", "start.run returned invalid result")
+            status = start_result.get("status")
+            if not isinstance(status, str) or status not in START_RUN_STATUS_ALLOWLIST:
+                raise TrailError("START_RESULT_INVALID", "start.run returned invalid status")
+            binding = {key: value for key, value in start_result.items() if key != "status"}
+            runtime = self.runtime_service.get_runtime(
+                workspace_root=request.workspace_root,
+                window_binding=binding,
+            )
+            session = service.find_reusable_session(window_binding=binding)
+            if session is not None:
+                return {
+                    "data": {
+                        "status": status,
+                        "session": session.session_id,
+                        "reused": 1,
+                        "title": binding["title"],
+                        "hwnd": binding["hwnd"],
+                    },
+                    "runtime": runtime,
+                }
+            created = service.create_session(window_binding=binding)
             return {
-                "session": session.session_id,
-                "reused": 1,
-                "title": binding["title"],
-                "hwnd": binding["hwnd"],
+                "data": {
+                    "status": status,
+                    "session": created.session_id,
+                    "reused": 0,
+                    "title": binding["title"],
+                    "hwnd": binding["hwnd"],
+                },
+                "runtime": runtime,
             }
-        created = service.create_session(window_binding=binding)
-        return {
-            "session": created.session_id,
-            "reused": 0,
-            "title": binding["title"],
-            "hwnd": binding["hwnd"],
-        }
+        except SideEffectAppliedButStateNotPersisted:
+            raise
+        except Exception as error:
+            self._raise_start_run_post_side_effect_failure(error)
 
     def _failure_envelope(self, *, error: Exception) -> dict[str, Any]:
         if isinstance(error, TrailError):

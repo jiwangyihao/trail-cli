@@ -22,6 +22,20 @@ OCR_AND_SCREENSHOT = (
     / "references"
     / "ocr-and-screenshot.md"
 )
+START_RUN_STATUS_HANDLING = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-hsr"
+    / "references"
+    / "start-run-status-handling.md"
+)
+START_RUN_WORLD_REFERENCE_IMAGE = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-hsr"
+    / "references"
+    / "04-world-chaoluguan.jpg"
+)
 SCENE_ENTRY_INDEX = (
     PROJECT_ROOT
     / "skills"
@@ -170,14 +184,43 @@ def test_trail_hsr_skill_has_required_sections_and_root_entry_semantics() -> Non
     assert "对外总入口" in text
     assert "active" in text and "public" in text
     assert "planned" in text
+    assert "trail start" in text
+    assert "status" in text
+    assert "shot path=" in text
+    assert "info read_image_first=1" in text
+    assert "launched_needs_check" in text
+    assert "launched_clicked_enter" in text
     assert "skills/shared/escalation-contract.md" in text
     assert "archive" in text
+    assert "references/start-run-status-handling.md" in text
 
 
 def test_trail_hsr_reference_files_exist_with_required_content() -> None:
     reference_expectations = {
-        SIMPLE_COMMAND_SURFACE: ["trail start", "trail ocr read", "trail input"],
-        OCR_AND_SCREENSHOT: ["shot path=", "info read_image_first=1"],
+        SIMPLE_COMMAND_SURFACE: [
+            "trail start",
+            "trail ocr read",
+            "trail input",
+            "status=",
+            "shot path=",
+        ],
+        OCR_AND_SCREENSHOT: [
+            "shot path=",
+            "info read_image_first=1",
+            "attached",
+            "launched_needs_check",
+            "launched_clicked_enter",
+        ],
+        START_RUN_STATUS_HANDLING: [
+            "attached",
+            "launched_needs_check",
+            "launched_clicked_enter",
+            "shot path=",
+            "info read_image_first=1",
+            "trail ocr read",
+            "点击进入",
+            "04-world-chaoluguan.jpg",
+        ],
         SCENE_ENTRY_INDEX: ["scene-entries.yaml", "status=active", "exposure=public"],
     }
 
@@ -185,6 +228,61 @@ def test_trail_hsr_reference_files_exist_with_required_content() -> None:
         text = path.read_text(encoding="utf-8")
         for fragment in expected_fragments:
             assert fragment in text
+
+
+def test_trail_hsr_simple_command_surface_documents_start_run_status_and_screenshot() -> None:
+    text = SIMPLE_COMMAND_SURFACE.read_text(encoding="utf-8")
+
+    assert "trail start" in text
+    assert "status" in text
+    assert "screenshot" in text or "截图" in text
+    assert "shot path=" in text
+    assert "session" in text
+    assert "不是只有 session" in text or "不再只是 session" in text
+
+
+def test_trail_hsr_ocr_and_screenshot_requires_reading_images_first_for_start_run_statuses() -> None:
+    text = OCR_AND_SCREENSHOT.read_text(encoding="utf-8")
+
+    for status in ("attached", "launched_needs_check", "launched_clicked_enter"):
+        assert status in text
+
+    assert "trail start" in text
+    assert "shot path=" in text
+    assert "info read_image_first=1" in text
+    assert "先读" in text and "截图" in text
+
+
+def test_trail_hsr_start_run_status_handling_reference_covers_triage_contract() -> None:
+    text = START_RUN_STATUS_HANDLING.read_text(encoding="utf-8")
+
+    for status in ("attached", "launched_needs_check", "launched_clicked_enter"):
+        assert status in text
+
+    assert "trail start" in text
+    assert "shot path=" in text
+    assert "info read_image_first=1" in text
+    assert "先读" in text and "截图" in text
+    assert "不能盲目继续" in text or "不要盲目继续" in text
+    assert "加载态" in text
+    assert "黑屏" in text
+    assert "动画" in text
+    assert "先继续观察" in text or "先观察" in text
+    assert "trail ocr read" in text
+    assert "不要额外乱点" in text or "不要乱点" in text
+    assert "点击进入" in text
+    assert "OCR" in text and "点击" in text
+    assert "征求用户意见" in text or "先征求用户意见" in text
+    assert START_RUN_WORLD_REFERENCE_IMAGE.is_file()
+    assert "04-world-chaoluguan.jpg" in text
+    assert "大世界探索态" in text
+    assert "启动/过场画面" in text or "过渡态" in text
+    assert "即使角色还在落地光柱里，也可以按大世界稳定态处理" in text
+    assert "不要把左上角的地点名当成大世界的核心判据" in text
+    assert "不要把恰好出现在附近的功能入口" in text
+    assert "差分宇宙等模式也可能有小地图" in text
+    assert "不要为了“再确认一下 attach 正不正常”而重复跑第二次 `trail start`" in text
+    assert "不要把 `trail start` 当成下一步动作本身" in text
 
 
 def test_scene_entry_index_documents_cw_entry_active_public_and_handoff() -> None:

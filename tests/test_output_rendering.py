@@ -3576,6 +3576,7 @@ def test_render_output_start_run_success_keeps_fixed_first_line_order():
     payload = {
         "ok": True,
         "data": {
+            "status": "launched_clicked_enter",
             "session": "sess-start-1",
             "reused": 1,
             "title": "崩坏：星穹铁道",
@@ -3590,7 +3591,7 @@ def test_render_output_start_run_success_keeps_fixed_first_line_order():
     }
 
     assert render_output("start.run", payload).splitlines() == [
-        "ok start.run session=sess-start-1 reused=1 title=崩坏：星穹铁道 hwnd=123",
+        "ok start.run status=launched_clicked_enter session=sess-start-1 reused=1 title=崩坏：星穹铁道 hwnd=123",
         "shot path=.trail/shots/req-start-run.png",
         "info read_image_first=1",
     ]
@@ -3600,12 +3601,13 @@ def test_render_output_start_run_success_keeps_reused_zero_fact():
     payload = {
         "ok": True,
         "data": {
+            "status": "attached",
             "session": "sess-start-2",
             "reused": 0,
             "title": "崩坏：星穹铁道",
             "hwnd": 456,
         },
-        "screenshot": None,
+        "screenshot": ".trail/shots/req-start-run-2.png",
         "timing": {},
         "warnings": [],
         "references": [],
@@ -3614,7 +3616,9 @@ def test_render_output_start_run_success_keeps_reused_zero_fact():
     }
 
     assert render_output("start.run", payload).splitlines() == [
-        "ok start.run session=sess-start-2 reused=0 title=崩坏：星穹铁道 hwnd=456"
+        "ok start.run status=attached session=sess-start-2 reused=0 title=崩坏：星穹铁道 hwnd=456",
+        "shot path=.trail/shots/req-start-run-2.png",
+        "info read_image_first=1",
     ]
 
 
@@ -3676,6 +3680,87 @@ def test_render_output_start_run_local_pre_daemon_failure_stays_on_start_run_tok
     assert render_output("start.run", payload).splitlines() == [
         "fail start.run code=DAEMON_INSTALL_FAILED",
         'why msg="daemon install failed"',
+    ]
+
+
+def test_render_output_start_run_screenshot_required_keeps_tainted_recover_signal():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "request_id": "req-start-no-shot",
+            "last_known_stage": "side_effect_applied",
+            "tainted": True,
+        },
+        "error": {
+            "code": "START_RESULT_SCREENSHOT_REQUIRED",
+            "message": "start.run success requires screenshot",
+        },
+    }
+
+    assert render_output("start.run", payload).splitlines() == [
+        "fail start.run code=START_RESULT_SCREENSHOT_REQUIRED tainted=1",
+        "request id=req-start-no-shot",
+        'why msg="start.run success requires screenshot"',
+        "recover action=daemon.request_status request=req-start-no-shot",
+    ]
+
+
+def test_render_output_start_run_invalid_status_keeps_tainted_recover_signal():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "request_id": "req-start-invalid-status",
+            "last_known_stage": "side_effect_applied",
+            "tainted": True,
+        },
+        "error": {
+            "code": "START_RESULT_INVALID",
+            "message": "start.run returned invalid status",
+        },
+    }
+
+    assert render_output("start.run", payload).splitlines() == [
+        "fail start.run code=START_RESULT_INVALID tainted=1",
+        "request id=req-start-invalid-status",
+        'why msg="start.run returned invalid status"',
+        "recover action=daemon.request_status request=req-start-invalid-status",
+    ]
+
+
+def test_render_output_start_run_invalid_result_keeps_tainted_recover_signal():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "request_id": "req-start-invalid-result",
+            "last_known_stage": "side_effect_applied",
+            "tainted": True,
+        },
+        "error": {
+            "code": "START_RESULT_INVALID",
+            "message": "start.run returned invalid result",
+        },
+    }
+
+    assert render_output("start.run", payload).splitlines() == [
+        "fail start.run code=START_RESULT_INVALID tainted=1",
+        "request id=req-start-invalid-result",
+        'why msg="start.run returned invalid result"',
+        "recover action=daemon.request_status request=req-start-invalid-result",
     ]
 
 

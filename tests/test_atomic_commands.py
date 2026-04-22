@@ -254,9 +254,16 @@ def test_trail_start_dispatches_single_start_run_after_local_ready(
         monkeypatch.setattr(start_module, "_ensure_local_daemon_ready", lambda resolved_home: ready.append(resolved_home))
     client = fake_daemon_client(
         {
-            "start.run": build_success_response(
+            "start.run": _build_success_response_with_guidance(
                 request_id="req-start-dispatch",
-                data={"session": "sess-start-1", "reused": 0, "title": "Demo Window", "hwnd": 321},
+                data={
+                    "status": "attached",
+                    "session": "sess-start-1",
+                    "reused": 0,
+                    "title": "Demo Window",
+                    "hwnd": 321,
+                },
+                screenshot=".trail/shots/req-start-dispatch.png",
             )
         }
     )
@@ -276,7 +283,9 @@ def test_trail_start_dispatches_single_start_run_after_local_ready(
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
-        'ok start.run session=sess-start-1 reused=0 title="Demo Window" hwnd=321'
+        'ok start.run status=attached session=sess-start-1 reused=0 title="Demo Window" hwnd=321',
+        "shot path=.trail/shots/req-start-dispatch.png",
+        "info read_image_first=1",
     ]
     assert installed == [True]
     assert ready == [daemon_home]

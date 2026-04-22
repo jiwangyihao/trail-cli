@@ -7,6 +7,13 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from trail.daemon.command_timeouts import (
+    CW_BATTLE_RUN_TIMEOUT_BUFFER_SECONDS,
+    DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS,
+    SOCKET_RESPONSE_TIMEOUT_SECONDS,
+    normalize_cw_battle_run_timeout,
+    resolve_command_response_timeout,
+)
 from trail.daemon.bootstrap import start_bootstrap, wait_until_runtime_ready
 from trail.daemon.manifest import load_manifest, manifest_path_for_user
 from trail.daemon.models import DaemonRequest
@@ -20,9 +27,6 @@ RETRIABLE_TRANSPORT_ERRORS = (
     ConnectionAbortedError,
     BrokenPipeError,
 )
-SOCKET_RESPONSE_TIMEOUT_SECONDS = 120.0
-DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS = 570
-CW_BATTLE_RUN_TIMEOUT_BUFFER_SECONDS = 30.0
 
 
 class DaemonTransport(Protocol):
@@ -80,19 +84,8 @@ def is_daemon_control_plane_error(response: dict[str, Any]) -> bool:
     return isinstance(code, str) and code.startswith("DAEMON_")
 
 
-def normalize_cw_battle_run_timeout(raw_timeout: Any) -> int:
-    if isinstance(raw_timeout, int) and not isinstance(raw_timeout, bool) and raw_timeout > 0:
-        return raw_timeout
-    return DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS
-
-
 def resolve_response_timeout(method: str, payload: dict[str, Any] | None) -> float:
-    if method != "cw.battle.run":
-        return SOCKET_RESPONSE_TIMEOUT_SECONDS
-
-    raw_timeout = payload.get("timeout") if isinstance(payload, dict) else None
-    battle_timeout_seconds = normalize_cw_battle_run_timeout(raw_timeout)
-    return float(battle_timeout_seconds) + CW_BATTLE_RUN_TIMEOUT_BUFFER_SECONDS
+    return resolve_command_response_timeout(method, payload)
 
 
 def send_daemon_request(

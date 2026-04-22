@@ -1152,6 +1152,7 @@ def _render_start_run(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     first_line = (
         f"ok {command} "
+        f"status={_encode_value(data.get('status'))} "
         f"session={_encode_value(data.get('session'))} "
         f"reused={_encode_value(data.get('reused'))} "
         f"title={_encode_value(data.get('title'))} "

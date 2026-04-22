@@ -1,6 +1,9 @@
 # Simple Command Surface
 
 - `trail start` 用来建立或恢复一个可继续推进的游戏会话入口，但它不是 scene owner 选择器。
+- `trail start` 现在不再只是返回 `session`；默认文本首行会带 `status=...`，并在成功时附带截图，因此要把它理解成“启动 + 首帧观察”的组合入口，而不是只有 session 分配器。
+- 只要 `trail start` 返回了 `shot path=...`，就说明这一轮已经产出了原始截图；如果同时带 `info read_image_first=1`，应先读图，再决定是否继续 scene 命令。
+- `trail start` 的 `status=attached`、`status=launched_needs_check`、`status=launched_clicked_enter` 都只是启动链路状态，不等于已经稳定进入大世界；三态细节见 `start-run-status-handling.md`。
 - `trail ocr read` 用来观察当前画面并补充结构化文本，不负责决定该把 owner 交给哪个 scene entry。
 - `trail input` 用来执行点击、按键、拖拽等动作，前提是总入口或当前 scene entry 已经决定了下一步动作。
 - 通用场景判断继续走 `trail start` / `trail ocr read` / `trail input ...`，不要把 `trail cw stage` 当成登录页、大世界等非 CW 场景检测器。

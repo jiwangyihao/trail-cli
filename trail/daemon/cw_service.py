@@ -6,7 +6,7 @@ from time import sleep
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
-from trail.daemon.client import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS, normalize_cw_battle_run_timeout
+from trail.daemon.command_timeouts import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS, resolve_command_execution_timeout
 from trail.daemon.command_service import PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
 from trail.output.capture import with_auto_capture, with_selective_capture
 from trail.scenes.cw.battle import run_cw_battle
@@ -345,6 +345,7 @@ class CwService:
                 mode=mode,
                 difficulty=difficulty,
                 battle_mode=battle_mode,
+                workspace_root=workspace_root,
             )
 
         handlers = {
@@ -488,7 +489,11 @@ class CwService:
             "cw.battle.run": lambda: run_cw_battle(
                 session,
                 runtime=runtime(),
-                timeout=normalize_cw_battle_run_timeout(payload.get("timeout") if isinstance(payload, dict) else None),
+                timeout=(
+                    resolve_command_execution_timeout("cw.battle.run", payload)
+                    if resolve_command_execution_timeout("cw.battle.run", payload) is not None
+                    else DEFAULT_CW_BATTLE_RUN_TIMEOUT
+                ),
             ),
             "cw.battle.start": lambda: start_cw_battle(
                 session,
@@ -542,7 +547,7 @@ def _apply_guide(session, *, runtime, artifact_store: ArtifactStore, lineup_id: 
     return refreshed.scene_state["cw"]["guide"]
 
 
-def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str) -> dict:
+def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None) -> dict:
     refreshed = start_cw(
         session,
         mode=mode,
@@ -557,7 +562,7 @@ def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str)
         collection_matches=detect_portal_collection_matches(runtime),
     )
     portal_snapshot = {
-        "cards": _attach_guides_to_cards(cards),
+        "cards": _attach_guides_to_cards(cards, workspace_root=workspace_root),
         "mode": entry_state.get("mode") if isinstance(entry_state, dict) else None,
         "difficulty": entry_state.get("difficulty") if isinstance(entry_state, dict) else None,
         "battle_mode": entry_state.get("battle_mode") if isinstance(entry_state, dict) else None,
@@ -579,7 +584,7 @@ def _restart_cw(session, *, runtime) -> dict:
     select_cw_portal(session, card_idx=1, runtime=runtime)
     wait_cw_portal_in_game(session, runtime=runtime)
     restart_cw_portal_to_settlement_entry(session, runtime=runtime)
-    return _start_cw(session, runtime=runtime, mode="continue", difficulty=difficulty, battle_mode=battle_mode)
+    return _start_cw(session, runtime=runtime, mode="continue", difficulty=difficulty, battle_mode=battle_mode, workspace_root=None)
 
 
 def _attach_guides_to_cards(cards: list[dict[str, object]], *, timeout: int = 10, workspace_root: str | None = None) -> list[dict[str, object]]:
