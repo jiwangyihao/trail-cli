@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -15,6 +17,7 @@ class OutputFormat(StrEnum):
 
 _OUTPUT_OPTIONS = {"format": OutputFormat.TEXT, "verbose": False}
 YAML_ALLOWLIST = {"daemon.status", "state.dump", "guide.fetch.cw", "guide.config.cw"}
+WORKFLOW_HANDOFFS_PATH = Path(__file__).resolve().parents[2] / "skills" / "registry" / "workflow-handoffs.yaml"
 
 
 def _normalize_output_format(output_format: str | OutputFormat) -> OutputFormat:
@@ -100,7 +103,7 @@ def _append_references(lines: list[str], payload: dict[str, Any]) -> None:
         )
 
 
-def _append_common_success_lines(lines: list[str], payload: dict[str, Any]) -> list[str]:
+def _append_common_success_lines(lines: list[str], payload: dict[str, Any], _command: str | None = None) -> list[str]:
     _append_success_capture_block(lines, payload)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
@@ -138,7 +141,7 @@ def _as_list(value: Any) -> list[Any]:
 
 def _render_success_summary(command: str, payload: dict[str, Any], *facts: tuple[str, Any]) -> list[str]:
     summary = _format_fact_sequence(*facts)
-    return _append_common_success_lines([f"ok {command} {summary}" if summary else f"ok {command}"], payload)
+    return _append_common_success_lines([f"ok {command} {summary}" if summary else f"ok {command}"], payload, command)
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -263,6 +266,59 @@ def _append_fact_line(lines: list[str], prefix: str, *facts: tuple[str, Any]) ->
     rendered = _format_fact_sequence(*facts)
     if rendered:
         lines.append(f"{prefix} {rendered}")
+
+
+@lru_cache(maxsize=1)
+def _load_workflow_handoffs() -> dict[str, Any]:
+    try:
+        registry = yaml.safe_load(WORKFLOW_HANDOFFS_PATH.read_text(encoding="utf-8")) or {}
+    except (FileNotFoundError, OSError, yaml.YAMLError):
+        return {}
+    commands = registry.get("commands")
+    return commands if isinstance(commands, dict) else {}
+
+
+def _select_workflow_handoff(command: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(command, str) or not command:
+        return {}
+    command_handoff = _load_workflow_handoffs().get(command)
+    if not isinstance(command_handoff, dict):
+        return {}
+
+    default = command_handoff.get("default")
+    statuses = command_handoff.get("statuses")
+    default_handoff = default if isinstance(default, dict) else {}
+    status_handoffs = statuses if isinstance(statuses, dict) else {}
+
+    status = _first_string(_as_dict(payload.get("data")).get("status"))
+    if status is not None:
+        status_handoff = status_handoffs.get(status)
+        if isinstance(status_handoff, dict):
+            return status_handoff
+
+    return default_handoff
+
+
+def _append_workflow_handoff(lines: list[str], command: Any, payload: dict[str, Any]) -> None:
+    handoff = _select_workflow_handoff(command, payload)
+    handoff_skill = _first_string(handoff.get("handoff_skill"))
+    handoff_strength = _first_string(handoff.get("handoff_strength"))
+    handoff_reason = _first_string(handoff.get("handoff_reason"))
+    if handoff_skill is None or handoff_strength is None or handoff_reason is None:
+        return
+    _append_fact_line(
+        lines,
+        "info",
+        ("handoff_skill", handoff_skill),
+        ("handoff_strength", handoff_strength),
+        ("handoff_reason", handoff_reason),
+    )
+
+
+def _finalize_success_lines(lines: list[str], command: str, payload: dict[str, Any]) -> list[str]:
+    finalized_lines = list(lines)
+    _append_workflow_handoff(finalized_lines, command, payload)
+    return finalized_lines
 
 
 def _append_guide_role_candidate_blocks(lines: list[str], data: dict[str, Any]) -> None:
@@ -591,7 +647,7 @@ def _render_cw_slots_summary_line(command: str, data: dict[str, Any]) -> str:
 
 def _render_cw_slots(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
-    return _append_common_success_lines([_render_cw_slots_summary_line(command, data)], payload)
+    return _append_common_success_lines([_render_cw_slots_summary_line(command, data)], payload, command)
 
 
 def _append_cw_slot_lines(lines: list[str], data: dict[str, Any]) -> None:
@@ -1063,6 +1119,7 @@ def _render_window_attach(command: str, payload: dict[str, Any]) -> list[str]:
     return _append_common_success_lines(
         [f"ok {command} title={_encode_value(data.get('title'))} hwnd={_encode_value(data.get('hwnd'))}"],
         payload,
+        command,
     )
 
 
@@ -1074,6 +1131,7 @@ def _render_window_launch(command: str, payload: dict[str, Any]) -> list[str]:
             f"already_running={_encode_value(bool(data.get('already_running')))} path={_encode_value(data.get('path'))}"
         ],
         payload,
+        command,
     )
 
 
@@ -1086,6 +1144,7 @@ def _render_session_create(command: str, payload: dict[str, Any]) -> list[str]:
             f"title={_encode_value(binding.get('title'))} hwnd={_encode_value(binding.get('hwnd'))}"
         ],
         payload,
+        command,
     )
 
 
@@ -1098,7 +1157,7 @@ def _render_start_run(command: str, payload: dict[str, Any]) -> list[str]:
         f"title={_encode_value(data.get('title'))} "
         f"hwnd={_encode_value(data.get('hwnd'))}"
     )
-    return _append_common_success_lines([first_line], payload)
+    return _append_common_success_lines([first_line], payload, command)
 
 
 def _render_screen_shot(command: str, payload: dict[str, Any]) -> list[str]:
@@ -1106,6 +1165,7 @@ def _render_screen_shot(command: str, payload: dict[str, Any]) -> list[str]:
     return _append_common_success_lines(
         [f"ok {command} captured={_encode_value(bool(data.get('captured')))}"],
         payload,
+        command,
     )
 
 
@@ -1137,7 +1197,7 @@ def _render_image_locate(command: str, payload: dict[str, Any]) -> list[str]:
     line = f"ok {command}"
     if box is not None:
         line += f" box={box}"
-    return _append_common_success_lines([line], payload)
+    return _append_common_success_lines([line], payload, command)
 
 
 def _render_image_wait(command: str, payload: dict[str, Any]) -> list[str]:
@@ -1170,7 +1230,7 @@ def _render_daemon_status(command: str, payload: dict[str, Any]) -> list[str]:
     lines = [f"ok {command} {facts}" if facts else f"ok {command}"]
     if runtime.get("last_start_error"):
         lines.append(f"why msg={_encode_value(runtime.get('last_start_error'))}")
-    return _append_common_success_lines(lines, payload)
+    return _append_common_success_lines(lines, payload, command)
 
 
 def _render_daemon_stop(command: str, payload: dict[str, Any]) -> list[str]:
@@ -1237,7 +1297,7 @@ def _render_state_dump(command: str, payload: dict[str, Any]) -> list[str]:
         ("tainted", bool(daemon_state.get("tainted"))),
     ]
     summary = _format_fact_sequence(*facts)
-    return _append_common_success_lines([f"ok {command} {summary}" if summary else f"ok {command}"], payload)
+    return _append_common_success_lines([f"ok {command} {summary}" if summary else f"ok {command}"], payload, command)
 
 
 def _render_guide_config(command: str, payload: dict[str, Any]) -> list[str]:
@@ -1265,7 +1325,7 @@ def _render_guide_config(command: str, payload: dict[str, Any]) -> list[str]:
 
 
 def _render_generic_success(command: str, payload: dict[str, Any]) -> list[str]:
-    return _append_common_success_lines([f"ok {command}"], payload)
+    return _append_common_success_lines([f"ok {command}"], payload, command)
 
 
 TEXT_RENDERERS = {
@@ -1390,7 +1450,7 @@ def _render_failure_lines(command: str, payload: dict[str, Any]) -> list[str]:
 def _render_text_lines(command: str, payload: dict[str, Any]) -> list[str]:
     if payload.get("ok"):
         renderer = TEXT_RENDERERS.get(command, _render_generic_success)
-        return renderer(command, payload)
+        return _finalize_success_lines(renderer(command, payload), command, payload)
     return _render_failure_lines(command, payload)
 
 

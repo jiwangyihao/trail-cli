@@ -60,6 +60,31 @@ WINDOW_LAUNCH = (
     / "references"
     / "window-launch.md"
 )
+CW_ENTRY_SKILL = PROJECT_ROOT / "skills" / "trail-cw-entry" / "SKILL.md"
+CW_ENTRY_GAMEPLAY_CONCEPTS = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-cw-entry"
+    / "references"
+    / "gameplay-concepts.md"
+)
+CW_ENTRY_PLAYER_LANGUAGE_MAPPING = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-cw-entry"
+    / "references"
+    / "player-language-mapping.md"
+)
+CW_ENTRY_CONFIRMATION_CHECKLIST = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-cw-entry"
+    / "references"
+    / "confirmation-checklist.md"
+)
+CW_ENTRY_TRIGGERS = (
+    PROJECT_ROOT / "skills" / "trail-cw-entry" / "evals" / "triggers.json"
+)
 
 
 def _frontmatter_markdown(path: Path) -> tuple[dict, str]:
@@ -67,6 +92,36 @@ def _frontmatter_markdown(path: Path) -> tuple[dict, str]:
     match = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.DOTALL)
     assert match, f"missing frontmatter in {path}"
     return yaml.safe_load(match.group(1)), match.group(2)
+
+
+def _markdown_section(text: str, heading: str) -> str:
+    match = re.search(
+        rf"^## {re.escape(heading)}\n(.*?)(?=^## |\Z)",
+        text,
+        re.DOTALL | re.MULTILINE,
+    )
+    assert match, f"missing section {heading}"
+    return match.group(1).strip()
+
+
+def _markdown_bullets(section_text: str) -> list[str]:
+    bullets = []
+    for line in section_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- [ ] "):
+            bullets.append(stripped.removeprefix("- [ ] "))
+        elif stripped.startswith("- "):
+            bullets.append(stripped.removeprefix("- "))
+    return bullets
+
+
+def _markdown_table_rows(text: str) -> list[list[str]]:
+    rows = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.endswith("|"):
+            rows.append([cell.strip() for cell in stripped.strip("|").split("|")])
+    return rows
 
 
 def _load_triggers() -> list[dict]:
@@ -130,6 +185,23 @@ def test_trail_hsr_reference_files_exist_with_required_content() -> None:
         text = path.read_text(encoding="utf-8")
         for fragment in expected_fragments:
             assert fragment in text
+
+
+def test_scene_entry_index_documents_cw_entry_active_public_and_handoff() -> None:
+    text = SCENE_ENTRY_INDEX.read_text(encoding="utf-8")
+
+    assert "scene-entries.yaml" in text
+    assert "status=active" in text
+    assert "exposure=public" in text
+    assert "cw.enter" in text
+    assert "handoff_skill=trail-cw-entry" in text
+    assert "workflow handoff" in text
+    assert "registry 是唯一索引来源。" in text
+    assert "不要凭 archive、旧文档或历史习惯推断当前入口。" in text
+    assert (
+        "当 `cw.enter` success 返回 `info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered` 时，应把它视为切到对应 scene entry 的强提示，不是继续沿用旧总入口语义。"
+        in text
+    )
 
 
 def test_trail_hsr_trigger_fixture_has_required_quota_and_schema() -> None:
@@ -232,6 +304,233 @@ def test_trail_hsr_trigger_fixture_has_explicit_planned_fallback_competition() -
             for keyword in ("未上线", "planned", "尚未 active")
         )
         for item in data
+    )
+
+
+def test_cw_entry_frontmatter_uses_user_facing_scene_entry_description() -> None:
+    frontmatter, _ = _frontmatter_markdown(CW_ENTRY_SKILL)
+
+    description = frontmatter["description"]
+    assert frontmatter["name"] == "trail-cw-entry"
+    assert any("\u4e00" <= ch <= "\u9fff" for ch in description)
+    assert "货币战争" in description
+    for forbidden in (
+        "cw enter",
+        "cw start",
+        "battle_mode",
+        "difficulty",
+        "portal",
+        "strategy",
+        "确认",
+    ):
+        assert forbidden not in description
+
+
+def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
+    text = CW_ENTRY_SKILL.read_text(encoding="utf-8")
+    confirm_section = _markdown_section(text, "What To Confirm First")
+    confirm_items = _markdown_bullets(confirm_section)
+
+    for section in (
+        "## Role",
+        "## When To Use",
+        "## What To Confirm First",
+        "## Workflow Handoff",
+        "## Reference Map",
+    ):
+        assert section in text
+
+    assert "cw enter" in text
+    assert "cw start" in text
+    assert "不是整局 owner" in text or "不是整局的 owner" in text
+    for expected_tokens in (
+        ("开新局", "继续上一局"),
+        ("上分", "速刷奖励"),
+        ("标准", "超频"),
+        ("当前职级难度", "更低难度"),
+        ("攻略/阵容", "投资环境/词条"),
+        ("刷开局",),
+        ("未收尾进度", "先结算"),
+    ):
+        assert any(all(token in item for token in expected_tokens) for item in confirm_items)
+    for forbidden in ("battle_mode=", "difficulty=", "portal refresh", "strategy="):
+        assert forbidden not in text
+
+
+def test_cw_entry_reference_files_exist_with_required_content() -> None:
+    gameplay_text = CW_ENTRY_GAMEPLAY_CONCEPTS.read_text(encoding="utf-8")
+    mapping_text = CW_ENTRY_PLAYER_LANGUAGE_MAPPING.read_text(encoding="utf-8")
+    checklist_text = CW_ENTRY_CONFIRMATION_CHECKLIST.read_text(encoding="utf-8")
+    mapping_rows = _markdown_table_rows(mapping_text)
+    checklist_items = _markdown_bullets(_markdown_section(checklist_text, "开局前必问清单"))
+    mapping_body_rows = mapping_rows[2:]
+    player_terms = [row[0] for row in mapping_body_rows]
+    action_targets = [row[2] for row in mapping_body_rows]
+
+    for fragment in (
+        "全新角色玩法能力",
+        "角色招募规则",
+        "金币，等级与商店",
+        "装备",
+        "投资环境与投资策略",
+        "攻略",
+        "优势布局",
+        "标准博弈",
+        "超频博弈",
+        "站位",
+        "角色赋能",
+        "羁绊",
+        "星级",
+        "金币是",
+        "核心经济资源",
+        "投资环境",
+        "投资策略",
+        "整局提供",
+        ):
+        assert fragment in gameplay_text
+
+    assert mapping_rows[0] == ["玩家常用说法", "官方化名词", "项目内命令或字段"]
+    assert len(mapping_body_rows) >= 10
+    for expected_phrase in ("A8", "上分", "周常", "奖励", "投资环境", "攻略开局"):
+        assert any(expected_phrase in term for term in player_terms)
+
+    assert any("cw enter" in target for target in action_targets)
+    assert any("cw start" in target for target in action_targets)
+    assert any("portal" in target for target in action_targets)
+    assert any("guide" in target for target in action_targets)
+    assert any("battle_mode=" in target for target in action_targets)
+    assert any("difficulty=" in target for target in action_targets)
+    assert sum(
+        1
+        for target in action_targets
+        if any(keyword in target for keyword in ("cw enter", "cw start", "portal", "guide", "确认后"))
+    ) >= len(action_targets) // 2
+
+    for expected_tokens in (
+        ("开新局", "继续上一局"),
+        ("上分", "速刷奖励"),
+        ("标准", "超频"),
+        ("当前职级难度", "更低难度"),
+        ("攻略/阵容", "投资环境/词条"),
+        ("刷开局",),
+        ("未收尾进度", "先结算"),
+    ):
+        assert any(all(token in item for token in expected_tokens) for item in checklist_items)
+
+    for fragment in ("cw enter", "cw start", "portal", "guide"):
+        assert fragment in checklist_text
+
+
+def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
+    skill_text = CW_ENTRY_SKILL.read_text(encoding="utf-8")
+    checklist_text = CW_ENTRY_CONFIRMATION_CHECKLIST.read_text(encoding="utf-8")
+    skill_items = _markdown_bullets(_markdown_section(skill_text, "What To Confirm First"))
+    checklist_items = _markdown_bullets(_markdown_section(checklist_text, "开局前必问清单"))
+
+    confirmation_groups = (
+        ("开新局", "继续上一局"),
+        ("上分", "速刷奖励"),
+        ("标准", "超频"),
+        ("当前职级难度", "更低难度"),
+        ("攻略/阵容", "投资环境/词条"),
+        ("刷开局",),
+        ("未收尾进度", "先结算"),
+    )
+
+    for expected_tokens in confirmation_groups:
+        assert any(all(token in item for token in expected_tokens) for item in skill_items)
+        assert any(all(token in item for token in expected_tokens) for item in checklist_items)
+
+
+def test_cw_entry_trigger_fixture_has_required_quota_and_schema() -> None:
+    data = json.loads(CW_ENTRY_TRIGGERS.read_text(encoding="utf-8"))
+    counts = Counter(item["sample_type"] for item in data)
+
+    assert len(data) >= 18
+    assert counts["should-trigger"] >= 6
+    assert counts["should-not-trigger"] >= 6
+    assert counts["competition"] >= 6
+
+    for item in data:
+        assert {"prompt", "sample_type", "expected_winner"} <= item.keys()
+        assert item["sample_type"] in {
+            "should-trigger",
+            "should-not-trigger",
+            "competition",
+        }
+        if item["sample_type"] == "competition":
+            assert "candidates" in item
+            assert item["expected_winner"] in item["candidates"]
+            assert {"trail-hsr", "trail-cw-entry"} <= set(item["candidates"])
+
+
+def test_cw_entry_trigger_fixture_covers_representative_prompts() -> None:
+    data = json.loads(CW_ENTRY_TRIGGERS.read_text(encoding="utf-8"))
+
+    should_trigger_prompts = [
+        item
+        for item in data
+        if item["sample_type"] == "should-trigger"
+        and item["expected_winner"] == "trail-cw-entry"
+    ]
+    should_not_trigger_prompts = [
+        item
+        for item in data
+        if item["sample_type"] == "should-not-trigger"
+        and item["expected_winner"] == "none"
+    ]
+    competition_prompts = [item for item in data if item["sample_type"] == "competition"]
+
+    assert any("货币战争" in item["prompt"] for item in should_trigger_prompts)
+    assert any("A8" in item["prompt"] for item in should_trigger_prompts)
+    assert any("周常" in item["prompt"] for item in should_trigger_prompts)
+    assert any("超频博弈" in item["prompt"] for item in should_trigger_prompts)
+    assert any("投资环境" in item["prompt"] for item in should_trigger_prompts)
+    assert any("攻略" in item["prompt"] for item in should_trigger_prompts)
+
+    assert any(
+        "cw start" in item["prompt"] or "battle_mode" in item["prompt"]
+        for item in should_not_trigger_prompts
+    )
+    assert any(
+        "daemon.request_status" in item["prompt"] or "request id" in item["prompt"]
+        for item in should_not_trigger_prompts
+    )
+    assert any(
+        any(keyword in item["prompt"] for keyword in ("Python", "PDF", "表格", "邮件"))
+        for item in should_not_trigger_prompts
+    )
+
+    assert any(
+        item["expected_winner"] == "trail-cw-entry"
+        and set(item["candidates"]) >= {"trail-hsr", "trail-cw-entry"}
+        and "货币战争" in item["prompt"]
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-hsr"
+        and set(item["candidates"]) >= {"trail-hsr", "trail-cw-entry"}
+        and "继续玩星铁" in item["prompt"]
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-cw-entry"
+        and "继续玩星铁" in item["prompt"]
+        and "货币战争" in item["prompt"]
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-cw-entry"
+        and any(keyword in item["prompt"] for keyword in ("开星铁", "打开星铁", "启动星铁"))
+        and "货币战争" in item["prompt"]
+        and any(keyword in item["prompt"] for keyword in ("周常", "奖励"))
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-hsr"
+        and "货币战争攻略" in item["prompt"]
+        and any(keyword in item["prompt"] for keyword in ("解释", "先讲", "不急着开"))
+        for item in competition_prompts
     )
 
 

@@ -1,0 +1,116 @@
+[
+  {
+    "prompt": "帮我玩货币战争",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "这一把货币战争想冲 A8",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "帮我刷一下货币战争周常奖励",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "开个超频博弈，快点把积分奖励刷完",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "先看货币战争投资环境，再决定这一局怎么玩",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "我想抄攻略开局，货币战争帮我挑路线",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "解释一下 cw start --mode new --battle-mode standard 是什么意思",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "battle_mode=overclock 和 difficulty=current 这两个参数分别代表什么",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "用 daemon.request_status 帮我查一下上次 request id=req-123 的状态",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "这个 request id=req-456 失败了，告诉我怎么走恢复链路",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "写个 Python 脚本批量改文件名",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "帮我总结这个 PDF 的重点",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "我要玩货币战争，直接带我进那个玩法",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "帮我冲货币战争 A8",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "先看货币战争投资环境，别急着开",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "想抄货币战争攻略开局，你直接接这个玩法入口",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "帮我继续玩星铁",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "继续玩星铁，接着推进当前任务",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "继续玩星铁，我这次想直接进货币战争冲 A8",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "先打开星铁，我要刷货币战争周常奖励",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "先讲下货币战争攻略是什么意思，不急着开局",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "expected_winner": "trail-hsr"
+  }
+]

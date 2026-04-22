@@ -26,6 +26,7 @@
 ## 正文顺序约束
 
 - success 路径必须先输出首行，再按需要输出 `shot`；若当前结果带截图，再紧跟 `info read_image_first=1`；然后才是 `item`、`guide`、`text`、`slot`、`opt`、其余 `info` 这类实体行，最后才是 `warn`、`ref`。
+- 若命令命中已配置 workflow handoff，success 路径允许在 `warn`、`ref` 之后追加一行尾行强提示 `info handoff_skill=... handoff_strength=... handoff_reason=...`，且该行必须是 success 输出最后一行。
 - failure 路径正文顺序固定为：`request` -> `shot` -> `why` -> `warn` -> `ref` -> `recover`；`debug` 只能在 `--verbose` 时追加在最后。
 - 不要为了单个命令“更自然”而重排 failure 行顺序；恢复链路必须稳定可扫读。
 
@@ -87,6 +88,9 @@
 ## skill 拓扑约束
 
 - `trail-hsr` 是对外总入口；`trail-<scene>-entry` 是对外场景入口；`trail-hsr-advanced` 是内部恢复层，不作为用户直达入口。
-- 只有 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口出现在 active 文档与测试中。
+- `trail-cw-entry` 现在是当前 active public 的货币战争 scene entry。
+- 只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口出现在 active 文档与测试中。
+- 当命令 success 输出 `info handoff_skill=... handoff_strength=strong ...` 时，Agent 应把它视为推荐的下一步 skill 切换信号；当前第一批是 `cw.enter -> trail-cw-entry`。
 - `AGENTS.md` 的 active 拓扑说明不得出现 archive skill 名称或 legacy 场景 skill 名称。
 - 任何 active skill 都不得直接或间接调用 archive skill。
+- 仍然禁止 legacy `trail-cw*` 回流为 active owner、默认 owner 或推荐入口。

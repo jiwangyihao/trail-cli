@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 README = PROJECT_ROOT / "README.md"
 AGENTS = PROJECT_ROOT / "AGENTS.md"
 REGISTRY = PROJECT_ROOT / "skills" / "registry" / "scene-entries.yaml"
+WORKFLOW_HANDOFFS = PROJECT_ROOT / "skills" / "registry" / "workflow-handoffs.yaml"
 COMPETITION = PROJECT_ROOT / "skills" / "registry" / "routing-competition.json"
 ESCALATION_CONTRACT = PROJECT_ROOT / "skills" / "shared" / "escalation-contract.md"
 OUTPUT_RENDERING_TEST = PROJECT_ROOT / "tests" / "test_output_rendering.py"
@@ -132,6 +133,34 @@ def test_routing_review_rollout_gate_requires_conclusion_to_match_row_consistenc
     assert _routing_review_declared_conclusion(text) == "PASS"
 
 
+def test_workflow_handoff_registry_file_exists() -> None:
+    assert WORKFLOW_HANDOFFS.is_file()
+
+
+def test_workflow_handoff_registry_has_only_cw_enter_mapping() -> None:
+    registry = yaml.safe_load(WORKFLOW_HANDOFFS.read_text(encoding="utf-8"))
+
+    assert registry == {
+        "commands": {
+            "cw.enter": {
+                "default": {
+                    "handoff_skill": "trail-cw-entry",
+                    "handoff_strength": "strong",
+                    "handoff_reason": "scene_entered",
+                }
+            }
+        }
+    }
+    assert set(registry) == {"commands"}
+    assert set(registry["commands"]) == {"cw.enter"}
+    assert registry["commands"]["cw.enter"]["default"] == {
+        "handoff_skill": "trail-cw-entry",
+        "handoff_strength": "strong",
+        "handoff_reason": "scene_entered",
+    }
+    assert "statuses" not in registry["commands"]["cw.enter"]
+
+
 def test_all_non_archive_legacy_docs_have_fixed_supersede_banner() -> None:
     for path in _iter_non_archive_specs_and_plans():
         text = path.read_text(encoding="utf-8")
@@ -175,28 +204,38 @@ def test_new_skill_topology_is_documented_in_readme() -> None:
         "- `trail-<scene>-entry` 是对外场景入口；只有 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口。"
         in text
     )
+    assert "`trail-cw-entry` 是货币战争当前入口 skill / scene entry" in text
+    assert "不是旧 `trail-cw` 那种整局 owner" in text
+    assert "`trail cw enter --session <id>` success 尾行会返回" in text
+    assert "`info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered`" in text
+    assert "已配置 workflow handoff 的 success 结果会在正常 success 内容、`warn`、`ref` 之后" in text
+    assert "它始终是 success 输出最后一行" in text
     assert "`trail-hsr-advanced` 是内部恢复层" in text
     assert "`trail-hsr-advanced` 不作为用户入口" in text
     assert "旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口" in text
-    assert legacy_skill_lines == ["- 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。"]
-    assert "`trail-cw-entry`" not in text
+    assert legacy_skill_lines.count("- 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。") == 1
     assert not re.search(r"skills/trail-cw[\\w-]*", text)
+    assert not re.search(r"trail-cw-(battle-advanced|guide|events|replenish|shop|slots)\b", text)
 
 
 def test_archive_calls_from_any_active_skill_are_forbidden_in_agents() -> None:
     text = AGENTS.read_text(encoding="utf-8")
 
+    assert "`trail-cw-entry` 现在是当前 active public 的货币战争 scene entry" in text
     assert (
-        "- 只有 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口出现在 active 文档与测试中。"
+        "- 只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口出现在 active 文档与测试中。"
         in text
     )
+    assert "`info handoff_skill=... handoff_strength=strong ...`" in text
+    assert "下一步 skill 切换信号" in text
+    assert "在 `warn`、`ref` 之后追加一行尾行强提示" in text
+    assert "该行必须是 success 输出最后一行" in text
     assert "- `AGENTS.md` 的 active 拓扑说明不得出现 archive skill 名称或 legacy 场景 skill 名称。" in text
     assert "任何 active skill 都不得直接或间接调用 archive skill" in text
-    assert not re.search(r"trail-cw(?!-entry)", text)
+    assert "仍然禁止 legacy `trail-cw*` 回流为 active owner、默认 owner 或推荐入口" in text
+    assert not re.search(r"skills/trail-cw[\\w-]*", text)
+    assert not re.search(r"trail-cw-(battle-advanced|guide|events|replenish|shop|slots)\b", text)
     assert "当前推荐入口" not in text
-    assert "推荐入口" not in text
-    assert "active owner" not in text
-    assert "默认 owner" not in text
 
 
 def test_active_skill_guidance_only_mentions_hsr_pair() -> None:
@@ -206,6 +245,34 @@ def test_active_skill_guidance_only_mentions_hsr_pair() -> None:
     assert 'PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md"' in text
     assert not re.search(r'skills"\s*/\s*"trail-cw(?!-entry)[^\"]*"', text)
     assert not re.search(r"trail-cw(?!-entry)", text)
+
+
+def test_cw_entry_readme_documents_active_scene_entry_and_handoff() -> None:
+    text = README.read_text(encoding="utf-8")
+    legacy_skill_lines = [line.strip() for line in text.splitlines() if "trail-cw" in line]
+
+    assert "`trail-cw-entry` 是货币战争当前入口 skill / scene entry" in text
+    assert "不是旧 `trail-cw` 那种整局 owner" in text
+    assert "`trail cw enter --session <id>` success 尾行会返回" in text
+    assert "`info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered`" in text
+    assert "旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口" in text
+    assert not re.search(r"skills/trail-cw[\w-]*", text)
+    assert not re.search(r"trail-cw-(battle-advanced|guide|events|replenish|shop|slots)\b", text)
+    assert legacy_skill_lines.count("- 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。") == 1
+    assert "旧 owner" not in text
+
+
+def test_cw_entry_agents_documents_active_scene_entry_and_strong_handoff_signal() -> None:
+    text = AGENTS.read_text(encoding="utf-8")
+
+    assert "`trail-cw-entry` 现在是当前 active public 的货币战争 scene entry" in text
+    assert "只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口" in text
+    assert "`info handoff_skill=... handoff_strength=strong ...`" in text
+    assert "下一步 skill 切换信号" in text
+    assert "legacy `trail-cw*` 回流为 active owner" in text
+    assert not re.search(r"skills/trail-cw[\w-]*", text)
+    assert not re.search(r"trail-cw-(battle-advanced|guide|events|replenish|shop|slots)\b", text)
+    assert "当前推荐入口" not in text
 
 
 def test_routing_competition_fixture_has_required_quota_and_cases() -> None:
