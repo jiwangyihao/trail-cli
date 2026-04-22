@@ -42,6 +42,7 @@ CW_GUIDE_PORTAL_MAX_PAGES = 30
 CW_GUIDE_PORTAL_DETAIL_WORKERS = 8
 CW_GUIDE_RECOVERY_ORIGIN = "guide.fetch.cw"
 GUIDE_ROLE_HIGH_RISK_SIMILARITY_THRESHOLD = 0.75
+CW_GUIDE_CONFIG_CACHE_RELATIVE = Path(".trail") / "cache" / "cw-guide-config.json"
 
 CW_WIDTH = 1920
 CW_HEIGHT = 1080
@@ -259,6 +260,37 @@ def _fetch_cw_config_data(*, timeout: int = 10) -> dict:
     if payload.get("retcode") != 0 or not isinstance(data, Mapping):
         raise TrailError("GUIDE_FETCH_FAILED", f"guide fetch failed: {payload.get('message', 'unknown error')}")
     return dict(data)
+
+
+def _cw_guide_config_cache_path(*, workspace_root: str | Path | None = None) -> Path:
+    root = Path.cwd() if workspace_root is None else Path(workspace_root)
+    return root / CW_GUIDE_CONFIG_CACHE_RELATIVE
+
+
+def _load_cached_cw_config_data(*, workspace_root: str | Path | None = None) -> dict | None:
+    path = _cw_guide_config_cache_path(workspace_root=workspace_root)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return dict(payload) if isinstance(payload, Mapping) else None
+
+
+def _write_cached_cw_config_data(data: Mapping[str, object], *, workspace_root: str | Path | None = None) -> None:
+    path = _cw_guide_config_cache_path(workspace_root=workspace_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(dict(data), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _get_cw_config_data(*, timeout: int = 10, workspace_root: str | Path | None = None) -> dict:
+    cached = _load_cached_cw_config_data(workspace_root=workspace_root)
+    if cached is not None:
+        return cached
+    data = _fetch_cw_config_data(timeout=timeout)
+    _write_cached_cw_config_data(data, workspace_root=workspace_root)
+    return data
 
 
 def _build_guide_list_request_payload(
@@ -1044,8 +1076,8 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
     }
 
 
-def fetch_cw_guide_config(*, timeout: int = 10) -> dict:
-    data = _fetch_cw_config_data(timeout=timeout)
+def fetch_cw_guide_config(*, timeout: int = 10, workspace_root: str | Path | None = None) -> dict:
+    data = _get_cw_config_data(timeout=timeout, workspace_root=workspace_root)
     strategy_source = data.get("fight_augment_list")
     if not isinstance(strategy_source, list):
         strategy_source = data.get("strategy_list")
@@ -1081,6 +1113,7 @@ def fetch_cw_guide_list(
     portal: str | list[str] | None = None,
     portal_id: str | list[str] | None = None,
     timeout: int = 10,
+    workspace_root: str | Path | None = None,
 ) -> dict:
     has_portal_filter = portal is not None or portal_id is not None
     if has_portal_filter and (page > 1 or next_page_token):
@@ -1092,7 +1125,7 @@ def fetch_cw_guide_list(
     raw_config: dict[str, object] | None = None
     needs_config = has_portal_filter or trait is not None or role is not None
     if needs_config:
-        raw_config = _fetch_cw_config_data(timeout=timeout)
+        raw_config = _get_cw_config_data(timeout=timeout, workspace_root=workspace_root)
 
     resolved_trait_id = trait_id
     if trait is not None and raw_config is not None:

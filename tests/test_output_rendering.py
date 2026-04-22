@@ -2362,6 +2362,36 @@ def test_render_output_renders_cw_slots_before_warn_and_ref():
     ]
 
 
+def test_render_output_renders_cw_slots_traits_and_trait_summary():
+    payload = {
+        "ok": True,
+        "data": {
+            "front": [{"name": "希儿", "star": 4, "traits": ["巡猎", "量子"]}],
+            "back": [{"name": "佩拉", "traits": ["量子"]}],
+            "hand": [{"name": "布洛妮娅", "traits": ["巡猎", "辅助"]}],
+            "trait_summary": [
+                {"trait": "量子", "tiers": [1, 2], "owned_roles": 2, "active_tier": 2, "total_tiers": 2, "ratio": 1.0},
+                {"trait": "巡猎", "tiers": [1, 2], "owned_roles": 1, "active_tier": 1, "total_tiers": 2, "ratio": 0.5},
+            ],
+            "stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.slots.read", payload).splitlines() == [
+        "ok cw.slots.read front=1 back=1 hand=1 stale=0",
+        "slot pos=front:0 name=希儿 star=4 traits=巡猎|量子",
+        "slot pos=back:0 name=佩拉 traits=量子",
+        "slot pos=hand:0 name=布洛妮娅 traits=巡猎|辅助",
+        'info 羁绊=量子 档位="1,2" 当前角色=2 已激活档位=2/2 占比=1.00',
+        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+    ]
+
+
 def test_render_output_renders_cw_slots_place_success_text():
     payload = {
         "ok": True,

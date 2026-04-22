@@ -610,6 +610,7 @@ def _append_cw_slot_lines(lines: list[str], data: dict[str, Any]) -> None:
                 cost = item.get("cost") if item.get("cost") is not None else item.get("price")
                 facts.append(("name", name if name is not None else value))
                 facts.append(("star", item.get("star")))
+                facts.append(("traits", _compact_text_or_sequence(item.get("traits"))))
                 facts.append(("rarity", item.get("rarity")))
                 facts.append(("carry", True if item.get("is_carry") is True else None))
                 facts.append(("cost", cost))
@@ -620,11 +621,38 @@ def _append_cw_slot_lines(lines: list[str], data: dict[str, Any]) -> None:
             lines.append("slot " + _format_fact_sequence(*facts))
 
 
+def _append_cw_slot_trait_summary(lines: list[str], data: dict[str, Any]) -> None:
+    for item in _as_list(data.get("trait_summary")):
+        if not isinstance(item, dict):
+            continue
+        active_tier = item.get("active_tier")
+        total_tiers = item.get("total_tiers")
+        activated = None
+        if active_tier is not None and total_tiers is not None:
+            activated = f"{active_tier}/{total_tiers}"
+        tiers = item.get("tiers")
+        tiers_text = None
+        if isinstance(tiers, list):
+            compact = [str(value) for value in tiers if value is not None]
+            if compact:
+                tiers_text = ",".join(compact)
+        _append_fact_line(
+            lines,
+            "info",
+            ("羁绊", item.get("trait")),
+            ("档位", tiers_text),
+            ("当前角色", item.get("owned_roles")),
+            ("已激活档位", activated),
+            ("占比", _format_score_value(item.get("ratio"))),
+        )
+
+
 def _render_cw_slots_read(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     lines = [_render_cw_slots_summary_line(command, data)]
     _append_success_capture_block(lines, payload)
     _append_cw_slot_lines(lines, data)
+    _append_cw_slot_trait_summary(lines, data)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines

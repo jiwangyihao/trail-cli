@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from copy import deepcopy
 from difflib import SequenceMatcher
+from pathlib import Path
 from time import sleep
 from typing import Any
 
@@ -71,6 +72,7 @@ INFO_DISMISS_POINT = _point(0.5, 0.5)
 HAND_EXPAND_DISMISS_POINT = _point(0.35, 0.20)
 SELL_SLOT_POINT = _point(0.05, 0.86)
 SLOT_NAME_REGION = _region(0.78, 0.175, 0.880, 0.2315)
+SLOT_STAR_REGION = _region(0.83, 0.15, 0.87, 0.17)
 CANNOT_BE_FIELDED_REGION = _region(0.25, 0.25, 0.75, 0.75)
 CRYSTAL_DRAG_DURATION_SECONDS = 0.2
 CRYSTAL_DRAG_PATHS = [
@@ -101,11 +103,21 @@ def _mark_slots_stale(session: SessionModel) -> SessionModel:
 
 
 def _snapshot_has_any_name(*areas: list[Any]) -> bool:
-    return any(value is not None and str(value).strip() for area in areas for value in area)
+    return any(_slot_value_name(value) for area in areas for value in area)
+
+
+def _slot_value_name(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("name") or "").strip()
+    return str(value or "").strip()
 
 
 def _template(scene_alias: str) -> str:
     return str(resolve_scene_asset("cw", scene_alias))
+
+
+def _star_template_path() -> str:
+    return str((Path(__file__).resolve().parent / "assets" / "star.png").resolve())
 
 
 def _box_center(box: Any) -> tuple[int, int]:
@@ -138,21 +150,56 @@ def _read_ocr_piece(item: Any) -> str:
     return ""
 
 
-def _capture_slot_name_panel_image(runtime, *, point: tuple[int, int]):
+def _capture_slot_panel_images(runtime, *, point: tuple[int, int]):
     runtime.click_point(*point)
     sleep(SLOT_PANEL_SETTLE_SECONDS * 2)
     try:
-        return runtime.capture_image(**SLOT_NAME_REGION, normalize=False)
+        return {
+            "name_image": runtime.capture_image(**SLOT_NAME_REGION, normalize=False),
+            "star_image": runtime.capture_image(**SLOT_STAR_REGION, normalize=False),
+        }
     finally:
         runtime.click_point(*INFO_DISMISS_POINT)
         sleep(SLOT_PANEL_SETTLE_SECONDS)
+
+
+def _capture_slot_name_panel_image(runtime, *, point: tuple[int, int]):
+    return _capture_slot_panel_images(runtime, point=point)["name_image"]
+
+
+def _count_slot_stars_in_image(image) -> int | None:
+    try:
+        import pyscreeze  # type: ignore
+    except Exception as exc:
+        raise TrailError("IMAGE_BACKEND_UNAVAILABLE", "pyscreeze backend unavailable") from exc
+
+    try:
+        boxes = list(pyscreeze.locateAll(_star_template_path(), image, confidence=0.9))
+    except Exception as exc:
+        image_not_found = getattr(pyscreeze, "ImageNotFoundException", None)
+        if image_not_found is not None and isinstance(exc, image_not_found):
+            return None
+        raise
+    if not boxes:
+        return None
+
+    centers: list[tuple[int, int]] = []
+    for left, top, width, height in boxes:
+        center = (int(left) + int(width) // 2, int(top) + int(height) // 2)
+        if any(abs(center[0] - prev[0]) < 3 and abs(center[1] - prev[1]) < 3 for prev in centers):
+            continue
+        centers.append(center)
+    return len(centers) or None
 
 
 def _compose_slot_name_strip_image(captures: list[dict[str, Any]]) -> tuple[Image.Image, list[dict[str, Any]]]:
     if not captures:
         return Image.new("RGB", (1, 1), color="white"), []
 
-    converted = [capture["image"].convert("RGB") for capture in captures]
+    converted = [
+        (capture.get("name_image") if capture.get("name_image") is not None else capture["image"]).convert("RGB")
+        for capture in captures
+    ]
     width = max(image.width for image in converted)
     total_height = sum(image.height for image in converted) + SLOT_NAME_STRIP_GAP * (len(converted) - 1)
     strip = Image.new("RGB", (width, total_height), color="white")
@@ -267,6 +314,13 @@ def _read_batch_slot_names(runtime, captures: list[dict[str, Any]]) -> dict[tupl
     return names
 
 
+def _read_slot_star_counts(captures: list[dict[str, Any]]) -> dict[tuple[str, int], int | None]:
+    return {
+        (capture["area"], capture["index"]): _count_slot_stars_in_image(capture["star_image"]) if "star_image" in capture else None
+        for capture in captures
+    }
+
+
 def _collapse_expanded_hand_card(runtime) -> None:
     template = _template(OPEN_TEMPLATE_ALIAS)
     for _ in range(HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS):
@@ -358,7 +412,7 @@ def _session_slot_name_candidates(cw_state: dict[str, Any]) -> tuple[list[str], 
     if slots.get("stale") is False:
         for area in ("front", "back", "hand"):
             for value in slots.get(area, []) or []:
-                text = str(value or "").strip()
+                text = _slot_value_name(value)
                 if text:
                     slot_candidates.append(text)
     return _dedupe_slot_name_candidates(authoritative_candidates), _dedupe_slot_name_candidates(slot_candidates)
@@ -400,6 +454,137 @@ def _normalize_slot_name(raw: str | None, *, authoritative_candidates: list[str]
     if normalized is not None:
         return normalized
     return text
+
+
+def _normalize_slot_value(raw: Any, *, authoritative_candidates: list[str], slot_candidates: list[str]) -> Any:
+    if isinstance(raw, dict):
+        normalized_name = _normalize_slot_name(
+            raw.get("name"),
+            authoritative_candidates=authoritative_candidates,
+            slot_candidates=slot_candidates,
+        )
+        if normalized_name is None:
+            return None
+        return {**raw, "name": normalized_name}
+    return _normalize_slot_name(raw, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates)
+
+
+def _normalize_trait_tiers(value: Any) -> list[int]:
+    tiers: list[int] = []
+    if not isinstance(value, list):
+        return tiers
+    for item in value:
+        if isinstance(item, int) and not isinstance(item, bool):
+            tiers.append(int(item))
+            continue
+        if isinstance(item, str) and item.isdigit():
+            tiers.append(int(item))
+            continue
+        if not isinstance(item, dict):
+            continue
+        for key in ("current_role_count", "count", "need_count", "need_num", "role_count", "layer"):
+            raw = item.get(key)
+            if isinstance(raw, int) and not isinstance(raw, bool):
+                tiers.append(int(raw))
+                break
+            if isinstance(raw, str) and raw.isdigit():
+                tiers.append(int(raw))
+                break
+    return sorted(dict.fromkeys(tier for tier in tiers if tier > 0))
+
+
+def _build_slot_trait_catalog(guide_config: dict[str, Any] | None) -> tuple[dict[str, list[str]], dict[str, list[int]]]:
+    if not isinstance(guide_config, dict):
+        return {}, {}
+
+    trait_name_by_id: dict[str, str] = {}
+    trait_tiers_by_name: dict[str, list[int]] = {}
+    for trait in guide_config.get("traits") or []:
+        if not isinstance(trait, dict):
+            continue
+        name = str(trait.get("name") or "").strip()
+        if not name:
+            continue
+        trait_id = trait.get("id")
+        if trait_id is not None:
+            trait_name_by_id[str(trait_id)] = name
+        explicit_tiers = _normalize_trait_tiers(trait.get("layers"))
+        if explicit_tiers:
+            trait_tiers_by_name[name] = explicit_tiers
+
+    role_traits_by_name: dict[str, list[str]] = {}
+    inferred_trait_counts: dict[str, int] = {}
+    for role in guide_config.get("roles") or []:
+        if not isinstance(role, dict):
+            continue
+        name = str(role.get("name") or "").strip()
+        if not name:
+            continue
+        traits: list[str] = []
+        for trait_id in role.get("trait_ids") or []:
+            trait_name = trait_name_by_id.get(str(trait_id))
+            if not trait_name or trait_name in traits:
+                continue
+            traits.append(trait_name)
+            inferred_trait_counts[trait_name] = inferred_trait_counts.get(trait_name, 0) + 1
+        role_traits_by_name[name] = traits
+
+    for trait_name, count in inferred_trait_counts.items():
+        trait_tiers_by_name.setdefault(trait_name, list(range(1, count + 1)))
+    return role_traits_by_name, trait_tiers_by_name
+
+
+def _with_slot_traits(value: Any, *, role_traits_by_name: dict[str, list[str]]) -> Any:
+    name = _slot_value_name(value)
+    if not name:
+        return None
+    traits = role_traits_by_name.get(name) or []
+    if isinstance(value, dict):
+        enriched = dict(value)
+        if traits:
+            enriched["traits"] = list(traits)
+        return enriched
+    if traits:
+        return {"name": name, "traits": list(traits)}
+    return value
+
+
+def _summarize_field_trait_status(front: list[Any], back: list[Any], *, guide_config: dict[str, Any] | None) -> list[dict[str, Any]]:
+    role_traits_by_name, trait_tiers_by_name = _build_slot_trait_catalog(guide_config)
+    owned_counts: dict[str, int] = {}
+    for value in list(front) + list(back):
+        name = _slot_value_name(value)
+        if not name:
+            continue
+        if isinstance(value, dict) and isinstance(value.get("traits"), list):
+            traits = [str(item) for item in value.get("traits") if str(item)]
+        else:
+            traits = role_traits_by_name.get(name) or []
+        for trait in traits:
+            owned_counts[trait] = owned_counts.get(trait, 0) + 1
+
+    summary: list[dict[str, Any]] = []
+    for trait, owned_roles in owned_counts.items():
+        tiers = trait_tiers_by_name.get(trait) or list(range(1, owned_roles + 1))
+        active_tier = 0
+        for tier in tiers:
+            if owned_roles >= tier:
+                active_tier = tier
+        total_tiers = len(tiers)
+        ratio = 0.0 if total_tiers == 0 else round(active_tier / total_tiers, 2)
+        summary.append(
+            {
+                "trait": trait,
+                "tiers": tiers,
+                "owned_roles": owned_roles,
+                "active_tier": active_tier,
+                "total_tiers": total_tiers,
+                "ratio": ratio,
+            }
+        )
+
+    summary.sort(key=lambda item: (-float(item.get("ratio", 0.0)), -int(item.get("owned_roles", 0)), str(item.get("trait") or "")))
+    return summary[:10]
 
 
 def _next_slots_stale(previous: dict[str, Any], *, parsed_targets: dict[str, set[int]] | None) -> bool:
@@ -451,7 +636,7 @@ def _ensure_fieldable_target(runtime, *, target: str) -> None:
 def build_cw_slots_reader(runtime, targets: list[str] | None = None) -> SlotsSnapshotReader:
     parsed_targets = _parse_slot_targets(targets)
 
-    def reader() -> tuple[list[str | None], list[str | None], list[str | None]]:
+    def reader() -> tuple[list[Any], list[Any], list[Any]]:
         _collapse_expanded_hand_card(runtime)
         front, back, hand = _empty_slots_snapshot()
         targets_by_area = parsed_targets or {
@@ -469,17 +654,19 @@ def build_cw_slots_reader(runtime, targets: list[str] | None = None) -> SlotsSna
                 captures.append({
                     "area": area,
                     "index": index,
-                    "image": _capture_slot_name_panel_image(runtime, point=points[index]),
+                    **_capture_slot_panel_images(runtime, point=points[index]),
                 })
 
         names_by_slot = _read_batch_slot_names(runtime, captures)
+        stars_by_slot = _read_slot_star_counts(captures)
         for (area, index), value in names_by_slot.items():
+            slot_value = None if value is None else {"name": value, "star": stars_by_slot.get((area, index))}
             if area == "front":
-                front[index] = value
+                front[index] = slot_value
             elif area == "back":
-                back[index] = value
+                back[index] = slot_value
             else:
-                hand[index] = value
+                hand[index] = slot_value
         return front, back, hand
 
     return reader
@@ -513,15 +700,21 @@ def build_cw_crystal_collector(runtime) -> CrystalCollector:
     return collector
 
 
-def read_cw_slots(session: SessionModel, *, reader: SlotsSnapshotReader, targets: list[str] | None = None) -> SessionModel:
+def read_cw_slots(
+    session: SessionModel,
+    *,
+    reader: SlotsSnapshotReader,
+    targets: list[str] | None = None,
+    guide_config: dict[str, Any] | None = None,
+) -> SessionModel:
     front, back, hand = reader()
     cw_state = ensure_cw_state(session)
     previous = cw_state.get("slots") if isinstance(cw_state.get("slots"), dict) else {}
     parsed_targets = _parse_slot_targets(targets)
     authoritative_candidates, slot_candidates = _session_slot_name_candidates(cw_state)
-    front = [_normalize_slot_name(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in front]
-    back = [_normalize_slot_name(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in back]
-    hand = [_normalize_slot_name(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in hand]
+    front = [_normalize_slot_value(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in front]
+    back = [_normalize_slot_value(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in back]
+    hand = [_normalize_slot_value(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in hand]
     merged_front = _merge_area_snapshot(previous.get("front"), front, size=len(FRONT_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["front"])
     merged_back = _merge_area_snapshot(previous.get("back"), back, size=len(BACK_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["back"])
     merged_hand = _merge_area_snapshot(previous.get("hand"), hand, size=len(HAND_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["hand"])
@@ -536,12 +729,21 @@ def read_cw_slots(session: SessionModel, *, reader: SlotsSnapshotReader, targets
         merged_hand=merged_hand,
     ):
         raise TrailError("SLOTS_READ_EMPTY", "未读取到任何货币战争槽位角色，请确认当前在编队界面")
+    if guide_config is not None:
+        role_traits_by_name, _ = _build_slot_trait_catalog(guide_config)
+        merged_front = [_with_slot_traits(value, role_traits_by_name=role_traits_by_name) for value in merged_front]
+        merged_back = [_with_slot_traits(value, role_traits_by_name=role_traits_by_name) for value in merged_back]
+        merged_hand = [_with_slot_traits(value, role_traits_by_name=role_traits_by_name) for value in merged_hand]
     cw_state["slots"] = {
         "front": deepcopy(merged_front),
         "back": deepcopy(merged_back),
         "hand": deepcopy(merged_hand),
         "stale": _next_slots_stale(previous, parsed_targets=parsed_targets),
     }
+    if guide_config is not None:
+        trait_summary = _summarize_field_trait_status(merged_front, merged_back, guide_config=guide_config)
+        if trait_summary:
+            cw_state["slots"]["trait_summary"] = deepcopy(trait_summary)
     _clear_sell_plan(cw_state)
     return session
 

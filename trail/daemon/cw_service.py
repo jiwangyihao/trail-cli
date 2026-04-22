@@ -360,22 +360,24 @@ class CwService:
                 detect_cw_portal(
                     session,
                     runtime=runtime(),
-                    portal_list=fetch_cw_guide_config().get("portal_list", []),
+                    portal_list=fetch_cw_guide_config(workspace_root=workspace_root).get("portal_list", []),
                 ),
+                workspace_root=workspace_root,
             ),
             "cw.portal.refresh": lambda: _attach_guides_to_portal_snapshot(
                 session,
                 refresh_cw_portal(
                     session,
                     runtime=runtime(),
-                    portal_list=fetch_cw_guide_config().get("portal_list", []),
+                    portal_list=fetch_cw_guide_config(workspace_root=workspace_root).get("portal_list", []),
                 ),
+                workspace_root=workspace_root,
             ),
             "cw.portal.restart": lambda: _restart_cw(session, runtime=runtime()),
             "cw.strategy.detect": lambda: detect_cw_strategy(
                 session,
                 runtime=runtime(),
-                strategy_list=fetch_cw_guide_config().get("strategy_list", []),
+                strategy_list=fetch_cw_guide_config(workspace_root=workspace_root).get("strategy_list", []),
             ),
             "cw.strategy.select": lambda: select_cw_strategy(
                 session,
@@ -386,7 +388,7 @@ class CwService:
                 session,
                 card_idx=payload["card_idx"],
                 runtime=runtime(),
-                strategy_list=fetch_cw_guide_config().get("strategy_list", []),
+                strategy_list=fetch_cw_guide_config(workspace_root=workspace_root).get("strategy_list", []),
             ),
             "cw.stage.detect": lambda: detect_cw_stage(
                 session,
@@ -408,6 +410,7 @@ class CwService:
                 session,
                 reader=slots_reader_factory(runtime(), targets=payload.get("slot")),
                 targets=payload.get("slot"),
+                guide_config=fetch_cw_guide_config(workspace_root=workspace_root),
             ).scene_state["cw"]["slots"],
             "cw.slots.swap": lambda: swap_cw_slots(
                 session,
@@ -550,7 +553,7 @@ def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str)
     entry_state = ensure_cw_state(refreshed).get("entry")
     cards = summarize_portal_cards(
         runtime.ocr(),
-        fetch_cw_guide_config().get("portal_list", []),
+        fetch_cw_guide_config(workspace_root=workspace_root).get("portal_list", []),
         collection_matches=detect_portal_collection_matches(runtime),
     )
     portal_snapshot = {
@@ -579,7 +582,7 @@ def _restart_cw(session, *, runtime) -> dict:
     return _start_cw(session, runtime=runtime, mode="continue", difficulty=difficulty, battle_mode=battle_mode)
 
 
-def _attach_guides_to_cards(cards: list[dict[str, object]], *, timeout: int = 10) -> list[dict[str, object]]:
+def _attach_guides_to_cards(cards: list[dict[str, object]], *, timeout: int = 10, workspace_root: str | None = None) -> list[dict[str, object]]:
     portal_titles: list[str] = []
     seen_titles: set[str] = set()
     for card in cards:
@@ -603,6 +606,7 @@ def _attach_guides_to_cards(cards: list[dict[str, object]], *, timeout: int = 10
             match_hard=None,
             portal=portal_titles if len(portal_titles) > 1 else portal_titles[0],
             timeout=timeout,
+            workspace_root=workspace_root,
         )
     except TrailError:
         return cards
@@ -634,10 +638,10 @@ def _attach_guides_to_cards(cards: list[dict[str, object]], *, timeout: int = 10
     return enriched
 
 
-def _attach_guides_to_portal_snapshot(session, snapshot: dict[str, object], *, timeout: int = 10) -> dict[str, object]:
+def _attach_guides_to_portal_snapshot(session, snapshot: dict[str, object], *, timeout: int = 10, workspace_root: str | None = None) -> dict[str, object]:
     enriched = {
         **snapshot,
-        "cards": _attach_guides_to_cards(snapshot.get("cards", []), timeout=timeout),
+        "cards": _attach_guides_to_cards(snapshot.get("cards", []), timeout=timeout, workspace_root=workspace_root),
     }
     ensure_cw_state(session)["portal"] = enriched
     return enriched

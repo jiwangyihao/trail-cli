@@ -86,6 +86,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `trail cw slots read --session <id> --slot front:0 --slot hand:3` 是首选定向确认路径，只读“看见有角色但名字不确定”的槽位。
 - 不传 `--slot` 时，`trail cw slots read --session <id>` 仍保留现有全量读取语义，只作为完整快照兜底，不表示默认行为已经改变。
 - 如果局部读取结果带 `stale=1`，它不等于新的完整 fresh 快照；后续判断仍要结合已有截图和基线来源。
+- `slots.read` 的 `slot ...` 行现在可能附带 `star=<n>`；没有稳定数出星级时不会强行输出 `star=`。
 
 ## 命令面概览
 

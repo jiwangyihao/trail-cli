@@ -98,6 +98,7 @@ def test_build_cw_slots_reader_batches_target_captures_into_single_ocr_call(monk
     build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
     assert build_cw_slots_reader is not None
     monkeypatch.setattr(slots_module, "sleep", lambda seconds: None, raising=False)
+    monkeypatch.setattr(slots_module, "_count_slot_stars_in_image", lambda image: 4, raising=False)
 
     strip_height = 61
 
@@ -132,13 +133,16 @@ def test_build_cw_slots_reader_batches_target_captures_into_single_ocr_call(monk
 
     front, back, hand = build_cw_slots_reader(runtime, targets=["front:0", "back:0", "hand:0"])()
 
-    assert front == ["希儿", None, None, None]
-    assert back == ["佩拉", None, None, None, None, None]
-    assert hand == ["银狼", None, None, None, None, None, None, None, None]
+    assert front == [{"name": "希儿", "star": 4}, None, None, None]
+    assert back == [{"name": "佩拉", "star": 4}, None, None, None, None, None]
+    assert hand == [{"name": "银狼", "star": 4}, None, None, None, None, None, None, None, None]
     assert runtime.capture_calls == [
         {**slots_module.SLOT_NAME_REGION, "normalize": False},
+        {**slots_module.SLOT_STAR_REGION, "normalize": False},
         {**slots_module.SLOT_NAME_REGION, "normalize": False},
+        {**slots_module.SLOT_STAR_REGION, "normalize": False},
         {**slots_module.SLOT_NAME_REGION, "normalize": False},
+        {**slots_module.SLOT_STAR_REGION, "normalize": False},
     ]
     assert len(runtime.ocr_image_calls) == 1
     assert runtime.ocr_image_calls[0]["ocr"].ocr_mode == "high"
@@ -178,7 +182,7 @@ def test_build_cw_slots_reader_ignores_geometryless_piece_when_multiple_targets(
 
     assert front == [None, None, None, None]
     assert back == [None, None, None, None, None, None]
-    assert hand == ["银狼", None, None, None, None, None, None, None, None]
+    assert hand == [{"name": "银狼", "star": None}, None, None, None, None, None, None, None, None]
 
 
 def test_map_ocr_pieces_to_slot_names_preserves_single_target_piece_order_with_geometryless_piece():
@@ -367,12 +371,19 @@ def test_build_cw_slots_reader_reads_runtime_slot_snapshots_and_closes_overlay(m
 
     front, back, hand = build_cw_slots_reader(runtime)()
 
-    assert front == ["希儿", None, None, None]
-    assert back == ["佩拉", None, None, None, None, None]
-    assert hand == ["银狼", None, "阮·梅", None, None, None, None, None, None]
+    assert front == [{"name": "希儿", "star": None}, None, None, None]
+    assert back == [{"name": "佩拉", "star": None}, None, None, None, None, None]
+    assert hand == [{"name": "银狼", "star": None}, None, {"name": "阮·梅", "star": None}, None, None, None, None, None, None]
     assert runtime.clicks[0] == (25, 40)
     assert runtime.clicks[1] == slots_module.HAND_EXPAND_DISMISS_POINT
-    assert runtime.capture_calls == [{**slots_module.SLOT_NAME_REGION, "normalize": False}] * 19
+    assert runtime.capture_calls == [
+        item
+        for _ in range(19)
+        for item in (
+            {**slots_module.SLOT_NAME_REGION, "normalize": False},
+            {**slots_module.SLOT_STAR_REGION, "normalize": False},
+        )
+    ]
     assert len(runtime.ocr_image_calls) == 1
 
 
@@ -418,10 +429,15 @@ def test_build_cw_slots_reader_reads_only_requested_slots(monkeypatch):
 
     front, back, hand = build_cw_slots_reader(runtime, targets=["front:0", "hand:2"])()
 
-    assert front == ["希儿", None, None, None]
+    assert front == [{"name": "希儿", "star": None}, None, None, None]
     assert back == [None, None, None, None, None, None]
-    assert hand == [None, None, "阮·梅", None, None, None, None, None, None]
-    assert runtime.capture_calls == [{**slots_module.SLOT_NAME_REGION, "normalize": False}] * 2
+    assert hand == [None, None, {"name": "阮·梅", "star": None}, None, None, None, None, None, None]
+    assert runtime.capture_calls == [
+        {**slots_module.SLOT_NAME_REGION, "normalize": False},
+        {**slots_module.SLOT_STAR_REGION, "normalize": False},
+        {**slots_module.SLOT_NAME_REGION, "normalize": False},
+        {**slots_module.SLOT_STAR_REGION, "normalize": False},
+    ]
     assert len(runtime.ocr_image_calls) == 1
 
 
@@ -553,9 +569,9 @@ def test_build_cw_slots_reader_waits_for_slot_panel_settle_between_interactions(
 
     front, back, hand = build_cw_slots_reader(runtime, targets=["front:0", "hand:0"])()
 
-    assert front == ["希儿", None, None, None]
+    assert front == [{"name": "希儿", "star": None}, None, None, None]
     assert back == [None, None, None, None, None, None]
-    assert hand == ["银狼", None, None, None, None, None, None, None, None]
+    assert hand == [{"name": "银狼", "star": None}, None, None, None, None, None, None, None, None]
 
 
 def test_slots_read_partial_refresh_preserves_existing_unknown_positions(tmp_path):
@@ -709,6 +725,90 @@ def test_slots_read_normalizes_name_from_fresh_session_candidates_only(tmp_path)
     )
 
     assert refreshed.scene_state["cw"]["slots"]["front"][0] == "布洛妮娅"
+
+
+def test_slots_read_preserves_star_metadata_when_normalizing_name(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "on_field": {"布洛妮娅": 1},
+        "off_field": {},
+    }
+    session.scene_state["cw"]["slots"]["front"] = [{"name": "布洛妮娅", "star": 2}, None, None, None]
+    session.scene_state["cw"]["slots"]["stale"] = False
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: ([{"name": "布罗妮娅", "star": 3}, None, None, None], [None] * 6, [None] * 9),
+        targets=["front:0"],
+    )
+
+    assert refreshed.scene_state["cw"]["slots"]["front"][0] == {"name": "布洛妮娅", "star": 3}
+
+
+def test_slots_read_enriches_slot_traits_and_summarizes_field_traits(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    guide_config = {
+        "traits": [
+            {"id": 2001, "name": "巡猎"},
+            {"id": 2002, "name": "量子"},
+            {"id": 2003, "name": "辅助"},
+        ],
+        "roles": [
+            {"id": 1001, "name": "希儿", "trait_ids": [2001, 2002]},
+            {"id": 1002, "name": "佩拉", "trait_ids": [2002]},
+            {"id": 1003, "name": "布洛妮娅", "trait_ids": [2001, 2003]},
+        ],
+    }
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: (
+            [{"name": "希儿", "star": 4}, None, None, None],
+            [{"name": "佩拉", "star": 2}, None, None, None, None, None],
+            [{"name": "布洛妮娅", "star": 3}, None, None, None, None, None, None, None, None],
+        ),
+        guide_config=guide_config,
+    )
+
+    assert refreshed.scene_state["cw"]["slots"]["front"][0] == {"name": "希儿", "star": 4, "traits": ["巡猎", "量子"]}
+    assert refreshed.scene_state["cw"]["slots"]["back"][0] == {"name": "佩拉", "star": 2, "traits": ["量子"]}
+    assert refreshed.scene_state["cw"]["slots"]["hand"][0] == {"name": "布洛妮娅", "star": 3, "traits": ["巡猎", "辅助"]}
+    assert refreshed.scene_state["cw"]["slots"]["trait_summary"] == [
+        {"trait": "量子", "tiers": [1, 2], "owned_roles": 2, "active_tier": 2, "total_tiers": 2, "ratio": 1.0},
+        {"trait": "巡猎", "tiers": [1, 2], "owned_roles": 1, "active_tier": 1, "total_tiers": 2, "ratio": 0.5},
+    ]
+
+
+def test_summarize_field_trait_status_sorts_by_activation_ratio_and_limits_top_ten():
+    slots_module = load_cw_slots_module()
+    summarize = getattr(slots_module, "_summarize_field_trait_status", None)
+    assert summarize is not None
+
+    front = [{"name": f"角色{index}", "traits": [f"羁绊{index}"]} for index in range(12)]
+    back = []
+    guide_config = {
+        "traits": [{"id": index, "name": f"羁绊{index}"} for index in range(12)],
+        "roles": [
+            {"id": f"r{index}-{role_idx}", "name": f"角色{index}" if role_idx == 0 else f"羁绊{index}候补{role_idx}", "trait_ids": [index]}
+            for index in range(12)
+            for role_idx in range(index + 1)
+        ],
+    }
+
+    summary = summarize(front, back, guide_config=guide_config)
+
+    assert len(summary) == 10
+    assert [item["trait"] for item in summary[:3]] == ["羁绊0", "羁绊1", "羁绊2"]
+    assert summary[0]["ratio"] == 1.0
+    assert summary[-1]["trait"] == "羁绊9"
 
 
 def test_slots_read_does_not_use_stale_slot_names_as_normalization_candidates(tmp_path):
@@ -1308,6 +1408,7 @@ def _set_sell_plan(session, plan: dict):
 
 def test_cw_slots_read_service_persists_incremental_snapshot(tmp_path: Path, monkeypatch):
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"traits": [], "roles": []})
     monkeypatch.setattr(
         "trail.daemon.cw_service.slots_reader_factory",
         lambda runtime, targets=None: lambda: (["希儿", None, None, None], [None] * 6, [None] * 9),
@@ -1326,6 +1427,7 @@ def test_cw_slots_read_service_persists_incremental_snapshot(tmp_path: Path, mon
 
 def test_cw_slots_read_service_preserves_existing_snapshot_shape(tmp_path: Path, monkeypatch):
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"traits": [], "roles": []})
     monkeypatch.setattr(
         "trail.daemon.cw_service.slots_reader_factory",
         lambda runtime, targets=None: lambda: ([None, "布洛妮娅", None, None], [None] * 6, [None] * 9),
@@ -1362,6 +1464,10 @@ def test_cw_slots_read_command_service_captures_screenshot(tmp_path: Path, monke
     cw_service = CwService(runtime_service=runtime_service)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
 
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.fetch_cw_guide_config",
+        lambda **kwargs: {"traits": [], "roles": []},
+    )
     monkeypatch.setattr(
         "trail.daemon.cw_service.slots_reader_factory",
         lambda runtime, targets=None: lambda: (["希儿", None, None, None], [None] * 6, [None] * 9),
@@ -1412,6 +1518,10 @@ def test_cw_slots_read_command_service_preserves_read_failure_semantics(tmp_path
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
 
     monkeypatch.setattr(
+        "trail.daemon.cw_service.fetch_cw_guide_config",
+        lambda **kwargs: {"traits": [], "roles": []},
+    )
+    monkeypatch.setattr(
         "trail.daemon.cw_service.slots_reader_factory",
         lambda runtime, targets=None: lambda: ([None] * 4, [None] * 6, [None] * 9),
     )
@@ -1458,6 +1568,7 @@ def test_cw_slots_read_command_service_preserves_unexpected_exception_semantics(
     cw_service = CwService(runtime_service=runtime_service)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
 
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"traits": [], "roles": []})
     monkeypatch.setattr(
         "trail.daemon.cw_service.slots_reader_factory",
         lambda runtime, targets=None: lambda: (_ for _ in ()).throw(RuntimeError("boom")),

@@ -461,7 +461,7 @@ class CommandService:
         from trail.scenes.cw.guide import fetch_cw_guide_config
 
         return success(
-            to_jsonable(fetch_cw_guide_config()),
+            to_jsonable(fetch_cw_guide_config(workspace_root=request.workspace_root)),
             request_id=request.request_id,
         )
 
@@ -491,6 +491,7 @@ class CommandService:
             kwargs["portal"] = request.payload.get("portal")
         if request.payload.get("portal_id") is not None:
             kwargs["portal_id"] = request.payload.get("portal_id")
+        kwargs["workspace_root"] = request.workspace_root
 
         try:
             payload = fetch_cw_guide_list(**kwargs)

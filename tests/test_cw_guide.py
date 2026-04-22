@@ -573,6 +573,53 @@ def test_fetch_cw_guide_config_includes_strategy_list_without_changing_existing_
     ]
 
 
+def test_fetch_cw_guide_config_writes_and_reuses_workspace_cache(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+
+    calls = {"count": 0}
+
+    def fake_urlopen(request, timeout=10):
+        del request, timeout
+        calls["count"] += 1
+        return FakeHttpResponse(fake_cw_config_response())
+
+    monkeypatch.setattr(guide_module, "urlopen", fake_urlopen, raising=False)
+
+    first = guide_module.fetch_cw_guide_config(workspace_root=tmp_path)
+    second = guide_module.fetch_cw_guide_config(workspace_root=tmp_path)
+
+    assert calls["count"] == 1
+    assert first == second
+    cache_path = tmp_path / ".trail" / "cache" / "cw-guide-config.json"
+    assert cache_path.is_file()
+
+
+def test_fetch_cw_guide_list_uses_cached_workspace_config_for_trait_resolution(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+
+    cache_path = tmp_path / ".trail" / "cache" / "cw-guide-config.json"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(fake_cw_config_response()["data"], ensure_ascii=False), encoding="utf-8")
+    captured_trait_id: dict[str, object] = {}
+
+    def fake_fetch_guide_list_data(**kwargs):
+        captured_trait_id["value"] = kwargs["trait_id"]
+        return {"list": [], "next_page_token": None}
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_guide_list_data", fake_fetch_guide_list_data, raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "urlopen",
+        lambda *args, **kwargs: pytest.fail("cached config path should avoid refetching guide config"),
+        raising=False,
+    )
+
+    payload = guide_module.fetch_cw_guide_list(page=1, limit=10, trait="巡猎", workspace_root=tmp_path)
+
+    assert payload["list"] == []
+    assert captured_trait_id["value"] == 2001
+
+
 def test_build_guide_list_request_payload_includes_role_ids():
     guide_module = load_cw_guide_module()
 
