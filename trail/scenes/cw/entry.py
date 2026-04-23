@@ -24,6 +24,7 @@ CURRENCY_WARS_ENTRY_POINT = (int(CW_WIDTH * 0.242), int(CW_HEIGHT * 0.30))
 CURRENCY_WARS_PARTICIPATE_POINT = (int(CW_WIDTH * 0.7786), int(CW_HEIGHT * 0.8194))
 STANDARD_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.2315))
 OVERCLOCK_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.4167))
+ENTRY_PRE_DIFFICULTY_OCR_SETTLE_SECONDS = 2.0
 HOME_UNFINISHED_PROGRESS_PRIMARY = "继续进度"
 HOME_UNFINISHED_PROGRESS_SECONDARY = ("结束并结算", "当前进度")
 SETTLEMENT_CONTINUE_PRIMARY = ("挑战成功", "挑战失败")
@@ -410,11 +411,25 @@ def read_entry_enemy_difficulty(
             after_input=after_input,
         )
 
+    filtered_digit_runs: list[tuple[int, int, int, int, int, str]] = []
+    for index, current in enumerate(digit_runs):
+        current_box = (current[0], current[1], current[2], current[3])
+        if any(
+            _boxes_overlap(current_box, (other[0], other[1], other[2], other[3])) and len(other[5]) > len(current[5])
+            for other_index, other in enumerate(digit_runs)
+            if other_index != index
+        ):
+            continue
+        filtered_digit_runs.append(current)
+    digit_runs = filtered_digit_runs
+
     for index, current in enumerate(digit_runs):
         current_box = (current[0], current[1], current[2], current[3])
         for other in digit_runs[index + 1 :]:
             other_box = (other[0], other[1], other[2], other[3])
             if _boxes_overlap(current_box, other_box):
+                if len(current[5]) == 1 and len(other[5]) == 1:
+                    continue
                 raise _build_difficulty_recovery_error(
                     requested_difficulty=requested_difficulty,
                     target_enemy_difficulty=target_enemy_difficulty,
@@ -558,16 +573,15 @@ def _step_reduce_entry_difficulty(
     _transition_sleep(ENTRY_DIFFICULTY_SETTLE_SECONDS)
 
 
-def _select_exact_difficulty(runtime, *, difficulty: str, parsed: Mapping[str, object]) -> None:
+def _select_exact_difficulty(runtime, *, difficulty: str, parsed: Mapping[str, object], after_input: bool) -> None:
     target_enemy_difficulty = int(parsed["target_enemy_difficulty"])
     target_ordinal = int(parsed["global_layer_ordinal"])
     current = _read_current_entry_rank(
         runtime,
         requested_difficulty=difficulty,
         target_enemy_difficulty=target_enemy_difficulty,
-        after_input=False,
+        after_input=after_input,
     )
-    after_input = False
     coarse_steps = 0
     fine_steps = 0
     iterations = 0
@@ -648,14 +662,13 @@ def _select_exact_difficulty(runtime, *, difficulty: str, parsed: Mapping[str, o
     )
 
 
-def _select_lowest_difficulty(runtime) -> None:
+def _select_lowest_difficulty(runtime, *, after_input: bool) -> None:
     requested_difficulty = "lowest"
     near_bottom = _require_entry_rank_token("A1-1")
     bottom = _require_entry_rank_token("A0-1")
     near_bottom_ordinal = int(near_bottom["global_layer_ordinal"])
     bottom_ordinal = int(bottom["global_layer_ordinal"])
     current: Mapping[str, object] | None = None
-    after_input = False
     iterations = 0
     max_iterations = ENTRY_DIFFICULTY_COARSE_MAX_STEPS + ENTRY_DIFFICULTY_FINE_MAX_STEPS
 
@@ -789,7 +802,7 @@ def _select_lowest_difficulty(runtime) -> None:
     )
 
 
-def _select_difficulty(runtime, *, difficulty: str) -> None:
+def _select_difficulty(runtime, *, difficulty: str, after_input: bool = False) -> None:
     if difficulty == "current":
         return
 
@@ -800,12 +813,12 @@ def _select_difficulty(runtime, *, difficulty: str) -> None:
         return
 
     if difficulty == "lowest":
-        _select_lowest_difficulty(runtime)
+        _select_lowest_difficulty(runtime, after_input=after_input)
         return
 
     parsed = parse_cw_start_difficulty_token(difficulty)
     if isinstance(parsed, Mapping) and parsed.get("kind") == "exact":
-        _select_exact_difficulty(runtime, difficulty=difficulty, parsed=parsed)
+        _select_exact_difficulty(runtime, difficulty=difficulty, parsed=parsed, after_input=after_input)
         return
 
     raise TrailError("CW_ENTRY_DIFFICULTY_INVALID", f"不支持的货币战争难度: {difficulty}")
@@ -932,7 +945,8 @@ def _detect_current_enter_page(
 
 def _enter_new_game(runtime, *, difficulty: str) -> None:
     _click_box_center(runtime, _wait(runtime, "entry.new"))
-    _select_difficulty(runtime, difficulty=difficulty)
+    _transition_sleep(ENTRY_PRE_DIFFICULTY_OCR_SETTLE_SECONDS)
+    _select_difficulty(runtime, difficulty=difficulty, after_input=True)
     _click_box_center(runtime, _wait(runtime, "entry.start_game"))
     _handle_boss_info_flow(runtime)
     _consume_click_blank_prompt(runtime)

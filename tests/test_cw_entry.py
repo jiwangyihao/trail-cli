@@ -231,12 +231,35 @@ def test_read_entry_enemy_difficulty_ignores_geometryless_noise_and_fails_on_gap
     assert exc_info.value.completed_after_side_effect is True
 
 
-def test_read_entry_enemy_difficulty_rejects_conflicting_overlapping_digit_pieces():
+def test_read_entry_enemy_difficulty_prefers_longest_piece_when_overlapping_with_single_digits():
     runtime = SimpleNamespace(
         ocr=lambda **kwargs: [
             {"text": "39", "box": {"left": 40, "top": 10, "width": 24, "height": 20}},
             {"text": "3", "box": {"left": 40, "top": 10, "width": 12, "height": 20}},
             {"text": "9", "box": {"left": 52, "top": 10, "width": 12, "height": 20}},
+        ]
+    )
+
+    assert read_entry_enemy_difficulty(runtime, requested_difficulty="A6-1", target_enemy_difficulty=39) == 39
+
+
+
+def test_read_entry_enemy_difficulty_prefers_longest_piece_when_overlapping_with_single_digit_fragment():
+    runtime = SimpleNamespace(
+        ocr=lambda **kwargs: [
+            {"text": "3", "box": {"left": 43, "top": 14, "width": 43, "height": 61}},
+            {"text": "36", "box": {"left": 72, "top": 12, "width": 56, "height": 68}},
+        ]
+    )
+
+    assert read_entry_enemy_difficulty(runtime, requested_difficulty="A5-7", target_enemy_difficulty=36) == 36
+
+
+def test_read_entry_enemy_difficulty_rejects_conflicting_overlapping_multi_digit_pieces():
+    runtime = SimpleNamespace(
+        ocr=lambda **kwargs: [
+            {"text": "39", "box": {"left": 40, "top": 10, "width": 24, "height": 20}},
+            {"text": "36", "box": {"left": 44, "top": 10, "width": 24, "height": 20}},
         ]
     )
 
@@ -254,6 +277,17 @@ def test_read_entry_enemy_difficulty_rejects_conflicting_overlapping_digit_piece
     }
     assert not hasattr(exc_info.value, "known_failure_after_save")
     assert not hasattr(exc_info.value, "completed_after_side_effect")
+
+
+def test_read_entry_enemy_difficulty_merges_overlapping_single_digit_pieces():
+    runtime = SimpleNamespace(
+        ocr=lambda **kwargs: [
+            {"text": "5", "box": {"left": 40, "top": 10, "width": 18, "height": 20}},
+            {"text": "1", "box": {"left": 54, "top": 10, "width": 12, "height": 20}},
+        ]
+    )
+
+    assert read_entry_enemy_difficulty(runtime, requested_difficulty="A5-1", target_enemy_difficulty=30) == 51
 
 
 def test_read_entry_enemy_difficulty_raises_missing_when_no_boxed_digits():
@@ -351,6 +385,69 @@ def test_select_exact_difficulty_noops_when_current_rank_already_matches_target(
     assert runtime.drags == []
 
 
+def test_select_battle_mode_does_not_wait_after_click(monkeypatch: pytest.MonkeyPatch):
+    import trail.scenes.cw.entry as entry_module
+
+    sleep_calls: list[float] = []
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: sleep_calls.append(seconds))
+    runtime = Runtime()
+
+    entry_module._select_battle_mode(runtime, battle_mode="standard")
+
+    assert runtime.clicks == [entry_module.STANDARD_BATTLE_MODE_POINT]
+    assert sleep_calls == []
+
+
+def test_enter_new_game_waits_before_first_difficulty_ocr(monkeypatch: pytest.MonkeyPatch):
+    import trail.scenes.cw.entry as entry_module
+
+    sleep_calls: list[float] = []
+    selected: list[str] = []
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    runtime = Runtime()
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: sleep_calls.append(seconds))
+    monkeypatch.setattr(entry_module, "_handle_boss_info_flow", lambda runtime: None)
+    monkeypatch.setattr(entry_module, "_consume_click_blank_prompt", lambda runtime: None)
+    monkeypatch.setattr(entry_module, "_handle_invest_environment_flow", lambda runtime: None)
+    monkeypatch.setattr(
+        entry_module,
+        "_wait",
+        lambda runtime, alias: {
+            "entry.new": {"left": 1570, "top": 955, "width": 48, "height": 32},
+            "entry.start_game": {"left": 1648, "top": 958, "width": 104, "height": 34},
+        }[alias],
+    )
+    monkeypatch.setattr(
+        entry_module,
+        "_select_difficulty",
+        lambda runtime, *, difficulty, after_input=False: selected.append(f"{difficulty}:{after_input}"),
+    )
+
+    entry_module._enter_new_game(runtime, difficulty="A5-1")
+
+    assert runtime.clicks == [(1594, 971), (1700, 975)]
+    assert sleep_calls == [2.0]
+    assert selected == ["A5-1:True"]
+
+
 def test_select_exact_difficulty_recovery_when_highest_button_missing(monkeypatch):
     import trail.scenes.cw.entry as entry_module
 
@@ -370,6 +467,28 @@ def test_select_exact_difficulty_recovery_when_highest_button_missing(monkeypatc
 
     assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
     assert exc_info.value.data["reason"] == "highest_reset_unavailable"
+
+
+def test_select_exact_difficulty_initial_failure_marks_known_failure_when_prior_input_done(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def ocr(self, **kwargs):
+            del kwargs
+            return []
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+
+    with pytest.raises(TrailError) as exc_info:
+        entry_module._select_difficulty(Runtime(), difficulty="A5-1", after_input=True)
+
+    assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
+    assert exc_info.value.known_failure_after_save is True
+    assert exc_info.value.completed_after_side_effect is True
 
 
 def test_select_exact_difficulty_recovery_when_coarse_drag_makes_no_progress(monkeypatch):
