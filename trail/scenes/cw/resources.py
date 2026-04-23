@@ -10,6 +10,7 @@ CW_RESOURCE_ALIASES = {
     "entry.difficulty.lowest": "down_arrow.png",
     "portal.collection": "collection.png",
     "portal.refresh": "invest_env_refresh.png",
+    "strategy.refresh": "invest_strategy_refresh.png",
     "guide.strategy": "strategy.png",
     "guide.enter_code": "enter_strategy_code.png",
     "guide.confirm": "ensure2.png",

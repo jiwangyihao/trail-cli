@@ -7,6 +7,7 @@ import pytest
 
 from trail.core.errors import TrailError
 from trail.scenes.cw.models import CwSceneState
+from trail.runtime.model import Box
 from trail.session.store import SessionStore
 
 
@@ -27,10 +28,12 @@ def load_cw_strategy_module():
 
 
 class StrategyRuntime:
-    def __init__(self, *, ocr_results: list[object] | None = None):
+    def __init__(self, *, ocr_results: list[object] | None = None, locate_result: Box | None = None):
         self.clicks: list[tuple[int, int]] = []
         self.ocr_calls = 0
+        self.locate_calls: list[tuple[str, dict[str, object]]] = []
         self._ocr_results = list(ocr_results) if ocr_results is not None else []
+        self._locate_result = locate_result
 
     def click_point(self, x: int, y: int, **kwargs):
         del kwargs
@@ -43,6 +46,10 @@ class StrategyRuntime:
             return []
         index = min(self.ocr_calls - 1, len(self._ocr_results) - 1)
         return self._ocr_results[index]
+
+    def locate(self, template: str, **kwargs):
+        self.locate_calls.append((template, dict(kwargs)))
+        return self._locate_result
 
 
 def make_rapidocr_piece(text: str, *, left: int, top: int, width: int = 180, height: int = 48, score: float = 0.99):
@@ -236,6 +243,70 @@ def test_summarize_strategy_cards_groups_rapidocr_pieces_by_lane_and_extracts_re
             "refresh_count": 0,
             "guide_match": "否",
             "guide_loaded": 1,
+        },
+    ]
+
+
+def test_summarize_strategy_cards_ignores_page_chrome_and_matches_real_strategy_page_layout():
+    strategy_module = load_cw_strategy_module()
+
+    cards = strategy_module.summarize_strategy_cards(
+        [
+            {"text": "攻略", "box": {"left": 1519.5, "top": 42.0, "width": 61.5, "height": 34.5}},
+            {"text": "返回备战界面", "box": {"left": 1722.0, "top": 42.0, "width": 154.5, "height": 34.5}},
+            {"text": "图例", "box": {"left": 180.0, "top": 85.5, "width": 57.0, "height": 31.5}},
+            {"text": "请选择投资策略", "box": {"left": 856.5, "top": 81.0, "width": 205.5, "height": 37.5}},
+            {"text": "装备党", "box": {"left": 411.0, "top": 477.0, "width": 88.5, "height": 36.0}},
+            {"text": "四费晋升", "box": {"left": 904.5, "top": 478.5, "width": 111.0, "height": 34.5}},
+            {"text": "梦境大舞台", "box": {"left": 1392.0, "top": 474.0, "width": 141.0, "height": 43.5}},
+            {"text": "激活狼狩羁绊时，狼狩角色们", "box": {"left": 282.0, "top": 522.0, "width": 327.0, "height": 34.5}},
+            {"text": "你购买的下1个4费角色将立刻", "box": {"left": 789.0, "top": 525.0, "width": 325.0, "height": 30.0}},
+            {"text": "盛会之星羁绊激活时，战斗中", "box": {"left": 1291.0, "top": 520.0, "width": 326.0, "height": 35.0}},
+            {"text": "每穿戴一件装备，就获得4%伤", "box": {"left": 286.0, "top": 555.0, "width": 330.0, "height": 28.0}},
+            {"text": "升到2星。获得12金币。", "box": {"left": 787.0, "top": 553.0, "width": 261.0, "height": 33.0}},
+            {"text": "首次激活3/7/10个不同的非独", "box": {"left": 1294.0, "top": 555.0, "width": 329.0, "height": 28.0}},
+            {"text": "害增幅和2%速度增幅。获得【", "box": {"left": 286.0, "top": 583.0, "width": 329.0, "height": 30.0}},
+            {"text": "立羁绊后，获得【盛会之星星", "box": {"left": 1291.0, "top": 579.0, "width": 323.0, "height": 36.0}},
+            {"text": "椒丘】和【飞雪】。", "box": {"left": 282.0, "top": 609.0, "width": 220.0, "height": 37.0}},
+            {"text": "徽】。获得【花火】。", "box": {"left": 1291.0, "top": 612.0, "width": 242.0, "height": 33.0}},
+            {"text": "刷新次数1", "box": {"left": 414.0, "top": 847.0, "width": 115.0, "height": 32.0}},
+            {"text": "刷新次数1", "box": {"left": 921.0, "top": 847.0, "width": 114.0, "height": 32.0}},
+            {"text": "刷新次数1", "box": {"left": 1423.0, "top": 847.0, "width": 116.0, "height": 32.0}},
+            {"text": "）确认", "box": {"left": 939.0, "top": 978.0, "width": 69.0, "height": 31.0}},
+            {"text": "UID:111373161", "box": {"left": 27.0, "top": 1050.0, "width": 123.0, "height": 25.0}},
+        ],
+        [
+            {"strategy_id": "equip", "title": "装备党", "description": "激活狼狩羁绊时，狼狩角色们每穿戴一件装备，就获得4%伤害增幅和2%速度增幅。获得<color=#b4b4b4>【椒丘】</color>和<color=#6cce9f>【飞霄】</color>。"},
+            {"strategy_id": "promote", "title": "四费晋升", "description": "你购买的下1个<color=#927fe7>4费角色</color>将立刻升到2星。获得12金币。"},
+            {"strategy_id": "dream", "title": "梦境大舞台", "description": "盛会之星羁绊激活时，战斗中首次激活3/7/10个不同的非独立羁绊后，获得【盛会之星星徽】。获得<color=#6cce9f>【花火】</color>。"},
+        ],
+        guide_state=None,
+    )
+
+    assert cards == [
+        {
+            "card_idx": 1,
+            "strategy_title": "装备党",
+            "strategy_description": "激活狼狩羁绊时，狼狩角色们每穿戴一件装备，就获得4%伤害增幅和2%速度增幅。获得<color=#b4b4b4>【椒丘】</color>和<color=#6cce9f>【飞霄】</color>。",
+            "refresh_count": 1,
+            "guide_match": "否",
+            "guide_loaded": 0,
+        },
+        {
+            "card_idx": 2,
+            "strategy_title": "四费晋升",
+            "strategy_description": "你购买的下1个<color=#927fe7>4费角色</color>将立刻升到2星。获得12金币。",
+            "refresh_count": 1,
+            "guide_match": "否",
+            "guide_loaded": 0,
+        },
+        {
+            "card_idx": 3,
+            "strategy_title": "梦境大舞台",
+            "strategy_description": "盛会之星羁绊激活时，战斗中首次激活3/7/10个不同的非独立羁绊后，获得【盛会之星星徽】。获得<color=#6cce9f>【花火】</color>。",
+            "refresh_count": 1,
+            "guide_match": "否",
+            "guide_loaded": 0,
         },
     ]
 
@@ -594,3 +665,78 @@ def test_refresh_cw_strategy_overwrites_all_cards_and_invalidates_stage(tmp_path
     assert session.scene_state["cw"]["strategy"] == snapshot
     assert session.scene_state["cw"]["stage"] == {"stale": True}
     assert session.last_stage is None
+
+
+def test_refresh_cw_strategy_prefers_refresh_label_center_over_static_lane_point(tmp_path: Path, monkeypatch):
+    strategy_module = load_cw_strategy_module()
+    session = build_session(tmp_path)
+    runtime = StrategyRuntime(
+        ocr_results=[
+            [
+                make_rapidocr_piece("刷新次数1", left=414, top=847, width=115, height=32),
+                make_rapidocr_piece("刷新次数1", left=921, top=847, width=114, height=32),
+                make_rapidocr_piece("刷新次数1", left=1423, top=847, width=116, height=32),
+            ],
+            [],
+        ]
+    )
+    session.scene_state["cw"] = {
+        "strategy": {"cards": [{"card_idx": 2, "strategy_title": "旧卡2"}], "stale": False},
+        "stage": {"value": "invest", "stale": False},
+    }
+    cards = [
+        {
+            "card_idx": 2,
+            "strategy_title": "新卡2",
+            "strategy_description": "d2",
+            "refresh_count": 1,
+            "guide_match": "次选",
+        }
+    ]
+
+    monkeypatch.setattr(
+        strategy_module,
+        "_detect_strategy_page_state",
+        lambda runtime, session=None: {"page": "in_game", "stage": "invest", "title": "请选择投资策略"},
+    )
+    monkeypatch.setattr(strategy_module, "summarize_strategy_cards", lambda *args, **kwargs: cards)
+
+    strategy_module.refresh_cw_strategy(session, card_idx=2, runtime=runtime, strategy_list=[])
+
+    assert runtime.clicks == [(978, 863)]
+
+
+def test_refresh_cw_strategy_clicks_located_refresh_icon_within_target_lane(tmp_path: Path, monkeypatch):
+    strategy_module = load_cw_strategy_module()
+    session = build_session(tmp_path)
+    runtime = StrategyRuntime(locate_result=Box(left=902, top=844, width=64, height=38))
+    session.scene_state["cw"] = {
+        "strategy": {"cards": [{"card_idx": 2, "strategy_title": "旧卡2"}], "stale": False},
+        "stage": {"value": "invest", "stale": False},
+    }
+    cards = [
+        {
+            "card_idx": 2,
+            "strategy_title": "新卡2",
+            "strategy_description": "d2",
+            "refresh_count": 1,
+            "guide_match": "次选",
+        }
+    ]
+
+    monkeypatch.setattr(
+        strategy_module,
+        "_detect_strategy_page_state",
+        lambda runtime, session=None: {"page": "in_game", "stage": "invest", "title": "请选择投资策略"},
+    )
+    monkeypatch.setattr(strategy_module, "summarize_strategy_cards", lambda *args, **kwargs: cards)
+
+    strategy_module.refresh_cw_strategy(session, card_idx=2, runtime=runtime, strategy_list=[])
+
+    assert runtime.clicks == [(934, 863)]
+    assert runtime.locate_calls == [
+        (
+            str(strategy_module._asset("strategy.refresh")),
+            {"from_x": 1 / 3, "from_y": 0.72, "to_x": 2 / 3, "to_y": 0.92},
+        )
+    ]
