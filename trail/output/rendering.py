@@ -1408,16 +1408,19 @@ def _unsupported_yaml_payload(payload: dict[str, Any], command: str) -> dict[str
     }
 
 
-def _is_tainted_failure(payload: dict[str, Any]) -> bool:
+def _failure_tainted_value(payload: dict[str, Any]) -> bool | None:
     debug = _as_dict(payload.get("debug"))
-    if debug.get("tainted") is True:
-        return True
+    if "tainted" in debug:
+        return bool(debug.get("tainted"))
 
     data = _as_dict(payload.get("data"))
-    if data.get("tainted") is True:
+    if "tainted" in data:
+        return bool(data.get("tainted"))
+
+    if payload.get("ok") is False and _should_render_recover(payload):
         return True
 
-    return payload.get("ok") is False and _should_render_recover(payload)
+    return None
 
 
 def _render_failure_lines(command: str, payload: dict[str, Any]) -> list[str]:
@@ -1425,8 +1428,9 @@ def _render_failure_lines(command: str, payload: dict[str, Any]) -> list[str]:
     debug = _as_dict(payload.get("debug"))
 
     first_line = f"fail {command} code={_encode_value(error.get('code'))}"
-    if _is_tainted_failure(payload):
-        first_line += " tainted=1"
+    tainted = _failure_tainted_value(payload)
+    if tainted is not None:
+        first_line += f" tainted={_encode_value(tainted)}"
 
     lines = [first_line]
     request_id = debug.get("request_id") or payload.get("request_id")

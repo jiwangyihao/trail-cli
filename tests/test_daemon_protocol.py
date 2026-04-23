@@ -2199,6 +2199,122 @@ def test_command_service_handles_cw_slots_place_known_failure_capture_error_as_p
     assert loaded.scene_state["cw"]["slots"]["stale"] is True
 
 
+def test_command_service_keeps_cw_start_recovery_failure_completed_after_side_effect(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ProtocolRuntime(tmp_path / "cw-start-recovery-known-fail.png")
+    runtime.capture_after_action = lambda optional=False, request_id=None: str(
+        tmp_path / ".trail" / "shots" / f"{request_id}.png"
+    )
+    runtime_service = ProtocolRuntimeService(runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    def fake_start_cw(session, *, mode: str, difficulty: str, battle_mode: str, runtime):
+        del session, mode, battle_mode, runtime
+        error = TrailError(
+            "CW_START_DIFFICULTY_RECOVERY_REQUIRED",
+            "cw start cannot safely continue difficulty selection; ask agent to enter error recovery",
+        )
+        error.data = {
+            "requested_difficulty": difficulty,
+            "target_enemy_difficulty": 51,
+            "current_enemy_difficulty": 49,
+            "reason": "coarse_no_progress",
+            "page": "entry.new",
+        }
+        error.known_failure_after_save = True
+        error.completed_after_side_effect = True
+        raise error
+
+    monkeypatch.setattr("trail.daemon.cw_service.start_cw", fake_start_cw)
+    request = DaemonRequest(
+        request_id="req-cw-start-recovery-known-failure",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "new",
+            "difficulty": "A7-3",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+    status = service.request_status(request.request_id)
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "CW_START_DIFFICULTY_RECOVERY_REQUIRED",
+        "message": "cw start cannot safely continue difficulty selection; ask agent to enter error recovery",
+    }
+    assert payload["screenshot"] == ".trail/shots/req-cw-start-recovery-known-failure.png"
+    assert status["final_state"] == "completed"
+    assert status["tainted"] is False
+
+
+def test_command_service_keeps_cw_start_recovery_failure_failed_before_side_effect_without_input(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    def fake_start_cw(session, *, mode: str, difficulty: str, battle_mode: str, runtime):
+        del session, mode, battle_mode, runtime
+        error = TrailError(
+            "CW_START_DIFFICULTY_RECOVERY_REQUIRED",
+            "cw start cannot safely continue difficulty selection; ask agent to enter error recovery",
+        )
+        error.data = {
+            "requested_difficulty": difficulty,
+            "target_enemy_difficulty": 51,
+            "current_enemy_difficulty": None,
+            "reason": "ocr_missing",
+            "page": "entry.new",
+        }
+        raise error
+
+    monkeypatch.setattr("trail.daemon.cw_service.start_cw", fake_start_cw)
+    request = DaemonRequest(
+        request_id="req-cw-start-recovery-pre-input",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "new",
+            "difficulty": "A7-3",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+    status = service.request_status(request.request_id)
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "CW_START_DIFFICULTY_RECOVERY_REQUIRED",
+        "message": "cw start cannot safely continue difficulty selection; ask agent to enter error recovery",
+    }
+    assert status["final_state"] == "failed_before_side_effect"
+    assert status["tainted"] is False
+
+
 @pytest.mark.parametrize("requested_mode", ["new", "continue"])
 def test_command_service_handles_cw_start_consumes_unfinished_progress_flag_before_run_start_chain(
     tmp_path: Path,
@@ -2509,6 +2625,147 @@ def test_command_service_handles_cw_start_rejects_invalid_enums(
     assert payload["error"] == {
         "code": expected_code,
         "message": expected_message,
+    }
+    assert start_calls == []
+    assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
+
+
+def test_command_service_handles_cw_start_valid_ax_x_does_not_leak_public_invalid_codes(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+    from trail.runtime.resources import resolve_scene_asset
+
+    monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+
+    def asset(alias: str) -> str:
+        return str(resolve_scene_asset("cw", alias))
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == asset("entry.new"):
+                return _box("entry.new", left=140, top=180)
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            if template == asset("entry.new"):
+                return _box("entry.new", left=140, top=180)
+            if template == asset("entry.start_game"):
+                return _box("entry.start_game", left=240, top=280)
+            if template == asset("stage.settle"):
+                return _box("stage.settle", left=340, top=380)
+            if template == asset("stage.boss_preview"):
+                return _box("stage.boss_preview", left=440, top=480)
+            if template == asset("entry.invest_environment"):
+                return _box("entry.invest_environment", left=540, top=580)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(dict(kwargs))
+            return [{"text": "货币战争"}]
+
+    cards = [{"card_idx": 1, "portal_title": "Alpha", "portal_description": "Desc", "score": 0.95}]
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-start-valid-ax-x",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "new",
+            "difficulty": "A7-3",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+
+    assert asset("entry.new") in runtime.locate_calls
+    if payload["ok"] is False:
+        assert payload["error"]["code"] not in {
+            "CW_START_DIFFICULTY_INVALID",
+            "CW_ENTRY_DIFFICULTY_INVALID",
+        }
+    assert service.request_status(request.request_id)["final_state"] in {
+        "completed",
+        "failed_before_side_effect",
+        "applied_but_not_persisted",
+        "persisted_but_response_unknown",
+    }
+
+
+@pytest.mark.parametrize("difficulty", ["A3-6", "A8-41", "A9-1", "A7_3", "a7-3", "A7-03", "A8-040", "A0-00"])
+def test_command_service_handles_cw_start_rejects_invalid_ax_x(
+    tmp_path: Path,
+    monkeypatch,
+    difficulty: str,
+): 
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = SimpleNamespace(ocr=lambda **kwargs: [{"text": "alpha"}])
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    start_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.start_cw",
+        lambda session, *, mode, difficulty, battle_mode, runtime: start_calls.append(
+            {
+                "mode": mode,
+                "difficulty": difficulty,
+                "battle_mode": battle_mode,
+            }
+        )
+        or session,
+    )
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id=f"req-cw-start-invalid-{difficulty}",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "new",
+            "difficulty": difficulty,
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {}
+    assert payload["error"] == {
+        "code": "CW_START_DIFFICULTY_INVALID",
+        "message": f"unsupported cw start difficulty: {difficulty}",
     }
     assert start_calls == []
     assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"

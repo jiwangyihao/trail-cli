@@ -6,9 +6,18 @@ from types import SimpleNamespace
 
 import pytest
 
+from trail.core.errors import TrailError
 from trail.runtime.model import Box
+from trail.runtime.ocr_config import OcrRequestConfig
 from trail.runtime.resources import resolve_scene_asset
-from trail.scenes.cw.entry import enter_cw
+from trail.scenes.cw.entry import (
+    ENTRY_ENEMY_DIFFICULTY_REGION,
+    enter_cw,
+    is_cw_exact_difficulty_token,
+    parse_cw_start_difficulty_token,
+    read_entry_enemy_difficulty,
+    resolve_entry_rank_from_enemy_difficulty,
+)
 from trail.session.store import SessionStore
 
 
@@ -47,6 +56,690 @@ def _install_template_runtime(
     runtime.locate = locate
     runtime.wait_img = wait_img
     runtime.ocr = ocr
+
+
+@pytest.mark.parametrize("value", ["A0-1", "A3-5", "A7-3", "A8-40"])
+def test_is_cw_exact_difficulty_token_accepts_public_ax_x_range(value: str):
+    assert is_cw_exact_difficulty_token(value) is True
+
+
+@pytest.mark.parametrize("value", ["current", "A3-6", "A8-41", "A9-1", "A7_3", "a7-3", "A7-03", "A8-040", "A0-00"])
+def test_is_cw_exact_difficulty_token_rejects_invalid_tokens(value: str):
+    assert is_cw_exact_difficulty_token(value) is False
+
+
+def test_parse_cw_start_difficulty_token_accepts_exact_rank():
+    assert parse_cw_start_difficulty_token("A7-3") == {
+        "kind": "exact",
+        "token": "A7-3",
+        "rank_code": "A7",
+        "rank_name": "资本帝王",
+        "layer": 3,
+        "target_enemy_difficulty": 51,
+        "global_layer_ordinal": 36,
+    }
+
+
+@pytest.mark.parametrize(
+    ("token", "target_enemy_difficulty", "global_layer_ordinal"),
+    [
+        ("A8-1", 61, 43),
+        ("A8-40", 108, 82),
+    ],
+)
+def test_parse_cw_start_difficulty_token_maps_a8_authoritative_values(
+    token: str,
+    target_enemy_difficulty: int,
+    global_layer_ordinal: int,
+):
+    parsed = parse_cw_start_difficulty_token(token)
+
+    assert parsed is not None
+    assert parsed["rank_code"] == "A8"
+    assert parsed["target_enemy_difficulty"] == target_enemy_difficulty
+    assert parsed["global_layer_ordinal"] == global_layer_ordinal
+
+
+def test_parse_cw_start_difficulty_token_accepts_preset_token():
+    assert parse_cw_start_difficulty_token("current") == {"kind": "preset", "token": "current"}
+
+
+@pytest.mark.parametrize("raw", ["AX-X", "A3-6", "A8-41", "A9-1", "A7_3", "a7-3", "A7-03", "A8-040", "A0-00"])
+def test_parse_cw_start_difficulty_token_rejects_invalid_exact_rank(raw: str):
+    assert parse_cw_start_difficulty_token(raw) is None
+
+
+def test_resolve_entry_rank_from_enemy_difficulty_maps_exact_band():
+    assert resolve_entry_rank_from_enemy_difficulty(39) == {
+        "token": "A6-1",
+        "rank_code": "A6",
+        "rank_name": "投资大师",
+        "layer": 1,
+        "enemy_difficulty": 39,
+        "global_layer_ordinal": 27,
+    }
+    assert resolve_entry_rank_from_enemy_difficulty(51) == {
+        "token": "A7-3",
+        "rank_code": "A7",
+        "rank_name": "资本帝王",
+        "layer": 3,
+        "enemy_difficulty": 51,
+        "global_layer_ordinal": 36,
+    }
+    assert resolve_entry_rank_from_enemy_difficulty(61) == {
+        "token": "A8-1",
+        "rank_code": "A8",
+        "rank_name": "财富造物主",
+        "layer": 1,
+        "enemy_difficulty": 61,
+        "global_layer_ordinal": 43,
+    }
+    assert resolve_entry_rank_from_enemy_difficulty(99) == {
+        "token": "A8-31",
+        "rank_code": "A8",
+        "rank_name": "财富造物主",
+        "layer": 31,
+        "enemy_difficulty": 99,
+        "global_layer_ordinal": 73,
+    }
+    assert resolve_entry_rank_from_enemy_difficulty(108) == {
+        "token": "A8-40",
+        "rank_code": "A8",
+        "rank_name": "财富造物主",
+        "layer": 40,
+        "enemy_difficulty": 108,
+        "global_layer_ordinal": 82,
+    }
+
+
+@pytest.mark.parametrize("value", [4, 5, 9, 10, 58, 59, 60, 71, 84, 97])
+def test_resolve_entry_rank_from_enemy_difficulty_rejects_unmapped_gap(value: int):
+    assert resolve_entry_rank_from_enemy_difficulty(value) is None
+
+
+def test_read_entry_enemy_difficulty_joins_split_digits_left_to_right():
+    seen: list[dict[str, object]] = []
+
+    def ocr(**kwargs):
+        seen.append(kwargs)
+        return [
+            {"text": "9", "box": {"left": 62, "top": 10, "width": 12, "height": 20}},
+            {"text": "3", "box": {"left": 40, "top": 12, "width": 12, "height": 20}},
+        ]
+
+    runtime = SimpleNamespace(ocr=ocr)
+
+    assert read_entry_enemy_difficulty(runtime) == 39
+    assert seen == [
+        {
+            "capture": ENTRY_ENEMY_DIFFICULTY_REGION,
+            "ocr": OcrRequestConfig(ocr_mode="high", retry_high="never"),
+        }
+    ]
+
+
+def test_read_entry_enemy_difficulty_accepts_points_mapping_geometry():
+    runtime = SimpleNamespace(
+        ocr=lambda **kwargs: [
+            {"text": "39", "points": ((40, 10), (64, 10), (64, 30), (40, 30))},
+        ]
+    )
+
+    assert read_entry_enemy_difficulty(runtime) == 39
+
+
+@pytest.mark.parametrize(
+    "piece",
+    [
+        {"text": "39", "center": {"x": 52, "y": 20}},
+        {"text": "39", "center": (52, 20)},
+        {"text": "39", "left": 40, "top": 10, "width": 24, "height": 20},
+    ],
+)
+def test_read_entry_enemy_difficulty_accepts_center_and_direct_geometry(piece: dict[str, object]):
+    runtime = SimpleNamespace(ocr=lambda **kwargs: [piece, {"text": "噪声"}])
+
+    assert read_entry_enemy_difficulty(runtime) == 39
+
+
+def test_read_entry_enemy_difficulty_ignores_geometryless_noise_and_fails_on_gap_value():
+    runtime = SimpleNamespace(
+        ocr=lambda **kwargs: [
+            {"text": "4", "box": {"left": 40, "top": 12, "width": 12, "height": 20}},
+            {"text": "噪声"},
+        ]
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        read_entry_enemy_difficulty(
+            runtime,
+            requested_difficulty="A0-1",
+            target_enemy_difficulty=1,
+            after_input=True,
+        )
+
+    assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
+    assert str(exc_info.value) == "cw start cannot safely continue difficulty selection; ask agent to enter error recovery"
+    assert exc_info.value.data == {
+        "requested_difficulty": "A0-1",
+        "target_enemy_difficulty": 1,
+        "current_enemy_difficulty": 4,
+        "reason": "ocr_unmapped",
+        "page": "entry.new",
+    }
+    assert exc_info.value.known_failure_after_save is True
+    assert exc_info.value.completed_after_side_effect is True
+
+
+def test_read_entry_enemy_difficulty_rejects_conflicting_overlapping_digit_pieces():
+    runtime = SimpleNamespace(
+        ocr=lambda **kwargs: [
+            {"text": "39", "box": {"left": 40, "top": 10, "width": 24, "height": 20}},
+            {"text": "3", "box": {"left": 40, "top": 10, "width": 12, "height": 20}},
+            {"text": "9", "box": {"left": 52, "top": 10, "width": 12, "height": 20}},
+        ]
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        read_entry_enemy_difficulty(runtime, requested_difficulty="A6-1", target_enemy_difficulty=39)
+
+    assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
+    assert str(exc_info.value) == "cw start cannot safely continue difficulty selection; ask agent to enter error recovery"
+    assert exc_info.value.data == {
+        "requested_difficulty": "A6-1",
+        "target_enemy_difficulty": 39,
+        "current_enemy_difficulty": None,
+        "reason": "ocr_conflict",
+        "page": "entry.new",
+    }
+    assert not hasattr(exc_info.value, "known_failure_after_save")
+    assert not hasattr(exc_info.value, "completed_after_side_effect")
+
+
+def test_read_entry_enemy_difficulty_raises_missing_when_no_boxed_digits():
+    runtime = SimpleNamespace(
+        ocr=lambda **kwargs: [
+            {"text": "噪声"},
+            {"text": "abc", "box": {"left": 40, "top": 12, "width": 12, "height": 20}},
+        ]
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        read_entry_enemy_difficulty(runtime, requested_difficulty="lowest", target_enemy_difficulty=1)
+
+    assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
+    assert exc_info.value.data == {
+        "requested_difficulty": "lowest",
+        "target_enemy_difficulty": 1,
+        "current_enemy_difficulty": None,
+        "reason": "ocr_missing",
+        "page": "entry.new",
+    }
+    assert not hasattr(exc_info.value, "known_failure_after_save")
+    assert not hasattr(exc_info.value, "completed_after_side_effect")
+
+
+def test_select_exact_difficulty_resets_to_highest_then_coarse_then_step(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.drags: list[tuple[int, int, int, int]] = []
+            self._values = iter([49, 108, 63, 51])
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            if template == _asset("entry.difficulty.highest"):
+                return _box("entry.difficulty.highest", left=1300, top=960)
+            if template == _asset("entry.difficulty.lowest"):
+                return _box("entry.difficulty.lowest", left=1600, top=960)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration=None):
+            del duration
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def ocr(self, **kwargs):
+            del kwargs
+            value = next(self._values)
+            return [{"text": str(value), "box": {"left": 10, "top": 10, "width": 20, "height": 20}}]
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    runtime = Runtime()
+
+    entry_module._select_difficulty(runtime, difficulty="A7-3")
+
+    assert runtime.clicks == [(1320, 970), (1620, 970)]
+    assert runtime.drags == [(960, 810, 960, 0)]
+
+
+def test_select_exact_difficulty_noops_when_current_rank_already_matches_target(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.drags: list[tuple[int, int, int, int]] = []
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration=None):
+            del duration
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def ocr(self, **kwargs):
+            del kwargs
+            return [{"text": "51", "box": {"left": 10, "top": 10, "width": 20, "height": 20}}]
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    runtime = Runtime()
+
+    entry_module._select_difficulty(runtime, difficulty="A7-3")
+
+    assert runtime.clicks == []
+    assert runtime.drags == []
+
+
+def test_select_exact_difficulty_recovery_when_highest_button_missing(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def ocr(self, **kwargs):
+            del kwargs
+            return [{"text": "49", "box": {"left": 10, "top": 10, "width": 20, "height": 20}}]
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+
+    with pytest.raises(TrailError) as exc_info:
+        entry_module._select_difficulty(Runtime(), difficulty="A8-1")
+
+    assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
+    assert exc_info.value.data["reason"] == "highest_reset_unavailable"
+
+
+def test_select_exact_difficulty_recovery_when_coarse_drag_makes_no_progress(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.drags: list[tuple[int, int, int, int]] = []
+            self._values = iter([49, 108, 108])
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            if template == _asset("entry.difficulty.highest"):
+                return _box("entry.difficulty.highest", left=1300, top=960)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del x, y, kwargs
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration=None):
+            del duration
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def ocr(self, **kwargs):
+            del kwargs
+            value = next(self._values)
+            return [{"text": str(value), "box": {"left": 10, "top": 10, "width": 20, "height": 20}}]
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+
+    with pytest.raises(TrailError) as exc_info:
+        entry_module._select_difficulty(Runtime(), difficulty="A7-3")
+
+    assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
+    assert exc_info.value.data["reason"] == "coarse_no_progress"
+
+
+def test_select_exact_difficulty_recovery_when_step_click_makes_no_progress(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.drags: list[tuple[int, int, int, int]] = []
+            self._values = iter([57, 57])
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            if template == _asset("entry.difficulty.lowest"):
+                return _box("entry.difficulty.lowest", left=1600, top=960)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration=None):
+            del duration
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def ocr(self, **kwargs):
+            del kwargs
+            value = next(self._values)
+            return [{"text": str(value), "box": {"left": 10, "top": 10, "width": 20, "height": 20}}]
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    runtime = Runtime()
+
+    with pytest.raises(TrailError) as exc_info:
+        entry_module._select_difficulty(runtime, difficulty="A7-1")
+
+    assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
+    assert exc_info.value.data["reason"] == "step_no_progress"
+    assert runtime.clicks == [(1620, 970)]
+    assert runtime.drags == []
+
+
+def test_select_exact_difficulty_recovery_when_coarse_budget_exhausted(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.drags: list[tuple[int, int, int, int]] = []
+            self._values = iter([
+                108,
+                *range(107, 98, -1),
+                *range(96, 86, -1),
+                *range(83, 73, -1),
+                *range(70, 67, -1),
+            ])
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del x, y, kwargs
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration=None):
+            del duration
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def ocr(self, **kwargs):
+            del kwargs
+            value = next(self._values)
+            return [{"text": str(value), "box": {"left": 10, "top": 10, "width": 20, "height": 20}}]
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    runtime = Runtime()
+
+    with pytest.raises(TrailError) as exc_info:
+        entry_module._select_difficulty(runtime, difficulty="A0-1")
+
+    assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
+    assert exc_info.value.data["reason"] == "iteration_budget_exhausted"
+    assert runtime.drags == [(960, 810, 960, 0)] * 20
+
+
+def test_select_lowest_recovers_immediately_when_arrow_present_but_ocr_missing(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.drags: list[tuple[int, int, int, int]] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            if template == _asset("entry.difficulty.lowest"):
+                return _box("entry.difficulty.lowest", left=1600, top=960)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration=None):
+            del duration
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def ocr(self, **kwargs):
+            del kwargs
+            return []
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    runtime = Runtime()
+
+    with pytest.raises(TrailError) as exc_info:
+        entry_module._select_difficulty(runtime, difficulty="lowest")
+
+    assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
+    assert exc_info.value.data["reason"] == "ocr_missing"
+    assert runtime.clicks == []
+    assert runtime.drags == []
+
+
+def test_select_lowest_noops_when_arrow_missing_and_current_rank_is_a0_1(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.drags: list[tuple[int, int, int, int]] = []
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration=None):
+            del duration
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def ocr(self, **kwargs):
+            del kwargs
+            return [{"text": "1", "box": {"left": 10, "top": 10, "width": 20, "height": 20}}]
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    runtime = Runtime()
+
+    entry_module._select_difficulty(runtime, difficulty="lowest")
+
+    assert runtime.clicks == []
+    assert runtime.drags == []
+
+
+def test_select_lowest_recovers_when_arrow_missing_near_bottom_but_not_at_a0_1(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.drags: list[tuple[int, int, int, int]] = []
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration=None):
+            del duration
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def ocr(self, **kwargs):
+            del kwargs
+            return [{"text": "8", "box": {"left": 10, "top": 10, "width": 20, "height": 20}}]
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: sleep_calls.append(seconds))
+    runtime = Runtime()
+
+    with pytest.raises(TrailError) as exc_info:
+        entry_module._select_difficulty(runtime, difficulty="lowest")
+
+    assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
+    assert exc_info.value.data["reason"] == "lowest_arrow_missing_non_bottom"
+    assert sleep_calls == [entry_module.ENTRY_DIFFICULTY_SETTLE_SECONDS]
+    assert runtime.clicks == []
+    assert runtime.drags == []
+
+
+def test_select_lowest_waits_once_then_steps_when_arrow_reappears_after_wait(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    runtime = SimpleNamespace()
+    arrow_box = _box("entry.difficulty.lowest", left=1600, top=960)
+    locate_results = iter([None, arrow_box, None])
+    step_calls: list[dict[str, object]] = []
+    read_calls = {"count": 0}
+    stepped = {"value": False}
+    sleep_calls: list[float] = []
+
+    def fake_locate(actual_runtime, alias: str):
+        assert actual_runtime is runtime
+        assert alias == "entry.difficulty.lowest"
+        return next(locate_results)
+
+    def fake_read_current_entry_rank(actual_runtime, *, requested_difficulty: str, target_enemy_difficulty, after_input: bool):
+        assert actual_runtime is runtime
+        assert requested_difficulty == "lowest"
+        assert target_enemy_difficulty is None
+        read_calls["count"] += 1
+        if stepped["value"]:
+            return {"token": "A0-1", "enemy_difficulty": 1, "global_layer_ordinal": 1}
+        return {"token": "A1-3", "enemy_difficulty": 8, "global_layer_ordinal": 6}
+
+    def fake_step(actual_runtime, *, requested_difficulty: str, target_enemy_difficulty, after_input: bool):
+        assert actual_runtime is runtime
+        step_calls.append(
+            {
+                "requested_difficulty": requested_difficulty,
+                "target_enemy_difficulty": target_enemy_difficulty,
+                "after_input": after_input,
+            }
+        )
+        stepped["value"] = True
+
+    def fake_sleep(seconds: float):
+        sleep_calls.append(seconds)
+        if len(sleep_calls) > 1:
+            raise AssertionError("lowest wait path should not repeat")
+
+    monkeypatch.setattr(entry_module, "_locate", fake_locate)
+    monkeypatch.setattr(entry_module, "_read_current_entry_rank", fake_read_current_entry_rank)
+    monkeypatch.setattr(entry_module, "_step_reduce_entry_difficulty", fake_step)
+    monkeypatch.setattr(
+        entry_module,
+        "_coarse_reduce_entry_difficulty",
+        lambda actual_runtime: (_ for _ in ()).throw(AssertionError("coarse should not run")),
+    )
+    monkeypatch.setattr(entry_module, "_transition_sleep", fake_sleep)
+
+    entry_module._select_difficulty(runtime, difficulty="lowest")
+
+    assert sleep_calls == [entry_module.ENTRY_DIFFICULTY_SETTLE_SECONDS]
+    assert step_calls == [
+        {
+            "requested_difficulty": "lowest",
+            "target_enemy_difficulty": None,
+            "after_input": False,
+        }
+    ]
+    assert read_calls["count"] == 2
+
+
+def test_select_lowest_coarse_then_step_to_a0_1(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.drags: list[tuple[int, int, int, int]] = []
+            self.locate_calls = 0
+            self._values = iter([108, 8, 8, 1])
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            if template != _asset("entry.difficulty.lowest"):
+                return None
+            self.locate_calls += 1
+            if self.locate_calls in {1, 2, 3}:
+                return _box("entry.difficulty.lowest", left=1600, top=960)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration=None):
+            del duration
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def ocr(self, **kwargs):
+            del kwargs
+            value = next(self._values)
+            return [{"text": str(value), "box": {"left": 10, "top": 10, "width": 20, "height": 20}}]
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    runtime = Runtime()
+
+    entry_module._select_difficulty(runtime, difficulty="lowest")
+
+    assert runtime.drags == [(960, 810, 960, 0)]
+    assert runtime.clicks == [(1620, 970)]
+
+
+def test_select_lowest_recovery_when_step_click_makes_no_progress(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.drags: list[tuple[int, int, int, int]] = []
+            self._values = iter([8, 8])
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            if template == _asset("entry.difficulty.lowest"):
+                return _box("entry.difficulty.lowest", left=1600, top=960)
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration=None):
+            del duration
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def ocr(self, **kwargs):
+            del kwargs
+            value = next(self._values)
+            return [{"text": str(value), "box": {"left": 10, "top": 10, "width": 20, "height": 20}}]
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    runtime = Runtime()
+
+    with pytest.raises(TrailError) as exc_info:
+        entry_module._select_difficulty(runtime, difficulty="lowest")
+
+    assert exc_info.value.code == "CW_START_DIFFICULTY_RECOVERY_REQUIRED"
+    assert exc_info.value.data["reason"] == "step_no_progress"
+    assert runtime.clicks == [(1620, 970)]
+    assert runtime.drags == []
 
 
 def test_enter_cw_records_entry_snapshot_and_invalidates_stage(tmp_path):

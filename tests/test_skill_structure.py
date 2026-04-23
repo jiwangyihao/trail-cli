@@ -488,7 +488,21 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
     assert "成就" in goal_items[2]
     assert "A5-1" in goal_items[2]
     assert "攻略优先" in goal_items[2]
-    assert all("继续上一局" not in item for item in goal_items)
+    assert any(
+        "继续当前职级" in item
+        and "更低" in item
+        and "最高职级" in item
+        and "AX-X" in item
+        for item in confirm_items
+    )
+    for expected_tokens in (
+        ("提升职级", "标准博弈", "highest"),
+        ("速刷周常", "超频博弈", "lowest"),
+        ("羁绊", "成就", "A5-1", "攻略优先"),
+    ):
+        assert any(all(token in item for token in expected_tokens) for item in confirm_items)
+    assert "A0-1..A8-40" in text
+    assert "A7-3" in text
     assert any(
         "攻略优先" in item
         and "环境优先" in item
@@ -503,13 +517,7 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
         and "一次 refresh" in item
         for item in confirm_items
     )
-    assert any(
-        ("未结束对局" in item or "未收尾进度" in item)
-        and "继续" in item
-        and "结算" in item
-        for item in confirm_items[3:]
-    )
-    assert all("继续上一局" not in item for item in confirm_items)
+    assert all("继续上一局" not in item for item in goal_items)
     conditional_follow_up_items = [
         item for item in confirm_items if "继续" in item and "结算" in item
     ]
@@ -523,9 +531,8 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
         and "一次 refresh" in item
         for item in checklist_items
     )
-    assert all("继续上一局" not in item for item in checklist_items)
     checklist_follow_up_items = [
-        item for item in checklist_items if "继续" in item or "结算" in item
+        item for item in checklist_items if "继续" in item and "结算" in item
     ]
     assert checklist_follow_up_items
     assert all(
@@ -533,7 +540,7 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
         for item in checklist_follow_up_items
     )
     assert "允许执行一次 refresh" in text
-    for forbidden in ("battle_mode=", "difficulty=", "strategy="):
+    for forbidden in ("battle_mode=", "difficulty=", "portal refresh", "strategy="):
         assert forbidden not in text
 
 
@@ -594,7 +601,7 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
 
     assert mapping_rows[0] == ["玩家常用说法", "官方化名词", "项目内命令或字段"]
     assert len(mapping_body_rows) >= 10
-    for expected_phrase in ("A8", "上分", "周常", "奖励", "投资环境", "攻略开局"):
+    for expected_phrase in ("A8", "A7-3", "上分", "周常", "奖励", "投资环境", "攻略开局", "最高职级"):
         assert any(expected_phrase in term for term in player_terms)
 
     assert any(
@@ -621,7 +628,10 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
     assert any("portal" in target for target in action_targets)
     assert any("guide" in target for target in action_targets)
     assert any("battle_mode=" in target for target in action_targets)
-    assert any("difficulty=" in target for target in action_targets)
+    assert any("difficulty=current" in target for target in action_targets)
+    assert any("difficulty=lowest" in target for target in action_targets)
+    assert any("difficulty=highest" in target for target in action_targets)
+    assert any("difficulty=AX-X" in target for target in action_targets)
     assert sum(
         1
         for target in action_targets
@@ -632,6 +642,7 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
         ("提升职级", "标准博弈", "highest"),
         ("速刷周常", "超频博弈", "lowest"),
         ("羁绊", "成就", "A5-1", "攻略优先"),
+        ("继续当前职级", "更低", "最高职级", "AX-X"),
         ("攻略优先", "环境优先"),
         ("刷开局", "refresh"),
         ("未结束对局", "继续", "结算"),
@@ -640,6 +651,8 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
 
     for fragment in ("cw enter", "cw start", "portal", "guide"):
         assert fragment in checklist_text
+    assert "A0-1..A8-40" in mapping_text
+    assert "A0-1..A8-40" in checklist_text
 
 
 def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
@@ -652,6 +665,7 @@ def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
         ("提升职级", "标准博弈", "highest"),
         ("速刷周常", "超频博弈", "lowest"),
         ("羁绊", "成就", "A5-1", "攻略优先"),
+        ("继续当前职级", "更低", "最高职级", "AX-X"),
         ("攻略优先", "环境优先"),
         ("刷开局", "refresh"),
         ("未结束对局", "继续", "结算"),
@@ -663,6 +677,8 @@ def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
 
     assert _lines_with_tokens(skill_text, "攻略优先", "先定攻略", "trail-cw-guide")
     assert _lines_with_tokens(checklist_text, "先定攻略", "trail-cw-guide")
+    assert "A0-1..A8-40" in skill_text
+    assert "A0-1..A8-40" in checklist_text
 
 
 def test_cw_entry_trigger_fixture_has_required_quota_and_schema() -> None:

@@ -56,7 +56,8 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
   - `攻略优先` / `环境优先`
   - `standard` / `overclock`
   - 是否接受刷开局（后续是否允许 `trail cw portal refresh` / `trail cw portal restart`）
-- `trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest --battle-mode standard|overclock` 负责把首页推进到投资环境页
+- `trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest|AX-X --battle-mode standard|overclock` 负责把首页推进到投资环境页
+- `AX-X` 使用公开职级层级表示法，范围 `A0-1..A8-40`；例如 `A7-3`
 - 如果已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot，使用 `trail cw portal detect --session <id>`；不要重复执行 `trail cw start`
 - `detect = 重识别当前三张卡，不点击`
 - detect 后可直接 `select`
