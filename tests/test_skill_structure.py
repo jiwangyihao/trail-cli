@@ -487,6 +487,7 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
     assert "羁绊" in goal_items[2]
     assert "成就" in goal_items[2]
     assert "A5-1" in goal_items[2]
+    assert "攻略优先" in goal_items[2]
     assert all("继续上一局" not in item for item in goal_items)
     assert any(
         "攻略优先" in item
@@ -611,6 +612,7 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
         and ("完成成就" in row[0] or "补成就" in row[0])
         and "标准博弈" in row[2]
         and "A5-1" in row[2]
+        and "攻略优先" in row[2]
         for row in mapping_body_rows
     )
 
@@ -629,7 +631,7 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
     for expected_tokens in (
         ("提升职级", "标准博弈", "highest"),
         ("速刷周常", "超频博弈", "lowest"),
-        ("羁绊", "成就", "A5-1"),
+        ("羁绊", "成就", "A5-1", "攻略优先"),
         ("攻略优先", "环境优先"),
         ("刷开局", "refresh"),
         ("未结束对局", "继续", "结算"),
@@ -649,7 +651,7 @@ def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
     confirmation_groups = (
         ("提升职级", "标准博弈", "highest"),
         ("速刷周常", "超频博弈", "lowest"),
-        ("羁绊", "成就", "A5-1"),
+        ("羁绊", "成就", "A5-1", "攻略优先"),
         ("攻略优先", "环境优先"),
         ("刷开局", "refresh"),
         ("未结束对局", "继续", "结算"),

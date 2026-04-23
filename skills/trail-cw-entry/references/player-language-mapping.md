@@ -7,7 +7,7 @@
 | 冲 A8 / 冲段位 / 提升职级 | 以更高职级为目标的标准博弈推进 | 先把目标记成 `标准博弈 + highest`，确认后进入 `cw enter` / `cw start`；需要桥接时再落到 `battle_mode=standard` + `difficulty=highest` |
 | 上分 | 以积分、晋升点为目标的标准博弈推进 | 通常会优先确认 `标准博弈 + highest`，再进入 `cw start` |
 | 刷周常 / 刷奖励 | 以更快完成积分奖励为目标的超频博弈 | 先把目标记成 `超频博弈 + lowest`，确认后进入 `cw enter` / `cw start`；需要桥接时再落到 `battle_mode=overclock` + `difficulty=lowest` |
-| 补羁绊 / 补成就 | 以完成特定羁绊或成就为目标的标准博弈推进 | 先把目标记成 `标准博弈 + A5-1`，如果要先挑攻略就转到 `guide.*`；需要桥接时再记录 `battle_mode=standard` + `difficulty=A5-1` |
+| 补羁绊 / 补成就 | 以完成特定羁绊或成就为目标的标准博弈推进 | 先把目标记成 `标准博弈 + A5-1 + 攻略优先`，优先切到 `trail-cw-guide` / `guide.*` 选攻略；需要桥接时再记录 `battle_mode=standard` + `difficulty=A5-1` |
 | 标准博弈 | 标准博弈 | 通常通过 `cw start` 开局；必要时桥接 `battle_mode=standard` |
 | 超频博弈 | 超频博弈 | 通常通过 `cw start` 开局；必要时桥接 `battle_mode=overclock` |
 | 看投资环境 / 看词条 | 投资环境 | 通常先进入 `cw enter` / `cw start`，再继续到 `portal.*` |
