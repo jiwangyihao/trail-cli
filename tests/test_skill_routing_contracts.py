@@ -11,6 +11,8 @@ README = PROJECT_ROOT / "README.md"
 AGENTS = PROJECT_ROOT / "AGENTS.md"
 REGISTRY = PROJECT_ROOT / "skills" / "registry" / "scene-entries.yaml"
 WORKFLOW_HANDOFFS = PROJECT_ROOT / "skills" / "registry" / "workflow-handoffs.yaml"
+CW_ENTRY_SKILL = PROJECT_ROOT / "skills" / "trail-cw-entry" / "SKILL.md"
+CW_GUIDE_SKILL = PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md"
 COMPETITION = PROJECT_ROOT / "skills" / "registry" / "routing-competition.json"
 ESCALATION_CONTRACT = PROJECT_ROOT / "skills" / "shared" / "escalation-contract.md"
 OUTPUT_RENDERING_TEST = PROJECT_ROOT / "tests" / "test_output_rendering.py"
@@ -27,20 +29,18 @@ ROUTING_REVIEW = (
 SUPERSEDE_LINE = "本文件已被 `docs/superpowers/specs/2026-04-21-trail-skill-system-redesign-design.md` 取代；仅供历史参考，不代表当前 active skill 拓扑。"
 SUPERSEDE_BANNER_LINE = f"> {SUPERSEDE_LINE}"
 LEGACY_DOC_PATTERNS = (
-    r"skills/trail-cw\b",
+    r"skills/trail-cw/SKILL\.md\b",
     r"skills/trail-cw-battle-advanced\b",
-    r"skills/trail-cw-guide\b",
     r"skills/trail-cw-events\b",
     r"skills/trail-cw-replenish\b",
     r"skills/trail-cw-shop\b",
     r"skills/trail-cw-slots\b",
+    r"trail-cw(?!-(entry|guide))\b",
     r"trail-cw-battle-advanced\b",
-    r"trail-cw-guide\b",
     r"trail-cw-events\b",
     r"trail-cw-replenish\b",
     r"trail-cw-shop\b",
     r"trail-cw-slots\b",
-    r"trail-cw(?!-entry)\b",
 )
 SUPERSEDE_EXEMPT_DOCS = {
     "2026-04-21-trail-skill-system-redesign.md",
@@ -64,6 +64,62 @@ ROUTING_REVIEW_METHOD_LINES = (
     "- 新 skill 集合 winner：按重设计后的 active/public/internal 拓扑判断；planned scene 继续回退到 `trail-hsr`，`trail-hsr-advanced` 仅作为内部升级层。",
     "- 比对口径：只比较路由 winner，不比较具体命令细节；若新 skill 集合 winner 与“预期 winner”全部一致，则结论记为 `PASS`，否则记为 `FAIL`。",
 )
+ACTIVE_CW_DOC_EXEMPT_PATTERN = r"trail-cw-(battle-advanced|events|replenish|shop|slots)\b"
+
+
+def _lines_with_token(text: str, token: str) -> list[str]:
+    return [line.strip() for line in text.splitlines() if token in line]
+
+
+def _assert_cw_guide_mentions_are_scoped(text: str) -> None:
+    lines = _lines_with_token(text, "trail-cw-guide")
+
+    assert lines
+    assert any("攻略选择 skill" in line for line in lines)
+    assert any("direct-user" in line or "用户明确要先选攻略" in line for line in lines)
+    assert any("trail-cw-entry" in line and ("推荐切入" in line or "回到" in line) for line in lines)
+
+    for line in lines:
+        if "scene entry" in line:
+            assert "不是 scene entry" in line or "不等于 scene entry" in line
+        if "默认 owner" in line:
+            assert "不是默认 owner" in line
+        if "整局 owner" in line:
+            assert "不是整局 owner" in line or "不是旧 `trail-cw` 那种整局 owner" in line
+
+
+def test_registry_keeps_trail_cw_entry_as_only_active_public_scene_entry() -> None:
+    registry = yaml.safe_load(REGISTRY.read_text(encoding="utf-8"))
+    active_public_entries = [
+        entry
+        for entry in registry["entries"]
+        if entry["status"] == "active" and entry["exposure"] == "public"
+    ]
+
+    assert active_public_entries == [
+        {
+            "scene": "cw",
+            "entry_skill": "trail-cw-entry",
+            "status": "active",
+            "exposure": "public",
+            "aliases": ["货币战争", "Currency Wars", "cw"],
+        }
+    ]
+
+
+def test_cw_guide_skill_supports_direct_entry_and_entry_handoff_chain() -> None:
+    entry_text = CW_ENTRY_SKILL.read_text(encoding="utf-8")
+    guide_text = CW_GUIDE_SKILL.read_text(encoding="utf-8")
+
+    assert "trail-cw-guide" in entry_text
+    assert "攻略优先" in entry_text
+    assert "先定攻略" in entry_text
+    assert "回到开局入口动作" in entry_text or "回到 `trail-cw-entry`" in entry_text
+
+    assert "用户直接说" in guide_text or "直接点名" in guide_text
+    assert "trail-cw-entry" in guide_text
+    assert "复用已确认信息" in guide_text or "只追问缺失项" in guide_text
+    assert "回到 `trail-cw-entry`" in guide_text or "交回 `trail-cw-entry`" in guide_text
 
 
 def _scene_entry_skill() -> str:
@@ -215,7 +271,17 @@ def test_new_skill_topology_is_documented_in_readme() -> None:
     assert "旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口" in text
     assert legacy_skill_lines.count("- 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。") == 1
     assert not re.search(r"skills/trail-cw[\\w-]*", text)
-    assert not re.search(r"trail-cw-(battle-advanced|guide|events|replenish|shop|slots)\b", text)
+    assert not re.search(ACTIVE_CW_DOC_EXEMPT_PATTERN, text)
+
+
+def test_cw_guide_readme_mentions_stay_in_selection_topology() -> None:
+    text = README.read_text(encoding="utf-8")
+
+    _assert_cw_guide_mentions_are_scoped(text)
+    guide_lines = _lines_with_token(text, "trail-cw-guide")
+    assert any("public" in line and "攻略选择" in line for line in guide_lines)
+    assert any("direct-user" in line or "直接" in line for line in guide_lines)
+    assert any("trail-cw-entry" in line and ("切到" in line or "回到" in line) for line in guide_lines)
 
 
 def test_archive_calls_from_any_active_skill_are_forbidden_in_agents() -> None:
@@ -234,8 +300,18 @@ def test_archive_calls_from_any_active_skill_are_forbidden_in_agents() -> None:
     assert "任何 active skill 都不得直接或间接调用 archive skill" in text
     assert "仍然禁止 legacy `trail-cw*` 回流为 active owner、默认 owner 或推荐入口" in text
     assert not re.search(r"skills/trail-cw[\\w-]*", text)
-    assert not re.search(r"trail-cw-(battle-advanced|guide|events|replenish|shop|slots)\b", text)
+    assert not re.search(ACTIVE_CW_DOC_EXEMPT_PATTERN, text)
     assert "当前推荐入口" not in text
+
+
+def test_cw_guide_agents_mentions_stay_in_selection_topology() -> None:
+    text = AGENTS.read_text(encoding="utf-8")
+
+    _assert_cw_guide_mentions_are_scoped(text)
+    guide_lines = _lines_with_token(text, "trail-cw-guide")
+    assert any("active public" in line and "攻略选择" in line for line in guide_lines)
+    assert any("direct-user" in line or "推荐切入" in line for line in guide_lines)
+    assert any("trail-cw-entry" in line and ("回到" in line or "推荐切入" in line) for line in guide_lines)
 
 
 def test_active_skill_guidance_only_mentions_hsr_pair() -> None:
@@ -257,7 +333,7 @@ def test_cw_entry_readme_documents_active_scene_entry_and_handoff() -> None:
     assert "`info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered`" in text
     assert "旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口" in text
     assert not re.search(r"skills/trail-cw[\w-]*", text)
-    assert not re.search(r"trail-cw-(battle-advanced|guide|events|replenish|shop|slots)\b", text)
+    assert not re.search(ACTIVE_CW_DOC_EXEMPT_PATTERN, text)
     assert legacy_skill_lines.count("- 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。") == 1
     assert "旧 owner" not in text
 
@@ -271,7 +347,7 @@ def test_cw_entry_agents_documents_active_scene_entry_and_strong_handoff_signal(
     assert "下一步 skill 切换信号" in text
     assert "legacy `trail-cw*` 回流为 active owner" in text
     assert not re.search(r"skills/trail-cw[\w-]*", text)
-    assert not re.search(r"trail-cw-(battle-advanced|guide|events|replenish|shop|slots)\b", text)
+    assert not re.search(ACTIVE_CW_DOC_EXEMPT_PATTERN, text)
     assert "当前推荐入口" not in text
 
 

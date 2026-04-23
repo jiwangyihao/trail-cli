@@ -7,6 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = PROJECT_ROOT / "skills" / "registry" / "scene-entries.yaml"
 SKILLS_ROOT = PROJECT_ROOT / "skills"
 CORE_ACTIVE_SKILL_DIRS = {"trail-hsr", "trail-hsr-advanced", "registry", "shared"}
+ACTIVE_PUBLIC_HELPER_SKILL_DIRS = {"trail-cw-guide"}
 ARCHIVE_ROOT = (
     PROJECT_ROOT
     / "docs"
@@ -15,7 +16,7 @@ ARCHIVE_ROOT = (
     / "skills"
     / "2026-04-21-cw-skill-snapshot"
 )
-LEGACY_CW_SKILL_DIRS = [
+ARCHIVED_LEGACY_CW_SKILL_DIRS = [
     "trail-cw",
     "trail-cw-battle-advanced",
     "trail-cw-guide",
@@ -24,7 +25,15 @@ LEGACY_CW_SKILL_DIRS = [
     "trail-cw-shop",
     "trail-cw-slots",
 ]
-EXPECTED_ARCHIVE_ROOT_ENTRIES = {"README.md", *LEGACY_CW_SKILL_DIRS}
+DISALLOWED_ACTIVE_LEGACY_CW_SKILL_DIRS = [
+    "trail-cw",
+    "trail-cw-battle-advanced",
+    "trail-cw-events",
+    "trail-cw-replenish",
+    "trail-cw-shop",
+    "trail-cw-slots",
+]
+EXPECTED_ARCHIVE_ROOT_ENTRIES = {"README.md", *ARCHIVED_LEGACY_CW_SKILL_DIRS}
 
 
 def _load_registry() -> dict:
@@ -73,7 +82,7 @@ def test_archive_snapshot_keeps_all_legacy_cw_skill_dirs() -> None:
     assert "本目录仅供历史参考" in readme
     assert "不代表当前 active skill 拓扑" in readme
 
-    for legacy_dir in LEGACY_CW_SKILL_DIRS:
+    for legacy_dir in ARCHIVED_LEGACY_CW_SKILL_DIRS:
         skill_dir = ARCHIVE_ROOT / legacy_dir
         assert skill_dir.is_dir()
         assert (skill_dir / "SKILL.md").is_file()
@@ -93,13 +102,15 @@ def test_no_longer_contains_legacy_cw_dirs_allows_active_public_scene_entries_fr
 
 def test_active_skills_directory_no_longer_contains_legacy_cw_dirs() -> None:
     registry_data = _load_registry()
-    allowed_active_skill_dirs = CORE_ACTIVE_SKILL_DIRS | _active_public_scene_entry_skills(
-        registry_data
+    allowed_active_skill_dirs = (
+        CORE_ACTIVE_SKILL_DIRS
+        | ACTIVE_PUBLIC_HELPER_SKILL_DIRS
+        | _active_public_scene_entry_skills(registry_data)
     )
     active_skill_dirs = {path.name for path in SKILLS_ROOT.iterdir() if path.is_dir()}
 
-    assert _active_public_scene_entry_skills(registry_data).isdisjoint(LEGACY_CW_SKILL_DIRS)
-    assert active_skill_dirs.isdisjoint(LEGACY_CW_SKILL_DIRS)
+    assert _active_public_scene_entry_skills(registry_data).isdisjoint(DISALLOWED_ACTIVE_LEGACY_CW_SKILL_DIRS)
+    assert active_skill_dirs.isdisjoint(DISALLOWED_ACTIVE_LEGACY_CW_SKILL_DIRS)
     assert active_skill_dirs == allowed_active_skill_dirs
 
 
@@ -124,5 +135,10 @@ def test_cw_entry_active_skill_directory_contract_allows_only_registry_public_en
 
     assert "trail-cw-entry" in _active_public_scene_entry_skills(registry_data)
     assert "trail-cw-entry" in active_skill_dirs
-    assert active_skill_dirs == CORE_ACTIVE_SKILL_DIRS | {"trail-cw-entry"}
-    assert not any(name.startswith("trail-cw") and name != "trail-cw-entry" for name in active_skill_dirs)
+    assert "trail-cw-guide" in active_skill_dirs
+    assert active_skill_dirs == CORE_ACTIVE_SKILL_DIRS | ACTIVE_PUBLIC_HELPER_SKILL_DIRS | {"trail-cw-entry"}
+    assert not any(
+        name.startswith("trail-cw")
+        and name not in {"trail-cw-entry", "trail-cw-guide"}
+        for name in active_skill_dirs
+    )

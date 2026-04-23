@@ -1,0 +1,122 @@
+[
+  {
+    "prompt": "帮我选货币战争攻略",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "先帮我定个货币战争攻略，再决定开哪把",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "这把想补羁绊成就，先挑一个货币战争攻略",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "按当前版本帮我筛一套货币战争攻略",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "这个投资环境适合什么货币战争攻略",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "我想先定主C和阵容倾向，再选货币战争攻略",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "用 daemon.request_status 查一下 req-123",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "这个 request id=req-456 失败了，告诉我恢复链路",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "解释一下 guide list cw --portal 是什么意思",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "guide fetch cw 这个命令的参数怎么填",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "继续玩星铁，接管当前任务",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "帮我总结这个 PDF 的重点",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "帮我选货币战争攻略，先别开局",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "帮我选攻略，货币战争这把先别急着开",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "货币战争先定攻略再进，帮我挑一个",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "货币战争先看投资环境，再决定要不要按攻略走",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "货币战争先看词条，不急着选攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "货币战争先开局，攻略等进去以后再说",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "货币战争直接开局，先看环境再说攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "直接进货币战争开一把，攻略之后再看",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "继续玩星铁，我想把当前任务推进一下",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-hsr"
+  },
+  {
+    "prompt": "继续玩星铁，但先帮我选货币战争攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  }
+]

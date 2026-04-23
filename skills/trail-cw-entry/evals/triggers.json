@@ -1,31 +1,31 @@
 [
   {
-    "prompt": "帮我玩货币战争",
+    "prompt": "帮我玩货币战争，先把开局目标定一下",
     "sample_type": "should-trigger",
     "expected_winner": "trail-cw-entry"
   },
   {
-    "prompt": "这一把货币战争想冲 A8",
+    "prompt": "这一把货币战争想冲 A8，按上分思路开",
     "sample_type": "should-trigger",
     "expected_winner": "trail-cw-entry"
   },
   {
-    "prompt": "帮我刷一下货币战争周常奖励",
+    "prompt": "帮我刷一下货币战争周常奖励，走超频博弈快一点",
     "sample_type": "should-trigger",
     "expected_winner": "trail-cw-entry"
   },
   {
-    "prompt": "开个超频博弈，快点把积分奖励刷完",
+    "prompt": "货币战争这局先看投资环境，再决定怎么玩",
     "sample_type": "should-trigger",
     "expected_winner": "trail-cw-entry"
   },
   {
-    "prompt": "先看货币战争投资环境，再决定这一局怎么玩",
+    "prompt": "这把货币战争想补羁绊成就，先按 A5-1 目标开",
     "sample_type": "should-trigger",
     "expected_winner": "trail-cw-entry"
   },
   {
-    "prompt": "我想抄攻略开局，货币战争帮我挑路线",
+    "prompt": "进入货币战争开局入口，我要先确认是环境优先还是攻略优先",
     "sample_type": "should-trigger",
     "expected_winner": "trail-cw-entry"
   },
@@ -35,7 +35,7 @@
     "expected_winner": "none"
   },
   {
-    "prompt": "battle_mode=overclock 和 difficulty=current 这两个参数分别代表什么",
+    "prompt": "battle_mode=overclock 和 difficulty=lowest 这两个参数分别代表什么",
     "sample_type": "should-not-trigger",
     "expected_winner": "none"
   },
@@ -62,55 +62,79 @@
   {
     "prompt": "我要玩货币战争，直接带我进那个玩法",
     "sample_type": "competition",
-    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
     "expected_winner": "trail-cw-entry"
   },
   {
     "prompt": "帮我冲货币战争 A8",
     "sample_type": "competition",
-    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
     "expected_winner": "trail-cw-entry"
   },
   {
     "prompt": "先看货币战争投资环境，别急着开",
     "sample_type": "competition",
-    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
     "expected_winner": "trail-cw-entry"
   },
   {
-    "prompt": "想抄货币战争攻略开局，你直接接这个玩法入口",
+    "prompt": "帮我选货币战争攻略，先别开局",
     "sample_type": "competition",
-    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "这把货币战争走攻略优先，你先帮我定攻略再开",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "货币战争这把走环境优先，先看词条和路线再说",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
     "expected_winner": "trail-cw-entry"
   },
   {
-    "prompt": "帮我继续玩星铁",
+    "prompt": "货币战争这次想刷开局，你先帮我判断值不值得 refresh",
     "sample_type": "competition",
-    "candidates": ["trail-hsr", "trail-cw-entry"],
-    "expected_winner": "trail-hsr"
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
   },
   {
-    "prompt": "继续玩星铁，接着推进当前任务",
+    "prompt": "货币战争我要开新局，先按入口确认目标和模式",
     "sample_type": "competition",
-    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "货币战争这边检测到像是未结束对局，你先帮我判断继续上一局还是先结算",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "继续玩星铁",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
     "expected_winner": "trail-hsr"
   },
   {
     "prompt": "继续玩星铁，我这次想直接进货币战争冲 A8",
     "sample_type": "competition",
-    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
     "expected_winner": "trail-cw-entry"
   },
   {
     "prompt": "先打开星铁，我要刷货币战争周常奖励",
     "sample_type": "competition",
-    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
     "expected_winner": "trail-cw-entry"
   },
   {
-    "prompt": "先讲下货币战争攻略是什么意思，不急着开局",
+    "prompt": "星铁启动失败了，顺便看看是不是货币战争入口没进对",
     "sample_type": "competition",
-    "candidates": ["trail-hsr", "trail-cw-entry"],
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
     "expected_winner": "trail-hsr"
   }
 ]

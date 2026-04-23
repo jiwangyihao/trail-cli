@@ -25,6 +25,8 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `trail-hsr` 是对外总入口，用于接管并继续推进《崩坏：星穹铁道》常规游玩。
 - `trail-<scene>-entry` 是对外场景入口；只有 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口。
 - `trail-cw-entry` 是货币战争当前入口 skill / scene entry；它只负责该玩法入口后的编排，不是旧 `trail-cw` 那种整局 owner。
+- `trail-cw-guide` 是可直接进入的 public 攻略选择 skill；用户明确要先选攻略时可以直接切到它。
+- `trail-cw-guide` 不是 scene entry、不是默认 owner、也不是旧 `trail-cw` 那种整局 owner；真正进入开局流程仍要回到 `trail-cw-entry`。
 - `trail-hsr-advanced` 是内部恢复层，用于启动失败、窗口接管异常、daemon / session 恢复等底层问题。
 - `trail-hsr-advanced` 不作为用户入口；只有 `trail-hsr` 或当前 active 的 scene entry 需要恢复链路时才会内部升级到它。
 - 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。
@@ -49,6 +51,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 先通过 `trail start` 或 `trail session create` 拿到可用 `session`
 - `trail cw enter --session <id>` 只负责把页面带到货币战争首页
 - `trail cw enter --session <id>` success 尾行会返回 `info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered`，表示下一步应优先切到 `trail-cw-entry`
+- 当用户明确要先选攻略，或 `trail-cw-entry` 走到“攻略优先 / 先定攻略”时，应切到 `trail-cw-guide`；真正进入开局流程仍要回到 `trail-cw-entry`
 - 到首页后先确认本局偏好：
   - `攻略优先` / `环境优先`
   - `standard` / `overclock`
