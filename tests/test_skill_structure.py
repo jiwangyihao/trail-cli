@@ -593,6 +593,9 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
         "highest",
         "lowest",
         "A5-1",
+        "紫金1",
+        "资本帝王3",
+        "财富造物主10",
         "攻略优先",
         "环境优先",
         "允许执行一次 refresh",
@@ -601,7 +604,7 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
 
     assert mapping_rows[0] == ["玩家常用说法", "官方化名词", "项目内命令或字段"]
     assert len(mapping_body_rows) >= 10
-    for expected_phrase in ("A8", "A7-3", "上分", "周常", "奖励", "投资环境", "攻略开局", "最高职级"):
+    for expected_phrase in ("A8", "A7-3", "紫金1", "资本帝王3", "财富造物主10", "上分", "周常", "奖励", "投资环境", "攻略开局", "最高职级"):
         assert any(expected_phrase in term for term in player_terms)
 
     assert any(
@@ -622,6 +625,9 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
         and "攻略优先" in row[2]
         for row in mapping_body_rows
     )
+    assert any("紫金1" in row[0] and "difficulty=A5-1" in row[2] for row in mapping_body_rows)
+    assert any("资本帝王3" in row[0] and "difficulty=A7-3" in row[2] for row in mapping_body_rows)
+    assert any("财富造物主10" in row[0] and "difficulty=A8-10" in row[2] for row in mapping_body_rows)
 
     assert any("cw enter" in target for target in action_targets)
     assert any("cw start" in target for target in action_targets)
