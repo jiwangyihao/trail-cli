@@ -24,9 +24,11 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 
 - `trail-hsr` 是对外总入口，用于接管并继续推进《崩坏：星穹铁道》常规游玩。
 - `trail-<scene>-entry` 是对外场景入口；只有 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口。
-- `trail-cw-entry` 是货币战争当前入口 skill / scene entry；它只负责该玩法入口后的编排，不是旧 `trail-cw` 那种整局 owner。
+- `trail-cw-entry` 是货币战争当前入口 skill / scene entry；它只负责该玩法入口后的编排，不是整局 owner，也不是旧 `trail-cw` 那种整局 owner。
 - `trail-cw-guide` 是可直接进入的 public 攻略选择 skill；用户明确要先选攻略时可以直接切到它。
 - `trail-cw-guide` 不是 scene entry、不是默认 owner、也不是旧 `trail-cw` 那种整局 owner；真正进入开局流程仍要回到 `trail-cw-entry`。
+- `trail-cw-portal` 是 internal portal-page skill；主要在 `trail cw start` 成功进入投资环境页后切入，不是 direct-user 公共入口、不是 scene entry、也不是 owner。
+- `trail-cw-portal` 在投资环境页负责 `portal detect/refresh/restart/select` 与环境优先逻辑；如果攻略还没定，就切到 `trail-cw-guide` 的无人值守模式按当前环境定攻略。
 - `trail-hsr-advanced` 是内部恢复层，用于启动失败、窗口接管异常、daemon / session 恢复等底层问题。
 - `trail-hsr-advanced` 不作为用户入口；只有 `trail-hsr` 或当前 active 的 scene entry 需要恢复链路时才会内部升级到它。
 - 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。
@@ -57,12 +59,14 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
   - `standard` / `overclock`
   - 是否接受刷开局（后续是否允许 `trail cw portal refresh` / `trail cw portal restart`）
 - `trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest|AX-X --battle-mode standard|overclock` 负责把首页推进到投资环境页
+- `trail cw start --session <id> ...` 成功进入投资环境页后，上层编排应切到 internal 的 `trail-cw-portal`，而不是把它当成新的 direct-user 入口
 - `AX-X` 使用公开职级层级表示法，范围 `A0-1..A8-40`；例如 `A7-3`
 - 如果已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot，使用 `trail cw portal detect --session <id>`；不要重复执行 `trail cw start`
 - `detect = 重识别当前三张卡，不点击`
 - detect 后可直接 `select`
 - `refresh = 点击刷新后生成新的三张卡`
 - `restart` 依旧要求已有开局真值；detect 不会补录 `mode/difficulty/battle_mode`
+- 如果投资环境页里还没定攻略，由 `trail-cw-portal` 切到 `trail-cw-guide` 的无人值守模式，按当前环境、`待收集=1` 与版本自动定攻略
 - 如果先按环境选攻略，再用：`trail guide list cw --portal <title>` 或 `trail guide list cw --portal-id <id>`
 - 如需免查 config 直接筛攻略，也可以在 list 阶段使用：`trail guide list cw --trait <name>`、`trail guide list cw --role <name>`；需要脚本固化或精确复现时，再切到 `--trait-id` / `--role-id`
 - `guide list cw` 列表结果现在会直接返回 `version`，list 阶段就应把版本兼容性纳入筛选判断

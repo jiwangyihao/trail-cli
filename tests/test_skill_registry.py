@@ -6,7 +6,8 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = PROJECT_ROOT / "skills" / "registry" / "scene-entries.yaml"
 SKILLS_ROOT = PROJECT_ROOT / "skills"
-CORE_ACTIVE_SKILL_DIRS = {"trail-hsr", "trail-hsr-advanced", "registry", "shared"}
+CORE_ACTIVE_SKILL_DIRS = {"trail-hsr", "registry", "shared"}
+ACTIVE_INTERNAL_SKILL_DIRS = {"trail-hsr-advanced", "trail-cw-portal"}
 ACTIVE_PUBLIC_HELPER_SKILL_DIRS = {"trail-cw-guide"}
 ARCHIVE_ROOT = (
     PROJECT_ROOT
@@ -48,6 +49,14 @@ def _active_public_scene_entry_skills(registry_data: dict) -> set[str]:
     }
 
 
+def _active_internal_skills(registry_data: dict) -> set[str]:
+    return {
+        skill["name"]
+        for skill in registry_data.get("internal_skills", [])
+        if skill.get("status") == "active" and skill.get("exposure") == "internal"
+    }
+
+
 def test_scene_entries_registry_declares_root_entry_and_internal_roles() -> None:
     data = _load_registry()
 
@@ -67,6 +76,12 @@ def test_scene_entries_registry_declares_root_entry_and_internal_roles() -> None
             "status": "active",
             "exposure": "internal",
             "caller_roles": ["root_entry", "scene_entry"],
+        },
+        {
+            "name": "trail-cw-portal",
+            "status": "active",
+            "exposure": "internal",
+            "caller_roles": ["scene_entry"],
         }
     ]
 
@@ -104,12 +119,14 @@ def test_active_skills_directory_no_longer_contains_legacy_cw_dirs() -> None:
     registry_data = _load_registry()
     allowed_active_skill_dirs = (
         CORE_ACTIVE_SKILL_DIRS
+        | ACTIVE_INTERNAL_SKILL_DIRS
         | ACTIVE_PUBLIC_HELPER_SKILL_DIRS
         | _active_public_scene_entry_skills(registry_data)
     )
     active_skill_dirs = {path.name for path in SKILLS_ROOT.iterdir() if path.is_dir()}
 
     assert _active_public_scene_entry_skills(registry_data).isdisjoint(DISALLOWED_ACTIVE_LEGACY_CW_SKILL_DIRS)
+    assert _active_internal_skills(registry_data).isdisjoint(DISALLOWED_ACTIVE_LEGACY_CW_SKILL_DIRS)
     assert active_skill_dirs.isdisjoint(DISALLOWED_ACTIVE_LEGACY_CW_SKILL_DIRS)
     assert active_skill_dirs == allowed_active_skill_dirs
 
@@ -127,6 +144,20 @@ def test_cw_entry_registry_is_active_public_scene_entry() -> None:
         }
     ]
     assert _active_public_scene_entry_skills(data) == {"trail-cw-entry"}
+    assert {entry["entry_skill"] for entry in data["entries"]} == {"trail-cw-entry"}
+    assert "trail-cw-guide" not in {entry["entry_skill"] for entry in data["entries"]}
+    assert "trail-cw-portal" not in {entry["entry_skill"] for entry in data["entries"]}
+
+
+def test_registry_keeps_cw_portal_internal_and_out_of_public_entries() -> None:
+    data = _load_registry()
+
+    assert {
+        skill["name"]
+        for skill in data["internal_skills"]
+        if skill["status"] == "active" and skill["exposure"] == "internal"
+    } >= {"trail-cw-portal"}
+    assert not any(entry.get("entry_skill") == "trail-cw-portal" for entry in data["entries"])
 
 
 def test_cw_entry_active_skill_directory_contract_allows_only_registry_public_entries() -> None:
@@ -134,11 +165,18 @@ def test_cw_entry_active_skill_directory_contract_allows_only_registry_public_en
     active_skill_dirs = {path.name for path in SKILLS_ROOT.iterdir() if path.is_dir()}
 
     assert "trail-cw-entry" in _active_public_scene_entry_skills(registry_data)
+    assert _active_internal_skills(registry_data) == ACTIVE_INTERNAL_SKILL_DIRS
     assert "trail-cw-entry" in active_skill_dirs
     assert "trail-cw-guide" in active_skill_dirs
-    assert active_skill_dirs == CORE_ACTIVE_SKILL_DIRS | ACTIVE_PUBLIC_HELPER_SKILL_DIRS | {"trail-cw-entry"}
+    assert "trail-cw-portal" in active_skill_dirs
+    assert active_skill_dirs == (
+        CORE_ACTIVE_SKILL_DIRS
+        | ACTIVE_INTERNAL_SKILL_DIRS
+        | ACTIVE_PUBLIC_HELPER_SKILL_DIRS
+        | {"trail-cw-entry"}
+    )
     assert not any(
         name.startswith("trail-cw")
-        and name not in {"trail-cw-entry", "trail-cw-guide"}
+        and name not in {"trail-cw-entry", "trail-cw-guide", "trail-cw-portal"}
         for name in active_skill_dirs
     )

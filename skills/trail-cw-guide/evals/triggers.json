@@ -78,7 +78,31 @@
     "expected_winner": "trail-cw-guide"
   },
   {
+    "prompt": "货币战争这把攻略优先，先帮我选攻略再开",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "投资环境页已经出来了，按当前环境直接帮我挑攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "这三个环境卡片已经给出来了，别再问我，直接按环境选一套攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
     "prompt": "货币战争先看投资环境，再决定要不要按攻略走",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "货币战争这把环境优先，先看环境再说攻略",
     "sample_type": "competition",
     "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
     "expected_winner": "trail-cw-entry"
@@ -90,7 +114,31 @@
     "expected_winner": "trail-cw-entry"
   },
   {
+    "prompt": "货币战争先看路线，不急着定攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
     "prompt": "货币战争先开局，攻略等进去以后再说",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "货币战争这次想刷开局，先看环境值不值得 refresh",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "货币战争我要开新局，先开再说攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "货币战争这边像有上一局没收尾，你先判断继续上一局还是结算",
     "sample_type": "competition",
     "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
     "expected_winner": "trail-cw-entry"

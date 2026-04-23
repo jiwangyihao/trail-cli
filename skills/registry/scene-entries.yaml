@@ -17,3 +17,8 @@ internal_skills:
     caller_roles:
       - root_entry
       - scene_entry
+  - name: trail-cw-portal
+    status: active
+    exposure: internal
+    caller_roles:
+      - scene_entry

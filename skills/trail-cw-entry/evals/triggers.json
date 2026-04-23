@@ -96,6 +96,12 @@
     "expected_winner": "trail-cw-entry"
   },
   {
+    "prompt": "货币战争先按标准博弈最高难度开，但如果有指定环境或阵容限制也一起记上",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
     "prompt": "货币战争这次想刷开局，你先帮我判断值不值得 refresh",
     "sample_type": "competition",
     "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
