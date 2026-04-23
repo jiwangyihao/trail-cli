@@ -72,6 +72,9 @@ def test_cw_enter_renders_home_summary_and_shot(cli_runner, fake_daemon_client, 
     assert result.stdout.splitlines() == _expected_lines(
         "ok cw.enter page=home",
         screenshot=".trail/shots/req-cw-enter.png",
+        body=[
+            "info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered",
+        ],
     )
     _assert_single_call(client, method="cw.enter", payload={}, tmp_path=tmp_path)
 
@@ -89,7 +92,11 @@ def test_cw_enter_renders_already_home_info(cli_runner, fake_daemon_client, tmp_
     result = cli_runner.invoke(app, ["cw", "enter", "--session", SESSION_ID])
 
     assert result.exit_code == 0
-    assert result.stdout.splitlines() == ["ok cw.enter page=home", "info already_home=1"]
+    assert result.stdout.splitlines() == [
+        "ok cw.enter page=home",
+        "info already_home=1",
+        "info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered",
+    ]
     _assert_single_call(client, method="cw.enter", payload={}, tmp_path=tmp_path)
 
 

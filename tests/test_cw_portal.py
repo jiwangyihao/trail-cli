@@ -934,7 +934,7 @@ def test_restart_cw_portal_selects_first_card_returns_home_and_restarts_into_inv
         return session
 
     monkeypatch.setattr(cw_service_module, "start_cw", fake_start_cw, raising=False)
-    monkeypatch.setattr(cw_service_module, "fetch_cw_guide_config", lambda timeout=10: {"portal_list": []}, raising=False)
+    monkeypatch.setattr(cw_service_module, "fetch_cw_guide_config", lambda **kwargs: {"portal_list": []}, raising=False)
     monkeypatch.setattr(cw_service_module, "summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: restarted_cards, raising=False)
 
     envelope = _run_cw_portal_mutation(
@@ -1015,7 +1015,7 @@ def test_restart_cw_portal_waits_for_in_game_before_returning_home(tmp_path: Pat
         lambda session, mode, difficulty, battle_mode, runtime: session.scene_state.setdefault("cw", {}).update({"entry": {"page": "invest", "mode": "new" if mode == "continue" else mode, "difficulty": difficulty, "battle_mode": battle_mode}}) or session,
         raising=False,
     )
-    monkeypatch.setattr(cw_service_module, "fetch_cw_guide_config", lambda timeout=10: {"portal_list": []}, raising=False)
+    monkeypatch.setattr(cw_service_module, "fetch_cw_guide_config", lambda **kwargs: {"portal_list": []}, raising=False)
     monkeypatch.setattr(cw_service_module, "summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: _portal_cards(), raising=False)
 
     envelope = _run_cw_portal_mutation(
@@ -1058,7 +1058,7 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
     observed_summary_inputs: list[dict[str, object]] = []
     monkeypatch.setattr(
         "trail.daemon.cw_service.fetch_cw_guide_config",
-        lambda timeout=10: {"portal_list": [{"portal_id": "alpha", "title": "Alpha Portal", "description": "Alpha Desc"}]},
+        lambda **kwargs: {"portal_list": [{"portal_id": "alpha", "title": "Alpha Portal", "description": "Alpha Desc"}]},
     )
     monkeypatch.setattr(
         "trail.daemon.cw_service.summarize_portal_cards",
@@ -1279,18 +1279,19 @@ def test_cw_start_from_clean_home_reveals_unfinished_progress_after_start_click(
     persisted = service.load_session(session.session_id)
 
     assert envelope["ok"] is False
-    assert envelope["data"] == {"page": "home"}
+    assert envelope["data"] == {}
     assert envelope["error"] == {
-        "code": "CW_START_PROGRESS_PENDING",
-        "message": "cw start found unfinished home progress; ask whether to continue progress or end and settle before starting a new run",
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
     }
-    assert status["final_state"] == "completed"
-    assert status["tainted"] is False
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True
     assert runtime.clicks == [start_box.center]
     assert runtime.wait_calls == []
     assert runtime.ocr_calls == [{}, {}, {}]
     assert persisted.scene_state["cw"]["entry"] == {"page": "home"}
     assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["希儿"]}
+    assert persisted.scene_state["daemon"]["tainted"] is True
 
 
 def test_cw_start_continue_from_whole_run_settlement_chain_reaches_invest_and_persists_new_mode(tmp_path: Path, monkeypatch):
@@ -1358,7 +1359,7 @@ def test_cw_start_continue_from_whole_run_settlement_chain_reaches_invest_and_pe
             return [{"text": "货币战争"}]
 
     runtime = Runtime()
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
@@ -1471,7 +1472,7 @@ def test_cw_start_entry_continue_still_advances_when_only_continue_progress_text
             _dict_piece("继续进度", left=100, top=100),
         ],
     )
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
@@ -1578,7 +1579,7 @@ def test_cw_start_continue_from_whole_run_settlement_chain_reaches_invest_and_pe
             return [{"text": "货币战争"}]
 
     runtime = Runtime()
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
@@ -1722,7 +1723,7 @@ def test_cw_start_continues_pages_between_home_and_invest(
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
     cards = _portal_cards()
     runtime = StartRuntime(locate_results=locate_results, wait_results=wait_results, ocr_result=[{"text": page}])
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
@@ -1778,7 +1779,7 @@ def test_cw_start_entry_new_allows_highest_when_already_selected(tmp_path: Path,
         },
         ocr_result=[{"text": "货币战争"}],
     )
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
@@ -1856,7 +1857,7 @@ def test_cw_start_entry_new_clicks_highest_when_button_visible(tmp_path: Path, m
         },
         ocr_result=[{"text": "货币战争"}],
     )
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
@@ -1901,7 +1902,7 @@ def test_cw_start_boss_preview_preserves_known_entry_truth_source(tmp_path: Path
         },
         ocr_result=[{"text": "boss preview"}],
     )
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
@@ -2044,7 +2045,7 @@ def test_cw_start_noops_on_invest_and_backfills_entry_params(tmp_path: Path, mon
         ocr_result=[{"text": "invest"}],
     )
     cards = _portal_cards()
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda timeout=10: {"portal_list": []})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: cards)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {

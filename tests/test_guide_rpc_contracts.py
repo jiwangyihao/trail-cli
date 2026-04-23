@@ -1221,6 +1221,7 @@ def test_command_service_handles_guide_list_cw_accepts_boolean_filters(tmp_path:
             "next_page_token": "token-2",
             "match_change_job": True,
             "match_hard": False,
+            "workspace_root": str(tmp_path),
         }
     ]
 
@@ -1279,6 +1280,7 @@ def test_command_service_handles_guide_list_cw_with_trait_and_roles(tmp_path: Pa
             "next_page_token": "token-2",
             "match_change_job": True,
             "match_hard": False,
+            "workspace_root": str(tmp_path),
         }
     ]
 
@@ -1460,7 +1462,7 @@ def test_command_service_handles_guide_config_cw_with_portal_list(tmp_path: Path
 
     monkeypatch.setattr(
         "trail.scenes.cw.guide.fetch_cw_guide_config",
-        lambda: {
+        lambda **kwargs: {
             "meta": {"season_id": 12},
             "lineup_levels": [],
             "traits": [],
@@ -1552,6 +1554,7 @@ def test_command_service_handles_guide_list_cw_with_portal_filters(tmp_path: Pat
             "match_change_job": None,
             "match_hard": None,
             "portal": "购物区",
+            "workspace_root": str(tmp_path),
         }
     ]
 
@@ -1623,6 +1626,7 @@ def test_command_service_handles_guide_list_cw_with_multi_portal_groups(tmp_path
             "match_change_job": None,
             "match_hard": None,
             "portal": ["购物区", "事件区"],
+            "workspace_root": str(tmp_path),
         }
     ]
 
