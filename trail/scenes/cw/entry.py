@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 from time import sleep
 
 from trail.core.errors import TrailError
+from trail.runtime.ocr_config import OcrRequestConfig
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw.stage import STAGE_RESOURCE_ALIASES, _detect_cw_stage_from_ocr
@@ -13,7 +15,6 @@ from trail.session.models import SessionModel
 CW_WIDTH = 1920
 CW_HEIGHT = 1080
 ENTRY_UI_WAIT_TIMEOUT = 10
-LOWEST_DIFFICULTY_MAX_CLICKS = 10
 ENTRY_GUIDE_HOTKEY = "f4"
 ENTRY_GUIDE_OPEN_SETTLE_SECONDS = 2.0
 ENTRY_COSMIC_STRIFE_SETTLE_SECONDS = 1.0
@@ -30,6 +31,32 @@ SETTLEMENT_CONTINUE_NEXT = ("下一步", "下一页")
 SETTLEMENT_CONTINUE_RETURN = "返回货币战争"
 SETTLEMENT_CONTINUE_POINT = (960, 908)
 SETTLEMENT_CONTINUE_SETTLE_SECONDS = 1.0
+ENTRY_ENEMY_DIFFICULTY_REGION = {"from_x": 480, "from_y": 940, "to_x": 590, "to_y": 1005}
+ENTRY_EXACT_DIFFICULTY_PATTERN = re.compile(r"^A(?P<rank>[0-8])-(?P<layer>[1-9]\d*)$")
+ENTRY_DIFFICULTY_SETTLE_SECONDS = 0.5
+ENTRY_DIFFICULTY_COARSE_THRESHOLD = 10
+ENTRY_DIFFICULTY_COARSE_MAX_STEPS = 20
+ENTRY_DIFFICULTY_FINE_MAX_STEPS = 12
+ENTRY_DIFFICULTY_COARSE_START = (CW_WIDTH // 2, int(CW_HEIGHT * 0.75))
+ENTRY_DIFFICULTY_COARSE_END = (CW_WIDTH // 2, 0)
+ENTRY_RANK_BANDS = (
+    {"rank_code": "A0", "rank_name": "黑铁", "max_layer": 3, "start_difficulty": 1, "ordinal_start": 1},
+    {"rank_code": "A1", "rank_name": "青铜", "max_layer": 3, "start_difficulty": 6, "ordinal_start": 4},
+    {"rank_code": "A2", "rank_name": "翠钢", "max_layer": 3, "start_difficulty": 11, "ordinal_start": 7},
+    {"rank_code": "A3", "rank_name": "钴银", "max_layer": 5, "start_difficulty": 16, "ordinal_start": 10},
+    {"rank_code": "A4", "rank_name": "冰钛", "max_layer": 5, "start_difficulty": 23, "ordinal_start": 15},
+    {"rank_code": "A5", "rank_name": "紫金", "max_layer": 7, "start_difficulty": 30, "ordinal_start": 20},
+    {"rank_code": "A6", "rank_name": "投资大师", "max_layer": 7, "start_difficulty": 39, "ordinal_start": 27},
+    {"rank_code": "A7", "rank_name": "资本帝王", "max_layer": 9, "start_difficulty": 49, "ordinal_start": 34},
+    {
+        "rank_code": "A8",
+        "rank_name": "财富造物主",
+        "max_layer": 40,
+        "start_difficulty": 61,
+        "ordinal_start": 43,
+        "difficulty_values": tuple(range(61, 71)) + tuple(range(74, 84)) + tuple(range(87, 97)) + tuple(range(99, 109)),
+    },
+)
 
 
 class CwEnterStateError(TrailError):
@@ -155,6 +182,258 @@ def _extract_ocr_texts(ocr_result: object) -> list[str]:
     return texts
 
 
+def _find_entry_rank_band(rank_code: str) -> Mapping[str, object] | None:
+    for band in ENTRY_RANK_BANDS:
+        if band["rank_code"] == rank_code:
+            return band
+    return None
+
+
+def _band_difficulty_values(band: Mapping[str, object]) -> tuple[int, ...]:
+    values = band.get("difficulty_values")
+    if isinstance(values, (list, tuple)):
+        return tuple(int(value) for value in values)
+    start_difficulty = int(band["start_difficulty"])
+    max_layer = int(band["max_layer"])
+    return tuple(range(start_difficulty, start_difficulty + max_layer))
+
+
+def parse_cw_start_difficulty_token(value: str) -> dict[str, object] | None:
+    if value in {"lowest", "current", "highest"}:
+        return {"kind": "preset", "token": value}
+
+    match = ENTRY_EXACT_DIFFICULTY_PATTERN.fullmatch(value)
+    if match is None:
+        return None
+
+    rank_code = f"A{match.group('rank')}"
+    layer = int(match.group("layer"))
+    band = _find_entry_rank_band(rank_code)
+    if band is None:
+        return None
+
+    difficulty_values = _band_difficulty_values(band)
+    max_layer = len(difficulty_values)
+    if layer < 1 or layer > max_layer:
+        return None
+
+    ordinal_start = int(band["ordinal_start"])
+    return {
+        "kind": "exact",
+        "token": value,
+        "rank_code": rank_code,
+        "rank_name": band["rank_name"],
+        "layer": layer,
+        "target_enemy_difficulty": difficulty_values[layer - 1],
+        "global_layer_ordinal": ordinal_start + layer - 1,
+    }
+
+
+def resolve_entry_rank_from_enemy_difficulty(value: int) -> dict[str, object] | None:
+    for band in ENTRY_RANK_BANDS:
+        difficulty_values = _band_difficulty_values(band)
+        if value not in difficulty_values:
+            continue
+
+        layer = difficulty_values.index(value) + 1
+        return {
+            "token": f"{band['rank_code']}-{layer}",
+            "rank_code": band["rank_code"],
+            "rank_name": band["rank_name"],
+            "layer": layer,
+            "enemy_difficulty": value,
+            "global_layer_ordinal": int(band["ordinal_start"]) + layer - 1,
+        }
+    return None
+
+
+def _require_entry_rank_token(token: str) -> Mapping[str, object]:
+    parsed = parse_cw_start_difficulty_token(token)
+    if not isinstance(parsed, Mapping) or parsed.get("kind") != "exact":
+        raise TrailError("CW_ENTRY_DIFFICULTY_INVALID", f"不支持的货币战争难度锚点: {token}")
+    return parsed
+
+
+def _extract_box_values(box: Mapping[object, object]) -> tuple[int, int, int, int] | None:
+    try:
+        return int(box["left"]), int(box["top"]), int(box["width"]), int(box["height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _extract_box_from_polygon(polygon: object) -> tuple[int, int, int, int] | None:
+    if not isinstance(polygon, (list, tuple)):
+        return None
+
+    xs: list[int] = []
+    ys: list[int] = []
+    for point in polygon:
+        try:
+            if isinstance(point, Mapping):
+                xs.append(int(point["x"]))
+                ys.append(int(point["y"]))
+            elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                xs.append(int(point[0]))
+                ys.append(int(point[1]))
+            else:
+                return None
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    if not xs or not ys:
+        return None
+
+    left = min(xs)
+    top = min(ys)
+    return left, top, max(xs) - left, max(ys) - top
+
+
+def _extract_center_box(center: object) -> tuple[int, int, int, int] | None:
+    if isinstance(center, Mapping):
+        try:
+            return int(center["x"]), int(center["y"]), 0, 0
+        except (KeyError, TypeError, ValueError):
+            return None
+    if isinstance(center, (list, tuple)) and len(center) >= 2:
+        try:
+            return int(center[0]), int(center[1]), 0, 0
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _extract_box(piece: object) -> tuple[int, int, int, int] | None:
+    if isinstance(piece, Mapping):
+        box = piece.get("box")
+        if isinstance(box, Mapping):
+            values = _extract_box_values(box)
+            if values is not None:
+                return values
+        elif all(hasattr(box, attr) for attr in ("left", "top", "width", "height")):
+            return int(box.left), int(box.top), int(box.width), int(box.height)
+
+        polygon = piece.get("polygon") or piece.get("points")
+        if polygon is not None:
+            values = _extract_box_from_polygon(polygon)
+            if values is not None:
+                return values
+
+        center = piece.get("center")
+        values = _extract_center_box(center)
+        if values is not None:
+            return values
+
+        values = _extract_box_values(piece)
+        if values is not None:
+            return values
+
+    if isinstance(piece, (list, tuple)) and piece:
+        values = _extract_box_from_polygon(piece[0])
+        if values is not None:
+            return values
+
+    return None
+
+
+def _read_ocr_piece(piece: object) -> str:
+    if isinstance(piece, Mapping):
+        return str(piece.get("text") or piece.get("ocr_text") or "").strip()
+    if isinstance(piece, (list, tuple)) and len(piece) >= 2 and isinstance(piece[1], str):
+        return piece[1].strip()
+    return ""
+
+
+def _boxes_overlap(left_box: tuple[int, int, int, int], right_box: tuple[int, int, int, int]) -> bool:
+    left_a, top_a, width_a, height_a = left_box
+    left_b, top_b, width_b, height_b = right_box
+    right_a = left_a + width_a
+    bottom_a = top_a + height_a
+    right_b = left_b + width_b
+    bottom_b = top_b + height_b
+    return left_a < right_b and left_b < right_a and top_a < bottom_b and top_b < bottom_a
+
+
+def _build_difficulty_recovery_error(
+    *,
+    requested_difficulty: str | None,
+    reason: str,
+    target_enemy_difficulty: int | None = None,
+    current_enemy_difficulty: int | None = None,
+    after_input: bool = False,
+) -> TrailError:
+    error = TrailError(
+        "CW_START_DIFFICULTY_RECOVERY_REQUIRED",
+        "cw start cannot safely continue difficulty selection; ask agent to enter error recovery",
+    )
+    error.data = {
+        "requested_difficulty": requested_difficulty,
+        "target_enemy_difficulty": target_enemy_difficulty,
+        "current_enemy_difficulty": current_enemy_difficulty,
+        "reason": reason,
+        "page": "entry.new",
+    }
+    error.tainted = False
+    if after_input:
+        error.known_failure_after_save = True
+        error.completed_after_side_effect = True
+    return error
+
+
+def read_entry_enemy_difficulty(
+    runtime,
+    *,
+    requested_difficulty: str | None = None,
+    target_enemy_difficulty: int | None = None,
+    after_input: bool = False,
+) -> int:
+    pieces = runtime.ocr(
+        capture=ENTRY_ENEMY_DIFFICULTY_REGION,
+        ocr=OcrRequestConfig(ocr_mode="high", retry_high="never"),
+    )
+    digit_runs: list[tuple[int, int, int, int, int, str]] = []
+    for order, piece in enumerate(pieces if isinstance(pieces, (list, tuple)) else []):
+        box = _extract_box(piece)
+        if box is None:
+            continue
+
+        text = _read_ocr_piece(piece)
+        digits = "".join(re.findall(r"\d+", text))
+        if not digits:
+            continue
+        digit_runs.append((box[0], box[1], box[2], box[3], order, digits))
+
+    if not digit_runs:
+        raise _build_difficulty_recovery_error(
+            requested_difficulty=requested_difficulty,
+            target_enemy_difficulty=target_enemy_difficulty,
+            reason="ocr_missing",
+            after_input=after_input,
+        )
+
+    for index, current in enumerate(digit_runs):
+        current_box = (current[0], current[1], current[2], current[3])
+        for other in digit_runs[index + 1 :]:
+            other_box = (other[0], other[1], other[2], other[3])
+            if _boxes_overlap(current_box, other_box):
+                raise _build_difficulty_recovery_error(
+                    requested_difficulty=requested_difficulty,
+                    target_enemy_difficulty=target_enemy_difficulty,
+                    reason="ocr_conflict",
+                    after_input=after_input,
+                )
+
+    current_enemy_difficulty = int("".join(part[5] for part in sorted(digit_runs, key=lambda part: (part[0], part[1], part[4]))))
+    if resolve_entry_rank_from_enemy_difficulty(current_enemy_difficulty) is None:
+        raise _build_difficulty_recovery_error(
+            requested_difficulty=requested_difficulty,
+            target_enemy_difficulty=target_enemy_difficulty,
+            current_enemy_difficulty=current_enemy_difficulty,
+            reason="ocr_unmapped",
+            after_input=after_input,
+        )
+    return current_enemy_difficulty
+
+
 def _home_has_unfinished_progress(runtime) -> bool:
     try:
         texts = _extract_ocr_texts(runtime.ocr())
@@ -200,6 +479,316 @@ def _select_battle_mode(runtime, *, battle_mode: str) -> None:
     runtime.click_point(*target)
 
 
+def is_cw_exact_difficulty_token(value: str) -> bool:
+    parsed = parse_cw_start_difficulty_token(value)
+    return isinstance(parsed, dict) and parsed.get("kind") == "exact"
+
+
+def _read_current_entry_rank(
+    runtime,
+    *,
+    requested_difficulty: str,
+    target_enemy_difficulty: int | None,
+    after_input: bool,
+) -> dict[str, object]:
+    current_enemy_difficulty = read_entry_enemy_difficulty(
+        runtime,
+        requested_difficulty=requested_difficulty,
+        target_enemy_difficulty=target_enemy_difficulty,
+        after_input=after_input,
+    )
+    current_rank = resolve_entry_rank_from_enemy_difficulty(current_enemy_difficulty)
+    if current_rank is None:
+        raise _build_difficulty_recovery_error(
+            requested_difficulty=requested_difficulty,
+            target_enemy_difficulty=target_enemy_difficulty,
+            current_enemy_difficulty=current_enemy_difficulty,
+            reason="ocr_unmapped",
+            after_input=after_input,
+        )
+    return current_rank
+
+
+def _reset_entry_to_highest(
+    runtime,
+    *,
+    requested_difficulty: str,
+    target_enemy_difficulty: int,
+    after_input: bool,
+) -> dict[str, object]:
+    box = _locate(runtime, "entry.difficulty.highest")
+    if box is None:
+        raise _build_difficulty_recovery_error(
+            requested_difficulty=requested_difficulty,
+            target_enemy_difficulty=target_enemy_difficulty,
+            reason="highest_reset_unavailable",
+            after_input=after_input,
+        )
+    _click_box_center(runtime, box)
+    _transition_sleep(ENTRY_DIFFICULTY_SETTLE_SECONDS)
+    return _read_current_entry_rank(
+        runtime,
+        requested_difficulty=requested_difficulty,
+        target_enemy_difficulty=target_enemy_difficulty,
+        after_input=True,
+    )
+
+
+def _coarse_reduce_entry_difficulty(runtime) -> None:
+    runtime.drag_to(*ENTRY_DIFFICULTY_COARSE_START, *ENTRY_DIFFICULTY_COARSE_END)
+    _transition_sleep(ENTRY_DIFFICULTY_SETTLE_SECONDS)
+
+
+def _step_reduce_entry_difficulty(
+    runtime,
+    *,
+    requested_difficulty: str,
+    target_enemy_difficulty: int | None,
+    after_input: bool,
+) -> None:
+    box = _locate(runtime, "entry.difficulty.lowest")
+    if box is None:
+        raise _build_difficulty_recovery_error(
+            requested_difficulty=requested_difficulty,
+            target_enemy_difficulty=target_enemy_difficulty,
+            reason="step_arrow_missing",
+            after_input=after_input,
+        )
+    _click_box_center(runtime, box)
+    _transition_sleep(ENTRY_DIFFICULTY_SETTLE_SECONDS)
+
+
+def _select_exact_difficulty(runtime, *, difficulty: str, parsed: Mapping[str, object]) -> None:
+    target_enemy_difficulty = int(parsed["target_enemy_difficulty"])
+    target_ordinal = int(parsed["global_layer_ordinal"])
+    current = _read_current_entry_rank(
+        runtime,
+        requested_difficulty=difficulty,
+        target_enemy_difficulty=target_enemy_difficulty,
+        after_input=False,
+    )
+    after_input = False
+    coarse_steps = 0
+    fine_steps = 0
+    iterations = 0
+    max_iterations = ENTRY_DIFFICULTY_COARSE_MAX_STEPS + ENTRY_DIFFICULTY_FINE_MAX_STEPS
+
+    while iterations < max_iterations:
+        current_ordinal = int(current["global_layer_ordinal"])
+        if current_ordinal == target_ordinal:
+            return
+
+        if current_ordinal < target_ordinal:
+            iterations += 1
+            current = _reset_entry_to_highest(
+                runtime,
+                requested_difficulty=difficulty,
+                target_enemy_difficulty=target_enemy_difficulty,
+                after_input=after_input,
+            )
+            after_input = True
+            continue
+
+        before = int(current["enemy_difficulty"])
+        if current_ordinal - target_ordinal > ENTRY_DIFFICULTY_COARSE_THRESHOLD:
+            if coarse_steps >= ENTRY_DIFFICULTY_COARSE_MAX_STEPS:
+                break
+            coarse_steps += 1
+            iterations += 1
+            _coarse_reduce_entry_difficulty(runtime)
+            after_input = True
+            current = _read_current_entry_rank(
+                runtime,
+                requested_difficulty=difficulty,
+                target_enemy_difficulty=target_enemy_difficulty,
+                after_input=True,
+            )
+            if int(current["enemy_difficulty"]) == before:
+                raise _build_difficulty_recovery_error(
+                    requested_difficulty=difficulty,
+                    target_enemy_difficulty=target_enemy_difficulty,
+                    current_enemy_difficulty=int(current["enemy_difficulty"]),
+                    reason="coarse_no_progress",
+                    after_input=True,
+                )
+            continue
+
+        if fine_steps >= ENTRY_DIFFICULTY_FINE_MAX_STEPS:
+            break
+        fine_steps += 1
+        iterations += 1
+        _step_reduce_entry_difficulty(
+            runtime,
+            requested_difficulty=difficulty,
+            target_enemy_difficulty=target_enemy_difficulty,
+            after_input=after_input,
+        )
+        after_input = True
+        current = _read_current_entry_rank(
+            runtime,
+            requested_difficulty=difficulty,
+            target_enemy_difficulty=target_enemy_difficulty,
+            after_input=True,
+        )
+        if int(current["enemy_difficulty"]) == before:
+            raise _build_difficulty_recovery_error(
+                requested_difficulty=difficulty,
+                target_enemy_difficulty=target_enemy_difficulty,
+                current_enemy_difficulty=int(current["enemy_difficulty"]),
+                reason="step_no_progress",
+                after_input=True,
+            )
+
+    raise _build_difficulty_recovery_error(
+        requested_difficulty=difficulty,
+        target_enemy_difficulty=target_enemy_difficulty,
+        current_enemy_difficulty=int(current["enemy_difficulty"]),
+        reason="iteration_budget_exhausted",
+        after_input=after_input,
+    )
+
+
+def _select_lowest_difficulty(runtime) -> None:
+    requested_difficulty = "lowest"
+    near_bottom = _require_entry_rank_token("A1-1")
+    bottom = _require_entry_rank_token("A0-1")
+    near_bottom_ordinal = int(near_bottom["global_layer_ordinal"])
+    bottom_ordinal = int(bottom["global_layer_ordinal"])
+    current: Mapping[str, object] | None = None
+    after_input = False
+    iterations = 0
+    max_iterations = ENTRY_DIFFICULTY_COARSE_MAX_STEPS + ENTRY_DIFFICULTY_FINE_MAX_STEPS
+
+    while iterations < max_iterations:
+        arrow_box = _locate(runtime, "entry.difficulty.lowest")
+        if arrow_box is None:
+            try:
+                current = _read_current_entry_rank(
+                    runtime,
+                    requested_difficulty=requested_difficulty,
+                    target_enemy_difficulty=None,
+                    after_input=after_input,
+                )
+            except TrailError:
+                _transition_sleep(ENTRY_DIFFICULTY_SETTLE_SECONDS)
+                current = _read_current_entry_rank(
+                    runtime,
+                    requested_difficulty=requested_difficulty,
+                    target_enemy_difficulty=None,
+                    after_input=after_input,
+                )
+
+            current_ordinal = int(current["global_layer_ordinal"])
+            if current_ordinal == bottom_ordinal:
+                return
+
+            before = int(current["enemy_difficulty"])
+            if current_ordinal - near_bottom_ordinal > ENTRY_DIFFICULTY_COARSE_THRESHOLD:
+                iterations += 1
+                _coarse_reduce_entry_difficulty(runtime)
+                after_input = True
+                current = _read_current_entry_rank(
+                    runtime,
+                    requested_difficulty=requested_difficulty,
+                    target_enemy_difficulty=None,
+                    after_input=True,
+                )
+                if int(current["enemy_difficulty"]) == before:
+                    raise _build_difficulty_recovery_error(
+                        requested_difficulty=requested_difficulty,
+                        current_enemy_difficulty=int(current["enemy_difficulty"]),
+                        reason="coarse_no_progress",
+                        after_input=True,
+                    )
+                continue
+
+            _transition_sleep(ENTRY_DIFFICULTY_SETTLE_SECONDS)
+            arrow_box = _locate(runtime, "entry.difficulty.lowest")
+            if arrow_box is None:
+                current = _read_current_entry_rank(
+                    runtime,
+                    requested_difficulty=requested_difficulty,
+                    target_enemy_difficulty=None,
+                    after_input=after_input,
+                )
+                if int(current["global_layer_ordinal"]) == bottom_ordinal:
+                    return
+                raise _build_difficulty_recovery_error(
+                    requested_difficulty=requested_difficulty,
+                    current_enemy_difficulty=int(current["enemy_difficulty"]),
+                    reason="lowest_arrow_missing_non_bottom",
+                    after_input=after_input,
+                )
+        else:
+            current = _read_current_entry_rank(
+                runtime,
+                requested_difficulty=requested_difficulty,
+                target_enemy_difficulty=None,
+                after_input=after_input,
+            )
+
+        current_ordinal = int(current["global_layer_ordinal"])
+        before = int(current["enemy_difficulty"])
+        if current_ordinal - near_bottom_ordinal > ENTRY_DIFFICULTY_COARSE_THRESHOLD:
+            iterations += 1
+            _coarse_reduce_entry_difficulty(runtime)
+            after_input = True
+            current = _read_current_entry_rank(
+                runtime,
+                requested_difficulty=requested_difficulty,
+                target_enemy_difficulty=None,
+                after_input=True,
+            )
+            if int(current["enemy_difficulty"]) == before:
+                raise _build_difficulty_recovery_error(
+                    requested_difficulty=requested_difficulty,
+                    current_enemy_difficulty=int(current["enemy_difficulty"]),
+                    reason="coarse_no_progress",
+                    after_input=True,
+                )
+            continue
+
+        iterations += 1
+        _step_reduce_entry_difficulty(
+            runtime,
+            requested_difficulty=requested_difficulty,
+            target_enemy_difficulty=None,
+            after_input=after_input,
+        )
+        after_input = True
+        current = _read_current_entry_rank(
+            runtime,
+            requested_difficulty=requested_difficulty,
+            target_enemy_difficulty=None,
+            after_input=True,
+        )
+        if int(current["enemy_difficulty"]) == before:
+            raise _build_difficulty_recovery_error(
+                requested_difficulty=requested_difficulty,
+                current_enemy_difficulty=int(current["enemy_difficulty"]),
+                reason="step_no_progress",
+                after_input=True,
+            )
+
+        if _locate(runtime, "entry.difficulty.lowest") is None:
+            if int(current["global_layer_ordinal"]) == bottom_ordinal:
+                return
+            raise _build_difficulty_recovery_error(
+                requested_difficulty=requested_difficulty,
+                current_enemy_difficulty=int(current["enemy_difficulty"]),
+                reason="lowest_arrow_missing_non_bottom",
+                after_input=True,
+            )
+
+    current_enemy_difficulty = None if current is None else int(current["enemy_difficulty"])
+    raise _build_difficulty_recovery_error(
+        requested_difficulty=requested_difficulty,
+        current_enemy_difficulty=current_enemy_difficulty,
+        reason="iteration_budget_exhausted",
+        after_input=after_input,
+    )
+
+
 def _select_difficulty(runtime, *, difficulty: str) -> None:
     if difficulty == "current":
         return
@@ -211,16 +800,12 @@ def _select_difficulty(runtime, *, difficulty: str) -> None:
         return
 
     if difficulty == "lowest":
-        template = _asset("entry.difficulty.lowest")
-        clicked = False
-        for _ in range(LOWEST_DIFFICULTY_MAX_CLICKS):
-            box = runtime.locate(template)
-            if box is None:
-                break
-            _click_box_center(runtime, box)
-            clicked = True
-        if not clicked:
-            _click_box_center(runtime, _wait(runtime, "entry.difficulty.lowest"))
+        _select_lowest_difficulty(runtime)
+        return
+
+    parsed = parse_cw_start_difficulty_token(difficulty)
+    if isinstance(parsed, Mapping) and parsed.get("kind") == "exact":
+        _select_exact_difficulty(runtime, difficulty=difficulty, parsed=parsed)
         return
 
     raise TrailError("CW_ENTRY_DIFFICULTY_INVALID", f"不支持的货币战争难度: {difficulty}")

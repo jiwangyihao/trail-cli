@@ -1891,6 +1891,67 @@ def test_cw_enter_help_exposes_home_only_contract(cli_runner):
     assert "--battle-mode" not in result.stdout
 
 
+def test_cw_start_help_mentions_ax_x_and_rank_ranges(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "start", "--help"])
+    difficulty_help = _normalize_help(_extract_help_option_block(result.output, "--difficulty"))
+
+    assert result.exit_code == 0
+    assert "lowest/current/highest/AX-X" in difficulty_help
+    assert "A0-1..A8-40" in difficulty_help
+
+
+def test_cw_start_invalid_difficulty_reaches_daemon_instead_of_typer(cli_runner, monkeypatch):
+    seen: dict[str, object] = {}
+
+    def fake_call(method, payload, *, session_id=None, verbose=None, daemon_client=None):
+        del session_id, verbose, daemon_client
+        seen["method"] = method
+        seen["payload"] = payload
+        return {
+            "ok": False,
+            "data": {},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": None,
+            "error": {
+                "code": "CW_START_DIFFICULTY_INVALID",
+                "message": "unsupported cw start difficulty: A9-1",
+            },
+        }
+
+    monkeypatch.setattr("trail.commands.cw.call_daemon", fake_call)
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "cw",
+            "start",
+            "--session",
+            "session-1",
+            "--mode",
+            "new",
+            "--difficulty",
+            "A9-1",
+            "--battle-mode",
+            "standard",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen == {
+        "method": "cw.start",
+        "payload": {
+            "session_id": "session-1",
+            "mode": "new",
+            "difficulty": "A9-1",
+            "battle_mode": "standard",
+        },
+    }
+    assert "fail cw.start code=CW_START_DIFFICULTY_INVALID" in result.stdout
+
+
 def test_window_help_exposes_launch_command(cli_runner):
     result = cli_runner.invoke(app, ["window", "--help"])
 

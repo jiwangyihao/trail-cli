@@ -10,7 +10,7 @@ from trail.daemon.command_timeouts import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS,
 from trail.daemon.command_service import PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
 from trail.output.capture import with_auto_capture, with_selective_capture
 from trail.scenes.cw.battle import run_cw_battle
-from trail.scenes.cw.entry import enter_cw, start_cw
+from trail.scenes.cw.entry import enter_cw, is_cw_exact_difficulty_token, start_cw
 from trail.scenes.cw.events import (
     build_cw_battle_continuer,
     build_cw_battle_starter,
@@ -110,6 +110,10 @@ SIDE_EFFECT_RUNTIME_METHODS = {"click_point", "drag_to", "press_key", "type_text
 PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS = 2.0
 CW_BATTLE_START_EXTRA_CAPTURE_DELAY_SECONDS = 3.0
 DEFAULT_CW_BATTLE_RUN_TIMEOUT = DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS
+
+
+def _is_valid_cw_start_difficulty(value: str) -> bool:
+    return value in {"lowest", "current", "highest"} or is_cw_exact_difficulty_token(value)
 
 
 def _capture_delay_seconds_for_method(method: str) -> float:
@@ -246,7 +250,14 @@ class CwService:
                 extra_delay_seconds = PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS if method == "cw.portal.select" else 0.0
                 capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id, extra_delay_seconds=extra_delay_seconds)
                 try:
-                    return with_auto_capture(capture_runtime, lambda: (_ for _ in ()).throw(error), verbose=verbose)
+                    response = with_auto_capture(capture_runtime, lambda: (_ for _ in ()).throw(error), verbose=verbose)
+                    if isinstance(response, dict):
+                        response_data = deepcopy(getattr(error, "data", None)) if isinstance(getattr(error, "data", None), dict) else {}
+                        if hasattr(error, "tainted") and "tainted" not in response_data:
+                            response_data["tainted"] = bool(getattr(error, "tainted"))
+                        if response_data:
+                            response["data"] = response_data
+                    return response
                 except Exception as capture_error:
                     screenshot = _safe_capture_after_action(capture_runtime)
                     raise PersistedButResponseUnknown(
@@ -331,7 +342,7 @@ class CwService:
                 raise TrailError("CW_START_ARGS_REQUIRED", "cw start requires mode/difficulty/battle_mode")
             if mode not in {"new", "continue"}:
                 raise TrailError("CW_START_MODE_INVALID", f"unsupported cw start mode: {mode}")
-            if difficulty not in {"lowest", "current", "highest"}:
+            if not _is_valid_cw_start_difficulty(difficulty):
                 raise TrailError("CW_START_DIFFICULTY_INVALID", f"unsupported cw start difficulty: {difficulty}")
             if battle_mode not in {"standard", "overclock"}:
                 raise TrailError("CW_START_BATTLE_MODE_INVALID", f"unsupported cw start battle_mode: {battle_mode}")

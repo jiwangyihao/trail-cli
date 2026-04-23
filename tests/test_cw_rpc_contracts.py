@@ -179,6 +179,77 @@ def test_cw_start_renders_portal_cards_and_shot(cli_runner, fake_daemon_client, 
     )
 
 
+def test_cw_start_forwards_exact_rank_payload_without_rendering_exact_rank_or_numeric_mapping(
+    cli_runner,
+    fake_daemon_client,
+    tmp_path,
+):
+    client = fake_daemon_client(
+        {
+            "cw.start": build_success_response(
+                request_id="req-cw-start-exact-rank",
+                data={
+                    "cards": [
+                        {
+                            "card_idx": 1,
+                            "portal_title": "Alpha Portal",
+                            "portal_description": "Alpha Desc",
+                            "score": 0.99,
+                            "guides": [],
+                        }
+                    ],
+                    "mode": "continue",
+                    "difficulty": "A7-3",
+                    "requested_difficulty": "A7-3",
+                    "target_enemy_difficulty": 51,
+                    "current_enemy_difficulty": 54,
+                    "page": "invest",
+                    "reason": "exact_rank_requested",
+                    "battle_mode": "standard",
+                    "stale": False,
+                },
+                screenshot=".trail/shots/req-cw-start-exact-rank.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "cw",
+            "start",
+            "--session",
+            SESSION_ID,
+            "--mode",
+            "continue",
+            "--difficulty",
+            "A7-3",
+            "--battle-mode",
+            "standard",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.start cards=1",
+        screenshot=".trail/shots/req-cw-start-exact-rank.png",
+        body=[
+            'opt idx=1 投资环境="Alpha Portal" score=0.99 待收集=0',
+            'opt idx=1 说明="Alpha Desc"',
+        ],
+    )
+    assert "A7-3" not in result.stdout
+    assert "51" not in result.stdout
+    assert "requested_difficulty=" not in result.stdout
+    assert "target_enemy_difficulty=" not in result.stdout
+    _assert_single_call(
+        client,
+        method="cw.start",
+        payload={"mode": "continue", "difficulty": "A7-3", "battle_mode": "standard"},
+        tmp_path=tmp_path,
+    )
+
+
 def test_cw_portal_select_renders_selected_card_summary(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {

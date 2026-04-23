@@ -882,10 +882,13 @@ class CommandService:
         else:
             code = type(error).__name__
             message = str(error) or type(error).__name__
-        data = getattr(error, "data", None)
+        raw_data = getattr(error, "data", None)
+        data = deepcopy(raw_data) if isinstance(raw_data, dict) else {}
+        if hasattr(error, "tainted") and "tainted" not in data:
+            data["tainted"] = bool(getattr(error, "tainted"))
         return {
             "ok": False,
-            "data": deepcopy(data) if isinstance(data, dict) else {},
+            "data": data,
             "screenshot": None,
             "timing": {},
             "warnings": [],

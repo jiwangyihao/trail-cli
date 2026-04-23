@@ -445,12 +445,14 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
         ("开新局", "继续上一局"),
         ("上分", "速刷奖励"),
         ("标准", "超频"),
-        ("当前职级难度", "更低难度"),
+        ("继续当前职级", "更低", "最高职级", "AX-X"),
         ("攻略/阵容", "投资环境/词条"),
         ("刷开局",),
         ("未收尾进度", "先结算"),
     ):
         assert any(all(token in item for token in expected_tokens) for item in confirm_items)
+    assert "A0-1..A8-40" in text
+    assert "A7-3" in text
     for forbidden in ("battle_mode=", "difficulty=", "portal refresh", "strategy="):
         assert forbidden not in text
 
@@ -489,7 +491,7 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
 
     assert mapping_rows[0] == ["玩家常用说法", "官方化名词", "项目内命令或字段"]
     assert len(mapping_body_rows) >= 10
-    for expected_phrase in ("A8", "上分", "周常", "奖励", "投资环境", "攻略开局"):
+    for expected_phrase in ("A8", "A7-3", "上分", "周常", "奖励", "投资环境", "攻略开局", "最高职级"):
         assert any(expected_phrase in term for term in player_terms)
 
     assert any("cw enter" in target for target in action_targets)
@@ -497,7 +499,10 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
     assert any("portal" in target for target in action_targets)
     assert any("guide" in target for target in action_targets)
     assert any("battle_mode=" in target for target in action_targets)
-    assert any("difficulty=" in target for target in action_targets)
+    assert any("difficulty=current" in target for target in action_targets)
+    assert any("difficulty=lowest" in target for target in action_targets)
+    assert any("difficulty=highest" in target for target in action_targets)
+    assert any("difficulty=AX-X" in target for target in action_targets)
     assert sum(
         1
         for target in action_targets
@@ -508,7 +513,7 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
         ("开新局", "继续上一局"),
         ("上分", "速刷奖励"),
         ("标准", "超频"),
-        ("当前职级难度", "更低难度"),
+        ("继续当前职级", "更低", "最高职级", "AX-X"),
         ("攻略/阵容", "投资环境/词条"),
         ("刷开局",),
         ("未收尾进度", "先结算"),
@@ -517,6 +522,8 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
 
     for fragment in ("cw enter", "cw start", "portal", "guide"):
         assert fragment in checklist_text
+    assert "A0-1..A8-40" in mapping_text
+    assert "A0-1..A8-40" in checklist_text
 
 
 def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
@@ -529,7 +536,7 @@ def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
         ("开新局", "继续上一局"),
         ("上分", "速刷奖励"),
         ("标准", "超频"),
-        ("当前职级难度", "更低难度"),
+        ("继续当前职级", "更低", "最高职级", "AX-X"),
         ("攻略/阵容", "投资环境/词条"),
         ("刷开局",),
         ("未收尾进度", "先结算"),
@@ -538,6 +545,9 @@ def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
     for expected_tokens in confirmation_groups:
         assert any(all(token in item for token in expected_tokens) for item in skill_items)
         assert any(all(token in item for token in expected_tokens) for item in checklist_items)
+
+    assert "A0-1..A8-40" in skill_text
+    assert "A0-1..A8-40" in checklist_text
 
 
 def test_cw_entry_trigger_fixture_has_required_quota_and_schema() -> None:

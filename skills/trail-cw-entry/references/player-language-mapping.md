@@ -11,8 +11,10 @@
 | 刷周常 / 刷奖励 | 以更快完成积分奖励为目标的超频博弈 | 通常会优先确认 `超频博弈`，再进入 `cw start`；必要时桥接 `battle_mode=overclock` |
 | 标准博弈 | 标准博弈 | 通常通过 `cw start` 开局；必要时桥接 `battle_mode=standard` |
 | 超频博弈 | 超频博弈 | 通常通过 `cw start` 开局；必要时桥接 `battle_mode=overclock` |
-| 当前职级难度 | 当前最高职级对应难度 | 作为 `cw start` 前的难度确认；必要时桥接 `difficulty=current` |
-| 更低难度 | 更低职级难度 | 作为 `cw start` 前的难度确认；必要时桥接 `difficulty=lowest` |
+| 当前这档 / 当前职级难度 / 继续当前职级 | 按当前职级继续推进 | 作为 `cw start` 前的难度确认；必要时桥接 `difficulty=current` |
+| 更低难度 / 降一档 / 先降到更低 | 降到更低职级继续推进 | 作为 `cw start` 前的难度确认；必要时桥接 `difficulty=lowest` |
+| 最高档 / 回最高职级 | 回到当前可选最高职级继续推进 | 作为 `cw start` 前的难度确认；必要时桥接 `difficulty=highest` |
+| 指定 A7-3 / 指定某个 A 段 | 指定某个公开职级层级 | 作为 `cw start` 前的难度确认；必要时桥接 `difficulty=AX-X`，公开范围 `A0-1..A8-40` |
 | 看投资环境 / 看词条 | 投资环境 | 通常先进入 `cw enter`，再继续到 `portal.*` |
 | 看路线 / 看策略 | 投资策略 | 通常先看 `portal.*` 给出的环境，再继续到 `strategy` 相关动作 |
 | 抄攻略开局 / 攻略开局 | 攻略 | 通常先看 `guide.*`，再决定是否按攻略推进到 `cw start` |

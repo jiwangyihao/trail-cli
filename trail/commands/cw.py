@@ -42,6 +42,12 @@ CW_BOSS_PREVIEW_HELP = "确认首领预览并继续战斗前阶段。"
 CW_BATTLE_HELP = "处理战斗开始与战后继续。"
 CW_SETTLE_HELP = "处理整局结算链页面。"
 CW_EVENT_HELP = "处理其余通用/特殊事件节点。"
+CW_START_DIFFICULTY_HELP = (
+    "难度支持 lowest/current/highest/AX-X；AX-X 例如 A7-3。"
+    "公开范围 A0-1..A8-40；分段层数："
+    "A0-1..A0-3，A1-1..A1-3，A2-1..A2-3，A3-1..A3-5，"
+    "A4-1..A4-5，A5-1..A5-7，A6-1..A6-7，A7-1..A7-9，A8-1..A8-40。"
+)
 
 cw_app = typer.Typer(no_args_is_help=True, help=CW_APP_HELP)
 cw_guide_app = typer.Typer(no_args_is_help=True, help=CW_GUIDE_HELP)
@@ -65,12 +71,6 @@ event_app = typer.Typer(no_args_is_help=True, help=CW_EVENT_HELP)
 class EnterMode(StrEnum):
     NEW = "new"
     CONTINUE = "continue"
-
-
-class EnterDifficulty(StrEnum):
-    LOWEST = "lowest"
-    CURRENT = "current"
-    HIGHEST = "highest"
 
 
 class BattleMode(StrEnum):
@@ -134,7 +134,7 @@ def cw_enter(session: str = typer.Option(..., "--session")) -> None:
 def cw_start(
     session: str = typer.Option(..., "--session"),
     mode: EnterMode = typer.Option(..., "--mode"),
-    difficulty: EnterDifficulty = typer.Option(EnterDifficulty.CURRENT, "--difficulty"),
+    difficulty: str = typer.Option("current", "--difficulty", help=CW_START_DIFFICULTY_HELP),
     battle_mode: BattleMode = typer.Option(BattleMode.STANDARD, "--battle-mode"),
 ) -> None:
     _print_cw(
@@ -142,7 +142,7 @@ def cw_start(
         session_id=session,
         payload={
             "mode": mode.value,
-            "difficulty": difficulty.value,
+            "difficulty": difficulty,
             "battle_mode": battle_mode.value,
         },
     )

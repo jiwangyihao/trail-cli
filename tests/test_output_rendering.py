@@ -32,6 +32,13 @@ SKILL_GUIDANCE_PATHS = (
     PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md",
     PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md",
 )
+CW_ENTRY_SKILL_PATH = PROJECT_ROOT / "skills" / "trail-cw-entry" / "SKILL.md"
+CW_ENTRY_PLAYER_LANGUAGE_MAPPING_PATH = (
+    PROJECT_ROOT / "skills" / "trail-cw-entry" / "references" / "player-language-mapping.md"
+)
+CW_ENTRY_CONFIRMATION_CHECKLIST_PATH = (
+    PROJECT_ROOT / "skills" / "trail-cw-entry" / "references" / "confirmation-checklist.md"
+)
 SIMPLE_COMMAND_SURFACE_PATH = (
     PROJECT_ROOT / "skills" / "trail-hsr" / "references" / "simple-command-surface.md"
 )
@@ -465,6 +472,41 @@ def test_readme_documents_portal_detect_recovery_contract() -> None:
     assert "detect 不会补录 `mode/difficulty/battle_mode`" in readme
     assert "trail cw portal.refresh" not in readme
     assert "trail cw portal.restart" not in readme
+
+
+def test_readme_cw_start_exact_rank_documents_public_difficulty_surface() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert (
+        "`trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest|AX-X --battle-mode standard|overclock`"
+        in readme
+    )
+    assert "`A0-1..A8-40`" in readme
+    assert "`A7-3`" in readme
+    assert "enemy_difficulty" not in readme
+    assert "A7-3 对应难度 51" not in readme
+    assert "--rank" not in readme
+
+
+def test_skill_cw_start_exact_rank_documents_public_difficulty_surface() -> None:
+    skill_text = CW_ENTRY_SKILL_PATH.read_text(encoding="utf-8")
+    mapping_text = CW_ENTRY_PLAYER_LANGUAGE_MAPPING_PATH.read_text(encoding="utf-8")
+    checklist_text = CW_ENTRY_CONFIRMATION_CHECKLIST_PATH.read_text(encoding="utf-8")
+    combined = "\n".join((skill_text, mapping_text, checklist_text))
+
+    assert "继续当前职级" in skill_text
+    assert "回最高职级" in skill_text
+    assert "AX-X" in skill_text
+    assert "A0-1..A8-40" in combined
+    assert "A7-3" in combined
+    assert "difficulty=highest" in mapping_text
+    assert "difficulty=AX-X" in mapping_text
+    assert "继续当前职级" in checklist_text
+    assert "回最高职级" in checklist_text
+    for text in (skill_text, mapping_text, checklist_text):
+        assert "enemy_difficulty" not in text
+        assert "A7-3 对应难度 51" not in text
+        assert "--rank" not in text
 
 
 def test_readme_documents_handoff_tail_rule() -> None:
@@ -2260,6 +2302,107 @@ def test_render_output_renders_cw_start_portal_cards_family():
         'opt idx=2 投资环境="Beta Portal" score=0.88 待收集=0',
         'opt idx=2 说明="Beta Desc"',
     ]
+
+
+def test_render_output_cw_start_exact_rank_omits_internal_difficulty_fields_from_success_text():
+    payload = {
+        "ok": True,
+        "data": {
+            "cards": [
+                {
+                    "card_idx": 1,
+                    "portal_title": "Alpha Portal",
+                    "portal_description": "Alpha Desc",
+                    "score": 0.99,
+                    "new": 1,
+                    "guides": [],
+                }
+            ],
+            "mode": "continue",
+            "difficulty": "A7-3",
+            "requested_difficulty": "A7-3",
+            "target_enemy_difficulty": 51,
+            "current_enemy_difficulty": 54,
+            "reason": "exact_rank_requested",
+            "page": "invest",
+            "battle_mode": "standard",
+            "stale": False,
+        },
+        "screenshot": ".trail/shots/req-start-exact-rank.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    rendered = render_output("cw.start", payload)
+
+    assert rendered.splitlines() == [
+        "ok cw.start cards=1",
+        "shot path=.trail/shots/req-start-exact-rank.png",
+        "info read_image_first=1",
+        'opt idx=1 投资环境="Alpha Portal" score=0.99 待收集=1',
+        'opt idx=1 说明="Alpha Desc"',
+    ]
+    for forbidden in (
+        "A7-3",
+        "51",
+        "requested_difficulty=",
+        "target_enemy_difficulty=",
+        "current_enemy_difficulty=",
+        "reason=",
+        "page=",
+    ):
+        assert forbidden not in rendered
+
+
+def test_render_output_cw_start_recovery_failure_keeps_failure_order_and_omits_internal_difficulty_fields():
+    payload = {
+        "request_id": "req-cw-start-recovery",
+        "ok": False,
+        "data": {
+            "tainted": False,
+            "requested_difficulty": "A7-3",
+            "target_enemy_difficulty": 51,
+            "current_enemy_difficulty": 54,
+            "reason": "difficulty_change_requires_confirmation",
+            "page": "home",
+        },
+        "screenshot": ".trail/shots/req-cw-start-recovery.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "request_id": "req-cw-start-recovery",
+            "last_known_stage": "side_effect_applied",
+        },
+        "error": {
+            "code": "CW_START_DIFFICULTY_RECOVERY_REQUIRED",
+            "message": "cw start difficulty change requires request-status confirmation",
+        },
+    }
+
+    rendered = render_output("cw.start", payload)
+
+    assert rendered.splitlines() == [
+        "fail cw.start code=CW_START_DIFFICULTY_RECOVERY_REQUIRED tainted=0",
+        "request id=req-cw-start-recovery",
+        "shot path=.trail/shots/req-cw-start-recovery.png",
+        'why msg="cw start difficulty change requires request-status confirmation"',
+        "recover action=daemon.request_status request=req-cw-start-recovery",
+    ]
+    for forbidden in (
+        "A7-3",
+        "51",
+        "requested_difficulty=",
+        "target_enemy_difficulty=",
+        "current_enemy_difficulty=",
+        "reason=",
+        "page=",
+    ):
+        assert forbidden not in rendered
 
 
 def test_render_output_cw_start_omits_guide_tag_field_when_portal_guide_has_no_tags():
