@@ -124,6 +124,31 @@ CW_GUIDE_CONFIRMATION_CHECKLIST = (
 CW_GUIDE_TRIGGERS = (
     PROJECT_ROOT / "skills" / "trail-cw-guide" / "evals" / "triggers.json"
 )
+CW_PORTAL_SKILL = PROJECT_ROOT / "skills" / "trail-cw-portal" / "SKILL.md"
+CW_PORTAL_COMMAND_SURFACE = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-cw-portal"
+    / "references"
+    / "portal-command-surface.md"
+)
+CW_PORTAL_SELECTION_RULES = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-cw-portal"
+    / "references"
+    / "portal-selection-rules.md"
+)
+CW_PORTAL_REFRESH_POLICY = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-cw-portal"
+    / "references"
+    / "portal-refresh-policy.md"
+)
+CW_PORTAL_TRIGGERS = (
+    PROJECT_ROOT / "skills" / "trail-cw-portal" / "evals" / "triggers.json"
+)
 
 
 def _frontmatter_markdown(path: Path) -> tuple[dict, str]:
@@ -161,6 +186,13 @@ def _markdown_table_rows(text: str) -> list[list[str]]:
         if stripped.startswith("|") and stripped.endswith("|"):
             rows.append([cell.strip() for cell in stripped.strip("|").split("|")])
     return rows
+
+
+def _table_row_by_first_cell(rows: list[list[str]], first_cell: str) -> list[str]:
+    for row in rows[2:]:
+        if row and row[0] == first_cell:
+            return row
+    raise AssertionError(f"missing table row starting with {first_cell}")
 
 
 def _lines_with_tokens(text: str, *tokens: str) -> list[str]:
@@ -464,6 +496,7 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
     confirm_items = _markdown_bullets(confirm_section)
     checklist_items = _markdown_bullets(_markdown_section(checklist_text, "开局前必问清单"))
     goal_items = confirm_items[:3]
+    checklist_goal_items = checklist_items[:3]
 
     for section in (
         "## Role",
@@ -478,21 +511,35 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
     assert "cw start" in text
     assert "不是整局 owner" in text or "不是整局的 owner" in text
     assert len(goal_items) == 3
+    assert len(checklist_goal_items) == 3
     assert "提升职级" in goal_items[0]
     assert "标准博弈" in goal_items[0]
     assert "highest" in goal_items[0]
+    assert "提升职级" in checklist_goal_items[0]
     assert any(token in goal_items[1] for token in ("速刷周常", "速刷奖励"))
     assert "超频博弈" in goal_items[1]
     assert "lowest" in goal_items[1]
+    assert any(token in checklist_goal_items[1] for token in ("速刷周常", "速刷奖励"))
     assert "羁绊" in goal_items[2]
     assert "成就" in goal_items[2]
     assert "A5-1" in goal_items[2]
     assert "攻略优先" in goal_items[2]
+    assert "羁绊" in checklist_goal_items[2]
+    assert "成就" in checklist_goal_items[2]
+    assert "A5-1" in checklist_goal_items[2]
+    assert "攻略优先" in checklist_goal_items[2]
     assert any(
         "继续当前职级" in item
         and "更低" in item
         and "最高职级" in item
         and "AX-X" in item
+        for item in confirm_items
+    )
+    assert any(
+        "进一步限制" in item
+        and "投资环境" in item
+        and any(token in item for token in ("角色", "阵容倾向"))
+        and "尽量满足" in item
         for item in confirm_items
     )
     for expected_tokens in (
@@ -517,7 +564,9 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
         and "一次 refresh" in item
         for item in confirm_items
     )
+    assert _lines_with_tokens(text + "\n" + checklist_text, "只负责确认", "刷开局")
     assert all("继续上一局" not in item for item in goal_items)
+    assert all("继续上一局" not in item for item in checklist_goal_items)
     conditional_follow_up_items = [
         item for item in confirm_items if "继续" in item and "结算" in item
     ]
@@ -529,6 +578,13 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
     assert any(
         ("没选刷开局" in item or "不刷开局" in item)
         and "一次 refresh" in item
+        for item in checklist_items
+    )
+    assert any(
+        "进一步限制" in item
+        and "投资环境" in item
+        and any(token in item for token in ("角色", "阵容倾向"))
+        and "尽量满足" in item
         for item in checklist_items
     )
     checklist_follow_up_items = [
@@ -607,27 +663,37 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
     for expected_phrase in ("A8", "A7-3", "紫金1", "资本帝王3", "财富造物主10", "上分", "周常", "奖励", "投资环境", "攻略开局", "最高职级"):
         assert any(expected_phrase in term for term in player_terms)
 
-    assert any(
-        "提升职级" in row[0] and "标准博弈" in row[2] and "highest" in row[2]
-        for row in mapping_body_rows
-    )
-    assert any(
-        ("速刷周常" in row[0] or "刷周常" in row[0] or "刷奖励" in row[0])
-        and "超频博弈" in row[2]
-        and "lowest" in row[2]
-        for row in mapping_body_rows
-    )
-    assert any(
-        ("完成羁绊" in row[0] or "补羁绊" in row[0])
-        and ("完成成就" in row[0] or "补成就" in row[0])
-        and "标准博弈" in row[2]
-        and "A5-1" in row[2]
-        and "攻略优先" in row[2]
-        for row in mapping_body_rows
-    )
-    assert any("紫金1" in row[0] and "difficulty=A5-1" in row[2] for row in mapping_body_rows)
-    assert any("资本帝王3" in row[0] and "difficulty=A7-3" in row[2] for row in mapping_body_rows)
-    assert any("财富造物主10" in row[0] and "difficulty=A8-10" in row[2] for row in mapping_body_rows)
+    promote_row = _table_row_by_first_cell(mapping_rows, "提升职级")
+    reward_row = _table_row_by_first_cell(mapping_rows, "周常/奖励")
+    bond_row = _table_row_by_first_cell(mapping_rows, "羁绊/成就")
+    purple_gold_row = _table_row_by_first_cell(mapping_rows, "紫金1")
+    emperor_row = _table_row_by_first_cell(mapping_rows, "资本帝王3")
+    creator_row = _table_row_by_first_cell(mapping_rows, "财富造物主10")
+
+    assert "标准博弈" in promote_row[1]
+    assert any(token in promote_row[1] for token in ("更高职级", "职级推进"))
+    assert "超频博弈" in reward_row[1]
+    assert "标准博弈" in bond_row[1]
+    assert "职级难度" in bond_row[1]
+    for official_row in (promote_row, reward_row, bond_row, purple_gold_row, emperor_row, creator_row):
+        assert not any(
+            token in official_row[1]
+            for token in (
+                "cw ",
+                "guide ",
+                "portal",
+                "battle_mode",
+                "difficulty=",
+                "trail-cw",
+            )
+        )
+
+    assert "标准博弈" in promote_row[2] and "highest" in promote_row[2]
+    assert "超频博弈" in reward_row[2] and "lowest" in reward_row[2]
+    assert "标准博弈" in bond_row[2] and "A5-1" in bond_row[2] and "攻略优先" in bond_row[2]
+    assert "difficulty=A5-1" in purple_gold_row[2]
+    assert "difficulty=A7-3" in emperor_row[2]
+    assert "difficulty=A8-10" in creator_row[2]
 
     assert any("cw enter" in target for target in action_targets)
     assert any("cw start" in target for target in action_targets)
@@ -649,6 +715,7 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
         ("速刷周常", "超频博弈", "lowest"),
         ("羁绊", "成就", "A5-1", "攻略优先"),
         ("继续当前职级", "更低", "最高职级", "AX-X"),
+        ("进一步限制", "投资环境", "角色"),
         ("攻略优先", "环境优先"),
         ("刷开局", "refresh"),
         ("未结束对局", "继续", "结算"),
@@ -672,6 +739,7 @@ def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
         ("速刷周常", "超频博弈", "lowest"),
         ("羁绊", "成就", "A5-1", "攻略优先"),
         ("继续当前职级", "更低", "最高职级", "AX-X"),
+        ("进一步限制", "投资环境", "角色"),
         ("攻略优先", "环境优先"),
         ("刷开局", "refresh"),
         ("未结束对局", "继续", "结算"),
@@ -685,6 +753,8 @@ def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
     assert _lines_with_tokens(checklist_text, "先定攻略", "trail-cw-guide")
     assert "A0-1..A8-40" in skill_text
     assert "A0-1..A8-40" in checklist_text
+    assert all("继续上一局" not in item for item in skill_items[:3])
+    assert all("继续上一局" not in item for item in checklist_items[:3])
 
 
 def test_cw_entry_trigger_fixture_has_required_quota_and_schema() -> None:
@@ -854,16 +924,18 @@ def test_cw_guide_skill_has_required_sections_and_selection_entry_semantics() ->
     assert any("版本" in item for item in confirm_items)
     assert any("投资环境" in item for item in confirm_items)
     assert any("主C" in item or "阵容倾向" in item for item in confirm_items)
-    assert len(command_items) <= 6
+    assert "public" in text
+    assert _lines_with_tokens(text, "interactive", "direct-user")
+    assert _lines_with_tokens(text, "无人值守", "投资环境页", "不再继续追问")
+    assert len(command_items) == 3
     assert "guide list cw" in text
     assert "guide fetch cw" in text
-    assert "cw guide apply" in text
     assert "cw guide current" in text
-    assert "真正进入游戏后" in text or "之后才轮到" in text
+    assert "cw guide apply" not in text
     assert _lines_with_tokens(text, "trail-cw-entry", "继承", "只追问缺失项")
     assert any(
-        token in "\n".join(_lines_with_tokens(text + "\n" + checklist_text, "继承", "只追问缺失项"))
-        for token in ("目标", "羁绊", "环境")
+        all(token in line for token in ("目标", "羁绊", "限制", "只追问缺失项"))
+        for line in _lines_with_tokens(text + "\n" + checklist_text, "继承", "只追问缺失项")
     )
     for forbidden in ("session_id", "lineup_id", "--session", "--lineup-id"):
         assert forbidden not in text
@@ -885,18 +957,23 @@ def test_cw_guide_reference_files_exist_with_required_content() -> None:
         "阵容倾向",
         "标准博弈",
         "超频博弈",
+        "#适用超频博弈",
+        "不是硬冲突",
+        "版本越新越好",
+        "不是自动排除旧版本",
+        "待收集=1",
+        "热门度",
     ):
         assert fragment in selection_text
 
     for fragment in (
         "guide list cw",
         "guide fetch cw",
-        "cw guide apply",
         "cw guide current",
-        "真正进入游戏后",
-        "不要一上来就 apply",
+        "当前已挂载",
     ):
         assert fragment in command_surface_text
+    assert "cw guide apply" not in command_surface_text
 
     for expected_tokens in (
         ("目标",),
@@ -908,6 +985,10 @@ def test_cw_guide_reference_files_exist_with_required_content() -> None:
         assert any(all(token in item for token in expected_tokens) for item in checklist_items)
 
     assert _lines_with_tokens(checklist_text, "trail-cw-entry", "继承", "只追问缺失项")
+    assert any(
+        all(token in line for token in ("目标", "羁绊", "限制", "只追问缺失项"))
+        for line in _lines_with_tokens(checklist_text, "trail-cw-entry", "继承", "只追问缺失项")
+    )
 
 
 def test_cw_guide_trigger_fixture_has_required_quota_and_schema() -> None:
@@ -974,13 +1055,13 @@ def test_cw_guide_trigger_fixture_covers_representative_prompts() -> None:
     assert any(
         item["expected_winner"] == "trail-cw-guide"
         and {"trail-cw-entry", "trail-cw-guide"} <= set(item["candidates"])
-        and any(keyword in item["prompt"] for keyword in ("选攻略", "定攻略", "挑攻略"))
+        and any(keyword in item["prompt"] for keyword in ("选攻略", "定攻略", "挑攻略", "攻略优先"))
         for item in competition_prompts
     )
     assert any(
         item["expected_winner"] == "trail-cw-entry"
         and {"trail-cw-entry", "trail-cw-guide"} <= set(item["candidates"])
-        and any(keyword in item["prompt"] for keyword in ("开局", "先看环境", "直接进货币战争"))
+        and any(keyword in item["prompt"] for keyword in ("环境优先", "看词条", "看路线", "开局", "先看环境", "直接进货币战争"))
         for item in competition_prompts
     )
     assert any(
@@ -996,7 +1077,316 @@ def test_cw_guide_trigger_fixture_covers_representative_prompts() -> None:
     )
     assert any(
         item["expected_winner"] == "trail-cw-guide"
+        and {"trail-cw-entry", "trail-cw-guide"} <= set(item["candidates"])
+        and any(keyword in item["prompt"] for keyword in ("投资环境页", "环境卡片"))
+        and any(keyword in item["prompt"] for keyword in ("按当前环境", "按环境", "别再问我"))
+        and any(keyword in item["prompt"] for keyword in ("挑攻略", "选一套攻略"))
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-cw-entry"
+        and "刷开局" in item["prompt"]
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-cw-entry"
+        and "开新局" in item["prompt"]
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] in {"trail-cw-entry", "trail-hsr"}
+        and "继续上一局" in item["prompt"]
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-cw-guide"
         and "帮我选攻略" in item["prompt"]
+        for item in competition_prompts
+    )
+
+
+def test_cw_portal_frontmatter_stays_internal_to_portal_page_follow_up() -> None:
+    assert CW_PORTAL_SKILL.exists(), f"missing skill file: {CW_PORTAL_SKILL}"
+
+    frontmatter, _ = _frontmatter_markdown(CW_PORTAL_SKILL)
+
+    description = frontmatter["description"]
+    assert frontmatter["name"] == "trail-cw-portal"
+    assert any("\u4e00" <= ch <= "\u9fff" for ch in description)
+    assert "投资环境页" in description
+    assert "cw start" in description
+    for forbidden in (
+        "trail start",
+        "direct-user",
+        "公共入口",
+        "我要玩货币战争",
+        "帮我选攻略",
+    ):
+        assert forbidden not in description
+
+
+def test_cw_portal_skill_has_required_sections_and_portal_action_contract() -> None:
+    text = CW_PORTAL_SKILL.read_text(encoding="utf-8")
+    action_items = _markdown_bullets(
+        _markdown_section(text, "How To Act On The Portal Page")
+    )
+    handoff_items = _markdown_bullets(
+        _markdown_section(text, "When To Hand Off To trail-cw-guide")
+    )
+
+    for section in (
+        "## Role",
+        "## When To Use",
+        "## How To Act On The Portal Page",
+        "## When To Hand Off To trail-cw-guide",
+        "## Reference Map",
+    ):
+        assert section in text
+
+    assert "internal" in text or "内部" in text
+    assert "不是 direct-user 公共入口" in text or "不做 direct-user 公共入口" in text
+    assert "不是 scene entry" in text
+    assert any(
+        token in text for token in ("不是 owner", "不是整局 owner", "不是整局的 owner")
+    )
+    assert "cw start" in text
+    assert "投资环境页" in text
+    assert "trail start" not in text
+    assert 4 <= len(action_items) <= 6
+    assert 2 <= len(handoff_items) <= 4
+    assert any(
+        "portal detect" in item
+        and "portal refresh" in item
+        and "portal restart" in item
+        and "portal select" in item
+        for item in action_items
+    )
+    assert any(
+        "待收集=1" in item and "收集奖励" in item for item in action_items
+    )
+    assert any(
+        "环境优先" in item and any(token in item for token in ("继续按环境走", "继续按环境"))
+        for item in action_items
+    )
+    assert any(
+        "允许刷开局" in item and "refresh" in item and "restart" in item
+        for item in action_items
+    )
+    assert any(
+        "不允许刷开局" in item and "一次 refresh" in item and "当前可见环境" in item
+        for item in action_items
+    )
+    assert any(
+        "不允许刷开局" in item
+        and "已确认" in item
+        and "环境优先" in item
+        and "最贴近目标" in item
+        for item in action_items
+    )
+    assert any(
+        "不允许刷开局" in item
+        and "未确定攻略" in item
+        and "必须切到" in item
+        and "trail-cw-guide" in item
+        and "无人值守" in item
+        for item in action_items
+    )
+    assert all(
+        "最接近攻略或最能服务目标的一项" not in item
+        and "最接近攻略" not in item
+        for item in action_items
+    )
+    assert any(
+        "未确定攻略" in item
+        and "trail-cw-guide" in item
+        and "无人值守" in item
+        for item in handoff_items
+    )
+    assert any(
+        "环境优先" in item and "不切到 trail-cw-guide" in item
+        for item in handoff_items
+    )
+    assert all(command not in text for command in ("guide list cw", "guide fetch cw", "cw guide current"))
+
+
+def test_cw_portal_reference_files_exist_with_required_content() -> None:
+    for path in (
+        CW_PORTAL_COMMAND_SURFACE,
+        CW_PORTAL_SELECTION_RULES,
+        CW_PORTAL_REFRESH_POLICY,
+    ):
+        assert path.exists(), f"missing reference file: {path}"
+
+    command_surface_text = CW_PORTAL_COMMAND_SURFACE.read_text(encoding="utf-8")
+    selection_text = CW_PORTAL_SELECTION_RULES.read_text(encoding="utf-8")
+    refresh_text = CW_PORTAL_REFRESH_POLICY.read_text(encoding="utf-8")
+
+    for fragment in (
+        "portal detect",
+        "portal refresh",
+        "portal restart",
+        "portal select",
+        "cw start",
+        "投资环境页",
+    ):
+        assert fragment in command_surface_text
+    assert "trail start" not in command_surface_text
+
+    for fragment in (
+        "待收集=1",
+        "通常表示",
+        "收集奖励",
+        "环境优先",
+        "继续按环境走",
+        "未确定攻略",
+        "trail-cw-guide",
+        "无人值守",
+        "当前环境",
+    ):
+        assert fragment in selection_text
+
+    for fragment in (
+        "允许刷开局",
+        "refresh",
+        "restart",
+        "接近攻略",
+        "不允许刷开局",
+        "一次 refresh",
+        "当前可见环境",
+        "环境优先",
+        "最贴近目标",
+        "trail-cw-guide",
+        "无人值守",
+    ):
+        assert fragment in refresh_text
+    assert "只有在已确认 `环境优先` 时" in refresh_text
+    assert "如果攻略仍未确定" in refresh_text
+    assert "如果还没定攻略，就选最能服务目标的一项" not in refresh_text
+
+
+def test_cw_portal_trigger_fixture_has_required_quota_and_schema() -> None:
+    assert CW_PORTAL_TRIGGERS.exists(), f"missing triggers file: {CW_PORTAL_TRIGGERS}"
+
+    data = json.loads(CW_PORTAL_TRIGGERS.read_text(encoding="utf-8"))
+    counts = Counter(item["sample_type"] for item in data)
+
+    assert len(data) >= 18
+    assert counts["should-trigger"] >= 6
+    assert counts["should-not-trigger"] >= 6
+    assert counts["competition"] >= 6
+
+    for item in data:
+        assert {"prompt", "sample_type", "expected_winner"} <= item.keys()
+        assert item["sample_type"] in {
+            "should-trigger",
+            "should-not-trigger",
+            "competition",
+        }
+        if item["sample_type"] == "competition":
+            assert "candidates" in item
+            assert item["expected_winner"] in item["candidates"]
+            assert "trail-cw-portal" in item["candidates"]
+
+
+def test_cw_portal_trigger_fixture_covers_representative_prompts() -> None:
+    data = json.loads(CW_PORTAL_TRIGGERS.read_text(encoding="utf-8"))
+
+    should_trigger_prompts = [
+        item
+        for item in data
+        if item["sample_type"] == "should-trigger"
+        and item["expected_winner"] == "trail-cw-portal"
+    ]
+    should_not_trigger_prompts = [
+        item
+        for item in data
+        if item["sample_type"] == "should-not-trigger"
+        and item["expected_winner"] == "none"
+    ]
+    competition_prompts = [item for item in data if item["sample_type"] == "competition"]
+
+    assert any(
+        any(keyword in item["prompt"] for keyword in ("投资环境页", "环境卡片", "当前环境"))
+        for item in should_trigger_prompts
+    )
+    assert any(
+        any(keyword in item["prompt"] for keyword in ("refresh", "restart", "刷开局"))
+        for item in should_trigger_prompts
+    )
+    assert any("待收集=1" in item["prompt"] for item in should_trigger_prompts)
+    assert any("环境优先" in item["prompt"] for item in should_trigger_prompts)
+    assert any(
+        "已确认环境优先" in item["prompt"]
+        and "不允许刷开局" in item["prompt"]
+        and "refresh 一次" in item["prompt"]
+        for item in should_trigger_prompts
+    )
+    assert any(
+        any(keyword in item["prompt"] for keyword in ("cw start 成功", "进到投资环境页", "开局后"))
+        for item in should_trigger_prompts
+    )
+
+    assert any(
+        any(keyword in item["prompt"] for keyword in ("玩货币战争", "货币战争开局入口"))
+        for item in should_not_trigger_prompts
+    )
+    assert any(
+        any(keyword in item["prompt"] for keyword in ("帮我选攻略", "先定攻略"))
+        for item in should_not_trigger_prompts
+    )
+    assert any(
+        any(keyword in item["prompt"] for keyword in ("daemon.request_status", "request id", "参数怎么填"))
+        for item in should_not_trigger_prompts
+    )
+
+    assert any(
+        item["expected_winner"] == "trail-cw-portal"
+        and {"trail-cw-entry", "trail-cw-portal"} <= set(item["candidates"])
+        and any(keyword in item["prompt"] for keyword in ("投资环境页", "环境卡片", "刷开局"))
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-cw-guide"
+        and {"trail-cw-portal", "trail-cw-guide"} <= set(item["candidates"])
+        and any(keyword in item["prompt"] for keyword in ("按当前环境", "当前环境已出"))
+        and any(keyword in item["prompt"] for keyword in ("定攻略", "挑攻略", "选攻略"))
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-cw-guide"
+        and {"trail-cw-portal", "trail-cw-guide"} <= set(item["candidates"])
+        and "攻略未定" in item["prompt"]
+        and "不允许刷开局" in item["prompt"]
+        and any(keyword in item["prompt"] for keyword in ("当前环境已出", "当前环境卡片已出", "投资环境页已经出来"))
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-cw-entry"
+        and {"trail-cw-entry", "trail-cw-portal"} <= set(item["candidates"])
+        and any(keyword in item["prompt"] for keyword in ("货币战争首页", "先决定路线", "刚进首页"))
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-cw-portal"
+        and {"trail-cw-entry", "trail-cw-portal"} <= set(item["candidates"])
+        and "已确认环境优先" in item["prompt"]
+        and "不允许刷开局" in item["prompt"]
+        and "refresh 一次" in item["prompt"]
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-cw-portal"
+        and {"trail-cw-portal", "trail-cw-guide"} <= set(item["candidates"])
+        and "已确认环境优先" in item["prompt"]
+        and "不允许刷开局" in item["prompt"]
+        and "refresh 一次" in item["prompt"]
+        and any(keyword in item["prompt"] for keyword in ("当前环境已出", "当前环境卡片已出", "环境卡片已经出来"))
+        for item in competition_prompts
+    )
+    assert any(
+        item["expected_winner"] == "trail-cw-portal"
+        and {"trail-cw-portal", "trail-cw-guide"} <= set(item["candidates"])
+        and "待收集=1" in item["prompt"]
         for item in competition_prompts
     )
 

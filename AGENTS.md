@@ -88,9 +88,11 @@
 ## skill 拓扑约束
 
 - `trail-hsr` 是对外总入口；`trail-<scene>-entry` 是对外场景入口；`trail-hsr-advanced` 是内部恢复层，不作为用户直达入口。
-- `trail-cw-entry` 现在是当前 active public 的货币战争 scene entry。
+- `trail-cw-entry` 现在是当前 active public 的货币战争 scene entry，不是整局 owner。
 - `trail-cw-guide` 是当前 active public 的攻略选择 skill，可 direct-user 命中，也可以由 `trail-cw-entry` 在“攻略优先 / 先定攻略”场景下推荐切入。
 - `trail-cw-guide` 不是 scene entry、不是默认 owner、也不是整局 owner；真正进入开局流程仍要回到 `trail-cw-entry`。
+- `trail-cw-portal` 是当前 active internal 的投资环境页 skill，主要在 `trail cw start` 成功进入投资环境页后由 scene entry 内部切入。
+- `trail-cw-portal` 不是 direct-user 公共入口、不是 scene entry、也不是 owner；它负责 `portal detect/refresh/restart/select` 与环境优先逻辑，若攻略未定则切到 `trail-cw-guide` 的无人值守模式。
 - 只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口出现在 active 文档与测试中。
 - 当命令 success 输出 `info handoff_skill=... handoff_strength=strong ...` 时，Agent 应把它视为推荐的下一步 skill 切换信号；当前第一批是 `cw.enter -> trail-cw-entry`。
 - `AGENTS.md` 的 active 拓扑说明不得出现 archive skill 名称或 legacy 场景 skill 名称。

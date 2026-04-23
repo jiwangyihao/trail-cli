@@ -1,0 +1,116 @@
+[
+  {
+    "prompt": "cw start 成功进到投资环境页了，先告诉我这一页该怎么继续",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-portal"
+  },
+  {
+    "prompt": "投资环境页已经出来，帮我判断当前环境卡片值不值得 refresh",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-portal"
+  },
+  {
+    "prompt": "当前环境里有个待收集=1 的卡，先说说这页该不该拿",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-portal"
+  },
+  {
+    "prompt": "这把环境优先，投资环境页现在该继续 refresh 还是直接 select",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-portal"
+  },
+  {
+    "prompt": "开局后已经进到投资环境页，如果允许刷开局就帮我判断 refresh 还是 restart",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-portal"
+  },
+  {
+    "prompt": "已确认环境优先，当前环境卡片已经给出，不允许刷开局的话先 refresh 一次，再由这页选最贴近目标的环境",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-portal"
+  },
+  {
+    "prompt": "我要玩货币战争",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "进入货币战争开局入口，先帮我定路线",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "帮我选攻略，先定攻略再开",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "货币战争这把先定攻略，不用看环境页",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "用 daemon.request_status 查一下 req-123",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "guide list cw 的参数怎么填",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "刚进货币战争首页，先决定路线再说",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-entry", "trail-cw-portal"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "货币战争首页还没开到环境页，先决定路线和优先级",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-entry", "trail-cw-portal"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "投资环境页已经出来了，这把想刷开局，先判断 refresh 还是 restart",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-entry", "trail-cw-portal"],
+    "expected_winner": "trail-cw-portal"
+  },
+  {
+    "prompt": "已确认环境优先，环境卡片已经出来，不允许刷开局的话只 refresh 一次，然后继续走这页",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-entry", "trail-cw-portal"],
+    "expected_winner": "trail-cw-portal"
+  },
+  {
+    "prompt": "当前环境已出，直接按当前环境帮我定攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-portal", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "当前环境已出，别再问我，按当前环境挑攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-portal", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "投资环境页里有个待收集=1 的环境，先告诉我这一页怎么行动",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-portal", "trail-cw-guide"],
+    "expected_winner": "trail-cw-portal"
+  },
+  {
+    "prompt": "当前环境已出，攻略未定，而且不允许刷开局，别让 portal 直接拍板，按当前环境去定攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-portal", "trail-cw-guide"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "已确认环境优先，环境卡片已经出来，不允许刷开局，只 refresh 一次后继续由 portal 在这页选最贴近目标的环境",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-portal", "trail-cw-guide"],
+    "expected_winner": "trail-cw-portal"
+  }
+]
