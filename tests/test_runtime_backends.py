@@ -3382,7 +3382,7 @@ def test_runtime_operator_prepares_window_before_input_actions():
 
     input_driver = SimpleNamespace(
         click=lambda x, y, **kwargs: calls.append(("click", x, y)),
-        drag=lambda from_x, from_y, to_x, to_y: calls.append(("drag", from_x, from_y, to_x, to_y)),
+        drag=lambda from_x, from_y, to_x, to_y, duration=None: calls.append(("drag", from_x, from_y, to_x, to_y, duration)),
         press=lambda key: calls.append(("press", key)),
     )
 
@@ -3401,9 +3401,103 @@ def test_runtime_operator_prepares_window_before_input_actions():
         ("prepare_input",),
         ("click", 10, 20),
         ("prepare_input",),
-        ("drag", 1, 2, 3, 4),
+        ("drag", 1, 2, 3, 4, 0.2),
         ("prepare_input",),
         ("press", "shift"),
+    ]
+
+
+def test_runtime_operator_drag_defaults_duration_to_point_two_seconds():
+    import trail.runtime.operator as operator_module
+
+    calls: list[tuple] = []
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+        def prepare_input(self):
+            calls.append(("prepare_input",))
+
+    input_driver = SimpleNamespace(
+        click=lambda x, y, **kwargs: calls.append(("click", x, y)),
+        drag=lambda from_x, from_y, to_x, to_y, duration=None: calls.append(("drag", from_x, from_y, to_x, to_y, duration)),
+        press=lambda key: calls.append(("press", key)),
+    )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=input_driver,
+    )
+
+    runtime.drag_to(1, 2, 3, 4)
+
+    assert calls == [
+        ("prepare_input",),
+        ("drag", 1, 2, 3, 4, 0.2),
+    ]
+    assert runtime.consume_debug_trace() == [
+        {"step": "prepare_input"},
+        {
+            "step": "drag_to",
+            "from_point": [1, 2],
+            "to_point": [3, 4],
+            "duration": 0.2,
+            "screen_from": [1, 2],
+            "screen_to": [3, 4],
+        }
+    ]
+
+
+def test_runtime_operator_drag_keeps_explicit_duration():
+    import trail.runtime.operator as operator_module
+
+    calls: list[tuple] = []
+
+    class WindowStub:
+        def capture(self, **kwargs):
+            return Image.new("RGB", (20, 20), color="white")
+
+        def capture_to_workspace(self):
+            raise AssertionError("not used")
+
+        def prepare_input(self):
+            calls.append(("prepare_input",))
+
+    input_driver = SimpleNamespace(
+        click=lambda x, y, **kwargs: calls.append(("click", x, y)),
+        drag=lambda from_x, from_y, to_x, to_y, duration=None: calls.append(("drag", from_x, from_y, to_x, to_y, duration)),
+        press=lambda key: calls.append(("press", key)),
+    )
+
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=input_driver,
+    )
+
+    runtime.drag_to(1, 2, 3, 4, duration=0.35)
+
+    assert calls == [
+        ("prepare_input",),
+        ("drag", 1, 2, 3, 4, 0.35),
+    ]
+    assert runtime.consume_debug_trace() == [
+        {"step": "prepare_input"},
+        {
+            "step": "drag_to",
+            "from_point": [1, 2],
+            "to_point": [3, 4],
+            "duration": 0.35,
+            "screen_from": [1, 2],
+            "screen_to": [3, 4],
+        }
     ]
 
 
@@ -3550,7 +3644,7 @@ def test_runtime_operator_click_and_drag_translate_window_relative_pixels():
 
     input_driver = SimpleNamespace(
         click=lambda x, y, **kwargs: calls.append(("click", x, y)),
-        drag=lambda from_x, from_y, to_x, to_y: calls.append(("drag", from_x, from_y, to_x, to_y)),
+        drag=lambda from_x, from_y, to_x, to_y, duration=None: calls.append(("drag", from_x, from_y, to_x, to_y, duration)),
         press=lambda key: calls.append(("press", key)),
     )
 
@@ -3568,7 +3662,7 @@ def test_runtime_operator_click_and_drag_translate_window_relative_pixels():
         ("prepare_input",),
         ("click", 110, 220),
         ("prepare_input",),
-        ("drag", 101, 202, 130, 240),
+        ("drag", 101, 202, 130, 240, 0.2),
     ]
 
 
@@ -3592,7 +3686,7 @@ def test_runtime_operator_keeps_ratio_support_for_scene_commands():
 
     input_driver = SimpleNamespace(
         click=lambda x, y, **kwargs: calls.append(("click", x, y)),
-        drag=lambda from_x, from_y, to_x, to_y: calls.append(("drag", from_x, from_y, to_x, to_y)),
+        drag=lambda from_x, from_y, to_x, to_y, duration=None: calls.append(("drag", from_x, from_y, to_x, to_y, duration)),
         press=lambda key: calls.append(("press", key)),
     )
 
@@ -3610,7 +3704,7 @@ def test_runtime_operator_keeps_ratio_support_for_scene_commands():
         ("prepare_input",),
         ("click", 600, 325),
         ("prepare_input",),
-        ("drag", 200, 300, 900, 500),
+        ("drag", 200, 300, 900, 500, 0.2),
     ]
 
 

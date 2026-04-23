@@ -76,6 +76,7 @@ class InputDriver(Protocol):
 
 class RuntimeOperator:
     FAST_OCR_MAX_SIZE = (1280, 720)
+    DEFAULT_DRAG_DURATION_SECONDS = 0.2
 
     def __init__(
         self,
@@ -591,15 +592,16 @@ class RuntimeOperator:
 
     def drag_to(self, from_x: float, from_y: float, to_x: float, to_y: float, *, duration: float | None = None):
         self._prepare_input_target()
+        resolved_duration = self.DEFAULT_DRAG_DURATION_SECONDS if duration is None else duration
         screen_from_x, screen_from_y = self._to_screen_point(from_x, from_y)
         screen_to_x, screen_to_y = self._to_screen_point(to_x, to_y)
-        self.input.drag(screen_from_x, screen_from_y, screen_to_x, screen_to_y, duration=duration)
+        self.input.drag(screen_from_x, screen_from_y, screen_to_x, screen_to_y, duration=resolved_duration)
         self._mark_input_action()
         self._record_trace(
             "drag_to",
             from_point=[from_x, from_y],
             to_point=[to_x, to_y],
-            duration=duration,
+            duration=resolved_duration,
             screen_from=[screen_from_x, screen_from_y],
             screen_to=[screen_to_x, screen_to_y],
         )
