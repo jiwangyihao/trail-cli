@@ -612,8 +612,7 @@ def _shop_status(session, *, artifact_store: ArtifactStore) -> dict:
         return {"stale": True}
     payload = shop_cw_status(session)
     guide_state = cw_state.get("guide")
-    share_code = guide_state.get("share_code") if isinstance(guide_state, dict) else None
-    if not isinstance(share_code, str) or SHARE_CODE_PATTERN.fullmatch(share_code) is None:
+    if not isinstance(guide_state, dict):
         payload.pop("guide_summary", None)
     return payload
 

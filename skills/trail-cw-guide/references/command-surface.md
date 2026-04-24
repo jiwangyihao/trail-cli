@@ -24,6 +24,6 @@
 
 ## 交回入口
 
-- 攻略选定并记录后，把后续开局动作交回 `trail-cw-entry`，再走 `cw enter` / `cw start`。
+- 如果这是 `direct-user` / 开局前链路，攻略选定并记录后，把后续开局动作交回 `trail-cw-entry`，再走 `cw enter` / `cw start`。
 - 如果这是投资环境页里的无人值守链路，攻略选定后，把后续环境选择动作交回 `trail-cw-portal`，由它继续 `portal select --card-idx ...`。
 - 返回开局链路后，`cw.portal.select` 成功时会自动应用当前已选攻略；这才是默认路径。
