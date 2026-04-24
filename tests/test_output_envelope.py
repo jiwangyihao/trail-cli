@@ -141,16 +141,10 @@ class MetadataRuntime(FakeRuntime):
         self.trace = [{"step": "click", "point": [10, 20]}]
 
 
-class OcrDebugRuntime(MetadataRuntime):
+class DebugContextRuntime(MetadataRuntime):
     def __init__(self, screenshot_path: Path):
         super().__init__(screenshot_path)
-        self.debug_context = {
-            "ocr_mode_requested": "fast",
-            "ocr_mode_effective": "high",
-            "ocr_scale_applied": "native",
-            "ocr_retry_high": 1,
-            "ocr_retry_reason": "low_confidence",
-        }
+        self.debug_context: dict[str, object] = {}
 
     def consume_debug_context(self):
         debug_context = dict(self.debug_context)
@@ -257,29 +251,26 @@ def test_with_auto_capture_keeps_capture_trace_request_local_under_concurrency(t
     assert payloads["right"]["debug"] == {"trace": [{"step": "capture_after_action", "thread": "right"}]}
 
 
-def test_with_auto_capture_promotes_ocr_context_keys_to_top_level_debug(tmp_path):
-    runtime = OcrDebugRuntime(tmp_path / "ocr-debug.png")
+def test_with_auto_capture_keeps_non_ocr_debug_context_without_allowlist(tmp_path):
+    runtime = DebugContextRuntime(tmp_path / "debug-context.png")
+    runtime.debug_context = {"last_known_stage": "handler_completed"}
 
     result = with_auto_capture(runtime, lambda: {"done": True}, verbose=True)
 
     assert result["debug"] == {
         "trace": [{"step": "click", "point": [10, 20]}],
-        "ocr_mode_requested": "fast",
-        "ocr_mode_effective": "high",
-        "ocr_scale_applied": "native",
-        "ocr_retry_high": 1,
-        "ocr_retry_reason": "low_confidence",
+        "last_known_stage": "handler_completed",
     }
 
 
-def test_with_auto_capture_ocr_context_allowlist_ignores_reserved_and_non_ocr_keys(tmp_path):
-    runtime = OcrDebugRuntime(tmp_path / "ocr-debug-allowlist.png")
+def test_with_auto_capture_debug_context_keeps_other_keys_but_ignores_reserved_keys(tmp_path):
+    runtime = DebugContextRuntime(tmp_path / "debug-context-reserved.png")
     runtime.debug_context.update(
         {
             "trace": [{"step": "override"}],
             "request_id": "req-from-context",
             "detail": "context detail",
-            "unexpected": "ignored",
+            "last_known_stage": "state_persisted",
         }
     )
 
@@ -287,12 +278,63 @@ def test_with_auto_capture_ocr_context_allowlist_ignores_reserved_and_non_ocr_ke
 
     assert result["debug"] == {
         "trace": [{"step": "click", "point": [10, 20]}],
-        "ocr_mode_requested": "fast",
-        "ocr_mode_effective": "high",
-        "ocr_scale_applied": "native",
-        "ocr_retry_high": 1,
-        "ocr_retry_reason": "low_confidence",
+        "last_known_stage": "state_persisted",
     }
+
+
+def test_with_auto_capture_collect_failure_only_drops_debug(tmp_path):
+    runtime = DebugContextRuntime(tmp_path / "debug-collect-failure.png")
+    runtime.warnings = [
+        {
+            "code": "WINDOW_NOT_FOREGROUND",
+            "message": "输入命令执行后窗口不在前台，本次操作可能失败",
+        }
+    ]
+    runtime.references = [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.97}]
+    runtime.debug_context = {"last_known_stage": "handler_completed"}
+
+    def raise_trace_failure():
+        raise RuntimeError("trace boom")
+
+    runtime.consume_debug_trace = raise_trace_failure
+
+    result = with_auto_capture(runtime, lambda: {"done": True}, verbose=True)
+
+    assert result["ok"] is True
+    assert result["data"] == {"done": True}
+    assert result["screenshot"].endswith("debug-collect-failure.png")
+    assert result["warnings"] == [
+        {
+            "code": "WINDOW_NOT_FOREGROUND",
+            "message": "输入命令执行后窗口不在前台，本次操作可能失败",
+        }
+    ]
+    assert result["references"] == [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.97}]
+    assert result["debug"] is None
+
+
+@pytest.mark.parametrize(
+    ("collector_name", "message"),
+    [
+        ("collect_warnings", "warnings boom"),
+        ("match_references", "references boom"),
+    ],
+)
+def test_with_auto_capture_collect_failure_for_warning_or_reference_metadata_propagates(
+    tmp_path,
+    collector_name,
+    message,
+):
+    runtime = DebugContextRuntime(tmp_path / f"{collector_name}-collect-failure.png")
+
+    def raise_collect_failure(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError(message)
+
+    setattr(runtime, collector_name, raise_collect_failure)
+
+    with pytest.raises(RuntimeError, match=message):
+        with_auto_capture(runtime, lambda: {"done": True}, verbose=True)
 
 
 def test_session_store_persists_relative_last_screenshot(tmp_path):

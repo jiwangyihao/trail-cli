@@ -1615,6 +1615,17 @@ def test_trail_hsr_advanced_skill_has_required_sections() -> None:
     assert "具体 skill owner" in text
 
 
+def test_trail_hsr_advanced_describes_verbose_trace_guidance() -> None:
+    text = TRAIL_HSR_ADVANCED_SKILL.read_text(encoding="utf-8")
+
+    assert "--verbose" in text
+    assert "major action trace" in text
+    assert "shared helper 执行证据" in text
+    assert "ts=<UTC RFC3339 毫秒时间戳>" in text
+    assert "ok=0|1" in text
+    assert "没有显式开启 `--verbose` 时，不能假定 stdout 含这些行" in text
+
+
 def test_trail_hsr_advanced_reference_files_exist_with_required_content() -> None:
     reference_expectations = {
         ADVANCED_COMMAND_SURFACE: [
@@ -1639,3 +1650,17 @@ def test_trail_hsr_advanced_reference_files_exist_with_required_content() -> Non
         text = path.read_text(encoding="utf-8")
         for fragment in expected_fragments:
             assert fragment in text
+
+
+def test_trail_hsr_advanced_reference_describes_verbose_trace_guidance() -> None:
+    text = ADVANCED_COMMAND_SURFACE.read_text(encoding="utf-8")
+
+    assert "major action trace" in text
+    assert "--verbose" in text
+    assert "UTC RFC3339" in text
+    assert "ok=0|1" in text
+    assert "shared helper 执行证据" in text
+    assert "trace/context" in text
+    assert "`trace` 只承载 finalized helper 动作事件" in text
+    assert "`context` 只承载跨动作请求级事实" in text
+    assert "debug kind=trace step=ocr ..." in text

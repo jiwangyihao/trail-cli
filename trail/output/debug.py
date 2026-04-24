@@ -24,6 +24,33 @@ def _encode_value(value: Any) -> str:
     return text
 
 
+def _format_box(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+
+    keys = ("left", "top", "width", "height")
+    if any(key not in value for key in keys):
+        return None
+    box_values = [value[key] for key in keys]
+    if any(box_value is None for box_value in box_values):
+        return None
+    return ",".join(str(box_value) for box_value in box_values)
+
+
+def _normalize_trace_event(trace: dict[str, Any]) -> dict[str, Any]:
+    event: dict[str, Any] = {"kind": "trace", "step": trace.get("step") or "unknown"}
+    for key, value in trace.items():
+        if key == "step":
+            continue
+        if key == "box":
+            formatted_box = _format_box(value)
+            if formatted_box is not None:
+                event[key] = formatted_box
+                continue
+        event[key] = value
+    return event
+
+
 def collect_debug_events(debug: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not isinstance(debug, dict):
         return []
@@ -36,12 +63,7 @@ def collect_debug_events(debug: dict[str, Any] | None) -> list[dict[str, Any]]:
 
     for trace in debug.get("trace") or []:
         if isinstance(trace, dict):
-            event: dict[str, Any] = {"kind": "trace", "step": trace.get("step") or "unknown"}
-            for key, value in trace.items():
-                if key == "step":
-                    continue
-                event[key] = value
-            events.append(event)
+            events.append(_normalize_trace_event(trace))
             continue
         events.append({"kind": "trace", "step": "unknown", "value": trace})
 

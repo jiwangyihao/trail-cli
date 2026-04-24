@@ -9,6 +9,13 @@ from trail.output.rendering import render_output
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LEGACY_OCR_CONTEXT_DEBUG_LINES = (
+    "debug kind=context key=ocr_mode_requested",
+    "debug kind=context key=ocr_mode_effective",
+    "debug kind=context key=ocr_scale_applied",
+    "debug kind=context key=ocr_retry_high",
+    "debug kind=context key=ocr_retry_reason",
+)
 
 
 def test_collect_debug_events_preserves_trace_detail_and_context_fields():
@@ -35,6 +42,33 @@ def test_collect_debug_events_preserves_trace_detail_and_context_fields():
         {"kind": "context", "key": "pid", "value": 4321},
         {"kind": "context", "key": "record", "value": {"final_state": "completed"}},
     ]
+
+
+def test_collect_debug_events_canonicalizes_box_only_in_debug_layer():
+    debug = {
+        "trace": [
+            {
+                "step": "locate",
+                "box": {"left": 10, "top": 20, "width": 30, "height": 40, "source": "template"},
+            }
+        ]
+    }
+
+    assert collect_debug_events(debug) == [{"kind": "trace", "step": "locate", "box": "10,20,30,40"}]
+    assert debug["trace"][0]["box"] == {"left": 10, "top": 20, "width": 30, "height": 40, "source": "template"}
+
+
+def test_collect_debug_events_keeps_malformed_box_raw_in_debug_layer():
+    malformed_box = {"left": 1, "top": 2, "width": 3, "height": None}
+    debug = {"trace": [{"step": "locate", "box": malformed_box}]}
+
+    assert collect_debug_events(debug) == [{"kind": "trace", "step": "locate", "box": malformed_box}]
+
+
+def test_collect_debug_events_keeps_non_dict_trace_legacy_shape():
+    debug = {"trace": ["legacy-trace"]}
+
+    assert collect_debug_events(debug) == [{"kind": "trace", "step": "unknown", "value": "legacy-trace"}]
 
 
 def test_render_output_does_not_leak_debug_lines_without_verbose():
@@ -145,30 +179,35 @@ def test_verbose_output_ocr_mode_retry_context_uses_existing_debug_pipeline():
         "references": [],
         "debug": {
             "request_id": "req-ocr-fast-retry",
-            "ocr_mode_requested": "fast",
-            "ocr_mode_effective": "high",
-            "ocr_scale_applied": "native",
-            "ocr_retry_high": 1,
-            "ocr_retry_reason": "low_confidence",
+            "trace": [
+                {
+                    "step": "ocr",
+                    "pieces": 1,
+                    "mode_requested": "fast",
+                    "mode_effective": "high",
+                    "scale_applied": "native",
+                    "retry_high": 1,
+                    "retry_reason": "low_confidence",
+                }
+            ],
         },
         "error": None,
     }
 
-    assert render_output("ocr.read", payload, verbose=True).splitlines() == [
+    rendered = render_output("ocr.read", payload, verbose=True)
+
+    assert rendered.splitlines() == [
         "ok ocr.read hits=1",
         "shot path=.trail/shots/req-ocr-fast-retry.png",
         "info read_image_first=1",
         "text value=点击进入",
         "debug kind=request msg=req-ocr-fast-retry",
-        "debug kind=context key=ocr_mode_requested value=fast",
-        "debug kind=context key=ocr_mode_effective value=high",
-        "debug kind=context key=ocr_scale_applied value=native",
-        "debug kind=context key=ocr_retry_high value=1",
-        "debug kind=context key=ocr_retry_reason value=low_confidence",
+        "debug kind=trace step=ocr pieces=1 mode_requested=fast mode_effective=high scale_applied=native retry_high=1 retry_reason=low_confidence",
     ]
+    assert all(line not in rendered for line in LEGACY_OCR_CONTEXT_DEBUG_LINES)
 
 
-def test_verbose_output_ocr_failure_keeps_ocr_context_from_runtime(tmp_path):
+def test_verbose_output_ocr_failure_keeps_ocr_trace_from_runtime(tmp_path):
     import trail.runtime.operator as operator_module
     from trail.output.capture import with_auto_capture
     from trail.runtime.ocr_config import OcrRequestConfig
@@ -210,18 +249,30 @@ def test_verbose_output_ocr_failure_keeps_ocr_context_from_runtime(tmp_path):
         verbose=True,
     )
     encoded_screenshot = payload["screenshot"].replace("\\", "\\\\")
+    rendered = render_output("ocr.read", payload, verbose=True)
+    lines = rendered.splitlines()
+    ocr_line = next(line for line in lines if line.startswith("debug kind=trace step=ocr "))
+    screenshot_line = next(line for line in lines if line.startswith("debug kind=trace step=capture_after_action "))
 
-    assert render_output("ocr.read", payload, verbose=True).splitlines() == [
+    assert lines[:3] == [
         "fail ocr.read code=OCR_BACKEND_UNAVAILABLE",
         f'shot path="{encoded_screenshot}"',
         'why msg="ocr backend unavailable"',
-        f'debug kind=trace step=capture_after_action optional=1 screenshot="{encoded_screenshot}"',
-        "debug kind=context key=ocr_mode_requested value=fast",
-        "debug kind=context key=ocr_mode_effective value=fast",
-        "debug kind=context key=ocr_scale_applied value=1280x720",
-        "debug kind=context key=ocr_retry_high value=0",
-        "debug kind=context key=ocr_retry_reason value=none",
     ]
+    assert screenshot_line.startswith("debug kind=trace step=capture_after_action optional=1 ")
+    assert f'optional=1 screenshot="{encoded_screenshot}"' in screenshot_line
+    assert "ts=" in screenshot_line
+    assert "ok=1" in screenshot_line
+    assert "kind=trace step=ocr" in ocr_line
+    assert "ok=0" in ocr_line
+    assert "mode_requested=fast" in ocr_line
+    assert "mode_effective=fast" in ocr_line
+    assert "scale_applied=1280x720" in ocr_line
+    assert "retry_high=0" in ocr_line
+    assert "retry_reason=none" in ocr_line
+    assert "error_code=OCR_BACKEND_UNAVAILABLE" in ocr_line
+    assert 'msg="ocr backend unavailable"' in ocr_line
+    assert all(line not in rendered for line in LEGACY_OCR_CONTEXT_DEBUG_LINES)
 
 
 def test_project_agents_declares_renderer_contracts() -> None:

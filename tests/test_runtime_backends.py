@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from io import BytesIO
 import json
 from pathlib import Path
+import re
 from statistics import median
 import sys
 import threading
@@ -15,6 +16,23 @@ from PIL import Image
 from trail.core.errors import TrailError
 from trail.runtime.model import Box, WindowBinding
 from tests.support.fake_daemon import FakeDaemonClient, build_success_response
+
+
+_TRACE_TS_PATTERN = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"
+
+
+def _assert_finalized_trace_event(event: dict[str, object], *, step: str, ok: int) -> None:
+    assert event["step"] == step
+    assert type(event["ok"]) is int
+    assert event["ok"] == ok
+    assert type(event["dur_ms"]) is int
+    assert event["dur_ms"] >= 0
+    assert isinstance(event["ts"], str)
+    assert re.fullmatch(_TRACE_TS_PATTERN, event["ts"])
+
+
+def _find_trace_event(trace: list[dict[str, object]], step: str) -> dict[str, object]:
+    return next(item for item in trace if item.get("step") == step)
 
 
 @pytest.fixture
@@ -1176,20 +1194,23 @@ def test_runtime_operator_retry_high_always_returns_high_result(tmp_path: Path):
     )
 
     result = runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="always"))
-    context = runtime.consume_debug_context()
+    trace = runtime.consume_debug_trace()
 
     assert calls == [
         {"mode": "fast", "size": (1280, 720)},
         {"mode": "high", "size": (1920, 1080)},
     ]
     assert result == [{"text": "高精度", "score": 0.99}]
-    assert context == {
-        "ocr_mode_requested": "fast",
-        "ocr_mode_effective": "high",
-        "ocr_scale_applied": "native",
-        "ocr_retry_high": 1,
-        "ocr_retry_reason": "none",
-    }
+    assert runtime.consume_debug_context() == {}
+    assert [item["attempt"] for item in trace if item.get("step") == "ocr_provider"] == ["fast", "high"]
+    ocr_event = _find_trace_event(trace, "ocr")
+    _assert_finalized_trace_event(ocr_event, step="ocr", ok=1)
+    assert ocr_event["pieces"] == 1
+    assert ocr_event["mode_requested"] == "fast"
+    assert ocr_event["mode_effective"] == "high"
+    assert ocr_event["scale_applied"] == "native"
+    assert ocr_event["retry_high"] == 1
+    assert ocr_event["retry_reason"] == "none"
 
 
 def test_runtime_operator_retry_high_auto_keeps_fast_result_when_high_fails(tmp_path: Path):
@@ -1235,7 +1256,7 @@ def test_runtime_operator_retry_high_auto_keeps_fast_result_when_high_fails(tmp_
     )
 
     result = runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="auto"))
-    context = runtime.consume_debug_context()
+    trace = runtime.consume_debug_trace()
 
     assert calls == ["fast", "high"]
     assert result == [{"text": "快档", "score": 0.91}]
@@ -1245,10 +1266,73 @@ def test_runtime_operator_retry_high_auto_keeps_fast_result_when_high_fails(tmp_
             "message": "ocr average score below 0.92; result may be incomplete",
         }
     ]
-    assert context["ocr_mode_effective"] == "fast"
-    assert context["ocr_scale_applied"] == "1280x720"
-    assert context["ocr_retry_high"] == 1
-    assert context["ocr_retry_reason"] == "low_confidence"
+    assert runtime.consume_debug_context() == {}
+    ocr_event = _find_trace_event(trace, "ocr")
+    _assert_finalized_trace_event(ocr_event, step="ocr", ok=1)
+    assert ocr_event["pieces"] == 1
+    assert ocr_event["mode_requested"] == "fast"
+    assert ocr_event["mode_effective"] == "fast"
+    assert ocr_event["scale_applied"] == "1280x720"
+    assert ocr_event["retry_high"] == 1
+    assert ocr_event["retry_reason"] == "low_confidence"
+    assert ocr_event["retry_error_type"] == "OcrRunFailure"
+    assert ocr_event["retry_error_code"] == "OCR_BACKEND_UNAVAILABLE"
+    assert ocr_event["retry_msg"] == "high retry failed"
+
+
+def test_runtime_operator_retry_high_auto_runtime_error_still_raises_and_keeps_failed_trace(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+    calls: list[str] = []
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image
+            assert ocr is not None
+            calls.append(ocr.ocr_mode)
+            if len(calls) == 1:
+                return operator_module.OcrRunResult(
+                    pieces=[{"text": "快档", "score": 0.91}],
+                    warnings=[],
+                    trace=[],
+                )
+            raise RuntimeError("high retry runtime failed")
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: buffer.getvalue(),
+            capture_to_workspace=lambda request_id=None: tmp_path / "ocr-retry-auto-runtime-fallback.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    with pytest.raises(RuntimeError, match="high retry runtime failed"):
+        runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="auto"))
+
+    trace = runtime.consume_debug_trace()
+
+    assert calls == ["fast", "high"]
+    ocr_event = _find_trace_event(trace, "ocr")
+    _assert_finalized_trace_event(ocr_event, step="ocr", ok=0)
+    assert ocr_event["pieces"] == 0
+    assert ocr_event["mode_effective"] == "high"
+    assert ocr_event["scale_applied"] == "native"
+    assert ocr_event["retry_high"] == 1
+    assert ocr_event["retry_reason"] == "low_confidence"
+    assert ocr_event["error_type"] == "RuntimeError"
+    assert ocr_event["msg"] == "high retry runtime failed"
 
 
 def test_runtime_operator_returns_empty_result_when_fast_has_no_hits_and_high_fails(tmp_path: Path):
@@ -1286,13 +1370,74 @@ def test_runtime_operator_returns_empty_result_when_fast_has_no_hits_and_high_fa
     )
 
     result = runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="auto"))
-    context = runtime.consume_debug_context()
+    trace = runtime.consume_debug_trace()
 
     assert calls == ["fast", "high"]
     assert result == []
     assert runtime.collect_warnings() == []
-    assert context["ocr_retry_high"] == 1
-    assert context["ocr_retry_reason"] == "no_hits"
+    assert runtime.consume_debug_context() == {}
+    ocr_event = _find_trace_event(trace, "ocr")
+    _assert_finalized_trace_event(ocr_event, step="ocr", ok=1)
+    assert ocr_event["pieces"] == 0
+    assert ocr_event["mode_requested"] == "fast"
+    assert ocr_event["mode_effective"] == "high"
+    assert ocr_event["scale_applied"] == "native"
+    assert ocr_event["retry_high"] == 1
+    assert ocr_event["retry_reason"] == "no_hits"
+    assert ocr_event["retry_error_type"] == "OcrRunFailure"
+    assert ocr_event["retry_error_code"] == "OCR_BACKEND_UNAVAILABLE"
+    assert ocr_event["retry_msg"] == "high retry failed"
+
+
+def test_runtime_operator_no_hits_high_runtime_error_still_raises_and_keeps_failed_trace(tmp_path: Path):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    buffer = BytesIO()
+    Image.new("RGB", (1920, 1080), color="white").save(buffer, format="PNG")
+    calls: list[str] = []
+
+    class EngineStub:
+        def run(self, image, *, ocr=None):
+            del image
+            assert ocr is not None
+            calls.append(ocr.ocr_mode)
+            if len(calls) == 1:
+                return operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])
+            raise RuntimeError("high retry runtime failed")
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: buffer.getvalue(),
+            capture_to_workspace=lambda request_id=None: tmp_path / "ocr-retry-empty-runtime.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=EngineStub(),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda *args, **kwargs: None,
+            hotkey=lambda *args, **kwargs: None,
+            type_text=lambda *args, **kwargs: None,
+        ),
+        reference_root=tmp_path,
+    )
+
+    with pytest.raises(RuntimeError, match="high retry runtime failed"):
+        runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="auto"))
+
+    trace = runtime.consume_debug_trace()
+
+    assert calls == ["fast", "high"]
+    ocr_event = _find_trace_event(trace, "ocr")
+    _assert_finalized_trace_event(ocr_event, step="ocr", ok=0)
+    assert ocr_event["pieces"] == 0
+    assert ocr_event["mode_effective"] == "high"
+    assert ocr_event["scale_applied"] == "native"
+    assert ocr_event["retry_high"] == 1
+    assert ocr_event["retry_reason"] == "no_hits"
+    assert ocr_event["error_type"] == "RuntimeError"
+    assert ocr_event["msg"] == "high retry runtime failed"
 
 
 def test_runtime_operator_high_mode_retry_high_is_noop(tmp_path: Path):
@@ -1328,20 +1473,22 @@ def test_runtime_operator_high_mode_retry_high_is_noop(tmp_path: Path):
     )
 
     result = runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="high", retry_high="always"))
-    context = runtime.consume_debug_context()
+    trace = runtime.consume_debug_trace()
 
     assert calls == ["high"]
     assert result == [{"text": "原图"}]
-    assert context == {
-        "ocr_mode_requested": "high",
-        "ocr_mode_effective": "high",
-        "ocr_scale_applied": "native",
-        "ocr_retry_high": 0,
-        "ocr_retry_reason": "none",
-    }
+    assert runtime.consume_debug_context() == {}
+    ocr_event = _find_trace_event(trace, "ocr")
+    _assert_finalized_trace_event(ocr_event, step="ocr", ok=1)
+    assert ocr_event["pieces"] == 1
+    assert ocr_event["mode_requested"] == "high"
+    assert ocr_event["mode_effective"] == "high"
+    assert ocr_event["scale_applied"] == "native"
+    assert ocr_event["retry_high"] == 0
+    assert ocr_event["retry_reason"] == "none"
 
 
-def test_runtime_operator_ocr_image_reuses_ocr_context(tmp_path: Path):
+def test_runtime_operator_ocr_image_emits_finalized_trace_and_keeps_provider_trace(tmp_path: Path):
     import trail.runtime.operator as operator_module
     from trail.runtime.ocr_config import OcrRequestConfig
 
@@ -1378,22 +1525,408 @@ def test_runtime_operator_ocr_image_reuses_ocr_context(tmp_path: Path):
         Image.new("RGB", (201, 61), color="white"),
         ocr=OcrRequestConfig(provider="cpu", ocr_mode="high", retry_high="never"),
     )
-    context = runtime.consume_debug_context()
     trace = runtime.consume_debug_trace()
 
     assert result == [{"text": "希儿", "score": 0.99}]
     assert runtime.collect_warnings() == [{"code": "OCR_ENGINE_HINT", "message": "hint"}]
-    assert context == {
-        "ocr_mode_requested": "high",
-        "ocr_mode_effective": "high",
-        "ocr_scale_applied": "native",
-        "ocr_retry_high": 0,
-        "ocr_retry_reason": "none",
-    }
-    assert trace == [
-        {"step": "ocr_provider", "attempt": "high"},
-        {"step": "ocr_image", "pieces": 1},
+    assert runtime.consume_debug_context() == {}
+    assert any(item.get("step") == "ocr_provider" and item.get("attempt") == "high" for item in trace)
+    ocr_event = _find_trace_event(trace, "ocr_image")
+    _assert_finalized_trace_event(ocr_event, step="ocr_image", ok=1)
+    assert ocr_event["pieces"] == 1
+    assert ocr_event["mode_requested"] == "high"
+    assert ocr_event["mode_effective"] == "high"
+    assert ocr_event["scale_applied"] == "native"
+    assert ocr_event["retry_high"] == 0
+    assert ocr_event["retry_reason"] == "none"
+
+
+def test_runtime_operator_ocr_failure_emits_finalized_ocr_trace_and_keeps_provider_trace(tmp_path: Path) -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: Image.new("RGB", (32, 32), color="white"),
+            capture_to_workspace=lambda request_id=None: tmp_path / "shot.png",
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(
+            run=lambda image, ocr=None: (_ for _ in ()).throw(
+                operator_module.OcrRunFailure(
+                    "OCR_BACKEND_UNAVAILABLE",
+                    "ocr backend unavailable",
+                    trace=[{"step": "ocr_provider", "requested_provider": "cpu"}],
+                )
+            )
+        ),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    with pytest.raises(operator_module.OcrRunFailure):
+        runtime.ocr(capture={})
+
+    trace = runtime.consume_debug_trace()
+    assert any(item.get("step") == "ocr_provider" and item.get("requested_provider") == "cpu" for item in trace)
+    ocr_event = _find_trace_event(trace, "ocr")
+    _assert_finalized_trace_event(ocr_event, step="ocr", ok=0)
+    assert ocr_event["pieces"] == 0
+    assert ocr_event["mode_requested"] == "fast"
+    assert ocr_event["mode_effective"] == "fast"
+    assert ocr_event["retry_high"] == 0
+    assert ocr_event["retry_reason"] == "none"
+    assert ocr_event["error_code"] == "OCR_BACKEND_UNAVAILABLE"
+    assert ocr_event["error_type"] == "OcrRunFailure"
+
+
+def test_runtime_operator_wait_img_and_locate_keep_raw_box_until_debug_layer() -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: b"demo", capture_to_workspace=lambda request_id=None: Path("shot.png")),
+        matcher=SimpleNamespace(locate=lambda template, image: operator_module.Box(left=10, top=20, width=30, height=40, source="template")),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    runtime.wait_img("entry.start", timeout=1, interval=0.1)
+
+    trace = runtime.consume_debug_trace()
+    locate_event = _find_trace_event(trace, "locate")
+    wait_event = _find_trace_event(trace, "wait_img")
+    _assert_finalized_trace_event(locate_event, step="locate", ok=1)
+    _assert_finalized_trace_event(wait_event, step="wait_img", ok=1)
+    assert isinstance(locate_event["box"], dict)
+    assert locate_event["box"] == {"left": 10, "top": 20, "width": 30, "height": 40, "source": "template"}
+    assert isinstance(wait_event["box"], dict)
+    assert wait_event["box"] == {"left": 10, "top": 20, "width": 30, "height": 40, "source": "template"}
+
+
+def test_runtime_operator_wait_img_failure_keeps_failed_helper_trace() -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: (_ for _ in ()).throw(TrailError("SCREENSHOT_FAILED", "无法截取窗口内容")),
+            capture_to_workspace=lambda request_id=None: Path("shot.png"),
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        runtime.wait_img("entry.start", timeout=1, interval=0.1)
+
+    assert exc_info.value.code == "SCREENSHOT_FAILED"
+    trace = runtime.consume_debug_trace()
+    wait_event = _find_trace_event(trace, "wait_img")
+    _assert_finalized_trace_event(wait_event, step="wait_img", ok=0)
+    assert wait_event["box"] is None
+    assert wait_event["error_code"] == "SCREENSHOT_FAILED"
+    assert wait_event["error_type"] == "TrailError"
+    assert wait_event["msg"] == "无法截取窗口内容"
+
+
+def test_runtime_operator_ocr_screenshot_failure_emits_failed_ocr_trace() -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: (_ for _ in ()).throw(TrailError("SCREENSHOT_FAILED", "无法截取窗口内容")),
+            capture_to_workspace=lambda request_id=None: Path("shot.png"),
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: (_ for _ in ()).throw(AssertionError("ocr engine should not run"))),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        runtime.ocr(capture={})
+
+    assert exc_info.value.code == "SCREENSHOT_FAILED"
+    trace = runtime.consume_debug_trace()
+    _assert_finalized_trace_event(_find_trace_event(trace, "screenshot"), step="screenshot", ok=0)
+    ocr_event = _find_trace_event(trace, "ocr")
+    _assert_finalized_trace_event(ocr_event, step="ocr", ok=0)
+    assert ocr_event["pieces"] == 0
+    assert ocr_event["error_code"] == "SCREENSHOT_FAILED"
+    assert ocr_event["error_type"] == "TrailError"
+    assert ocr_event["msg"] == "无法截取窗口内容"
+
+
+@pytest.mark.parametrize(
+    ("runner", "expected_step"),
+    [
+        (lambda runtime: runtime.click_point(10, 20), "click_point"),
+        (lambda runtime: runtime.drag_to(10, 20, 30, 40), "drag_to"),
+        (lambda runtime: runtime.press_key("f", presses=1), "press_key"),
+        (lambda runtime: runtime.hotkey("ctrl", "l"), "hotkey"),
+        (lambda runtime: runtime.type_text("abc"), "type_text"),
+    ],
+)
+def test_runtime_operator_input_helpers_keep_parent_trace_when_prepare_fails(runner, expected_step) -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            prepare_input=lambda: None,
+            is_foreground=lambda: False,
+            to_screen_point=lambda x, y: (x, y),
+            capture=lambda **kwargs: b"demo",
+            capture_to_workspace=lambda request_id=None: Path("shot.png"),
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    with pytest.raises(operator_module.TrailError) as exc_info:
+        runner(runtime)
+
+    assert exc_info.value.code == "WINDOW_NOT_FOREGROUND"
+    trace = runtime.consume_debug_trace()
+    helper_event = _find_trace_event(trace, expected_step)
+    _assert_finalized_trace_event(helper_event, step=expected_step, ok=0)
+    assert helper_event["error_code"] == "WINDOW_NOT_FOREGROUND"
+    assert any(item.get("step") == "prepare_input" for item in trace)
+    assert any(item.get("step") == "foreground_prepare_check" for item in trace)
+
+
+def test_runtime_operator_click_point_keeps_parent_trace_when_coordinate_conversion_fails() -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            prepare_input=lambda: None,
+            is_foreground=lambda: True,
+            to_screen_point=lambda x, y: (_ for _ in ()).throw(RuntimeError("point convert failed")),
+            capture=lambda **kwargs: b"demo",
+            capture_to_workspace=lambda request_id=None: Path("shot.png"),
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="point convert failed"):
+        runtime.click_point(10, 20)
+
+    trace = runtime.consume_debug_trace()
+    helper_event = _find_trace_event(trace, "click_point")
+    _assert_finalized_trace_event(helper_event, step="click_point", ok=0)
+    assert helper_event["error_type"] == "RuntimeError"
+    assert helper_event["msg"] == "point convert failed"
+
+
+def test_runtime_operator_wait_img_timeout_emits_success_trace_with_empty_box(monkeypatch) -> None:
+    import trail.runtime.operator as operator_module
+
+    monotonic_values = iter([100.0, 100.0, 101.1])
+    monkeypatch.setattr(operator_module, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(operator_module, "sleep", lambda seconds: None)
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: b"demo", capture_to_workspace=lambda request_id=None: Path("shot.png")),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    assert runtime.wait_img("entry.start", timeout=1, interval=0.0) is None
+
+    trace = runtime.consume_debug_trace()
+    wait_event = _find_trace_event(trace, "wait_img")
+    _assert_finalized_trace_event(wait_event, step="wait_img", ok=1)
+    assert wait_event["found"] == 0
+    assert wait_event["box"] is None
+
+
+def test_runtime_operator_post_input_foreground_error_keeps_parent_and_child_trace() -> None:
+    import trail.runtime.operator as operator_module
+
+    class WindowStub:
+        def __init__(self):
+            self.foreground_checks = 0
+
+        def capture(self, **kwargs):
+            del kwargs
+            return b"demo"
+
+        def capture_to_workspace(self, request_id=None):
+            del request_id
+            return Path("shot.png")
+
+        def prepare_input(self):
+            return None
+
+        def is_foreground(self):
+            self.foreground_checks += 1
+            return self.foreground_checks == 1
+
+        def to_screen_point(self, x, y):
+            return x, y
+
+    clicks: list[tuple[int, int]] = []
+    runtime = operator_module.RuntimeOperator(
+        window=WindowStub(),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda x, y, **kwargs: clicks.append((x, y)),
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+    runtime.raise_post_input_foreground_error = True
+
+    with pytest.raises(operator_module.TrailError) as exc_info:
+        runtime.click_point(10, 20)
+
+    assert exc_info.value.code == "WINDOW_NOT_FOREGROUND"
+    assert exc_info.value.completed_after_side_effect is True
+    assert clicks == [(10, 20)]
+    trace = runtime.consume_debug_trace()
+    _assert_finalized_trace_event(_find_trace_event(trace, "click_point"), step="click_point", ok=0)
+    _assert_finalized_trace_event(_find_trace_event(trace, "foreground_check"), step="foreground_check", ok=0)
+    assert runtime.collect_warnings() == [
+        {
+            "code": "WINDOW_NOT_FOREGROUND",
+            "message": "输入命令执行后窗口不在前台，本次操作可能失败；可能是窗口未在前台，或拉回前台失败",
+        }
     ]
+
+
+def test_runtime_operator_screenshot_and_ocr_image_emit_finalized_trace() -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: b"demo", capture_to_workspace=lambda request_id=None: Path("shot.png")),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[{"text": "进入"}], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    runtime.screenshot()
+    runtime.ocr_image(Image.new("RGB", (32, 32), color="white"))
+
+    trace = runtime.consume_debug_trace()
+    screenshot_event = _find_trace_event(trace, "screenshot")
+    ocr_event = _find_trace_event(trace, "ocr_image")
+    _assert_finalized_trace_event(screenshot_event, step="screenshot", ok=1)
+    _assert_finalized_trace_event(ocr_event, step="ocr_image", ok=1)
+    assert screenshot_event["source"] == "raw"
+    assert ocr_event["pieces"] == 1
+
+
+def test_runtime_operator_foreground_checks_emit_finalized_trace_on_success_and_failure() -> None:
+    import trail.runtime.operator as operator_module
+
+    success_runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            prepare_input=lambda: None,
+            is_foreground=lambda: True,
+            to_screen_point=lambda x, y: (x, y),
+            capture=lambda **kwargs: b"demo",
+            capture_to_workspace=lambda request_id=None: Path("shot.png"),
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    success_runtime.click_point(10, 20)
+    success_trace = success_runtime.consume_debug_trace()
+
+    _assert_finalized_trace_event(_find_trace_event(success_trace, "prepare_input"), step="prepare_input", ok=1)
+    _assert_finalized_trace_event(_find_trace_event(success_trace, "foreground_prepare_check"), step="foreground_prepare_check", ok=1)
+    _assert_finalized_trace_event(_find_trace_event(success_trace, "foreground_check"), step="foreground_check", ok=1)
+
+    failure_runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            prepare_input=lambda: None,
+            is_foreground=lambda: False,
+            to_screen_point=lambda x, y: (x, y),
+            capture=lambda **kwargs: b"demo",
+            capture_to_workspace=lambda request_id=None: Path("shot.png"),
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    with pytest.raises(operator_module.TrailError):
+        failure_runtime.click_point(10, 20)
+
+    failure_trace = failure_runtime.consume_debug_trace()
+    _assert_finalized_trace_event(_find_trace_event(failure_trace, "prepare_input"), step="prepare_input", ok=0)
+    _assert_finalized_trace_event(_find_trace_event(failure_trace, "foreground_prepare_check"), step="foreground_prepare_check", ok=0)
 
 
 @pytest.mark.parametrize(
@@ -1445,10 +1978,11 @@ def test_runtime_operator_retry_reason_priority_prefers_no_hits_over_low_confide
     )
 
     runtime.ocr(capture={}, ocr=OcrRequestConfig(provider="cpu", ocr_mode="fast", retry_high="auto"))
-    context = runtime.consume_debug_context()
+    trace = runtime.consume_debug_trace()
 
-    assert context["ocr_retry_high"] == 1
-    assert context["ocr_retry_reason"] == expected_reason
+    ocr_event = _find_trace_event(trace, "ocr")
+    assert ocr_event["retry_high"] == 1
+    assert ocr_event["retry_reason"] == expected_reason
 
 
 def test_command_service_ocr_read_retry_high_success_suppresses_fast_warning_from_default_output(tmp_path: Path):
@@ -1523,7 +2057,7 @@ def test_command_service_ocr_read_retry_high_success_suppresses_fast_warning_fro
     ]
 
 
-def test_with_auto_capture_ocr_failure_keeps_ocr_context_on_real_runtime_failure(tmp_path: Path):
+def test_with_auto_capture_ocr_failure_keeps_ocr_trace_on_real_runtime_failure(tmp_path: Path):
     import trail.runtime.operator as operator_module
     from trail.output.capture import with_auto_capture
     from trail.runtime.ocr_config import OcrRequestConfig
@@ -1567,11 +2101,19 @@ def test_with_auto_capture_ocr_failure_keeps_ocr_context_on_real_runtime_failure
 
     assert payload["ok"] is False
     assert payload["error"] == {"code": "OCR_BACKEND_UNAVAILABLE", "message": "ocr backend unavailable"}
-    assert payload["debug"]["ocr_mode_requested"] == "fast"
-    assert payload["debug"]["ocr_mode_effective"] == "fast"
-    assert payload["debug"]["ocr_scale_applied"] == "1280x720"
-    assert payload["debug"]["ocr_retry_high"] == 0
-    assert payload["debug"]["ocr_retry_reason"] == "none"
+    assert payload["debug"] is not None
+    assert "ocr_mode_requested" not in payload["debug"]
+    assert "ocr_mode_effective" not in payload["debug"]
+    assert "ocr_scale_applied" not in payload["debug"]
+    assert "ocr_retry_high" not in payload["debug"]
+    assert "ocr_retry_reason" not in payload["debug"]
+    ocr_event = _find_trace_event(payload["debug"]["trace"], "ocr")
+    _assert_finalized_trace_event(ocr_event, step="ocr", ok=0)
+    assert ocr_event["mode_requested"] == "fast"
+    assert ocr_event["mode_effective"] == "fast"
+    assert ocr_event["scale_applied"] == "1280x720"
+    assert ocr_event["retry_high"] == 0
+    assert ocr_event["retry_reason"] == "none"
 
 
 def test_runtime_operator_fast_mode_quality_gate_on_dense_notice_fixture():
@@ -2591,6 +3133,49 @@ def test_runtime_operator_ocr_rejects_invalid_ocr_request_config_before_engine_r
     assert exc_info.value.code == expected_code
     assert str(exc_info.value) == expected_message
     assert engine_calls == []
+    trace = runtime.consume_debug_trace()
+    ocr_event = _find_trace_event(trace, "ocr")
+    _assert_finalized_trace_event(ocr_event, step="ocr", ok=0)
+    assert ocr_event["error_code"] == expected_code
+    assert ocr_event["msg"] == expected_message
+
+
+@pytest.mark.parametrize(
+    ("ocr_config", "expected_code", "expected_message"),
+    [
+        ("provider", "OCR_INPUT_INVALID", "unsupported ocr provider: gpu"),
+        ("lang", "OCR_LANG_UNSUPPORTED", "unsupported ocr lang: en"),
+    ],
+)
+def test_runtime_operator_ocr_image_rejects_invalid_ocr_request_config_with_failed_helper_trace(
+    tmp_path: Path,
+    ocr_config: str,
+    expected_code: str,
+    expected_message: str,
+):
+    import trail.runtime.operator as operator_module
+    from trail.runtime.ocr_config import OcrRequestConfig
+
+    config = OcrRequestConfig(provider="gpu") if ocr_config == "provider" else OcrRequestConfig(lang="en")
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: None, capture_to_workspace=lambda request_id=None: tmp_path / "ocr-image-invalid.png"),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: (_ for _ in ()).throw(AssertionError("ocr engine should not run"))),
+        input_driver=SimpleNamespace(click=lambda *args, **kwargs: None, drag=lambda *args, **kwargs: None, press=lambda *args, **kwargs: None),
+        reference_root=tmp_path,
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        runtime.ocr_image(Image.new("RGB", (20, 20), color="white"), ocr=config)
+
+    assert exc_info.value.code == expected_code
+    assert str(exc_info.value) == expected_message
+    trace = runtime.consume_debug_trace()
+    ocr_event = _find_trace_event(trace, "ocr_image")
+    _assert_finalized_trace_event(ocr_event, step="ocr_image", ok=0)
+    assert ocr_event["error_code"] == expected_code
+    assert ocr_event["msg"] == expected_message
 
 
 @pytest.mark.parametrize(
@@ -3365,6 +3950,77 @@ def test_runtime_operator_locate_retries_once_after_initial_miss():
     assert box == Box(left=1, top=2, width=3, height=4, source="demo.png")
 
 
+def test_runtime_operator_locate_failure_trace_keeps_attempts_and_retried() -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: (_ for _ in ()).throw(TrailError("SCREENSHOT_FAILED", "无法截取窗口内容")),
+            capture_to_workspace=lambda request_id=None: Path("shot.png"),
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        runtime.locate("entry.start")
+
+    assert exc_info.value.code == "SCREENSHOT_FAILED"
+    trace = runtime.consume_debug_trace()
+    locate_event = _find_trace_event(trace, "locate")
+    _assert_finalized_trace_event(locate_event, step="locate", ok=0)
+    assert locate_event["attempts"] == 1
+    assert locate_event["retried"] == 0
+    assert locate_event["box"] is None
+
+
+@pytest.mark.parametrize(
+    ("runner", "expected_step"),
+    [
+        (lambda runtime: runtime.click_point(10, 20), "click_point"),
+        (lambda runtime: runtime.drag_to(10, 20, 30, 40), "drag_to"),
+        (lambda runtime: runtime.press_key("f", presses=1), "press_key"),
+        (lambda runtime: runtime.hotkey("ctrl", "l"), "hotkey"),
+        (lambda runtime: runtime.type_text("abc"), "type_text"),
+    ],
+)
+def test_runtime_operator_input_helpers_emit_finalized_trace_with_ok_ts_and_duration(runner, expected_step) -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            prepare_input=lambda: None,
+            is_foreground=lambda: True,
+            to_screen_point=lambda x, y: (x, y),
+            capture=lambda **kwargs: b"demo",
+            capture_to_workspace=lambda request_id=None: Path("shot.png"),
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    runner(runtime)
+
+    trace = runtime.consume_debug_trace()
+    _assert_finalized_trace_event(_find_trace_event(trace, "prepare_input"), step="prepare_input", ok=1)
+    _assert_finalized_trace_event(_find_trace_event(trace, expected_step), step=expected_step, ok=1)
+
+
 def test_runtime_operator_prepares_window_before_input_actions():
     import trail.runtime.operator as operator_module
 
@@ -3441,17 +4097,17 @@ def test_runtime_operator_drag_defaults_duration_to_point_two_seconds():
         ("prepare_input",),
         ("drag", 1, 2, 3, 4, 0.2),
     ]
-    assert runtime.consume_debug_trace() == [
-        {"step": "prepare_input"},
-        {
-            "step": "drag_to",
-            "from_point": [1, 2],
-            "to_point": [3, 4],
-            "duration": 0.2,
-            "screen_from": [1, 2],
-            "screen_to": [3, 4],
-        }
-    ]
+    trace = runtime.consume_debug_trace()
+    prepare_event = trace[0]
+    drag_event = trace[1]
+
+    _assert_finalized_trace_event(prepare_event, step="prepare_input", ok=1)
+    _assert_finalized_trace_event(drag_event, step="drag_to", ok=1)
+    assert drag_event["from_point"] == [1, 2]
+    assert drag_event["to_point"] == [3, 4]
+    assert drag_event["duration"] == 0.2
+    assert drag_event["screen_from"] == [1, 2]
+    assert drag_event["screen_to"] == [3, 4]
 
 
 def test_runtime_operator_drag_keeps_explicit_duration():
@@ -3488,17 +4144,17 @@ def test_runtime_operator_drag_keeps_explicit_duration():
         ("prepare_input",),
         ("drag", 1, 2, 3, 4, 0.35),
     ]
-    assert runtime.consume_debug_trace() == [
-        {"step": "prepare_input"},
-        {
-            "step": "drag_to",
-            "from_point": [1, 2],
-            "to_point": [3, 4],
-            "duration": 0.35,
-            "screen_from": [1, 2],
-            "screen_to": [3, 4],
-        }
-    ]
+    trace = runtime.consume_debug_trace()
+    prepare_event = trace[0]
+    drag_event = trace[1]
+
+    _assert_finalized_trace_event(prepare_event, step="prepare_input", ok=1)
+    _assert_finalized_trace_event(drag_event, step="drag_to", ok=1)
+    assert drag_event["from_point"] == [1, 2]
+    assert drag_event["to_point"] == [3, 4]
+    assert drag_event["duration"] == 0.35
+    assert drag_event["screen_from"] == [1, 2]
+    assert drag_event["screen_to"] == [3, 4]
 
 
 def test_runtime_operator_prepares_window_before_hotkey_actions():
@@ -3536,6 +4192,10 @@ def test_runtime_operator_prepares_window_before_hotkey_actions():
         ("prepare_input",),
         ("hotkey", ("ctrl", "v")),
     ]
+    trace = runtime.consume_debug_trace()
+    _assert_finalized_trace_event(trace[0], step="prepare_input", ok=1)
+    _assert_finalized_trace_event(trace[1], step="hotkey", ok=1)
+    assert trace[1]["keys"] == ["ctrl", "v"]
 
 
 def test_runtime_operator_prepares_window_before_type_text_actions():
@@ -3576,6 +4236,10 @@ def test_runtime_operator_prepares_window_before_type_text_actions():
         ("prepare_input",),
         ("type_text", "##demo##"),
     ]
+    trace = runtime.consume_debug_trace()
+    _assert_finalized_trace_event(trace[0], step="prepare_input", ok=1)
+    _assert_finalized_trace_event(trace[1], step="type_text", ok=1)
+    assert trace[1]["text"] == "##demo##"
 
 
 def test_runtime_operator_type_text_on_windows_does_not_require_pyautogui_backend(monkeypatch):
@@ -4542,6 +5206,295 @@ def test_runtime_operator_rejects_input_when_window_not_foreground_before_input(
     assert runtime.collect_warnings() == []
 
 
+def test_runtime_operator_constructs_debug_trace_recorder() -> None:
+    import trail.runtime.operator as operator_module
+    from trail.runtime.debug_recorder import DebugTraceRecorder
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: b"demo", capture_to_workspace=lambda request_id=None: Path("shot.png")),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    assert isinstance(runtime._debug_recorder, DebugTraceRecorder)
+
+
+def test_runtime_operator_recorder_failure_does_not_override_original_error() -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            prepare_input=lambda: None,
+            is_foreground=lambda: False,
+            to_screen_point=lambda x, y: (x, y),
+            capture=lambda **kwargs: b"demo",
+            capture_to_workspace=lambda request_id=None: Path("shot.png"),
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+    runtime._debug_recorder.append_trace = lambda payload: (_ for _ in ()).throw(RuntimeError("recorder boom"))
+
+    with pytest.raises(operator_module.TrailError) as exc_info:
+        runtime.click_point(10, 20)
+
+    assert exc_info.value.code == "WINDOW_NOT_FOREGROUND"
+    assert str(exc_info.value) == "窗口不在前台，无法执行输入"
+
+
+def test_runtime_operator_begin_scope_failure_drops_request_debug_without_polluting_next_request(monkeypatch) -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: b"demo", capture_to_workspace=lambda request_id=None: Path("shot.png")),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+    original_begin_scope = runtime._debug_recorder.begin_scope
+    state = {"calls": 0}
+
+    def flaky_begin_scope() -> None:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            raise RuntimeError("begin boom")
+        original_begin_scope()
+
+    monkeypatch.setattr(runtime._debug_recorder, "begin_scope", flaky_begin_scope)
+
+    runtime.begin_capture_scope()
+    runtime._record_trace("failed_begin")
+    runtime._set_debug_context(source="failed_begin")
+    assert runtime.consume_debug_trace() == []
+    assert runtime.consume_debug_context() == {}
+    runtime.end_capture_scope()
+
+    runtime.begin_capture_scope()
+    assert runtime.consume_debug_trace() == []
+    assert runtime.consume_debug_context() == {}
+    runtime.end_capture_scope()
+
+
+def test_runtime_operator_end_scope_failure_does_not_pollute_next_request_when_debug_not_consumed(monkeypatch) -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: b"demo", capture_to_workspace=lambda request_id=None: Path("shot.png")),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+    original_end_scope = runtime._debug_recorder.end_scope
+    state = {"calls": 0}
+
+    def flaky_end_scope() -> None:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            raise RuntimeError("end boom")
+        original_end_scope()
+
+    monkeypatch.setattr(runtime._debug_recorder, "end_scope", flaky_end_scope)
+
+    runtime.begin_capture_scope()
+    runtime._record_trace("stale")
+    runtime._set_debug_context(source="stale")
+    runtime.end_capture_scope()
+
+    runtime.begin_capture_scope()
+    assert runtime.consume_debug_trace() == []
+    assert runtime.consume_debug_context() == {}
+    runtime.end_capture_scope()
+
+
+def test_runtime_operator_drops_unconsumed_debug_when_request_scope_ends() -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: b"demo", capture_to_workspace=lambda request_id=None: Path("shot.png")),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    runtime.begin_capture_scope()
+    runtime._record_trace("stale")
+    runtime._set_debug_context(stale=1)
+    runtime.end_capture_scope()
+
+    assert runtime.consume_debug_trace() == []
+    assert runtime.consume_debug_context() == {}
+
+    runtime.begin_capture_scope()
+    runtime._record_trace("fresh")
+    runtime._set_debug_context(fresh=1)
+    trace = runtime.consume_debug_trace()
+    context = runtime.consume_debug_context()
+    runtime.end_capture_scope()
+
+    assert trace == [{"step": "fresh"}]
+    assert context == {"fresh": 1}
+    assert runtime.consume_debug_trace() == []
+    assert runtime.consume_debug_context() == {}
+
+
+def test_runtime_operator_consume_then_write_trace_does_not_leave_late_debug_outside_scope() -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: b"demo", capture_to_workspace=lambda request_id=None: Path("shot.png")),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    runtime.begin_capture_scope()
+    runtime._record_trace("early")
+    assert runtime.consume_debug_trace() == [{"step": "early"}]
+    runtime._record_trace("late")
+    runtime.end_capture_scope()
+
+    assert runtime.consume_debug_trace() == []
+
+    runtime.begin_capture_scope()
+    runtime._record_trace("fresh")
+    assert runtime.consume_debug_trace() == [{"step": "fresh"}]
+    runtime.end_capture_scope()
+    assert runtime.consume_debug_trace() == []
+
+
+def test_runtime_operator_consume_then_write_context_does_not_leave_late_debug_outside_scope() -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: b"demo", capture_to_workspace=lambda request_id=None: Path("shot.png")),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    runtime.begin_capture_scope()
+    runtime._set_debug_context(early=1)
+    assert runtime.consume_debug_context() == {"early": 1}
+    runtime._set_debug_context(late=1)
+    runtime.end_capture_scope()
+
+    assert runtime.consume_debug_context() == {}
+
+    runtime.begin_capture_scope()
+    runtime._set_debug_context(fresh=1)
+    assert runtime.consume_debug_context() == {"fresh": 1}
+    runtime.end_capture_scope()
+    assert runtime.consume_debug_context() == {}
+
+
+def test_runtime_operator_uses_debug_recorder_for_scope_trace_and_context_wiring() -> None:
+    import trail.runtime.operator as operator_module
+
+    calls: list[tuple[str, object | None]] = []
+
+    class SpyRecorder:
+        def begin_scope(self) -> None:
+            calls.append(("begin_scope", None))
+
+        def end_scope(self) -> None:
+            calls.append(("end_scope", None))
+
+        def append_trace(self, payload: dict[str, object]) -> None:
+            calls.append(("append_trace", dict(payload)))
+
+        def set_context(self, **payload: object) -> None:
+            calls.append(("set_context", dict(payload)))
+
+        def consume_trace(self) -> list[dict[str, object]]:
+            calls.append(("consume_trace", None))
+            return [{"step": "from_spy"}]
+
+        def consume_context(self) -> dict[str, object]:
+            calls.append(("consume_context", None))
+            return {"source": "spy"}
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(capture=lambda **kwargs: b"demo", capture_to_workspace=lambda request_id=None: Path("shot.png")),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+    runtime._debug_recorder = SpyRecorder()
+    runtime._trace = [{"step": "legacy_global"}]
+    runtime._debug_context = {"source": "legacy_global"}
+
+    runtime.begin_capture_scope()
+    runtime._request_local.trace = [{"step": "legacy_request"}]
+    runtime._request_local.debug_context = {"source": "legacy_request"}
+    runtime._record_trace("prepare_input", source="runtime")
+    runtime._set_debug_context(mode_requested="fast")
+    trace = runtime.consume_debug_trace()
+    context = runtime.consume_debug_context()
+    runtime.end_capture_scope()
+
+    assert calls == [
+        ("begin_scope", None),
+        ("append_trace", {"step": "prepare_input", "source": "runtime"}),
+        ("set_context", {"mode_requested": "fast"}),
+        ("consume_trace", None),
+        ("consume_context", None),
+        ("end_scope", None),
+    ]
+    assert trace == [{"step": "from_spy"}]
+    assert context == {"source": "spy"}
+
+
 def test_runtime_operator_warns_when_window_leaves_foreground_after_input():
     import trail.runtime.operator as operator_module
 
@@ -4585,6 +5538,8 @@ def test_runtime_operator_warns_when_window_leaves_foreground_after_input():
     runtime.click_point(10, 20)
 
     assert clicks == [(10, 20)]
+    trace = runtime.consume_debug_trace()
+    _assert_finalized_trace_event(_find_trace_event(trace, "foreground_check"), step="foreground_check", ok=0)
     assert runtime.collect_warnings() == [
         {
             "code": "WINDOW_NOT_FOREGROUND",
@@ -4623,6 +5578,37 @@ def test_runtime_operator_capture_after_action_passes_request_id_to_window():
 
     assert path == Path(".trail/shots/req-operator.png")
     assert window.request_ids == ["req-operator"]
+    [event] = runtime.consume_debug_trace()
+    _assert_finalized_trace_event(event, step="capture_after_action", ok=1)
+    assert event["optional"] == 0
+    assert Path(event["screenshot"]) == Path(".trail/shots/req-operator.png")
+
+
+def test_runtime_operator_capture_after_action_optional_failure_keeps_failed_trace() -> None:
+    import trail.runtime.operator as operator_module
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            capture=lambda **kwargs: b"demo",
+            capture_to_workspace=lambda request_id=None: (_ for _ in ()).throw(RuntimeError("capture failed")),
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image, ocr=None: operator_module.OcrRunResult(pieces=[], warnings=[], trace=[])),
+        input_driver=SimpleNamespace(
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    assert runtime.capture_after_action(optional=True) is None
+    [event] = runtime.consume_debug_trace()
+    _assert_finalized_trace_event(event, step="capture_after_action", ok=0)
+    assert event["optional"] == 1
+    assert event["error_type"] == "RuntimeError"
+    assert event["msg"] == "capture failed"
 
 
 def test_runtime_operator_capture_after_action_waits_after_recent_input(monkeypatch, tmp_path):
