@@ -12,10 +12,16 @@
 - `guide fetch cw` 负责读取完整攻略内容，用来核对标签、阵容、运营思路、投资环境和版本。
 - 如果只是要决定“选哪套攻略”，通常到这里就够了。
 
+## 读取并写入当前 session
+
+- `guide fetch cw --select` 会在读取攻略详情的同时，把选中的攻略写入 session。
+- 这样后续真正进入对局时会自动生效，不需要再额外补一条旧的挂载命令。
+
 ## 当前回看
 
 - `cw guide current` 用来回看当前已挂载的攻略摘要，确认现在游戏里实际挂着哪套攻略。
 
 ## 交回入口
 
-- 攻略选定后，把后续开局动作交回 `trail-cw-entry`，再走 `cw enter` / `cw start`。
+- 如果这是 `direct-user` / 开局前链路，攻略选定后，把后续开局动作交回 `trail-cw-entry`，再走 `cw enter` / `cw start`。
+- 如果这是投资环境页里的无人值守链路，攻略选定后，把后续环境选择动作交回 `trail-cw-portal`，由它继续 `portal select --card-idx ...`。

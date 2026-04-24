@@ -24,14 +24,14 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 
 - `trail-hsr` 是对外总入口，用于接管并继续推进《崩坏：星穹铁道》常规游玩。
 - `trail-<scene>-entry` 是对外场景入口；只有 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口。
-- `trail-cw-entry` 是货币战争当前入口 skill / scene entry；它只负责该玩法入口后的编排，不是整局 owner，也不是旧 `trail-cw` 那种整局 owner。
+- `trail-cw-entry` 是货币战争当前入口 skill / scene entry；它只负责该玩法入口后的编排，不是整局 owner。
 - `trail-cw-guide` 是可直接进入的 public 攻略选择 skill；用户明确要先选攻略时可以直接切到它。
-- `trail-cw-guide` 不是 scene entry、不是默认 owner、也不是旧 `trail-cw` 那种整局 owner；真正进入开局流程仍要回到 `trail-cw-entry`。
-- `trail-cw-portal` 是 internal portal-page skill；主要在 `trail cw start` 成功进入投资环境页后切入，不是 direct-user 公共入口、不是 scene entry、也不是 owner。
-- `trail-cw-portal` 在投资环境页负责 `portal detect/refresh/restart/select` 与环境优先逻辑；如果攻略还没定，就切到 `trail-cw-guide` 的无人值守模式按当前环境定攻略。
+- `trail-cw-guide` 不是 scene entry、不是默认 owner、也不是整局 owner；真正进入开局流程仍要回到 `trail-cw-entry`。
+- `trail-cw-portal` 是 internal portal-page skill；主要在 `trail cw start` 或 `trail cw portal refresh` 成功停留在投资环境页后切入，不是 direct-user 公共入口、不是 scene entry、也不是 owner。
+- `trail-cw-portal` 在投资环境页负责 `portal detect/refresh/restart/select` 与环境优先逻辑；如果攻略还没定，就切到 `trail-cw-guide` 的无人值守模式按当前环境定攻略，再回到当前投资环境页流程。
 - `trail-hsr-advanced` 是内部恢复层，用于启动失败、窗口接管异常、daemon / session 恢复等底层问题。
 - `trail-hsr-advanced` 不作为用户入口；只有 `trail-hsr` 或当前 active 的 scene entry 需要恢复链路时才会内部升级到它。
-- 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。
+- 旧货币战争 archive skill 已归档，不再作为 active owner 或推荐入口。
 
 手工 CLI 冒烟顺序：
 

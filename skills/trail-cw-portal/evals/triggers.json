@@ -30,6 +30,11 @@
     "expected_winner": "trail-cw-portal"
   },
   {
+    "prompt": "portal refresh 成功后还在投资环境页，继续按当前页决定选哪套攻略和选哪个环境",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-portal"
+  },
+  {
     "prompt": "我要玩货币战争",
     "sample_type": "should-not-trigger",
     "expected_winner": "none"

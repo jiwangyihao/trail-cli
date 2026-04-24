@@ -86,17 +86,35 @@
   {
     "prompt": "投资环境页已经出来了，按当前环境直接帮我挑攻略",
     "sample_type": "competition",
-    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide", "trail-cw-portal"],
     "expected_winner": "trail-cw-guide"
   },
   {
     "prompt": "这三个环境卡片已经给出来了，别再问我，直接按环境选一套攻略",
     "sample_type": "competition",
-    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide", "trail-cw-portal"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "投资环境页已经出来，别再问，直接按当前环境挑攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide", "trail-cw-portal"],
+    "expected_winner": "trail-cw-guide"
+  },
+  {
+    "prompt": "投资环境页已经出来，别再问我，直接按当前环境挑攻略",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-guide", "trail-cw-portal"],
     "expected_winner": "trail-cw-guide"
   },
   {
     "prompt": "货币战争先看投资环境，再决定要不要按攻略走",
+    "sample_type": "competition",
+    "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "货币战争先看环境，再决定要不要按攻略走",
     "sample_type": "competition",
     "candidates": ["trail-hsr", "trail-cw-entry", "trail-cw-guide"],
     "expected_winner": "trail-cw-entry"

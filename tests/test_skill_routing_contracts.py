@@ -11,10 +11,14 @@ README = PROJECT_ROOT / "README.md"
 AGENTS = PROJECT_ROOT / "AGENTS.md"
 REGISTRY = PROJECT_ROOT / "skills" / "registry" / "scene-entries.yaml"
 WORKFLOW_HANDOFFS = PROJECT_ROOT / "skills" / "registry" / "workflow-handoffs.yaml"
-CW_ENTRY_SKILL = PROJECT_ROOT / "skills" / "trail-cw-entry" / "SKILL.md"
 CW_GUIDE_SKILL = PROJECT_ROOT / "skills" / "trail-cw-guide" / "SKILL.md"
-CW_PORTAL_SKILL = PROJECT_ROOT / "skills" / "trail-cw-portal" / "SKILL.md"
 CW_GUIDE_TRIGGERS = PROJECT_ROOT / "skills" / "trail-cw-guide" / "evals" / "triggers.json"
+CW_GUIDE_COMMAND_SURFACE = (
+    PROJECT_ROOT / "skills" / "trail-cw-guide" / "references" / "command-surface.md"
+)
+CW_GUIDE_CONFIRMATION_CHECKLIST = (
+    PROJECT_ROOT / "skills" / "trail-cw-guide" / "references" / "confirmation-checklist.md"
+)
 CW_PORTAL_TRIGGERS = PROJECT_ROOT / "skills" / "trail-cw-portal" / "evals" / "triggers.json"
 COMPETITION = PROJECT_ROOT / "skills" / "registry" / "routing-competition.json"
 ESCALATION_CONTRACT = PROJECT_ROOT / "skills" / "shared" / "escalation-contract.md"
@@ -67,7 +71,15 @@ ROUTING_REVIEW_METHOD_LINES = (
     "- 新 skill 集合 winner：按重设计后的 active/public/internal 拓扑判断；planned scene 继续回退到 `trail-hsr`，`trail-hsr-advanced` 仅作为内部升级层。",
     "- 比对口径：只比较路由 winner，不比较具体命令细节；若新 skill 集合 winner 与“预期 winner”全部一致，则结论记为 `PASS`，否则记为 `FAIL`。",
 )
-ACTIVE_CW_DOC_EXEMPT_PATTERN = r"trail-cw-(battle-advanced|events|replenish|shop|slots)\b"
+LEGACY_CW_SKILL_PATH_PATTERNS = (
+    r"skills/trail-cw/SKILL\.md\b",
+    r"skills/trail-cw-battle-advanced(?:/|\b)",
+    r"skills/trail-cw-events(?:/|\b)",
+    r"skills/trail-cw-replenish(?:/|\b)",
+    r"skills/trail-cw-shop(?:/|\b)",
+    r"skills/trail-cw-slots(?:/|\b)",
+)
+LEGACY_ACTIVE_CW_PATTERN = r"trail-cw(?!-(entry|guide|portal)\b)\b"
 
 
 def _lines_with_token(text: str, token: str) -> list[str]:
@@ -86,9 +98,8 @@ def _assert_cw_entry_mentions_are_scoped(text: str) -> None:
     lines = _lines_with_token(text, "trail-cw-entry")
 
     assert lines
-    assert any("scene entry" in line for line in lines)
-    assert any("当前" in line or "active" in line for line in lines)
-    assert any(("整局 owner" in line or "不负责整局" in line) and "不是" in line for line in lines)
+    assert any(("当前入口" in line or "当前 active public" in line) and "scene entry" in line for line in lines)
+    assert any(("整局 owner" in line or "owner" in line) and "不是" in line for line in lines)
 
 
 def _assert_cw_guide_mentions_are_scoped(text: str) -> None:
@@ -97,29 +108,95 @@ def _assert_cw_guide_mentions_are_scoped(text: str) -> None:
     assert lines
     assert any(("攻略" in line or "攻略选择" in line) and "public" in line for line in lines)
     assert any("direct-user" in line or "直接" in line for line in lines)
-    assert any("trail-cw-entry" in line and ("推荐" in line or "回到" in line or "切" in line) for line in lines)
-
-    for line in lines:
-        if "scene entry" in line:
-            assert "不是" in line or "不等于" in line
-        if "owner" in line:
-            assert "不是" in line
+    assert any("scene entry" in line and "不是" in line for line in lines)
+    assert any("默认 owner" in line and "不是" in line for line in lines)
+    assert any("整局 owner" in line and "不是" in line for line in lines)
 
 
 def _assert_cw_portal_mentions_are_scoped(text: str) -> None:
     lines = _lines_with_token(text, "trail-cw-portal")
 
     assert lines
-    assert any("internal" in line for line in lines)
-    assert any("投资环境页" in line or "portal-page" in line or "portal page" in line for line in lines)
-    assert any("cw.start" in line or "cw start" in line for line in lines)
-    assert any("trail-cw-guide" in line and "无人值守" in line for line in text.splitlines())
+    assert any("internal" in line and ("投资环境页" in line or "portal-page" in line or "portal page" in line) for line in lines)
     assert any("scene entry" in line and "不是" in line for line in lines)
     assert any("owner" in line and "不是" in line for line in lines)
+    assert any(
+        ("direct-user" in line or "用户入口" in line) and ("不是" in line or "不作为" in line)
+        for line in lines
+    )
 
-    for line in lines:
-        if "direct-user" in line or "用户入口" in line:
-            assert "不是" in line or "不作为" in line
+
+def _assert_only_cw_enter_handoff_doc_smoke(text: str) -> None:
+    assert "handoff_skill=trail-cw-entry" in text
+    assert "handoff_skill=trail-cw-guide" not in text
+    assert "handoff_skill=trail-cw-portal" not in text
+
+
+def _assert_no_legacy_cw_skill_mentions(text: str) -> None:
+    for pattern in LEGACY_CW_SKILL_PATH_PATTERNS:
+        assert not re.search(pattern, text)
+    assert not re.search(LEGACY_ACTIVE_CW_PATTERN, text)
+
+
+def _competition_rows(path: Path, *candidates: str) -> list[dict]:
+    required = set(candidates)
+    return [
+        row
+        for row in _trigger_rows(path, "competition")
+        if required <= set(row.get("candidates", []))
+    ]
+
+
+def _context_windows_within_line(
+    text: str,
+    *,
+    context_tokens: tuple[str, ...],
+    stop_tokens: tuple[str, ...],
+) -> list[str]:
+    windows: list[str] = []
+
+    for line in text.splitlines():
+        clauses = [clause.strip() for clause in re.split(r"[，；;]", line) if clause.strip()]
+        for idx, clause in enumerate(clauses):
+            if not any(token in clause for token in context_tokens):
+                continue
+
+            parts = [clause]
+            cursor = idx + 1
+            while cursor < len(clauses) and not any(
+                token in clauses[cursor] for token in stop_tokens
+            ):
+                parts.append(clauses[cursor])
+                cursor += 1
+
+            windows.append(" ".join(parts))
+
+    return windows
+
+
+def _assert_context_binds_return_owner_in_window(
+    text: str,
+    *,
+    context_tokens: tuple[str, ...],
+    stop_tokens: tuple[str, ...],
+    return_tokens: tuple[str, ...],
+    expected_owner: str,
+    wrong_owner: str,
+) -> None:
+    windows = _context_windows_within_line(
+        text,
+        context_tokens=context_tokens,
+        stop_tokens=stop_tokens,
+    )
+
+    assert any(
+        any(token in window for token in return_tokens) and expected_owner in window
+        for window in windows
+    )
+    assert not any(
+        any(token in window for token in return_tokens) and wrong_owner in window
+        for window in windows
+    )
 
 
 def test_registry_keeps_trail_cw_entry_as_only_active_public_scene_entry() -> None:
@@ -149,75 +226,116 @@ def test_registry_keeps_trail_cw_entry_as_only_active_public_scene_entry() -> No
     )
 
 
-def test_cw_guide_skill_supports_direct_entry_and_entry_handoff_chain() -> None:
-    entry_text = CW_ENTRY_SKILL.read_text(encoding="utf-8")
-    guide_text = CW_GUIDE_SKILL.read_text(encoding="utf-8")
-
-    assert "trail-cw-guide" in entry_text
-    assert "攻略优先" in entry_text
-    assert "先定攻略" in entry_text
-
-    assert "用户直接说" in guide_text or "直接点名" in guide_text
-    assert "trail-cw-entry" in guide_text
-    assert "复用已确认信息" in guide_text or "只追问缺失项" in guide_text
-    assert "回到 `trail-cw-entry`" in guide_text or "交回 `trail-cw-entry`" in guide_text
-
-
-def test_cw_guide_trigger_artifacts_cover_direct_user_entry_boundary_and_unattended_cut() -> None:
+def test_cw_guide_trigger_artifacts_cover_direct_user_entry_boundary_and_portal_boundary() -> None:
     should_trigger = _trigger_rows(CW_GUIDE_TRIGGERS, "should-trigger")
-    competition = _trigger_rows(CW_GUIDE_TRIGGERS, "competition")
+    should_not_trigger = _trigger_rows(CW_GUIDE_TRIGGERS, "should-not-trigger")
+    entry_vs_guide = _competition_rows(CW_GUIDE_TRIGGERS, "trail-cw-entry", "trail-cw-guide")
+    guide_vs_portal = _competition_rows(CW_GUIDE_TRIGGERS, "trail-cw-guide", "trail-cw-portal")
+    hsr_vs_guide = _competition_rows(CW_GUIDE_TRIGGERS, "trail-hsr", "trail-cw-guide")
 
     assert any(row["expected_winner"] == "trail-cw-guide" for row in should_trigger)
     assert any("攻略" in row["prompt"] and "货币战争" in row["prompt"] for row in should_trigger)
+    assert all(row["expected_winner"] == "none" for row in should_not_trigger)
+    assert any("daemon.request_status" in row["prompt"] for row in should_not_trigger)
+    assert any(
+        "恢复链路" in row["prompt"] or "request id=" in row["prompt"]
+        for row in should_not_trigger
+    )
+    assert any(
+        "guide list cw" in row["prompt"] or "guide fetch cw" in row["prompt"]
+        for row in should_not_trigger
+    )
+    assert any("继续玩星铁" in row["prompt"] for row in should_not_trigger)
     assert any(
         row["expected_winner"] == "trail-cw-guide"
-        and {"trail-cw-entry", "trail-cw-guide"} <= set(row["candidates"])
-        for row in competition
+        and ("先定攻略" in row["prompt"] or "攻略优先" in row["prompt"] or "先别开" in row["prompt"])
+        for row in entry_vs_guide
     )
     assert any(
         row["expected_winner"] == "trail-cw-entry"
-        and {"trail-cw-entry", "trail-cw-guide"} <= set(row["candidates"])
-        for row in competition
+        and ("先看环境" in row["prompt"] or "环境优先" in row["prompt"] or "先开局" in row["prompt"])
+        for row in entry_vs_guide
     )
     assert any(
         row["expected_winner"] == "trail-cw-guide"
         and ("当前环境" in row["prompt"] or "投资环境页" in row["prompt"])
-        for row in competition
+        for row in guide_vs_portal
+    )
+    assert any(
+        row["expected_winner"] == "trail-hsr" and "继续玩星铁" in row["prompt"]
+        for row in hsr_vs_guide
     )
 
 
-def test_cw_portal_skill_is_internal_only_and_hands_off_to_unattended_guide() -> None:
-    text = CW_PORTAL_SKILL.read_text(encoding="utf-8")
+def test_cw_guide_artifacts_lock_return_owner_semantics() -> None:
+    artifact_texts = {
+        "SKILL.md": CW_GUIDE_SKILL.read_text(encoding="utf-8"),
+        "references/command-surface.md": CW_GUIDE_COMMAND_SURFACE.read_text(encoding="utf-8"),
+        "references/confirmation-checklist.md": CW_GUIDE_CONFIRMATION_CHECKLIST.read_text(
+            encoding="utf-8"
+        ),
+    }
 
-    assert "internal" in text
-    assert "cw start" in text or "cw.start" in text
-    assert "投资环境页" in text
-    assert "不是 direct-user 公共入口" in text or "不作为 direct-user" in text
-    assert "不是 scene entry" in text
-    assert "不是 owner" in text
-    assert "trail-cw-guide" in text
-    assert "无人值守" in text
-    assert "环境优先" in text
+    for name, text in artifact_texts.items():
+        _assert_context_binds_return_owner_in_window(
+            text,
+            context_tokens=("direct-user", "开局前"),
+            stop_tokens=("无人值守", "投资环境页"),
+            return_tokens=("交回", "控制权交回", "回到", "继续由"),
+            expected_owner="trail-cw-entry",
+            wrong_owner="trail-cw-portal",
+        )
+        _assert_context_binds_return_owner_in_window(
+            text,
+            context_tokens=("无人值守", "投资环境页"),
+            stop_tokens=("direct-user", "开局前"),
+            return_tokens=("交回", "控制权交回", "回到", "继续由"),
+            expected_owner="trail-cw-portal",
+            wrong_owner="trail-cw-entry",
+        )
 
 
 def test_cw_portal_trigger_artifacts_cover_internal_only_and_guide_handoff_boundary() -> None:
     should_trigger = _trigger_rows(CW_PORTAL_TRIGGERS, "should-trigger")
     should_not_trigger = _trigger_rows(CW_PORTAL_TRIGGERS, "should-not-trigger")
-    competition = _trigger_rows(CW_PORTAL_TRIGGERS, "competition")
+    entry_vs_portal = _competition_rows(CW_PORTAL_TRIGGERS, "trail-cw-entry", "trail-cw-portal")
+    guide_vs_portal = _competition_rows(CW_PORTAL_TRIGGERS, "trail-cw-guide", "trail-cw-portal")
 
-    assert any(row["expected_winner"] == "trail-cw-portal" for row in should_trigger)
-    assert any("投资环境页" in row["prompt"] for row in should_trigger)
-    assert any(row["expected_winner"] == "none" and "我要玩货币战争" in row["prompt"] for row in should_not_trigger)
+    assert any(
+        row["expected_winner"] == "trail-cw-portal"
+        and ("cw start" in row["prompt"] or "portal refresh" in row["prompt"] or "投资环境页" in row["prompt"])
+        for row in should_trigger
+    )
+    assert all(row["expected_winner"] == "none" for row in should_not_trigger)
+    assert any("daemon.request_status" in row["prompt"] for row in should_not_trigger)
+    assert any("guide list cw" in row["prompt"] for row in should_not_trigger)
+    assert any(
+        "我要玩货币战争" in row["prompt"] or "开局入口" in row["prompt"]
+        for row in should_not_trigger
+    )
+    assert any(
+        "选攻略" in row["prompt"] or "先定攻略" in row["prompt"]
+        for row in should_not_trigger
+    )
     assert any(
         row["expected_winner"] == "trail-cw-entry"
-        and set(row["candidates"]) == {"trail-cw-entry", "trail-cw-portal"}
-        for row in competition
+        and ("首页" in row["prompt"] or "还没开到环境页" in row["prompt"])
+        for row in entry_vs_portal
+    )
+    assert any(
+        row["expected_winner"] == "trail-cw-portal"
+        and ("投资环境页" in row["prompt"] or "refresh" in row["prompt"] or "restart" in row["prompt"])
+        for row in entry_vs_portal
     )
     assert any(
         row["expected_winner"] == "trail-cw-guide"
-        and set(row["candidates"]) == {"trail-cw-guide", "trail-cw-portal"}
         and ("攻略未定" in row["prompt"] or "按当前环境" in row["prompt"])
-        for row in competition
+        for row in guide_vs_portal
+    )
+    assert any(
+        row["expected_winner"] == "trail-cw-portal"
+        and ("待收集=1" in row["prompt"] or "refresh" in row["prompt"] or "restart" in row["prompt"])
+        for row in guide_vs_portal
     )
 
 
@@ -352,7 +470,6 @@ def test_routing_review_keeps_auditable_methodology_and_complete_rows() -> None:
 
 def test_new_skill_topology_is_documented_in_readme() -> None:
     text = README.read_text(encoding="utf-8")
-    legacy_skill_lines = [line.strip() for line in text.splitlines() if "trail-cw" in line]
 
     assert "trail-hsr" in text and "总入口" in text
     assert "trail-<scene>-entry" in text and "scene entry" in text
@@ -360,26 +477,11 @@ def test_new_skill_topology_is_documented_in_readme() -> None:
     _assert_cw_guide_mentions_are_scoped(text)
     _assert_cw_portal_mentions_are_scoped(text)
     assert "trail-hsr-advanced" in text and "内部恢复层" in text
-    assert "handoff_skill=trail-cw-entry" in text
-    assert "handoff_skill=trail-cw-guide" not in text
-    assert "handoff_skill=trail-cw-portal" not in text
-    assert "旧 `trail-cw*` 已归为 archive" in text
-    assert legacy_skill_lines.count("- 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。") == 1
-    assert not re.search(r"skills/trail-cw[\\w-]*", text)
-    assert not re.search(ACTIVE_CW_DOC_EXEMPT_PATTERN, text)
+    _assert_only_cw_enter_handoff_doc_smoke(text)
+    _assert_no_legacy_cw_skill_mentions(text)
 
 
-def test_cw_guide_readme_mentions_stay_in_selection_topology() -> None:
-    text = README.read_text(encoding="utf-8")
-
-    _assert_cw_guide_mentions_are_scoped(text)
-    guide_lines = _lines_with_token(text, "trail-cw-guide")
-    assert any("public" in line and ("攻略" in line or "攻略选择" in line) for line in guide_lines)
-    assert any("direct-user" in line or "直接" in line for line in guide_lines)
-    assert any("trail-cw-entry" in line and ("切到" in line or "回到" in line) for line in guide_lines)
-
-
-def test_archive_calls_from_any_active_skill_are_forbidden_in_agents() -> None:
+def test_new_skill_topology_is_documented_in_agents() -> None:
     text = AGENTS.read_text(encoding="utf-8")
 
     _assert_cw_entry_mentions_are_scoped(text)
@@ -390,22 +492,10 @@ def test_archive_calls_from_any_active_skill_are_forbidden_in_agents() -> None:
     assert "下一步 skill 切换信号" in text
     assert "在 `warn`、`ref` 之后追加一行尾行强提示" in text
     assert "该行必须是 success 输出最后一行" in text
-    assert "archive skill" in text and "legacy 场景 skill 名称" in text
     assert "任何 active skill 都不得直接或间接调用 archive skill" in text
-    assert "仍然禁止 legacy `trail-cw*` 回流为 active owner、默认 owner 或推荐入口" in text
-    assert not re.search(r"skills/trail-cw[\\w-]*", text)
-    assert not re.search(ACTIVE_CW_DOC_EXEMPT_PATTERN, text)
+    _assert_only_cw_enter_handoff_doc_smoke(text)
+    _assert_no_legacy_cw_skill_mentions(text)
     assert "当前推荐入口" not in text
-
-
-def test_cw_guide_agents_mentions_stay_in_selection_topology() -> None:
-    text = AGENTS.read_text(encoding="utf-8")
-
-    _assert_cw_guide_mentions_are_scoped(text)
-    guide_lines = _lines_with_token(text, "trail-cw-guide")
-    assert any("active public" in line and ("攻略" in line or "攻略选择" in line) for line in guide_lines)
-    assert any("direct-user" in line or "推荐切入" in line for line in guide_lines)
-    assert any("trail-cw-entry" in line and ("回到" in line or "推荐切入" in line) for line in guide_lines)
 
 
 def test_active_skill_guidance_only_mentions_hsr_pair() -> None:
@@ -417,47 +507,6 @@ def test_active_skill_guidance_only_mentions_hsr_pair() -> None:
     assert not re.search(r"trail-cw(?!-entry)", text)
 
 
-def test_cw_entry_readme_documents_active_scene_entry_and_handoff() -> None:
-    text = README.read_text(encoding="utf-8")
-    legacy_skill_lines = [line.strip() for line in text.splitlines() if "trail-cw" in line]
-
-    _assert_cw_entry_mentions_are_scoped(text)
-    assert "cw enter" in text or "cw.enter" in text
-    assert "handoff_skill=trail-cw-entry" in text
-    assert "旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口" in text
-    assert not re.search(r"skills/trail-cw[\w-]*", text)
-    assert not re.search(ACTIVE_CW_DOC_EXEMPT_PATTERN, text)
-    assert legacy_skill_lines.count("- 旧 `trail-cw*` 已归为 archive，不再作为 active owner 或推荐入口。") == 1
-    assert "旧 owner" not in text
-
-
-def test_cw_entry_agents_documents_active_scene_entry_and_strong_handoff_signal() -> None:
-    text = AGENTS.read_text(encoding="utf-8")
-
-    _assert_cw_entry_mentions_are_scoped(text)
-    assert "status=active" in text and "exposure=public" in text
-    assert "`info handoff_skill=... handoff_strength=strong ...`" in text
-    assert "下一步 skill 切换信号" in text
-    assert "legacy `trail-cw*` 回流为 active owner" in text
-    assert not re.search(r"skills/trail-cw[\w-]*", text)
-    assert not re.search(ACTIVE_CW_DOC_EXEMPT_PATTERN, text)
-    assert "当前推荐入口" not in text
-
-
-def test_cw_portal_readme_mentions_stay_in_internal_portal_topology() -> None:
-    text = README.read_text(encoding="utf-8")
-
-    _assert_cw_portal_mentions_are_scoped(text)
-    assert "trail-cw-guide" in text and "无人值守" in text
-
-
-def test_cw_portal_agents_mentions_stay_in_internal_portal_topology() -> None:
-    text = AGENTS.read_text(encoding="utf-8")
-
-    _assert_cw_portal_mentions_are_scoped(text)
-    assert "trail-cw-guide" in text and "无人值守" in text
-
-
 def test_legacy_doc_patterns_do_not_misclassify_active_cw_topology_names() -> None:
     active_names = ["trail-cw-entry", "trail-cw-guide", "trail-cw-portal"]
 
@@ -465,6 +514,28 @@ def test_legacy_doc_patterns_do_not_misclassify_active_cw_topology_names() -> No
         regex = re.compile(pattern)
         for name in active_names:
             assert regex.search(name) is None, (pattern, name)
+
+
+def test_legacy_path_patterns_do_not_misclassify_active_cw_skill_paths() -> None:
+    active_paths = [
+        "skills/trail-cw-entry/SKILL.md",
+        "skills/trail-cw-guide/references/command-surface.md",
+        "skills/trail-cw-portal/evals/triggers.json",
+    ]
+    legacy_paths = [
+        "skills/trail-cw/SKILL.md",
+        "skills/trail-cw-battle-advanced/SKILL.md",
+        "skills/trail-cw-events/SKILL.md",
+        "skills/trail-cw-replenish/SKILL.md",
+        "skills/trail-cw-shop/SKILL.md",
+        "skills/trail-cw-slots/SKILL.md",
+    ]
+
+    for path in active_paths:
+        assert not any(re.search(pattern, path) for pattern in LEGACY_CW_SKILL_PATH_PATTERNS), path
+
+    for path in legacy_paths:
+        assert any(re.search(pattern, path) for pattern in LEGACY_CW_SKILL_PATH_PATTERNS), path
 
 
 def test_routing_competition_fixture_has_required_quota_and_cases() -> None:

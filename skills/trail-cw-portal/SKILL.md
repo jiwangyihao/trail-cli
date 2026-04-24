@@ -8,8 +8,8 @@ description: 当上游已经用 `cw start` 成功进入货币战争投资环境�
 ## Role
 
 - `trail-cw-portal` 是货币战争投资环境页的 internal 跟进 skill，不是 direct-user 公共入口，也不是 scene entry、不是 owner。
-- 它只在 `cw start` 已成功把流程推进到投资环境页之后接手，负责解释这一页接下来怎么行动。
-- 它负责判断这一页该继续看环境、刷新开局，还是把“按当前环境定攻略”交给 `trail-cw-guide`。
+- 它只在 `cw start` 或 `portal refresh` 成功把流程推进到投资环境页之后接手，负责解释这一页接下来怎么行动。
+- 它的核心职责不是先选环境再单独补攻略，而是在当前环境页联合决策“选哪套攻略 + 选哪个环境”。
 
 ## When To Use
 
@@ -20,17 +20,20 @@ description: 当上游已经用 `cw start` 成功进入货币战争投资环境�
 
 ## How To Act On The Portal Page
 
-- 先用 `portal detect` 看当前可见环境卡片；需要刷新候选时用 `portal refresh`；确认整把不要时用 `portal restart`；决定继续当前环境时用 `portal select`。
+- 先用 `portal detect` 看当前可见环境卡片；需要刷新候选时用 `portal refresh`；确认整把不要时用 `portal restart`；决定继续当前环境时用 `portal select --card-idx ...`。
 - `待收集=1` 通常表示选择这个投资环境更有利于完成当前收集奖励；除非它和已知目标明显冲突，否则不要轻易忽略。
+- 环境页里的判断要先综合每张卡自带的推荐攻略、热度、版本和 `待收集=1`，再决定这一页是继续、refresh 还是切攻略。
 - 如果上游已经定了 `环境优先`，就继续按环境走，比较当前环境是否服务目标，再决定 refresh、restart 还是 select。
 - 如果允许刷开局，就把 `refresh` / `restart` 当成自动筛选手段，持续刷到出现接近攻略或明显服务目标的环境。
+- 如果当前还没定攻略，就先切到 `trail-cw-guide` 的无人值守模式，让它在当前环境页上下文里挑出最合适的攻略，再回到 portal 流程决定选哪个环境。
 - 如果不允许刷开局，仍可先做一次 refresh；只有在已确认 `环境优先` 时，portal 才在当前可见环境里选最贴近目标的一项；如果未确定攻略，则必须切到 `trail-cw-guide` 的无人值守模式，不由 portal 直接拍板。
+- 只有当没有带 `待收集=1` 的环境，或所有推荐攻略互动数据都 < 5000 时，才允许先做一次 refresh，然后再综合选择；`版本过旧` 只作为权衡因素，不设硬阈值。
 
 ## When To Hand Off To trail-cw-guide
 
-- 如果未确定攻略，但投资环境页已经出来，就切到 `trail-cw-guide` 的无人值守模式，让它按当前环境、`待收集=1` 和版本自动定攻略。
+- 如果未确定攻略，但投资环境页已经出来，就切到 `trail-cw-guide` 的无人值守模式，让它按当前环境页里的推荐攻略、热度、版本、`待收集=1` 和其他已知限制自动定攻略。
 - 如果用户明确说“按当前环境直接定攻略”，也切到 `trail-cw-guide`，不要在这里继续追问。
-- 如果上游已经确认 `环境优先`，就不切到 trail-cw-guide；先在当前环境页完成 refresh/restart/select，再决定后面是否补定攻略。
+- 选定攻略后，回到 portal 流程，用 `portal select --card-idx ...` 选中对应投资环境，再继续后续流程。
 
 ## Reference Map
 
