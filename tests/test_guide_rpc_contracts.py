@@ -13,12 +13,18 @@ from trail.output.rendering import render_output
 from tests.support.fake_daemon import build_success_response
 
 
-def _guide_request(*, workspace_root: Path, method: str, payload: dict | None = None):
+def _guide_request(
+    *,
+    workspace_root: Path,
+    method: str,
+    payload: dict | None = None,
+    session_id: str | None = None,
+):
     return DaemonRequest(
         request_id=f"req-{method}",
         protocol_version=PROTOCOL_VERSION,
         workspace_root=str(workspace_root),
-        session_id=None,
+        session_id=session_id,
         verbose=False,
         method=method,
         payload=payload or {},
@@ -140,6 +146,108 @@ def test_guide_fetch_renders_summary_and_yaml(cli_runner, fake_daemon_client, tm
             "session_id": None,
             "verbose": False,
         }
+    ]
+
+
+def test_guide_fetch_select_routes_session_at_top_level_and_keeps_yaml_shape(
+    cli_runner,
+    fake_daemon_client,
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "trail.commands.guide.fetch_cw_guide",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local guide fetch path used")),
+        raising=False,
+    )
+    client = fake_daemon_client(
+        {
+            "guide.fetch.cw": build_success_response(
+                request_id="req-guide-fetch-select",
+                data={
+                    "lineup_id": "abc",
+                    "title": "7群攻2银河学者",
+                    "share_code": "##demo##",
+                    "labels": ["7级搜牌"],
+                    "version": "3.2",
+                    "min_coins": 40,
+                    "min_level": 7,
+                    "mid_level": 8,
+                    "support_hard": False,
+                    "has_change_equip": False,
+                    "has_expert": False,
+                    "operation_guide": "前期：过渡",
+                    "portals": [],
+                    "first_fight_augments": [],
+                    "second_fight_augments": [],
+                    "order_basic": [],
+                    "order_compose": [],
+                    "role_stages": [],
+                },
+            )
+        }
+    )
+
+    text_result = cli_runner.invoke(app, ["guide", "fetch", "cw", "abc", "--select", "--session", "sess-1"])
+    yaml_result = cli_runner.invoke(
+        app,
+        ["--format", "yaml", "guide", "fetch", "cw", "abc", "--select", "--session", "sess-1"],
+    )
+
+    assert text_result.exit_code == 0
+    assert yaml_result.exit_code == 0
+    assert text_result.stdout.splitlines()[0] == (
+        "ok guide.fetch.cw 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2 最低金币=40 最低等级=7 中期等级=8"
+    )
+    assert "lineup_id: abc" in yaml_result.stdout
+    assert "selected:" not in yaml_result.stdout
+    assert "session_id:" not in yaml_result.stdout
+    assert "artifact_id:" not in yaml_result.stdout
+    assert client.calls == [
+        {
+            "method": "guide.fetch.cw",
+            "payload": {"url": "abc", "select": True},
+            "workspace_root": str(tmp_path),
+            "session_id": "sess-1",
+            "verbose": False,
+        },
+        {
+            "method": "guide.fetch.cw",
+            "payload": {"url": "abc", "select": True},
+            "workspace_root": str(tmp_path),
+            "session_id": "sess-1",
+            "verbose": False,
+        },
+    ]
+
+
+def test_guide_fetch_select_rejects_missing_session(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "fetch", "cw", "abc", "--select"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail guide.fetch.cw code=GUIDE_INPUT_INVALID",
+        'why msg="guide.fetch.cw --select requires --session"',
+    ]
+
+
+def test_guide_fetch_rejects_session_without_select(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "fetch", "cw", "abc", "--session", "sess-1"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail guide.fetch.cw code=GUIDE_INPUT_INVALID",
+        'why msg="guide.fetch.cw --session requires --select"',
+    ]
+
+
+def test_guide_fetch_rejects_empty_session_string(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "fetch", "cw", "abc", "--session", ""])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail guide.fetch.cw code=GUIDE_INPUT_INVALID",
+        'why msg="guide.fetch.cw --session must be a non-empty string"',
     ]
 
 
@@ -1168,6 +1276,146 @@ def test_command_service_handles_guide_fetch_cw_and_persists_artifact(tmp_path: 
         "recovery_origin": "guide.fetch.cw",
         "created_at": artifact_payload["created_at"],
     }
+
+
+def test_command_service_handles_guide_fetch_cw_select_and_persists_session(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+    from trail.daemon.session_service import SessionServiceRegistry
+
+    calls: list[tuple[str, object]] = []
+
+    def fake_fetch_payload(url: str):
+        calls.append(("fetch_payload", url))
+        return {
+            "lineup_id": url,
+            "share_code": "##demo##",
+            "title": "Alpha攻略",
+            "version": "3.2",
+            "min_coins": 40,
+            "min_level": 7,
+            "mid_level": 8,
+            "on_field": {"front_a": 1},
+            "off_field": {"back_b": 2},
+        }
+
+    def fake_fetch_guide(url: str, *, fetcher):
+        calls.append(("fetch_guide", url))
+        return fetcher(url)
+
+    monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide_payload", fake_fetch_payload)
+    monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide", fake_fetch_guide)
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
+    payload = service.handle(
+        _guide_request(
+            workspace_root=tmp_path,
+            method="guide.fetch.cw",
+            payload={"url": "abc", "select": True},
+            session_id=session.session_id,
+        )
+    )
+
+    loaded = session_service.load_session(session.session_id)
+    artifacts = list((tmp_path / ".trail" / "artifacts").glob("*.json"))
+
+    assert payload == {
+        "request_id": "req-guide.fetch.cw",
+        "ok": True,
+        "data": {
+            "lineup_id": "abc",
+            "share_code": "##demo##",
+            "title": "Alpha攻略",
+            "version": "3.2",
+            "min_coins": 40,
+            "min_level": 7,
+            "mid_level": 8,
+            "on_field": {"front_a": 1},
+            "off_field": {"back_b": 2},
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    assert calls == [("fetch_guide", "abc"), ("fetch_payload", "abc")]
+    assert len(artifacts) == 1
+    assert loaded.scene_state["cw"]["guide"] == {
+        "artifact": artifacts[0].stem,
+        "lineup_id": "abc",
+        "share_code": "##demo##",
+        "source_url": None,
+        "title": "Alpha攻略",
+        "author": None,
+        "uploader": None,
+        "labels": [],
+        "support_hard": False,
+        "has_change_equip": False,
+        "has_expert": False,
+        "version": "3.2",
+        "on_field": {"front_a": 1},
+        "off_field": {"back_b": 2},
+        "role_stages": [],
+        "first_fight_augments": [],
+        "second_fight_augments": [],
+        "portals": [],
+        "order_basic": [],
+        "order_compose": [],
+        "remaining_purchases": {"front_a": 1, "back_b": 2},
+    }
+    assert loaded.scene_state["cw"]["constraints"] == {
+        "min_coins": 40,
+        "min_level": 7,
+        "mid_level": 8,
+        "priority": {},
+        "positioning": {},
+    }
+    assert session_service.request_status("req-guide.fetch.cw")["final_state"] == "completed"
+
+
+def test_command_service_guide_fetch_select_cleans_artifact_when_save_session_fails(tmp_path: Path, monkeypatch):
+    from trail.daemon.command_service import CommandService
+    from trail.daemon.session_service import SessionServiceRegistry
+
+    def fake_fetch_payload(url: str):
+        return {
+            "lineup_id": url,
+            "share_code": "##demo##",
+            "title": "Alpha攻略",
+            "version": "3.2",
+            "min_coins": 40,
+            "min_level": 7,
+            "mid_level": 8,
+            "on_field": {"front_a": 1},
+            "off_field": {"back_b": 2},
+        }
+
+    monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide_payload", fake_fetch_payload)
+    monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide", lambda url, *, fetcher: fetcher(url))
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    monkeypatch.setattr(session_service, "save_session", lambda model: (_ for _ in ()).throw(OSError("save failed")))
+    service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
+
+    payload = service.handle(
+        _guide_request(
+            workspace_root=tmp_path,
+            method="guide.fetch.cw",
+            payload={"url": "abc", "select": True},
+            session_id=session.session_id,
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == {"code": "OSError", "message": "save failed"}
+    assert session_service.request_status("req-guide.fetch.cw")["final_state"] == "failed_before_side_effect"
+    assert list((tmp_path / ".trail" / "artifacts").glob("*.json")) == []
 
 
 def test_command_service_handles_guide_list_cw_accepts_boolean_filters(tmp_path: Path, monkeypatch):

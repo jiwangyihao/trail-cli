@@ -19,7 +19,11 @@ CW_APP_HELP = (
     "portal 负责投资环境页的识别/选择/刷新/重开，其中 detect 只重识别当前三张卡，"
     "refresh 点击刷新后生成新的三张卡；其余分组处理局内阶段与资源。"
 )
-CW_GUIDE_HELP = "应用或回顾当前对局已选攻略。当前攻略摘要会输出 攻略ID、攻略标题、攻略码、版本、攻略标签 与 攻略快照ID。"
+CW_GUIDE_HELP = (
+    "查看或手动应用当前对局已选攻略。先用 guide.fetch.cw --select 记录当前攻略；"
+    "cw.portal.select 成功后会自动应用；cw.guide.apply 只作为手动兜底。"
+    "cw.guide.current 与 cw.guide.apply 查看的是当前已选攻略，不是普通 fetch 预览。"
+)
 CW_PORTAL_HELP = (
     "投资环境页上的识别/选择/刷新/重开动作。"
     "detect 重新识别并保存当前三张卡；refresh 点击刷新后生成新的三张卡。"
@@ -148,7 +152,10 @@ def cw_start(
     )
 
 
-@portal_app.command("select", help="选择当前投资环境页上的一张卡。")
+@portal_app.command(
+    "select",
+    help="选择当前投资环境页上的一张卡；必须先用 guide.fetch.cw --select 记录当前已选攻略，未记录则会在点击前失败；成功后会自动应用当前已选攻略。",
+)
 def cw_portal_select(
     session: str = typer.Option(..., "--session"),
     card_idx: int = typer.Option(..., "--card-idx"),
@@ -201,15 +208,12 @@ def cw_strategy_refresh(
     _print_cw("cw.strategy.refresh", session_id=session, payload={"card_idx": card_idx})
 
 
-@cw_guide_app.command("apply")
-def cw_guide_apply(
-    session: str = typer.Option(..., "--session"),
-    guide: str = typer.Option(..., "--lineup-id", "--guide"),
-) -> None:
-    _print_cw("cw.guide.apply", session_id=session, payload={"lineup_id": guide})
+@cw_guide_app.command("apply", help="当 `cw.portal.select` 的自动应用链路不可用时，手动兜底应用当前已选攻略。")
+def cw_guide_apply(session: str = typer.Option(..., "--session")) -> None:
+    _print_cw("cw.guide.apply", session_id=session)
 
 
-@cw_guide_app.command("current")
+@cw_guide_app.command("current", help="查看当前已选攻略摘要。")
 def cw_guide_current(session: str = typer.Option(..., "--session")) -> None:
     _print_cw("cw.guide.current", session_id=session)
 

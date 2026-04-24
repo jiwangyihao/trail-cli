@@ -431,7 +431,7 @@ def test_readme_and_active_skills_document_help_boundaries() -> None:
     assert "`trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断" in readme
     assert "`cw`：货币战争固定流程命令" in readme
     assert "`stage` 只用于已进入货币战争后的内部阶段快速检测/等待" in readme
-    assert "`trail cw guide` 只负责当前对局攻略的 apply/current" in readme
+    assert "`trail cw guide` 只负责当前对局已选攻略的 current/apply" in readme
     assert "`trail cw invest read|choose` 继续只表示局内 invest 事件" in readme
     assert "`trail cw portal select --session <id> --card-idx <n>`" in readme
     assert "`trail cw portal select|detect|refresh|restart` 只用于首页之后的投资环境选择页" in readme
@@ -461,17 +461,17 @@ def test_readme_and_active_skills_document_help_boundaries() -> None:
 
 def test_readme_documents_portal_detect_recovery_contract() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    cw_flow_section = _markdown_section(readme, "货币战争流程")
 
-    assert "`trail cw portal detect --session <id>`" in readme
-    assert "已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot" in readme
-    assert "不要重复执行 `trail cw start`" in readme
-    assert "detect = 重识别当前三张卡，不点击" in readme
-    assert "refresh = 点击刷新后生成新的三张卡" in readme
-    assert "detect 后可直接 `select`" in readme
-    assert "`restart` 依旧要求已有开局真值" in readme
-    assert "detect 不会补录 `mode/difficulty/battle_mode`" in readme
-    assert "trail cw portal.refresh" not in readme
-    assert "trail cw portal.restart" not in readme
+    _assert_text_contains_in_order(
+        cw_flow_section,
+        "- 如果已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot，使用 `trail cw portal detect --session <id>`；不要重复执行 `trail cw start`",
+        "- `detect = 重识别当前三张卡，不点击`",
+        "- detect 后可直接 `select`",
+        "- `restart` 依旧要求已有开局真值；detect 不会补录 `mode/difficulty/battle_mode`",
+    )
+    assert "detect 后需要先 `trail cw portal refresh --session <id>`" not in cw_flow_section
+    assert "detect 会补录 `mode/difficulty/battle_mode`" not in cw_flow_section
 
 
 def test_readme_cw_start_exact_rank_documents_public_difficulty_surface() -> None:
@@ -532,6 +532,45 @@ def test_readme_documents_strategy_page_boundary() -> None:
     assert "`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口" in readme
 
 
+def test_readme_documents_selected_guide_and_portal_auto_apply_flow() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    cw_flow_section = _markdown_section(readme, "货币战争流程")
+    guide_section = _markdown_section(readme, "Guide 字段语义")
+    skill_boundary_section = _markdown_section(readme, "Skill 边界")
+
+    _assert_text_contains_in_order(
+        cw_flow_section,
+        "- 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前已选攻略；这一步只写 session，不执行 UI 应用",
+        "- 回到开局链路后，`trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略",
+        "- `trail cw guide apply --session <id>` 只作为手动兜底；如需回顾当前已选攻略：`trail cw guide current --session <id>`",
+    )
+    _assert_text_contains_in_order(
+        guide_section,
+        "- `trail guide fetch cw` 默认是完整攻略预览，不会建立当前已选攻略；确认后用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前攻略",
+        "- `trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略；`trail cw guide apply` 只作为手动兜底",
+        "- `trail guide fetch cw` 负责看完整攻略；`trail cw guide current|apply` 负责回顾当前已选攻略；两者不要混用",
+    )
+    assert (
+        "- `trail cw guide current|apply` 只返回当前已选攻略摘要：首行看 `攻略ID/攻略标题/攻略码/版本`，正文按需补 `guide 攻略标签=...`"
+        in guide_section
+    )
+    assert (
+        "- 货币战争里，先用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前已选攻略；回到开局链路后由 `trail cw portal select` 成功时自动应用，`trail cw guide apply` 只作为手动兜底"
+        in skill_boundary_section
+    )
+    assert "当前已应用攻略摘要" not in readme
+    assert "在进入游戏并完成投资环境选择后，再执行：`trail cw guide apply --session <id> --lineup-id <lineup_id>`" not in readme
+
+
+def test_readme_locks_cw_portal_select_success_screenshot_order() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert (
+        "```text\nok cw.portal.select idx=2 投资环境=\"购物区\"\nshot path=.trail/shots/req-portal-select.png\ninfo read_image_first=1\n```"
+        in readme
+    )
+
+
 def test_readme_routes_stage_invest_to_strategy() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
@@ -548,11 +587,11 @@ def test_strategy_protocol_is_frozen_in_readme_and_agents() -> None:
 
     assert "`cw.strategy.detect|refresh` 的 `info 已加载攻略=0|1` 固定在所有 `opt` 行之后" in readme
     assert (
-        "```text\nok cw.strategy.detect cards=2\nshot path=.trail/shots/req-strategy-detect.png\nopt idx=1 投资策略=回蓝 攻略推荐=优选 刷新次数=0\nopt idx=1 说明=启动回转\nopt idx=2 投资策略=暴击 攻略推荐=否 刷新次数=2\nopt idx=2 说明=爆发增伤\ninfo 已加载攻略=1\n```"
+        "```text\nok cw.strategy.detect cards=2\nshot path=.trail/shots/req-strategy-detect.png\ninfo read_image_first=1\nopt idx=1 投资策略=回蓝 攻略推荐=优选 刷新次数=0\nopt idx=1 说明=启动回转\nopt idx=2 投资策略=暴击 攻略推荐=否 刷新次数=2\nopt idx=2 说明=爆发增伤\ninfo 已加载攻略=1\n```"
         in readme
     )
     assert (
-        "```text\nok cw.strategy.select idx=2 投资策略=回蓝\nshot path=.trail/shots/req-strategy-select.png\n```"
+        "```text\nok cw.strategy.select idx=2 投资策略=回蓝\nshot path=.trail/shots/req-strategy-select.png\ninfo read_image_first=1\n```"
         in readme
     )
     assert (
@@ -569,7 +608,7 @@ def test_readme_includes_cw_strategy_refresh_example_and_flow() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
     assert (
-        "```text\nok cw.strategy.refresh cards=2\nshot path=.trail/shots/req-strategy-refresh.png\nopt idx=1 投资策略=连携 攻略推荐=否 刷新次数=1\nopt idx=1 说明=补充连段\nopt idx=2 投资策略=回蓝 攻略推荐=优选 刷新次数=0\nopt idx=2 说明=启动回转\ninfo 已加载攻略=1\n```"
+        "```text\nok cw.strategy.refresh cards=2\nshot path=.trail/shots/req-strategy-refresh.png\ninfo read_image_first=1\nopt idx=1 投资策略=连携 攻略推荐=否 刷新次数=1\nopt idx=1 说明=补充连段\nopt idx=2 投资策略=回蓝 攻略推荐=优选 刷新次数=0\nopt idx=2 说明=启动回转\ninfo 已加载攻略=1\n```"
         in readme
     )
     assert (

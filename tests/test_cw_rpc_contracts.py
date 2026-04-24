@@ -278,6 +278,34 @@ def test_cw_portal_select_renders_selected_card_summary(cli_runner, fake_daemon_
     _assert_single_call(client, method="cw.portal.select", payload={"card_idx": 2}, tmp_path=tmp_path)
 
 
+def test_cw_portal_select_renders_recoverable_unknown_result_lines(cli_runner, fake_daemon_client, tmp_path):
+    fake_daemon_client(
+        {
+            "cw.portal.select": {
+                "request_id": "req-cw-portal-select-unknown",
+                "ok": False,
+                "data": {"tainted": True},
+                "screenshot": None,
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": {"last_known_stage": "side_effect_applied"},
+                "error": {"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+            }
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "portal", "select", "--session", SESSION_ID, "--card-idx", "2"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.portal.select code=DAEMON_UNAVAILABLE tainted=1",
+        "request id=req-cw-portal-select-unknown",
+        'why msg="mutation result unknown"',
+        "recover action=daemon.request_status request=req-cw-portal-select-unknown",
+    ]
+
+
 def test_cw_portal_detect_renders_portal_cards_family(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
@@ -567,12 +595,28 @@ def test_cw_guide_current_renders_guide_summary(cli_runner, fake_daemon_client, 
     _assert_single_call(client, method="cw.guide.current", payload={}, tmp_path=tmp_path)
 
 
-@pytest.mark.parametrize("guide_flag", ["--lineup-id", "--guide"])
-def test_cw_guide_apply_renders_guide_summary(cli_runner, fake_daemon_client, tmp_path, guide_flag: str):
+def test_cw_guide_help_describes_selected_guide_flow(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "guide", "--help"])
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0
+    assert "当前已选攻略" in normalized
+    assert "guide.fetch.cw --select" in normalized
+    assert "cw.portal.select" in normalized
+    assert "cw.guide.apply 只作为手动兜底" in normalized
+    assert normalized.index("guide.fetch.cw --select") < normalized.index("cw.portal.select")
+    assert normalized.index("cw.portal.select") < normalized.index("cw.guide.apply 只作为手动兜底")
+    assert "当前已应用攻略" not in normalized
+    assert "已经 apply 过后" not in normalized
+    assert "--lineup-id" not in normalized
+    assert "--guide" not in normalized
+
+
+def test_cw_guide_apply_renders_guide_summary(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.guide.apply": build_success_response(
-                request_id=f"req-cw-guide-apply-{guide_flag.lstrip('-')}",
+                request_id="req-cw-guide-apply",
                 data={
                     "lineup_id": "abc",
                     "title": "7群攻2银河学者",
@@ -587,7 +631,7 @@ def test_cw_guide_apply_renders_guide_summary(cli_runner, fake_daemon_client, tm
         }
     )
 
-    result = cli_runner.invoke(app, ["cw", "guide", "apply", "--session", SESSION_ID, guide_flag, "abc"])
+    result = cli_runner.invoke(app, ["cw", "guide", "apply", "--session", SESSION_ID])
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == _expected_lines(
@@ -595,7 +639,16 @@ def test_cw_guide_apply_renders_guide_summary(cli_runner, fake_daemon_client, tm
         screenshot=".trail/shots/req-cw-guide-apply.png",
         body=["guide 攻略标签=#7级搜牌|#适用超频博弈", "info 攻略快照ID=art-1"],
     )
-    _assert_single_call(client, method="cw.guide.apply", payload={"lineup_id": "abc"}, tmp_path=tmp_path)
+    _assert_single_call(client, method="cw.guide.apply", payload={}, tmp_path=tmp_path)
+
+
+@pytest.mark.parametrize("legacy_flag", ["--lineup-id", "--guide"])
+def test_cw_guide_apply_rejects_legacy_cli_flags(cli_runner, legacy_flag: str):
+    result = cli_runner.invoke(app, ["cw", "guide", "apply", "--session", SESSION_ID, legacy_flag, "abc"])
+
+    assert result.exit_code == 2
+    assert "No such option" in result.output
+    assert legacy_flag in result.output
 
 
 def test_cw_slots_place_renders_slot_counts_and_shot(cli_runner, fake_daemon_client, tmp_path):

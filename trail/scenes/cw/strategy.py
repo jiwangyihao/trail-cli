@@ -8,6 +8,7 @@ from typing import Any
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.entry import _detect_current_enter_page
+from trail.scenes.cw.guide import SHARE_CODE_PATTERN
 from trail.scenes.cw.models import ensure_cw_state
 
 STRATEGY_SCREEN_WIDTH = 1920
@@ -657,7 +658,7 @@ def _match_strategy_catalog(
 
 
 def _guide_match_for_strategy(title: str, guide_state: object | None) -> tuple[str, int]:
-    if not isinstance(guide_state, Mapping):
+    if not _has_valid_selected_guide(guide_state):
         return "否", 0
 
     normalized_title = _normalize_strategy_text(title)
@@ -668,6 +669,13 @@ def _guide_match_for_strategy(title: str, guide_state: object | None) -> tuple[s
     if normalized_title and normalized_title in secondary:
         return "次选", 1
     return "否", 1
+
+
+def _has_valid_selected_guide(guide_state: object | None) -> bool:
+    if not isinstance(guide_state, Mapping):
+        return False
+    share_code = guide_state.get("share_code")
+    return isinstance(share_code, str) and SHARE_CODE_PATTERN.fullmatch(share_code) is not None
 
 
 def _normalize_guide_strategy_names(values: object) -> set[str]:

@@ -1703,7 +1703,7 @@ def test_cw_help_exposes_scene_command_groups(cli_runner):
     assert "start" in _extract_help_command_block(result.output, "start")
 
     expected_blocks = {
-        "guide": ("应用", "回顾", "当前对局", "已选攻略"),
+        "guide": ("查看", "应用", "当前对局", "已选攻略", "guide.fetch.cw --select", "自动应用"),
         "portal": ("投资环境页", "识别", "选择", "刷新", "重开"),
         "stage": ("检测", "等待", "阶段"),
         "slots": ("编队",),
@@ -1733,7 +1733,7 @@ def test_cw_help_exposes_scene_command_groups(cli_runner):
         ("portal", ("投资环境页", "detect", "识别", "选择", "refresh", "刷新", "重开")),
         ("invest", ("局内", "invest", "事件")),
         ("stage", ("货币战争内部", "检测", "等待", "登录页", "大世界", "非 CW")),
-        ("guide", ("应用", "回顾", "当前对局", "已选攻略")),
+        ("guide", ("查看", "应用", "当前对局", "已选攻略", "guide.fetch.cw --select", "自动应用")),
         ("shop", ("商店", "购买", "刷新", "关闭")),
         ("event", ("通用", "特殊事件")),
     ],
@@ -1790,13 +1790,69 @@ def test_cw_portal_help_mentions_invest_portal_terms(cli_runner):
     assert "new=" not in normalized
 
 
-def test_cw_guide_help_mentions_snapshot_id(cli_runner):
+def test_cw_guide_help_describes_selected_guide_boundary(cli_runner):
     result = cli_runner.invoke(app, ["cw", "guide", "--help"])
     normalized = _normalize_help(result.output)
 
     assert result.exit_code == 0
-    assert "攻略快照ID" in normalized
+    assert "当前已选攻略" in normalized
+    assert "guide.fetch.cw --select" in normalized
+    assert "cw.portal.select" in normalized
+    assert "cw.guide.apply 只作为手动兜底" in normalized
+    assert normalized.index("guide.fetch.cw --select") < normalized.index("cw.portal.select")
+    assert normalized.index("cw.portal.select") < normalized.index("cw.guide.apply 只作为手动兜底")
+    assert "攻略快照ID" not in normalized
     assert "artifact=" not in normalized
+    assert "当前已应用攻略" not in normalized
+    assert "已经 apply 过后" not in normalized
+    assert "--lineup-id" not in normalized
+
+
+def test_guide_fetch_cw_help_distinguishes_preview_and_select_flow(cli_runner):
+    result = cli_runner.invoke(app, ["guide", "fetch", "cw", "--help"])
+    normalized = _normalize_help(result.output)
+    summary_block = _normalize_help(result.output.split("Options", 1)[0])
+    select_block = _extract_help_option_block(result.output, "--select")
+    session_block = _extract_help_option_block(result.output, "--session")
+
+    assert result.exit_code == 0
+    assert "拉取攻略内容并直接返回给 Agent" in summary_block
+    assert "默认只做预览/查看" in summary_block
+    assert "支持 lineup_url 或 lineup_id" in summary_block
+    assert "写入当前 session" not in summary_block
+    assert "--session" not in summary_block
+    assert "--select" in result.output
+    assert "把攻略写入当前 session" in select_block
+    assert "建立当前已选攻略" in select_block
+    assert "不执行 UI 应用" in select_block
+    assert "--session" in result.output
+    assert "只在 --select 时必填" in session_block
+    assert "--select" in session_block
+    assert "--lineup-id" not in result.output
+
+
+def test_cw_portal_select_help_mentions_selected_guide_auto_apply(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "portal", "select", "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    assert "--session" in result.output
+    assert "--card-idx" in result.output
+    assert "guide.fetch.cw --select" in normalized
+    assert "未记录则会在点击前失败" in normalized
+    assert "成功后会自动应用当前已选攻略" in normalized
+    assert "手动兜底" not in normalized
+
+
+def test_cw_guide_apply_help_marks_manual_fallback_only(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "guide", "apply", "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    assert "--session" in result.output
+    assert "手动兜底" in normalized
+    assert "当前已选攻略" in normalized
+    assert "常规第一步" not in normalized
 
 
 def test_cw_slots_read_help_describes_slot_as_targeted_confirmation(cli_runner):

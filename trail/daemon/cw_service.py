@@ -36,12 +36,10 @@ from trail.scenes.cw.events import (
     start_cw_battle,
 )
 from trail.scenes.cw.guide import (
-    apply_cw_guide,
+    SHARE_CODE_PATTERN,
     apply_cw_guide_via_ui,
-    fetch_cw_guide,
     fetch_cw_guide_list,
-    fetch_cw_guide_payload,
-    recover_cw_guide_from_latest_artifact,
+    invalidate_cw_guide_runtime_state,
 )
 from trail.scenes.cw.guide import fetch_cw_guide_config
 from trail.scenes.cw.models import ensure_cw_state
@@ -359,14 +357,24 @@ class CwService:
                 workspace_root=workspace_root,
             )
 
+        def run_portal_select() -> dict:
+            guide = _require_selected_guide(session)
+            return _select_portal_and_apply_selected_guide(
+                session,
+                runtime=runtime(),
+                card_idx=payload["card_idx"],
+                guide=guide,
+            )
+
+        def run_guide_apply() -> dict:
+            _validate_cw_guide_apply_payload(payload)
+            guide = _require_selected_guide(session)
+            return _apply_selected_guide_via_ui(session, runtime=runtime(), guide=guide)
+
         handlers = {
             "cw.enter": lambda: validated_enter_payload() and enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
             "cw.start": run_start,
-            "cw.portal.select": lambda: select_cw_portal(
-                session,
-                card_idx=payload["card_idx"],
-                runtime=runtime(),
-            ),
+            "cw.portal.select": run_portal_select,
             "cw.portal.detect": lambda: _attach_guides_to_portal_snapshot(
                 session,
                 detect_cw_portal(
@@ -411,12 +419,7 @@ class CwService:
                 detector=stage_detector_factory(runtime()),
                 timeout=payload.get("timeout", DEFAULT_CW_STAGE_WAIT_TIMEOUT),
             ).scene_state["cw"]["stage"],
-            "cw.guide.apply": lambda: _apply_guide(
-                session,
-                runtime=runtime(),
-                artifact_store=artifact_store,
-                lineup_id=payload["lineup_id"],
-            ),
+            "cw.guide.apply": run_guide_apply,
             "cw.guide.current": lambda: _current_guide(session, artifact_store=artifact_store),
             "cw.slots.read": lambda: read_cw_slots(
                 session,
@@ -536,26 +539,60 @@ def _handle_and_save_session(handler, session_service, session):
 
 
 def _current_guide(session, *, artifact_store: ArtifactStore):
-    guide_state = session.scene_state.get("cw", {}).get("guide")
-    if isinstance(guide_state, dict):
-        return guide_state
-    return recover_cw_guide_from_latest_artifact(session, artifact_store=artifact_store)
+    del artifact_store
+    return _require_selected_guide(session)
+
+
+def _require_selected_guide(session) -> dict:
+    cw_state = session.scene_state.get("cw")
+    guide_state = cw_state.get("guide") if isinstance(cw_state, dict) else None
+    if not isinstance(guide_state, dict):
+        raise TrailError(
+            "CW_GUIDE_SELECTION_REQUIRED",
+            "cw current guide is empty; run guide.fetch.cw --select first",
+        )
+    share_code = guide_state.get("share_code")
+    if not isinstance(share_code, str) or SHARE_CODE_PATTERN.fullmatch(share_code) is None:
+        raise TrailError("CW_GUIDE_STATE_INVALID", "current cw guide share_code invalid")
+    return guide_state
 
 
 def _shop_status(session, *, artifact_store: ArtifactStore) -> dict:
-    _current_guide(session, artifact_store=artifact_store)
-    return shop_cw_status(session)
+    del artifact_store
+    cw_state = session.scene_state.get("cw")
+    if not isinstance(cw_state, dict):
+        return {"stale": True}
+    payload = shop_cw_status(session)
+    guide_state = cw_state.get("guide")
+    share_code = guide_state.get("share_code") if isinstance(guide_state, dict) else None
+    if not isinstance(share_code, str) or SHARE_CODE_PATTERN.fullmatch(share_code) is None:
+        payload.pop("guide_summary", None)
+    return payload
 
 
-def _apply_guide(session, *, runtime, artifact_store: ArtifactStore, lineup_id: str):
-    guide_data = fetch_cw_guide(lineup_id, fetcher=fetch_cw_guide_payload)
-    apply_cw_guide_via_ui(runtime, share_code=guide_data["share_code"])
+def _validate_cw_guide_apply_payload(payload: dict) -> None:
+    if any(key in payload for key in ("lineup_id", "guide")):
+        raise TrailError(
+            "CW_GUIDE_APPLY_ARGS_NOT_SUPPORTED",
+            "cw guide.apply no longer accepts lineup_id/guide; use guide.fetch.cw --select",
+        )
+
+
+def _apply_selected_guide_via_ui(session, *, runtime, guide: dict | None = None) -> dict:
+    selected_guide = guide if guide is not None else _require_selected_guide(session)
+    apply_cw_guide_via_ui(runtime, share_code=selected_guide["share_code"])
+    invalidate_cw_guide_runtime_state(session)
+    return selected_guide
+
+
+def _select_portal_and_apply_selected_guide(session, *, runtime, card_idx: int, guide: dict | None = None) -> dict:
+    selected_guide = guide if guide is not None else _require_selected_guide(session)
+    selected = select_cw_portal(session, card_idx=card_idx, runtime=runtime)
     try:
-        artifact = artifact_store.create(scene="cw", kind="guide", payload=guide_data)
-        refreshed = apply_cw_guide(session, guide_data={**guide_data, "artifact_id": artifact.artifact_id})
+        _apply_selected_guide_via_ui(session, runtime=runtime, guide=selected_guide)
     except Exception as error:
-        raise CwSideEffectAppliedError("cw.guide.apply side effect already ran") from error
-    return refreshed.scene_state["cw"]["guide"]
+        raise CwSideEffectAppliedError("cw.portal.select guide apply side effect already ran") from error
+    return selected
 
 
 def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None) -> dict:

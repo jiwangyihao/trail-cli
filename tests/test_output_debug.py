@@ -265,6 +265,15 @@ def test_project_agents_declares_renderer_contracts() -> None:
     assert "guide.list.cw 的默认文本改用 攻略ID/攻略标题/版本/主C/攻略标签/最终阵容" in agents
     assert "cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`" in agents
     assert "cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id" in agents
+    assert "current/apply` 只看当前已选攻略摘要" in agents
+    assert "guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。" in agents
+    assert "不扩张 success / YAML shape" in agents
+    assert "guide.fetch.cw --select` 只负责把当前攻略写入 session" in agents
+    assert "由 `cw.portal.select` 成功时自动兑现当前已选攻略" in agents
+    assert "current/apply` 只看当前已应用攻略摘要" not in agents
+    assert "在进入游戏并完成投资环境选择后，再执行" not in agents
+    assert "cw guide apply --session <id> --lineup-id <lineup_id>" not in agents
+    assert "--lineup-id" not in agents
     assert "guide.config.cw` 使用 `赛季/子赛季/大版本/搜牌档位/羁绊/角色/角色标签/投资环境`" in agents
     assert "README.md` 示例与说明" in agents
     assert "renderer 单测" in agents

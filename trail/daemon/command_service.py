@@ -310,10 +310,9 @@ class CommandService:
             raise TrailError("DAEMON_UNAVAILABLE", "cw service not configured")
         return self.cw_service
 
-    def _run_cw(self, request, *, service):
-        payload = deepcopy(request.payload)
-        if request.session_id is not None:
-            payload.setdefault("session_id", request.session_id)
+    def _run_cw(self, request, *, service, payload: dict | None = None):
+        if payload is None:
+            payload, _ = self._canonicalize_cw_payload(request)
         return self._cw_service().handle(
             method=request.method,
             payload=payload,
@@ -321,10 +320,9 @@ class CommandService:
             session_service=service,
         )
 
-    def _run_cw_with_capture(self, request, *, service):
-        payload = deepcopy(request.payload)
-        if request.session_id is not None:
-            payload.setdefault("session_id", request.session_id)
+    def _run_cw_with_capture(self, request, *, service, payload: dict | None = None):
+        if payload is None:
+            payload, _ = self._canonicalize_cw_payload(request)
         response = self._response_with_request_id(
             request.request_id,
             self._cw_service().handle_with_capture(
@@ -338,10 +336,9 @@ class CommandService:
         )
         return _normalize_capture_payload(response, workspace_root=Path(request.workspace_root))
 
-    def _run_cw_mutation(self, request, *, service):
-        payload = deepcopy(request.payload)
-        if request.session_id is not None:
-            payload.setdefault("session_id", request.session_id)
+    def _run_cw_mutation(self, request, *, service, payload: dict | None = None):
+        if payload is None:
+            payload, _ = self._canonicalize_cw_payload(request)
         try:
             response = self._cw_service().handle_mutation(
                 method=request.method,
@@ -498,6 +495,18 @@ class CommandService:
             )
 
         if request.method.startswith("guide.fetch."):
+            self._guide_scene(request.method, "guide.fetch.")
+            session_id = self._guide_fetch_select_session_id(request)
+            if session_id is not None:
+                return self._run_mutation(
+                    request,
+                    request.method,
+                    lambda session_service: self._handle_guide_fetch_select(request, session_service),
+                    handler_persisted_state=True,
+                    response_builder=lambda payload: success(payload),
+                    enforce_cw_tainted=True,
+                    tainted_session_id=session_id,
+                )
             return self._handle_guide_fetch(request)
 
         if request.method.startswith("guide.config."):
@@ -508,20 +517,20 @@ class CommandService:
 
         if request.method.startswith("cw."):
             service = self._session_service(request)
+            payload, session_id = self._canonicalize_cw_payload(request)
             if request.method in CW_CAPTURE_METHODS or request.method in CW_CAPTURED_READ_METHODS:
-                return self._run_cw_with_capture(request, service=service)
+                return self._run_cw_with_capture(request, service=service, payload=payload)
             if request.method in CW_MUTATING_METHODS:
-                session_id = request.session_id or request.payload.get("session_id")
                 return self._run_mutation(
                     request,
                     request.method,
-                    lambda session_service: self._run_cw_mutation(request, service=session_service),
+                    lambda session_service: self._run_cw_mutation(request, service=session_service, payload=payload),
                     handler_persisted_state=True,
                     response_builder=lambda payload: payload,
-                    enforce_cw_tainted=bool(isinstance(session_id, str) and session_id),
-                    tainted_session_id=session_id if isinstance(session_id, str) and session_id else None,
+                    enforce_cw_tainted=True,
+                    tainted_session_id=session_id,
                 )
-            return success(self._run_cw(request, service=service), request_id=request.request_id)
+            return success(self._run_cw(request, service=service, payload=payload), request_id=request.request_id)
 
         raise TrailError("DAEMON_METHOD_NOT_SUPPORTED", f"unsupported method: {request.method}")
 
@@ -531,12 +540,52 @@ class CommandService:
             raise TrailError("SCENE_NOT_SUPPORTED", f"暂不支持场景 {scene}")
         return scene
 
-    def _handle_guide_fetch(self, request):
+    def _canonicalize_cw_payload(self, request) -> tuple[dict[str, Any], str]:
+        payload = deepcopy(request.payload)
+        session_id = request.session_id
+        if not isinstance(session_id, str) or not session_id:
+            raise TrailError("SESSION_REQUIRED", f"cw method requires top-level session_id: {request.method}")
+
+        if "session_id" in payload:
+            payload_session_id = payload.get("session_id")
+            if not isinstance(payload_session_id, str) or not payload_session_id or payload_session_id != session_id:
+                raise TrailError(
+                    "SESSION_CONFLICT",
+                    f"cw method payload session_id conflicts with top-level session_id: {request.method}",
+                )
+
+        payload["session_id"] = session_id
+        return payload, session_id
+
+    def _guide_fetch_select_session_id(self, request) -> str | None:
+        select_value = request.payload.get("select")
+        if select_value is None:
+            select = False
+        elif isinstance(select_value, bool):
+            select = select_value
+        else:
+            raise TrailError("GUIDE_INPUT_INVALID", "guide.fetch.cw select must be a boolean")
+
+        raw_session_id = request.session_id
+        payload_has_session_id = "session_id" in request.payload
+        if select:
+            if payload_has_session_id:
+                raise TrailError("GUIDE_INPUT_INVALID", "guide.fetch.cw select only accepts top-level session_id")
+            if raw_session_id is None:
+                raise TrailError("GUIDE_INPUT_INVALID", "guide.fetch.cw select requires top-level session_id")
+            if not isinstance(raw_session_id, str) or raw_session_id == "":
+                raise TrailError("GUIDE_INPUT_INVALID", "guide.fetch.cw top-level session_id must be a non-empty string")
+            return raw_session_id
+        if raw_session_id is not None or payload_has_session_id:
+            raise TrailError("GUIDE_INPUT_INVALID", "guide.fetch.cw session_id requires select")
+        return None
+
+    def _fetch_cw_guide_with_artifact(self, request):
         self._guide_scene(request.method, "guide.fetch.")
         from trail.scenes.cw import guide as cw_guide
 
         guide_payload = to_jsonable(cw_guide.fetch_cw_guide(request.payload["url"], fetcher=cw_guide.fetch_cw_guide_payload))
-        ArtifactStore(Path(request.workspace_root) / ".trail" / "artifacts").create(
+        artifact = ArtifactStore(Path(request.workspace_root) / ".trail" / "artifacts").create(
             scene="cw",
             kind="guide",
             payload={
@@ -544,10 +593,38 @@ class CommandService:
                 "recovery_origin": "guide.fetch.cw",
             },
         )
+        return guide_payload, artifact
+
+    def _handle_guide_fetch(self, request):
+        guide_payload, _artifact = self._fetch_cw_guide_with_artifact(request)
         return success(
             guide_payload,
             request_id=request.request_id,
         )
+
+    def _handle_guide_fetch_select(self, request, service):
+        from trail.scenes.cw.guide import select_cw_guide
+
+        session = service.load_session(request.session_id)
+        _artifact = None
+        try:
+            _guide_payload, _artifact = self._fetch_cw_guide_with_artifact(request)
+            select_cw_guide(
+                session,
+                guide_data={
+                    **_guide_payload,
+                    "artifact_id": _artifact.artifact_id,
+                },
+            )
+            service.save_session(session)
+            return _guide_payload
+        except Exception:
+            if _artifact is not None:
+                try:
+                    _artifact.path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
 
     def _handle_guide_config(self, request):
         self._guide_scene(request.method, "guide.config.")

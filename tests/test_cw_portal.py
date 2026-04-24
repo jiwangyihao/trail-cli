@@ -596,6 +596,140 @@ def test_select_cw_portal_marks_snapshot_stale_after_confirm(tmp_path: Path, mon
     }
 
 
+def test_cw_portal_select_requires_selected_guide_before_click(tmp_path: Path):
+    runtime = PortalRuntime()
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    called: list[int] = []
+    select_patch = pytest.MonkeyPatch()
+    select_patch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: called.append(card_idx) or (_ for _ in ()).throw(AssertionError("select should not run without guide")),
+    )
+
+    try:
+        envelope = _run_cw_portal_mutation(
+            command_service=command_service,
+            session=session,
+            workspace_root=tmp_path,
+            request_id="req-cw-portal-select-no-guide",
+            method="cw.portal.select",
+            payload={"card_idx": 2},
+        )
+        status = service.request_status("req-cw-portal-select-no-guide")
+
+        assert envelope["ok"] is False
+        assert envelope["error"]["code"] == "CW_GUIDE_SELECTION_REQUIRED"
+        assert "guide.fetch.cw --select" in envelope["error"]["message"]
+        assert called == []
+        assert runtime.clicks == []
+        assert status["final_state"] == "failed_before_side_effect"
+    finally:
+        select_patch.undo()
+
+
+@pytest.mark.parametrize(
+    "guide_state",
+    [
+        {"artifact": "selected-artifact", "lineup_id": "selected-lineup"},
+        {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": ""},
+        {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "demo"},
+        {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "###"},
+    ],
+    ids=["missing-share-code", "empty-share-code", "plain-text-share-code", "broken-marker-share-code"],
+)
+def test_cw_portal_select_rejects_invalid_selected_guide_before_click(
+    tmp_path: Path,
+    guide_state: dict[str, object],
+):
+    runtime = PortalRuntime()
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": dict(guide_state),
+        "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    called: list[int] = []
+    select_patch = pytest.MonkeyPatch()
+    select_patch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: called.append(card_idx) or (_ for _ in ()).throw(AssertionError("select should not run with invalid guide")),
+    )
+
+    try:
+        envelope = _run_cw_portal_mutation(
+            command_service=command_service,
+            session=session,
+            workspace_root=tmp_path,
+            request_id=f"req-cw-portal-select-invalid-guide-{guide_state.get('share_code', 'missing')}",
+            method="cw.portal.select",
+            payload={"card_idx": 2},
+        )
+        status = service.request_status(f"req-cw-portal-select-invalid-guide-{guide_state.get('share_code', 'missing')}")
+
+        assert envelope["ok"] is False
+        assert envelope["error"]["code"] == "CW_GUIDE_STATE_INVALID"
+        assert called == []
+        assert runtime.clicks == []
+        assert status["final_state"] == "failed_before_side_effect"
+    finally:
+        select_patch.undo()
+
+
+def test_cw_portal_select_auto_applies_selected_guide_and_invalidates_runtime_state(tmp_path: Path, monkeypatch):
+    runtime = PortalRuntime()
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+        "slots": {"stale": False, "hand": ["银狼"]},
+        "sell_plan": {"candidates": [0]},
+        "shop": {"opened": True, "stale": False, "items": [{"name": "希儿"}]},
+        "stage": {"value": "shop", "stale": False},
+    }
+    service.save_session(session)
+    applied_share_codes: list[str] = []
+    selected_card_idxs: list[int] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: selected_card_idxs.append(card_idx)
+        or session.scene_state["cw"]["portal"].__setitem__("stale", True)
+        or dict(_portal_cards()[card_idx - 1]),
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.apply_cw_guide_via_ui",
+        lambda runtime, share_code: applied_share_codes.append(share_code),
+    )
+
+    envelope = _run_cw_portal_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-portal-select-auto-apply",
+        method="cw.portal.select",
+        payload={"card_idx": 2},
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"] == _portal_cards()[1]
+    assert selected_card_idxs == [2]
+    assert applied_share_codes == ["##demo##"]
+    assert runtime.clicks == []
+    assert persisted.scene_state["cw"]["portal"]["stale"] is True
+    assert persisted.scene_state["cw"]["guide"]["lineup_id"] == "selected-lineup"
+    assert persisted.scene_state["cw"]["sell_plan"] == {}
+    assert persisted.scene_state["cw"]["slots"]["stale"] is True
+    assert persisted.scene_state["cw"]["shop"]["stale"] is True
+    assert persisted.scene_state["cw"]["stage"]["stale"] is True
+
+
 def test_refresh_cw_portal_rejects_non_invest_page(tmp_path: Path, monkeypatch):
     import trail.scenes.cw.portal as portal_module
 
