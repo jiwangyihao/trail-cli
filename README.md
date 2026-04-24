@@ -71,9 +71,10 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
   - `trail cw portal detect --session <id>`
   - `trail cw portal refresh --session <id>`
   - `trail cw portal restart --session <id>`
-- 在进入游戏并完成投资环境选择后，再执行：`trail cw guide apply --session <id> --lineup-id <lineup_id>`
-- 如需回顾当前已应用攻略：`trail cw guide current --session <id>`
-- `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
+- 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前已选攻略；这一步只写 session，不执行 UI 应用
+- 回到开局链路后，`trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略
+- `trail cw guide apply --session <id>` 只作为手动兜底；如需回顾当前已选攻略：`trail cw guide current --session <id>`
+- `trail cw guide` 只负责当前对局已选攻略的 current/apply；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
 - `stage=invest` 时，不要默认走 `trail cw invest.*`
 - 如果 screenshot 或页面标题显示“请选择投资策略”，局内投资策略页应优先使用 `trail cw strategy detect|refresh|select`
 - 开局投资环境页仍是 `trail cw portal.*`；普通局内 invest 事件的兼容/粗粒度入口才是 `trail cw invest.*`
@@ -230,6 +231,7 @@ info read_image_first=1
 ```text
 ok cw.strategy.detect cards=2
 shot path=.trail/shots/req-strategy-detect.png
+info read_image_first=1
 opt idx=1 投资策略=回蓝 攻略推荐=优选 刷新次数=0
 opt idx=1 说明=启动回转
 opt idx=2 投资策略=暴击 攻略推荐=否 刷新次数=2
@@ -240,6 +242,7 @@ info 已加载攻略=1
 ```text
 ok cw.strategy.refresh cards=2
 shot path=.trail/shots/req-strategy-refresh.png
+info read_image_first=1
 opt idx=1 投资策略=连携 攻略推荐=否 刷新次数=1
 opt idx=1 说明=补充连段
 opt idx=2 投资策略=回蓝 攻略推荐=优选 刷新次数=0
@@ -250,6 +253,7 @@ info 已加载攻略=1
 ```text
 ok cw.strategy.select idx=2 投资策略=回蓝
 shot path=.trail/shots/req-strategy-select.png
+info read_image_first=1
 ```
 
 ```text
@@ -265,7 +269,7 @@ info 搜牌档位=3 羁绊=42 角色=80 角色标签=11 投资环境=6
 
 - `guide.fetch.cw` 看完整攻略
 - `guide.list.cw` 看筛选摘要
-- `cw.guide.current|apply` 看当前已应用攻略摘要
+- `cw.guide.current|apply` 看当前已选攻略摘要
 - `guide.config.cw` 看筛选枚举和全局配置规模
 - `guide.config.cw --format yaml` 会先输出中文摘要，再附原始英文 key 的结构化 YAML data
 
@@ -300,9 +304,11 @@ recover action=daemon.request_status request=req-42
 
 - `trail guide fetch cw` 默认文本会直接返回攻略标题、攻略标签、投资环境、投资策略、装备优先度与阶段阵容等完整关键信息，方便在 apply 前确认是否就是目标攻略
 - `trail guide list cw` 默认文本只保留选攻略最关键的摘要：`攻略ID/攻略标题/版本/主C/攻略标签/点赞/收藏`，并在第二行补 `最终阵容=`
-- `trail cw guide current|apply` 只返回当前已应用攻略摘要：首行看 `攻略ID/攻略标题/攻略码/版本`，正文按需补 `guide 攻略标签=...`
+- `trail cw guide current|apply` 只返回当前已选攻略摘要：首行看 `攻略ID/攻略标题/攻略码/版本`，正文按需补 `guide 攻略标签=...`
 - `攻略快照ID`：只出现在 `trail cw guide current|apply` 的 `info 攻略快照ID=...`，它是 artifact id / 恢复追踪 id，不是 `shot path=...` 截图路径
-- `trail guide fetch cw` 负责看完整攻略；`trail cw guide current|apply` 负责回顾当前已应用攻略；两者不要混用
+- `trail guide fetch cw` 默认是完整攻略预览，不会建立当前已选攻略；确认后用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前攻略
+- `trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略；`trail cw guide apply` 只作为手动兜底
+- `trail guide fetch cw` 负责看完整攻略；`trail cw guide current|apply` 负责回顾当前已选攻略；两者不要混用
 - `攻略标签`：除了原始标签外，还会把布尔类攻略特征折叠成 `#标签`，例如 `#适用超频博弈`、`#星徽攻略`、`#专家顾问`；值为 false 时省略
 - `羁绊列表`：按当前攻略各阶段阵容里出现过的羁绊去重汇总，并尽量保留层数，形如 `6贝洛伯格`，便于 Agent 直接对照攻略核心体系
 - `最低金币`：这套攻略默认要求保留的最低金币阈值；后续 shop 决策应把它当成约束，而不是可随意花完的预算
@@ -319,12 +325,12 @@ recover action=daemon.request_status request=req-42
 - CLI 负责显式动作命令、固定 UI 流程命令与确定性防御动作
 - skill 负责整局编排、阶段切换、策略判断与失败恢复
 - 本项目不追求“内建识别穷尽所有状态”，而是优先把真实动作链和最小可靠检测做出来，把复杂画面判断留给 agent 的多模态能力
-- 货币战争里，攻略应用应放在“进入游戏并完成投资环境选择之后”执行，不建议在更早的入口阶段导入攻略
+- 货币战争里，先用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前已选攻略；回到开局链路后由 `trail cw portal select` 成功时自动应用，`trail cw guide apply` 只作为手动兜底
 - `trail-hsr` 是对外总入口，负责 `trail start`、`trail ocr read`、`trail input ...` 的 simple-first 起手、总入口接管与 scene 路由判断
 - `trail-<scene>-entry` 是对外场景入口；只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口
 - `trail cw enter` 只负责把页面带到货币战争首页；真正进入投资环境页要用 `trail cw start`
 - `trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断
-- `trail cw guide` 只负责当前对局攻略的 apply/current；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
+- `trail cw guide` 只负责当前对局已选攻略的 current/apply；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
 - `trail cw portal select|detect|refresh|restart` 只用于首页之后的投资环境选择页；`detect = 重识别当前三张卡，不点击`，`refresh = 点击刷新后生成新的三张卡`
 - `trail cw invest read|choose` 继续表示局内 invest 事件，不是开局投资环境页命令
 - `trail cw slots place` 用重复 `--action <source,target>` 显式批量上场；`trail cw hand sell` 用重复 `--slot <n>` 显式批量卖牌

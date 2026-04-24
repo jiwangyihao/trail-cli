@@ -14,6 +14,7 @@
 
 - 目标、优先级与是否允许一次 `refresh` 明确后，一般先用 `cw enter` 进入货币战争首页，把当前请求落到开局前决策点。
 - 当模式、默认难度表达与是否走环境优先已经明确后，再用 `cw start` 真正推进到投资环境页并开局。
-- 如果用户要先定攻略，先切到 `trail-cw-guide` 或 `guide.*`；攻略选定后，再回到 `cw enter` / `cw start`。
+- 如果用户要先定攻略，先切到 `trail-cw-guide`；至少先执行 `guide.fetch.cw --select --session <id>` 记录当前已选攻略，再回到 `cw enter` / `cw start`。
+- 返回开局链路后，在投资环境页执行 `cw.portal.select` 成功时会自动应用当前已选攻略；`cw.guide.apply` 只作为手动兜底。
 - 如果用户要先看投资环境，继续走 `portal.*`；即使没选刷开局，也允许执行一次 refresh。
 - 只有在后续真的检测到未结束对局时，才补问继续还是结算，再决定是否继续执行 `cw start` / `portal.*` / `guide.*`。

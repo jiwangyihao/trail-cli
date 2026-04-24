@@ -31,8 +31,9 @@ description: 当用户已经明确要进入《崩坏：星穹铁道》的货币�
 ## Workflow Handoff
 
 - 用户直接说“玩货币战争”时，可以直接命中这个 skill。
-- 如果用户选择“攻略优先”或明确要先定攻略，应切到 `trail-cw-guide`，先把攻略选择做完，再回到开局入口动作。
+- 如果用户选择“攻略优先”或明确要先定攻略，应切到 `trail-cw-guide`，先完成 `guide.fetch.cw --select` 记录当前攻略，再回到开局入口动作。
 - 如果用户选择“环境优先”，或只是要先看这一局值不值得玩，则继续保留在本 skill，后续再进入 `cw enter` / `cw start` / `portal.*`。
+- 如果是从 `trail-cw-guide` 返回，说明当前 session 已经有当前攻略；默认继续 `cw enter` / `cw start` / `cw.portal.select` 这条开局链路，后续在投资环境页执行 `cw.portal.select` 成功后，会自动应用当前已选攻略，不要把 `cw guide apply` 当成默认第一步；只有自动应用失败或需要手动重试时，`cw guide apply` 才作为兜底。
 - 只有后续真的检测到未结束对局时，才补问继续还是结算，然后再决定 `cw start` 的走向。
 
 ## Reference Map

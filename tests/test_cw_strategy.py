@@ -83,7 +83,7 @@ def test_summarize_strategy_cards_marks_primary_secondary_and_loaded_state():
             {"strategy_id": "mana", "title": "回蓝", "description": "d2"},
             {"strategy_id": "crit", "title": "暴击", "description": "d3"},
         ],
-        guide_state={"first_fight_augments": ["快攻"], "second_fight_augments": ["回蓝"]},
+        guide_state={"share_code": "##demo##", "first_fight_augments": ["快攻"], "second_fight_augments": ["回蓝"]},
     )
 
     assert cards == [
@@ -135,6 +135,31 @@ def test_summarize_strategy_cards_marks_not_recommended_when_guide_missing():
     ]
 
 
+def test_summarize_strategy_cards_keeps_guide_loaded_zero_when_selected_guide_share_code_is_invalid():
+    strategy_module = load_cw_strategy_module()
+
+    cards = strategy_module.summarize_strategy_cards(
+        [{"text": "快攻", "refresh_count": 1}],
+        [{"strategy_id": "rush", "title": "快攻", "description": "d1"}],
+        guide_state={
+            "share_code": "demo",
+            "first_fight_augments": ["快攻"],
+            "second_fight_augments": ["回蓝"],
+        },
+    )
+
+    assert cards == [
+        {
+            "card_idx": 1,
+            "strategy_title": "快攻",
+            "strategy_description": "d1",
+            "refresh_count": 1,
+            "guide_match": "否",
+            "guide_loaded": 0,
+        }
+    ]
+
+
 def test_summarize_strategy_cards_does_not_fabricate_cards_from_catalog_when_ocr_is_empty():
     strategy_module = load_cw_strategy_module()
 
@@ -165,7 +190,7 @@ def test_summarize_strategy_cards_assigns_card_idx_by_horizontal_position_when_g
             {"strategy_id": "mana", "title": "回蓝", "description": "d2"},
             {"strategy_id": "crit", "title": "暴击", "description": "d3"},
         ],
-        guide_state={"first_fight_augments": ["快攻"], "second_fight_augments": ["回蓝"]},
+        guide_state={"share_code": "##demo##", "first_fight_augments": ["快攻"], "second_fight_augments": ["回蓝"]},
     )
 
     assert cards == [
@@ -216,7 +241,7 @@ def test_summarize_strategy_cards_groups_rapidocr_pieces_by_lane_and_extracts_re
             {"strategy_id": "mana", "title": "回蓝", "description": "技能循环"},
             {"strategy_id": "crit", "title": "暴击", "description": "收尾爆发"},
         ],
-        guide_state={"first_fight_augments": ["快攻"], "second_fight_augments": ["回蓝"]},
+        guide_state={"share_code": "##demo##", "first_fight_augments": ["快攻"], "second_fight_augments": ["回蓝"]},
     )
 
     assert cards == [
@@ -387,6 +412,58 @@ def test_detect_cw_strategy_creates_fresh_snapshot_and_writes_session(tmp_path: 
         "stale": False,
     }
     assert session.scene_state["cw"]["strategy"] == snapshot
+
+
+def test_detect_cw_strategy_keeps_guide_loaded_zero_when_session_guide_missing_even_with_plain_fetch_artifact(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.artifacts.store import ArtifactStore
+
+    strategy_module = load_cw_strategy_module()
+    session = build_session(tmp_path)
+    runtime = StrategyRuntime(
+        ocr_results=[
+            [
+                make_rapidocr_piece("快攻", left=120, top=140),
+                make_rapidocr_piece("回蓝", left=820, top=140),
+                make_rapidocr_piece("保守", left=1460, top=140),
+            ]
+        ]
+    )
+    ArtifactStore(tmp_path / ".trail" / "artifacts").create(
+        scene="cw",
+        kind="guide",
+        payload={
+            "scene": "cw",
+            "kind": "guide",
+            "lineup_id": "preview-only",
+            "share_code": "##preview##",
+            "on_field": {"希儿": 9},
+            "off_field": {"佩拉": 3},
+            "first_fight_augments": ["快攻"],
+            "second_fight_augments": ["回蓝"],
+            "recovery_origin": "guide.fetch.cw",
+        },
+    )
+
+    monkeypatch.setattr(
+        strategy_module,
+        "_detect_strategy_page_state",
+        lambda runtime, session=None: {"page": "in_game", "stage": "invest", "title": "请选择投资策略"},
+    )
+
+    snapshot = strategy_module.detect_cw_strategy(
+        session,
+        runtime=runtime,
+        strategy_list=[
+            {"name": "快攻", "description": "d1"},
+            {"name": "回蓝", "description": "d2"},
+            {"name": "保守", "description": "d3"},
+        ],
+    )
+
+    assert [card["guide_loaded"] for card in snapshot["cards"]] == [0, 0, 0]
 
 
 def test_detect_cw_strategy_reads_heading_from_runtime_ocr_when_entry_state_has_no_title(tmp_path: Path, monkeypatch):
@@ -610,6 +687,59 @@ def test_refresh_cw_strategy_rejects_invalid_card_idx(tmp_path: Path, monkeypatc
         strategy_module.refresh_cw_strategy(session, card_idx=0, runtime=StrategyRuntime(), strategy_list=[])
 
     assert exc_info.value.code == "CW_STRATEGY_CARD_IDX_INVALID"
+
+
+def test_refresh_cw_strategy_keeps_guide_loaded_zero_when_session_guide_missing_even_with_plain_fetch_artifact(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.artifacts.store import ArtifactStore
+
+    strategy_module = load_cw_strategy_module()
+    session = build_session(tmp_path)
+    runtime = StrategyRuntime(
+        ocr_results=[
+            [
+                make_rapidocr_piece("快攻", left=120, top=140),
+                make_rapidocr_piece("回蓝", left=820, top=140),
+                make_rapidocr_piece("保守", left=1460, top=140),
+            ]
+        ]
+    )
+    ArtifactStore(tmp_path / ".trail" / "artifacts").create(
+        scene="cw",
+        kind="guide",
+        payload={
+            "scene": "cw",
+            "kind": "guide",
+            "lineup_id": "preview-only",
+            "share_code": "##preview##",
+            "on_field": {"希儿": 9},
+            "off_field": {"佩拉": 3},
+            "first_fight_augments": ["快攻"],
+            "second_fight_augments": ["回蓝"],
+            "recovery_origin": "guide.fetch.cw",
+        },
+    )
+
+    monkeypatch.setattr(
+        strategy_module,
+        "_detect_strategy_page_state",
+        lambda runtime, session=None: {"page": "in_game", "stage": "invest", "title": "请选择投资策略"},
+    )
+
+    snapshot = strategy_module.refresh_cw_strategy(
+        session,
+        card_idx=2,
+        runtime=runtime,
+        strategy_list=[
+            {"name": "快攻", "description": "d1"},
+            {"name": "回蓝", "description": "d2"},
+            {"name": "保守", "description": "d3"},
+        ],
+    )
+
+    assert [card["guide_loaded"] for card in snapshot["cards"]] == [0, 0, 0]
 
 
 def test_refresh_cw_strategy_overwrites_all_cards_and_invalidates_stage(tmp_path: Path, monkeypatch):

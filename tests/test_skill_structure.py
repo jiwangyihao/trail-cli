@@ -461,6 +461,7 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
     text = CW_ENTRY_SKILL.read_text(encoding="utf-8")
     checklist_text = CW_ENTRY_CONFIRMATION_CHECKLIST.read_text(encoding="utf-8")
     confirm_section = _markdown_section(text, "What To Confirm First")
+    handoff_section = _markdown_section(text, "Workflow Handoff")
     confirm_items = _markdown_bullets(confirm_section)
     checklist_items = _markdown_bullets(_markdown_section(checklist_text, "开局前必问清单"))
     goal_items = confirm_items[:3]
@@ -540,6 +541,11 @@ def test_cw_entry_skill_has_required_sections_and_command_positioning() -> None:
         for item in checklist_follow_up_items
     )
     assert "允许执行一次 refresh" in text
+    assert "cw.portal.select" in text
+    assert "自动应用当前已选攻略" in text
+    assert "cw guide apply" in handoff_section
+    assert "默认第一步" in handoff_section and "不要把" in handoff_section
+    assert "自动应用" in handoff_section and any(token in handoff_section for token in ("失败", "失效", "手动重试"))
     for forbidden in ("battle_mode=", "difficulty=", "portal refresh", "strategy="):
         assert forbidden not in text
 
@@ -551,6 +557,7 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
     combined_text = "\n".join((gameplay_text, mapping_text, checklist_text))
     mapping_rows = _markdown_table_rows(mapping_text)
     checklist_items = _markdown_bullets(_markdown_section(checklist_text, "开局前必问清单"))
+    next_step_section = _markdown_section(checklist_text, "确认后的一般下一步")
     mapping_body_rows = mapping_rows[2:]
     player_terms = [row[0] for row in mapping_body_rows]
     action_targets = [row[2] for row in mapping_body_rows]
@@ -633,6 +640,9 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
     assert any("cw start" in target for target in action_targets)
     assert any("portal" in target for target in action_targets)
     assert any("guide" in target for target in action_targets)
+    assert any("guide.fetch.cw --select --session <id>" in target for target in action_targets)
+    assert any("cw.portal.select" in target and "自动应用当前已选攻略" in target for target in action_targets)
+    assert any("cw.guide.apply" in target and "手动兜底" in target for target in action_targets)
     assert any("battle_mode=" in target for target in action_targets)
     assert any("difficulty=current" in target for target in action_targets)
     assert any("difficulty=lowest" in target for target in action_targets)
@@ -657,12 +667,22 @@ def test_cw_entry_reference_files_exist_with_required_content() -> None:
 
     for fragment in ("cw enter", "cw start", "portal", "guide"):
         assert fragment in checklist_text
+    assert "当前已选攻略" in checklist_text
+    assert "当前已应用攻略" not in checklist_text
+    assert "guide.fetch.cw --select --session <id>" in checklist_text
+    assert "cw.portal.select" in checklist_text
+    assert "自动应用当前已选攻略" in checklist_text
+    assert "cw.guide.apply" in checklist_text
+    assert "手动兜底" in checklist_text
+    assert next_step_section.index("guide.fetch.cw --select --session <id>") < next_step_section.index("cw.portal.select")
+    assert next_step_section.index("cw.portal.select") < next_step_section.index("cw.guide.apply")
     assert "A0-1..A8-40" in mapping_text
     assert "A0-1..A8-40" in checklist_text
 
 
 def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
     skill_text = CW_ENTRY_SKILL.read_text(encoding="utf-8")
+    mapping_text = CW_ENTRY_PLAYER_LANGUAGE_MAPPING.read_text(encoding="utf-8")
     checklist_text = CW_ENTRY_CONFIRMATION_CHECKLIST.read_text(encoding="utf-8")
     skill_items = _markdown_bullets(_markdown_section(skill_text, "What To Confirm First"))
     checklist_items = _markdown_bullets(_markdown_section(checklist_text, "开局前必问清单"))
@@ -683,6 +703,16 @@ def test_cw_entry_top_level_and_checklist_confirmations_stay_in_sync() -> None:
 
     assert _lines_with_tokens(skill_text, "攻略优先", "先定攻略", "trail-cw-guide")
     assert _lines_with_tokens(checklist_text, "先定攻略", "trail-cw-guide")
+    assert "guide.fetch.cw --select --session <id>" in mapping_text
+    assert "guide.fetch.cw --select --session <id>" in checklist_text
+    assert "cw.portal.select" in mapping_text
+    assert "cw.portal.select" in checklist_text
+    assert "自动应用当前已选攻略" in mapping_text
+    assert "自动应用当前已选攻略" in checklist_text
+    assert "cw.guide.apply" in mapping_text
+    assert "cw.guide.apply" in checklist_text
+    assert "手动兜底" in mapping_text
+    assert "手动兜底" in checklist_text
     assert "A0-1..A8-40" in skill_text
     assert "A0-1..A8-40" in checklist_text
 
@@ -836,6 +866,8 @@ def test_cw_guide_skill_has_required_sections_and_selection_entry_semantics() ->
     checklist_text = CW_GUIDE_CONFIRMATION_CHECKLIST.read_text(encoding="utf-8")
     confirm_items = _markdown_bullets(_markdown_section(text, "What To Confirm First"))
     command_items = _markdown_bullets(_markdown_section(text, "Command Surface"))
+    command_section = _markdown_section(text, "Command Surface")
+    handoff_section = _markdown_section(text, "Workflow Handoff")
 
     for section in (
         "## Role",
@@ -857,9 +889,21 @@ def test_cw_guide_skill_has_required_sections_and_selection_entry_semantics() ->
     assert len(command_items) <= 6
     assert "guide list cw" in text
     assert "guide fetch cw" in text
+    assert "当前已选攻略" in text
+    assert "当前已应用攻略" not in text
+    assert "guide.fetch.cw --select" in text
+    assert text.index("guide.fetch.cw --select") < text.index("cw guide apply")
     assert "cw guide apply" in text
     assert "cw guide current" in text
     assert "真正进入游戏后" in text or "之后才轮到" in text
+    assert "当前已选攻略摘要" in command_section
+    assert "当前已应用攻略" not in command_section
+    assert "记录当前攻略" in text
+    assert "cw.portal.select" in text
+    assert "自动应用" in text
+    assert command_section.index("guide.fetch.cw --select") < command_section.index("cw guide apply")
+    assert handoff_section.index("guide.fetch.cw --select") < handoff_section.index("cw.portal.select")
+    assert handoff_section.index("cw.portal.select") < handoff_section.index("cw guide apply")
     assert _lines_with_tokens(text, "trail-cw-entry", "继承", "只追问缺失项")
     assert any(
         token in "\n".join(_lines_with_tokens(text + "\n" + checklist_text, "继承", "只追问缺失项"))
@@ -874,6 +918,10 @@ def test_cw_guide_reference_files_exist_with_required_content() -> None:
     command_surface_text = CW_GUIDE_COMMAND_SURFACE.read_text(encoding="utf-8")
     checklist_text = CW_GUIDE_CONFIRMATION_CHECKLIST.read_text(encoding="utf-8")
     checklist_items = _markdown_bullets(_markdown_section(checklist_text, "选攻略前确认清单"))
+    record_section = _markdown_section(command_surface_text, "记录当前攻略")
+    entry_section = _markdown_section(command_surface_text, "交回入口")
+    fallback_section = _markdown_section(command_surface_text, "真正进入游戏后")
+    next_step_section = _markdown_section(checklist_text, "确认后的一般下一步")
 
     for fragment in (
         "目标",
@@ -891,12 +939,24 @@ def test_cw_guide_reference_files_exist_with_required_content() -> None:
     for fragment in (
         "guide list cw",
         "guide fetch cw",
+        "guide.fetch.cw --select",
         "cw guide apply",
         "cw guide current",
         "真正进入游戏后",
         "不要一上来就 apply",
+        "记录当前攻略",
+        "cw.portal.select",
+        "自动应用",
     ):
         assert fragment in command_surface_text
+
+    assert "当前已选攻略" in command_surface_text
+    assert "当前已应用攻略" not in command_surface_text
+    assert "只把当前攻略写入 session，不做 UI 应用" in record_section
+    assert "自动应用当前已选攻略" in entry_section
+    assert "手动兜底" in fallback_section
+    assert command_surface_text.index("guide.fetch.cw --select") < command_surface_text.index("cw guide apply")
+    assert command_surface_text.index("guide.fetch.cw --select") < command_surface_text.index("cw.portal.select")
 
     for expected_tokens in (
         ("目标",),
@@ -908,6 +968,13 @@ def test_cw_guide_reference_files_exist_with_required_content() -> None:
         assert any(all(token in item for token in expected_tokens) for item in checklist_items)
 
     assert _lines_with_tokens(checklist_text, "trail-cw-entry", "继承", "只追问缺失项")
+    assert "当前已选攻略" in checklist_text
+    assert "当前已应用攻略" not in checklist_text
+    assert "guide.fetch.cw --select" in checklist_text
+    assert "cw.portal.select" in checklist_text
+    assert "自动应用" in checklist_text
+    assert next_step_section.index("guide.fetch.cw --select --session <id>") < next_step_section.index("cw.portal.select")
+    assert next_step_section.index("cw.portal.select") < next_step_section.index("cw guide apply")
 
 
 def test_cw_guide_trigger_fixture_has_required_quota_and_schema() -> None:

@@ -40,7 +40,6 @@ LOOKUP_WHITESPACE_PATTERN = re.compile(r"\s+")
 CW_GUIDE_UPSTREAM_PAGE_SIZE = 10
 CW_GUIDE_PORTAL_MAX_PAGES = 30
 CW_GUIDE_PORTAL_DETAIL_WORKERS = 8
-CW_GUIDE_RECOVERY_ORIGIN = "guide.fetch.cw"
 GUIDE_ROLE_HIGH_RISK_SIMILARITY_THRESHOLD = 0.75
 CW_GUIDE_CONFIG_CACHE_RELATIVE = Path(".trail") / "cache" / "cw-guide-config.json"
 
@@ -1455,27 +1454,6 @@ def fetch_cw_guide(url: str, *, fetcher) -> dict:
     return normalize_cw_guide_payload(fetcher(url))
 
 
-def load_latest_cw_guide_artifact(*, artifact_store: ArtifactStore) -> dict | None:
-    latest_key: tuple[str, str] | None = None
-    latest_payload: dict | None = None
-
-    for path in artifact_store.workspace.glob("*.json"):
-        try:
-            payload = _read_guide_payload(path)
-            if payload.get("recovery_origin") != CW_GUIDE_RECOVERY_ORIGIN:
-                continue
-            payload.setdefault("artifact_id", path.stem)
-            normalized = normalize_cw_guide_payload(payload)
-        except TrailError:
-            continue
-        key = (str(payload.get("created_at") or ""), path.stem)
-        if latest_key is None or key > latest_key:
-            latest_key = key
-            latest_payload = normalized
-
-    return latest_payload
-
-
 def _read_guide_payload(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -1512,39 +1490,6 @@ def resolve_guide_input(value: str, *, artifact_store: ArtifactStore) -> dict:
     payload.setdefault("scene", meta.scene)
     payload.setdefault("kind", meta.kind)
     return normalize_cw_guide_payload(payload)
-
-
-def _merge_recovered_remaining_purchases(session: SessionModel, initial_remaining: Mapping[str, object]) -> dict[str, int]:
-    merged = {name: int(count) for name, count in initial_remaining.items() if isinstance(name, str) and isinstance(count, int) and not isinstance(count, bool)}
-
-    cw_state = ensure_cw_state(session)
-    shop_state = cw_state.get("shop")
-    if not isinstance(shop_state, Mapping):
-        return merged
-    guide_summary = shop_state.get("guide_summary")
-    if not isinstance(guide_summary, Mapping):
-        return merged
-    existing_remaining = guide_summary.get("remaining_purchases")
-    if not isinstance(existing_remaining, Mapping):
-        return merged
-
-    for name, count in existing_remaining.items():
-        if name not in merged or not isinstance(name, str) or not isinstance(count, int) or isinstance(count, bool):
-            continue
-        merged[name] = min(merged[name], max(0, count))
-    return merged
-
-
-def recover_cw_guide_from_latest_artifact(session: SessionModel, *, artifact_store: ArtifactStore) -> dict | None:
-    guide_payload = load_latest_cw_guide_artifact(artifact_store=artifact_store)
-    if guide_payload is None:
-        return None
-    recovered = apply_cw_guide(session, guide_data=guide_payload, reset_dependent_state=False).scene_state["cw"]["guide"]
-    recovered["remaining_purchases"] = _merge_recovered_remaining_purchases(
-        session,
-        recovered.get("remaining_purchases", {}),
-    )
-    return recovered
 
 
 def apply_cw_guide(session: SessionModel, guide_data: dict, *, reset_dependent_state: bool = True) -> SessionModel:
@@ -1586,9 +1531,19 @@ def apply_cw_guide(session: SessionModel, guide_data: dict, *, reset_dependent_s
         "positioning": guide_payload.get("positioning", {}),
     }
     if reset_dependent_state:
-        defaults = CwSceneState().model_dump()
-        cw_state["slots"] = defaults["slots"]
-        cw_state["sell_plan"] = defaults["sell_plan"]
-        cw_state["shop"] = defaults["shop"]
-        cw_state["stage"] = defaults["stage"]
+        invalidate_cw_guide_runtime_state(session)
+    return session
+
+
+def select_cw_guide(session: SessionModel, *, guide_data: dict) -> SessionModel:
+    return apply_cw_guide(session, guide_data=guide_data, reset_dependent_state=False)
+
+
+def invalidate_cw_guide_runtime_state(session: SessionModel) -> SessionModel:
+    defaults = CwSceneState().model_dump()
+    cw_state = ensure_cw_state(session)
+    cw_state["slots"] = defaults["slots"]
+    cw_state["sell_plan"] = defaults["sell_plan"]
+    cw_state["shop"] = defaults["shop"]
+    cw_state["stage"] = defaults["stage"]
     return session

@@ -510,6 +510,362 @@ def test_command_service_handles_state_dump(tmp_path: Path):
     assert payload["data"]["session_id"] == session.session_id
 
 
+def test_command_service_routes_guide_fetch_select_through_run_mutation(tmp_path: Path, monkeypatch):
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
+    observed: dict[str, object] = {}
+
+    def fake_run_mutation(request, command_name, handler, **kwargs):
+        observed["request"] = request
+        observed["command_name"] = command_name
+        observed["handler"] = handler
+        observed["kwargs"] = kwargs
+        return {"ok": True, "data": {"lineup_id": "abc"}}
+
+    monkeypatch.setattr(command_service, "_run_mutation", fake_run_mutation)
+    request = DaemonRequest(
+        request_id="req-guide-fetch-select-route",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="guide.fetch.cw",
+        payload={"url": "abc", "select": True},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload == {"ok": True, "data": {"lineup_id": "abc"}}
+    assert observed["request"] is request
+    assert observed["command_name"] == "guide.fetch.cw"
+    assert observed["kwargs"] == {
+        "handler_persisted_state": True,
+        "response_builder": observed["kwargs"]["response_builder"],
+        "enforce_cw_tainted": True,
+        "tainted_session_id": session.session_id,
+    }
+
+
+def test_server_handle_payload_rejects_guide_fetch_select_missing_top_level_session_id(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-guide-fetch-select-missing-session",
+            method="guide.fetch.cw",
+            payload={"url": "abc", "select": True, "session_id": "sess-1"},
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "GUIDE_INPUT_INVALID"
+
+
+def test_server_handle_payload_rejects_guide_fetch_with_top_level_session_without_select(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr(
+        "trail.scenes.cw.guide.fetch_cw_guide",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fetch should not run without select")),
+    )
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-guide-fetch-session-without-select",
+            method="guide.fetch.cw",
+            payload={"url": "abc"},
+            session_id="sess-1",
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "GUIDE_INPUT_INVALID"
+
+
+def test_server_handle_payload_rejects_guide_fetch_when_top_level_session_is_empty_string(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr(
+        "trail.scenes.cw.guide.fetch_cw_guide",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fetch should not run for empty session_id")),
+    )
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-guide-fetch-empty-session",
+            method="guide.fetch.cw",
+            payload={"url": "abc"},
+            session_id="",
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "GUIDE_INPUT_INVALID"
+
+
+def test_server_handle_payload_rejects_guide_fetch_select_with_conflicting_payload_session_id(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr(
+        "trail.scenes.cw.guide.fetch_cw_guide",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fetch should not run with payload session_id")),
+    )
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-guide-fetch-conflicting-session",
+            method="guide.fetch.cw",
+            payload={"url": "abc", "select": True, "session_id": "sess-payload"},
+            session_id="sess-top",
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "GUIDE_INPUT_INVALID"
+
+
+def test_server_handle_payload_rejects_guide_fetch_with_non_boolean_select(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr(
+        "trail.scenes.cw.guide.fetch_cw_guide",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fetch should not run for invalid select type")),
+    )
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-guide-fetch-non-bool-select",
+            method="guide.fetch.cw",
+            payload={"url": "abc", "select": "true"},
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "GUIDE_INPUT_INVALID"
+
+
+def test_server_handle_payload_rejects_guide_fetch_select_when_session_is_tainted(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state.setdefault("daemon", {})["tainted"] = True
+    session_service.save_session(session)
+    monkeypatch.setattr(
+        "trail.scenes.cw.guide.fetch_cw_guide",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fetch should not run for tainted session")),
+    )
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-guide-fetch-select-session-tainted",
+            method="guide.fetch.cw",
+            payload={"url": "abc", "select": True},
+            session_id=session.session_id,
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "SESSION_RECONCILE_REQUIRED",
+        "message": "session is tainted; reconcile before mutating cw commands",
+    }
+    assert response["debug"] == {
+        "request_id": "req-guide-fetch-select-session-tainted",
+        "session_id": session.session_id,
+    }
+
+
+@pytest.mark.parametrize("method,payload", [("cw.guide.apply", {}), ("cw.portal.select", {"card_idx": 1})])
+def test_server_handle_payload_rejects_cw_methods_with_payload_only_session_id(
+    tmp_path: Path,
+    monkeypatch,
+    method: str,
+    payload: dict[str, object],
+):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id=f"req-{method.replace('.', '-')}-payload-only-session",
+            method=method,
+            payload={"session_id": "sess-payload", **payload},
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "SESSION_REQUIRED",
+        "message": f"cw method requires top-level session_id: {method}",
+    }
+
+
+@pytest.mark.parametrize("method,payload", [("cw.guide.apply", {}), ("cw.portal.select", {"card_idx": 1})])
+def test_server_handle_payload_rejects_cw_methods_with_conflicting_payload_session_id(
+    tmp_path: Path,
+    monkeypatch,
+    method: str,
+    payload: dict[str, object],
+):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id=f"req-{method.replace('.', '-')}-conflicting-session",
+            method=method,
+            payload={"session_id": "sess-payload", **payload},
+            session_id="sess-top",
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "SESSION_CONFLICT",
+        "message": f"cw method payload session_id conflicts with top-level session_id: {method}",
+    }
+
+
+def test_server_handle_payload_rejects_cw_guide_apply_payload_only_session_on_tainted_session(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state.setdefault("daemon", {})["tainted"] = True
+    session_service.save_session(session)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.apply_cw_guide_via_ui",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("apply should not run for payload-only session_id")),
+    )
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
+    server = TrailDaemonServer(command_service=command_service)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="req-cw-guide-apply-payload-only-tainted",
+            method="cw.guide.apply",
+            payload={"session_id": session.session_id},
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "SESSION_REQUIRED",
+        "message": "cw method requires top-level session_id: cw.guide.apply",
+    }
+
+
+def test_command_service_tracks_cw_portal_select_request_status_with_top_level_session_id(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return tmp_path / ".trail" / "shots" / "req-cw-portal-select-session-binding.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session_a = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session_b = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 2})
+    loaded_a = service.load_session(session_a.session_id)
+    loaded_a.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": {"artifact": "selected-artifact-a", "lineup_id": "selected-lineup-a", "share_code": "##demo##"},
+        "portal": {"cards": [{"card_idx": 1, "portal_title": "A"}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    loaded_b = service.load_session(session_b.session_id)
+    loaded_b.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": {"artifact": "selected-artifact-b", "lineup_id": "selected-lineup-b", "share_code": "##demo##"},
+        "portal": {"cards": [{"card_idx": 1, "portal_title": "B"}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(loaded_a)
+    service.save_session(loaded_b)
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": session.scene_state["cw"]["portal"]["cards"][0]["portal_title"]},
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.apply_cw_guide_via_ui",
+        lambda runtime, share_code: None,
+    )
+
+    response = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-portal-select-session-binding",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session_a.session_id,
+            verbose=False,
+            method="cw.portal.select",
+            payload={"session_id": session_a.session_id, "card_idx": 1},
+        )
+    )
+    status = service.request_status("req-cw-portal-select-session-binding")
+
+    assert response["ok"] is True
+    assert response["data"]["portal_title"] == "A"
+    assert status["session_id"] == session_a.session_id
+
+
 def test_command_service_start_run_returns_status_and_window_facts(tmp_path: Path):
     runtime_service = StartRuntimeServiceStub()
     session_services = SessionServiceRegistry()
@@ -3120,7 +3476,7 @@ def test_cw_strategy_refresh_handler_routes_strategy_list_through_mutation_journ
     assert service.load_session(session.session_id).scene_state["cw"]["strategy"] == snapshot
 
 
-def test_command_service_handles_cw_portal_select_and_marks_snapshot_stale(tmp_path: Path, monkeypatch):
+def test_command_service_handles_cw_portal_select_and_auto_applies_selected_guide(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 
     class Runtime:
@@ -3143,15 +3499,21 @@ def test_command_service_handles_cw_portal_select_and_marks_snapshot_stale(tmp_p
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
         "portal": {"cards": [{"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
     }
     service.save_session(session)
     runtime = Runtime()
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
     cw_service = CwService(runtime_service=runtime_service)
+    applied_share_codes: list[str] = []
     monkeypatch.setattr(
         "trail.daemon.cw_service.select_cw_portal",
         lambda session, card_idx, runtime: session.scene_state["cw"]["portal"].__setitem__("stale", True) or {"card_idx": card_idx, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88},
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.apply_cw_guide_via_ui",
+        lambda runtime, share_code: applied_share_codes.append(share_code),
     )
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
@@ -3169,6 +3531,7 @@ def test_command_service_handles_cw_portal_select_and_marks_snapshot_stale(tmp_p
     assert payload["ok"] is True
     assert payload["data"] == {"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}
     assert payload["screenshot"] == ".trail/shots/req-cw-portal-select.png"
+    assert applied_share_codes == ["##demo##"]
     assert service.load_session(session.session_id).scene_state["cw"]["portal"]["stale"] is True
     assert service.request_status("req-cw-portal-select")["final_state"] == "completed"
     assert runtime.capture_requests == [(False, "req-cw-portal-select")]
@@ -3198,15 +3561,21 @@ def test_command_service_handles_cw_portal_select_waits_extra_before_capture(tmp
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
         "portal": {"cards": [{"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
     }
     service.save_session(session)
     runtime = Runtime()
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
     cw_service = CwService(runtime_service=runtime_service)
+    applied_share_codes: list[str] = []
     monkeypatch.setattr(
         "trail.daemon.cw_service.select_cw_portal",
         lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88},
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.apply_cw_guide_via_ui",
+        lambda runtime, share_code: applied_share_codes.append(share_code),
     )
     monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: sleeps.append(seconds))
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
@@ -3223,8 +3592,91 @@ def test_command_service_handles_cw_portal_select_waits_extra_before_capture(tmp
     payload = command_service.handle(request)
 
     assert payload["ok"] is True
+    assert applied_share_codes == ["##demo##"]
     assert sleeps == [2.0]
     assert runtime.capture_requests == [(False, "req-cw-portal-select-delay")]
+
+
+def test_command_service_marks_cw_portal_select_post_click_apply_failure_as_recoverable_and_blocks_followup_mutations(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+
+    session_services = SessionServiceRegistry()
+    service = session_services.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    loaded = service.load_session(session.session_id)
+    loaded.scene_state["cw"] = {
+        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        "portal": {"cards": [{"card_idx": 1, "portal_title": "商店"}], "mode": "new", "difficulty": "normal", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(loaded)
+
+    runtime_service = SimpleNamespace(get_runtime=lambda **_: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=session_services, cw_service=cw_service)
+    events: list[str] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: events.append("select")
+        or session.scene_state["cw"]["portal"].__setitem__("stale", True)
+        or {"card_idx": card_idx, "portal_title": "商店"},
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.apply_cw_guide_via_ui",
+        lambda runtime, share_code: events.append("apply") or (_ for _ in ()).throw(RuntimeError("apply failed")),
+    )
+
+    response = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-portal-select-post-click-fail",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.portal.select",
+            payload={"session_id": session.session_id, "card_idx": 1},
+        )
+    )
+    status_response = command_service.handle(
+        DaemonRequest(
+            request_id="req-daemon-request-status-portal-select-post-click-fail",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="daemon.request_status",
+            payload={"request_id": "req-cw-portal-select-post-click-fail"},
+        )
+    )
+    blocked = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-guide-apply-blocked-after-portal-taint",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.guide.apply",
+            payload={"session_id": session.session_id},
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["request_id"] == "req-cw-portal-select-post-click-fail"
+    assert response["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert response["debug"]["last_known_stage"] == "side_effect_applied"
+    assert status_response["ok"] is True
+    assert status_response["data"]["final_state"] == "applied_but_not_persisted"
+    assert status_response["data"]["tainted"] is True
+    assert status_response["data"]["last_visible_stage"] == "responded"
+    assert events == ["select", "apply"]
+    assert service.is_session_tainted(session.session_id) is True
+    assert blocked["ok"] is False
+    assert blocked["error"]["code"] == "SESSION_RECONCILE_REQUIRED"
 
 
 def test_command_service_handles_cw_portal_refresh_and_updates_snapshot(tmp_path: Path, monkeypatch):

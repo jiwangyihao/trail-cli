@@ -30,12 +30,32 @@ def _require_cw_scene(scene: str) -> bool:
 
 
 @guide_app.command("fetch")
-def guide_fetch(scene: str, url: str) -> None:
-    """拉取攻略内容并直接返回给 Agent；货币战争支持 lineup_url 或 lineup_id。"""
+def guide_fetch(
+    scene: str,
+    url: str,
+    select: bool = typer.Option(False, "--select", help="拉取后把攻略写入当前 session，建立当前已选攻略，不执行 UI 应用。"),
+    session: str | None = typer.Option(None, "--session", help="只在 --select 时必填；与 --select 一起使用的 session id。"),
+) -> None:
+    """拉取攻略内容并直接返回给 Agent，默认只做预览/查看；货币战争支持 lineup_url 或 lineup_id。"""
     if not _require_cw_scene(scene):
         print_output(f"guide.fetch.{scene}", _unsupported_scene_response(scene))
         return
-    print_output(f"guide.fetch.{scene}", call_daemon(f"guide.fetch.{scene}", {"url": url}))
+    if session == "":
+        print_output(f"guide.fetch.{scene}", _guide_input_invalid_response("guide.fetch.cw --session must be a non-empty string"))
+        return
+    if select and session is None:
+        print_output(f"guide.fetch.{scene}", _guide_input_invalid_response("guide.fetch.cw --select requires --session"))
+        return
+    if session is not None and not select:
+        print_output(f"guide.fetch.{scene}", _guide_input_invalid_response("guide.fetch.cw --session requires --select"))
+        return
+    payload = {"url": url}
+    if select:
+        payload["select"] = True
+    print_output(
+        f"guide.fetch.{scene}",
+        call_daemon(f"guide.fetch.{scene}", payload, session_id=session),
+    )
 
 
 @guide_app.command("config")
