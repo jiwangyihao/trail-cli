@@ -7,13 +7,6 @@ from trail.core.errors import TrailError
 from trail.output.envelope import command_failure, command_success
 
 _CAPTURE_OPTIONS = {"verbose": False}
-_OCR_DEBUG_CONTEXT_ALLOWLIST = (
-    "ocr_mode_requested",
-    "ocr_mode_effective",
-    "ocr_scale_applied",
-    "ocr_retry_high",
-    "ocr_retry_reason",
-)
 
 
 def _resolve_runtime(runtime):
@@ -69,55 +62,82 @@ def _end_capture_scope(runtime) -> None:
         end_capture_scope()
 
 
+def _collect_capture_warnings(runtime) -> list[dict]:
+    warnings: list[dict] = []
+    if runtime is None:
+        return warnings
+
+    collect_warnings = getattr(runtime, "collect_warnings", None)
+    if callable(collect_warnings):
+        warnings = collect_warnings() or []
+    return warnings
+
+
+def _collect_capture_references(runtime, *, screenshot) -> list[dict]:
+    references: list[dict] = []
+    if runtime is None:
+        return references
+
+    match_references = getattr(runtime, "match_references", None)
+    if screenshot is not None and callable(match_references):
+        references = match_references(screenshot) or []
+    return references
+
+
+def _collect_capture_debug(runtime, *, verbose: bool):
+    if runtime is None or not verbose:
+        return None
+
+    consume_debug_trace = getattr(runtime, "consume_debug_trace", None)
+    consume_debug_context = getattr(runtime, "consume_debug_context", None)
+    trace = []
+    if callable(consume_debug_trace):
+        trace = consume_debug_trace() or []
+    debug_context = {}
+    if callable(consume_debug_context):
+        debug_context = consume_debug_context() or {}
+    filtered_debug_context = {}
+    if isinstance(debug_context, dict):
+        filtered_debug_context = {
+            key: value
+            for key, value in debug_context.items()
+            if key not in {"trace", "request_id", "detail"}
+        }
+    if not trace and not filtered_debug_context:
+        return None
+
+    debug = {}
+    if trace:
+        debug["trace"] = trace
+    debug.update(filtered_debug_context)
+    return debug
+
+
 def _collect_capture_metadata(runtime, *, screenshot, verbose: bool) -> dict:
     runtime = _resolve_runtime(runtime)
-    warnings: list[dict] = []
-    references: list[dict] = []
+    return {
+        "warnings": _collect_capture_warnings(runtime),
+        "references": _collect_capture_references(runtime, screenshot=screenshot),
+        "debug": _collect_capture_debug(runtime, verbose=verbose),
+    }
+
+
+def _safe_collect_capture_metadata(runtime, *, screenshot, verbose: bool) -> dict:
+    runtime = _resolve_runtime(runtime)
+    warnings = _collect_capture_warnings(runtime)
+    references = _collect_capture_references(runtime, screenshot=screenshot)
     debug = None
 
-    if runtime is not None:
-        collect_warnings = getattr(runtime, "collect_warnings", None)
-        if callable(collect_warnings):
-            warnings = collect_warnings() or []
-
-        match_references = getattr(runtime, "match_references", None)
-        if screenshot is not None and callable(match_references):
-            references = match_references(screenshot) or []
-
-        if verbose:
-            consume_debug_trace = getattr(runtime, "consume_debug_trace", None)
-            consume_debug_context = getattr(runtime, "consume_debug_context", None)
-            trace = []
-            if callable(consume_debug_trace):
-                trace = consume_debug_trace() or []
-            debug_context = {}
-            if callable(consume_debug_context):
-                debug_context = consume_debug_context() or {}
-            if trace or debug_context:
-                debug = {}
-                if trace:
-                    debug["trace"] = trace
-                if isinstance(debug_context, dict):
-                    for key in _OCR_DEBUG_CONTEXT_ALLOWLIST:
-                        if key in debug_context:
-                            debug[key] = debug_context[key]
+    try:
+        debug = _collect_capture_debug(runtime, verbose=verbose)
+    except Exception:
+        debug = None
 
     return {
         "warnings": warnings,
         "references": references,
         "debug": debug,
     }
-
-
-def _safe_collect_capture_metadata(runtime, *, screenshot, verbose: bool) -> dict:
-    try:
-        return _collect_capture_metadata(runtime, screenshot=screenshot, verbose=verbose)
-    except Exception:
-        return {
-            "warnings": [],
-            "references": [],
-            "debug": None,
-        }
 
 
 def with_auto_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None = None):
@@ -130,7 +150,7 @@ def with_auto_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None =
             data = fn()
         except TrailError as exc:
             screenshot = _capture_optional_screenshot(resolved_runtime)
-            metadata = _collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
+            metadata = _safe_collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
             return command_failure(
                 code=exc.code,
                 message=str(exc),
@@ -140,7 +160,7 @@ def with_auto_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None =
             )
         except Exception as exc:
             screenshot = _capture_optional_screenshot(resolved_runtime)
-            metadata = _collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
+            metadata = _safe_collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
             return command_failure(
                 code="UNEXPECTED_ERROR",
                 message=_format_unexpected_exception(exc),
@@ -150,7 +170,7 @@ def with_auto_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None =
             )
 
         screenshot = _capture_screenshot(resolved_runtime, optional=False)
-        metadata = _collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
+        metadata = _safe_collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
         return command_success(
             data=data,
             screenshot=screenshot,

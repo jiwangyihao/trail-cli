@@ -178,7 +178,10 @@ DirectML 安装与环境 profile 说明：
 - `trail daemon request-status --request-id <id>` 用于回查某个请求的终态、关联 session、最近可见阶段与污染状态，典型输出是 `ok daemon.request_status request=req-42 session=sess-1 final_state=completed last_visible_stage=responded tainted=0`
 - `tainted=1` 表示当前 failure 或状态带有运行态污染风险；继续执行前，先确认请求终态，再决定是否执行 `trail daemon reconcile-session --session <id>`
 - `--format yaml` 仍然保留同一条首行摘要，但只在允许的命令上提供结构化视图；当前更适合 `daemon status`、`state dump`、`guide fetch cw`、`guide config cw` 这类结果体量更大或层级更深的命令
-- `--verbose` 只追加 `debug kind=...` 调试行，不改变默认文本协议里的事实集合与顺序
+- `--verbose` 只追加 `debug kind=...` 调试行，不改变默认文本协议里的事实集合与顺序；shared helper 的 major action trace 会固定追加为 `debug kind=trace ...` 行
+- finalized helper 动作 trace 至少携带 `step=<helper>`、`ts=<UTC RFC3339 毫秒时间戳>` 与 `ok=0|1`
+- `trace/context` 边界固定：`trace` 只承载 finalized helper 动作事件；`context` 只承载跨动作请求级事实，不能再拿来补某次 helper 的动作结果
+- OCR 的 mode/retry 事实不再作为 top-level debug context 暴露，而是通过 `debug kind=trace step=ocr ...` 出现；legacy trace 仍按现有 key/value 规则兼容渲染
 - 对多模态 agent 来说，截图仍是第一手事实来源；看到 `shot path=...` 且紧随 `info read_image_first=1` 时，必须先读这张原始图，再参考后续 `detect/read/status` 压缩文本
 
 文本协议示例：

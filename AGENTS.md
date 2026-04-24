@@ -43,9 +43,13 @@
 
 - `--verbose` 只追加开发/排障层，不改变默认文本协议的事实集合和顺序。
 - `--verbose` 事件必须统一经过 `trail.output.debug.collect_debug_events` 和 `trail.output.debug.render_debug_lines` 写入。
+- shared helper 的 major action trace 固定输出到 verbose `debug kind=trace ...` 行；finalized 事件至少保留 `ts=<UTC RFC3339 毫秒时间戳>` 与 `ok=0|1`。
+- `trace/context` 边界固定：`trace` 只承载 finalized helper 动作事件；`context` 只承载跨动作请求级事实，不能再拿来补动作结果。
+- OCR 的 mode/retry 事实不再作为 top-level debug context 暴露，而是通过 `debug kind=trace step=ocr ...` 出现；legacy trace 继续兼容渲染。
 - 禁止各命令直接拼接 `debug ...` stdout，也不要把临时调试信息混入默认模式。
 - `--verbose` 不为 `image_guidance` 新增独立 guidance 事件；默认模式里的 `info read_image_first=1` 仍只在 success 文本层出现。
 - 默认模式不得泄漏 verbose 事件；需要排障时才通过 `--verbose` 查看 `debug kind=...` 行。
+- recorder / collect / render 继续按 best-effort 处理；即使 debug 收集失败，也只能丢 debug，不得改默认文本的 success/failure/recover 语义。
 
 ## YAML allowlist 约束
 

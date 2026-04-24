@@ -70,6 +70,50 @@ class ProtocolRuntime:
             raise self.click_error
 
 
+class ScopedDebugProtocolRuntime(ProtocolRuntime):
+    def __init__(self, screenshot_path: Path):
+        super().__init__(screenshot_path)
+        self._local = threading.local()
+
+    def begin_capture_scope(self):
+        depth = int(getattr(self._local, "depth", 0)) + 1
+        self._local.depth = depth
+        if depth == 1:
+            self._local.trace = []
+            self._local.context = {}
+
+    def end_capture_scope(self):
+        depth = int(getattr(self._local, "depth", 0))
+        self._local.depth = max(0, depth - 1)
+
+    def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+        del optional
+        capture_request_id = request_id or self._screenshot_path.stem
+        return str(self._screenshot_path.parent / f"{capture_request_id}.png")
+
+    def consume_debug_trace(self):
+        trace = list(getattr(self._local, "trace", []))
+        self._local.trace = []
+        return trace
+
+    def consume_debug_context(self):
+        context = dict(getattr(self._local, "context", {}))
+        self._local.context = {}
+        return context
+
+    def click_point(self, x: int, y: int):
+        super().click_point(x, y)
+        if int(getattr(self._local, "depth", 0)) > 0:
+            self._local.trace.append(
+                {
+                    "step": "click_point",
+                    "ts": "2026-04-24T08:15:30.123Z",
+                    "ok": 1,
+                    "point": [x, y],
+                }
+            )
+
+
 class ProtocolRuntimeService:
     def __init__(self, runtime, *, launch_result: dict | None = None):
         self._runtime = runtime
@@ -2089,6 +2133,49 @@ def test_command_service_handles_cw_slots_place_known_failure_as_completed(tmp_p
     assert loaded.scene_state["cw"]["slots"]["stale"] is True
 
 
+def test_cw_mutation_scope_collects_trace_emitted_before_auto_capture(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ScopedDebugProtocolRuntime(tmp_path / "cw-start-shared-scope-success.png")
+    service = CwService(runtime_service=ProtocolRuntimeService(runtime))
+
+    def fake_start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None):
+        del session, mode, difficulty, battle_mode, workspace_root
+        runtime.click_point(10, 20)
+        return {"cards": 1}
+
+    monkeypatch.setattr("trail.daemon.cw_service._start_cw", fake_start_cw)
+
+    payload = service.handle_mutation(
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "new",
+            "difficulty": "lowest",
+            "battle_mode": "standard",
+        },
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+        request_id="req-cw-start-shared-scope-success",
+        verbose=True,
+    )
+
+    assert payload["ok"] is True
+    assert payload["debug"] == {
+        "trace": [
+            {
+                "step": "click_point",
+                "ts": "2026-04-24T08:15:30.123Z",
+                "ok": 1,
+                "point": [10, 20],
+            }
+        ]
+    }
+
+
 def test_command_service_handles_cw_slots_place_known_failure_save_error_as_applied_but_not_persisted(
     tmp_path: Path,
     monkeypatch,
@@ -2197,6 +2284,56 @@ def test_command_service_handles_cw_slots_place_known_failure_capture_error_as_p
     assert status["final_state"] == "persisted_but_response_unknown"
     assert status["tainted"] is True
     assert loaded.scene_state["cw"]["slots"]["stale"] is True
+
+
+def test_cw_mutation_scope_keeps_failure_path_trace_until_known_failure_capture(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ScopedDebugProtocolRuntime(tmp_path / "cw-start-shared-scope-known-failure.png")
+    service = CwService(runtime_service=ProtocolRuntimeService(runtime))
+
+    def fake_start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None):
+        del session, mode, difficulty, battle_mode, workspace_root
+        runtime.click_point(10, 20)
+        error = TrailError("CW_START_DIFFICULTY_RECOVERY_REQUIRED", "recovery required")
+        error.known_failure_after_save = True
+        error.completed_after_side_effect = True
+        raise error
+
+    monkeypatch.setattr("trail.daemon.cw_service._start_cw", fake_start_cw)
+
+    payload = service.handle_mutation(
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "new",
+            "difficulty": "lowest",
+            "battle_mode": "standard",
+        },
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+        request_id="req-cw-start-shared-scope-known-failure",
+        verbose=True,
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "CW_START_DIFFICULTY_RECOVERY_REQUIRED",
+        "message": "recovery required",
+    }
+    assert payload["debug"] == {
+        "trace": [
+            {
+                "step": "click_point",
+                "ts": "2026-04-24T08:15:30.123Z",
+                "ok": 1,
+                "point": [10, 20],
+            }
+        ]
+    }
 
 
 def test_command_service_keeps_cw_start_recovery_failure_completed_after_side_effect(tmp_path: Path, monkeypatch):
@@ -2628,6 +2765,118 @@ def test_command_service_handles_cw_start_rejects_invalid_enums(
     }
     assert start_calls == []
     assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
+
+
+def test_command_service_keeps_cw_start_payload_validation_before_runtime_scope_init(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = FailingProtocolRuntimeService(TrailError("WINDOW_NOT_FOUND", "window missing"))
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-start-invalid-mode-preflight",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "warp",
+            "difficulty": "current",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {}
+    assert payload["error"] == {
+        "code": "CW_START_MODE_INVALID",
+        "message": "unsupported cw start mode: warp",
+    }
+    assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
+
+
+def test_command_service_keeps_cw_enter_payload_validation_before_runtime_scope_init(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = FailingProtocolRuntimeService(TrailError("WINDOW_NOT_FOUND", "window missing"))
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-enter-legacy-args-preflight",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.enter",
+        payload={
+            "session_id": session.session_id,
+            "mode": "new",
+            "difficulty": "current",
+            "battle_mode": "standard",
+        },
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["data"] == {}
+    assert payload["error"] == {
+        "code": "CW_ENTER_ARGS_NOT_SUPPORTED",
+        "message": "cw enter no longer accepts mode/difficulty/battle_mode; use cw start",
+    }
+    assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
+
+
+def test_command_service_handles_cw_hand_sell_plan_runtime_failure_after_save_as_persisted_unknown(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state.setdefault("cw", {})["slots"] = {
+        "stale": False,
+        "hand": [None, "希儿", None, "布洛妮娅"],
+    }
+    service.save_session(session)
+
+    runtime_service = FailingProtocolRuntimeService(TrailError("WINDOW_NOT_FOUND", "window missing"))
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-hand-sell-plan-runtime-fail-after-save",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.hand.sell_plan",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+    status = service.request_status(request.request_id)
+    loaded = service.load_session(session.session_id)
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert payload["debug"]["last_known_stage"] == "state_persisted"
+    assert "UnboundLocalError" not in payload["debug"]["detail"]
+    assert "WINDOW_NOT_FOUND" not in payload["error"]["code"]
+    assert status["final_state"] == "persisted_but_response_unknown"
+    assert status["tainted"] is True
+    assert loaded.scene_state["cw"]["sell_plan"] == {"candidates": [1, 3]}
 
 
 def test_command_service_handles_cw_start_valid_ax_x_does_not_leak_public_invalid_codes(tmp_path: Path, monkeypatch):

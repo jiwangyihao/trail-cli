@@ -24,6 +24,13 @@ OCR_VERBOSE_ONLY_KEYS = (
     "ocr_retry_high",
     "ocr_retry_reason",
 )
+LEGACY_OCR_CONTEXT_DEBUG_LINES = (
+    "debug kind=context key=ocr_mode_requested",
+    "debug kind=context key=ocr_mode_effective",
+    "debug kind=context key=ocr_scale_applied",
+    "debug kind=context key=ocr_retry_high",
+    "debug kind=context key=ocr_retry_reason",
+)
 CW_ACTION_STAGE_COMMANDS = ("cw.battle.start", "cw.battle.continue", "cw.settle.next")
 SCREENSHOT_FIRST_RULE_SNIPPET = (
     "如果命令返回 `shot path=...` 且紧随 `info read_image_first=1`，必须先读取这张原始截图，再参考后续"
@@ -336,6 +343,33 @@ def test_agents_document_screenshot_first_protocol_facts() -> None:
     assert "envelope 顶层若带 `screenshot`，同步生成 `image_guidance.read_image_first=1`" in agents
     assert "`image_guidance` 不进入 YAML body" in agents
     assert "`--verbose` 不为 `image_guidance` 新增独立 guidance 事件" in agents
+
+
+def test_readme_documents_verbose_major_action_trace_contract() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "major action trace" in readme
+    assert "step=<helper>" in readme
+    assert "UTC RFC3339" in readme
+    assert "ok=0|1" in readme
+    assert "`trace` 只承载 finalized helper 动作事件" in readme
+    assert "`context` 只承载跨动作请求级事实" in readme
+    assert "`debug kind=trace step=ocr ...`" in readme
+
+
+def test_agents_document_verbose_major_action_trace_contract() -> None:
+    agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "`--verbose` 只追加开发/排障层，不改变默认文本协议的事实集合和顺序。" in agents
+    assert "major action trace 固定输出" in agents
+    assert "UTC RFC3339" in agents
+    assert "ok=0|1" in agents
+    assert "trace/context" in agents
+    assert "`trace` 只承载 finalized helper 动作事件" in agents
+    assert "`context` 只承载跨动作请求级事实" in agents
+    assert "debug kind=trace step=ocr ..." in agents
+    assert "不再作为 top-level debug context 暴露" in agents
+    assert "best-effort" in agents
 
 
 def test_skills_document_screenshot_first_guidance_rule() -> None:
@@ -1037,11 +1071,17 @@ def test_render_output_ocr_read_success_keeps_ocr_mode_retry_context_verbose_onl
         "references": [],
         "debug": {
             "request_id": "req-ocr-success",
-            "ocr_mode_requested": "fast",
-            "ocr_mode_effective": "high",
-            "ocr_scale_applied": "native",
-            "ocr_retry_high": 1,
-            "ocr_retry_reason": "low_confidence",
+            "trace": [
+                {
+                    "step": "ocr",
+                    "pieces": 1,
+                    "mode_requested": "fast",
+                    "mode_effective": "high",
+                    "scale_applied": "native",
+                    "retry_high": 1,
+                    "retry_reason": "low_confidence",
+                }
+            ],
         },
         "error": None,
     }
@@ -1067,11 +1107,17 @@ def test_render_output_ocr_read_failure_keeps_ocr_mode_retry_context_verbose_onl
         "references": [{"path": "refs/ocr.png", "similarity": 0.75}],
         "debug": {
             "request_id": "req-ocr-fail",
-            "ocr_mode_requested": "fast",
-            "ocr_mode_effective": "fast",
-            "ocr_scale_applied": "1280x720",
-            "ocr_retry_high": 0,
-            "ocr_retry_reason": "none",
+            "trace": [
+                {
+                    "step": "ocr",
+                    "pieces": 0,
+                    "mode_requested": "fast",
+                    "mode_effective": "fast",
+                    "scale_applied": "1280x720",
+                    "retry_high": 0,
+                    "retry_reason": "none",
+                }
+            ],
         },
         "error": {"code": "OCR_BACKEND_UNAVAILABLE", "message": "ocr backend unavailable"},
     }
@@ -3464,7 +3510,7 @@ def test_render_output_preserves_original_failure_for_non_allowlist_yaml():
     ]
 
 
-def test_render_output_verbose_includes_ocr_mode_effective_ocr_scale_applied_and_ocr_retry_reason_from_capture_context(tmp_path):
+def test_render_output_verbose_renders_ocr_facts_from_trace_from_capture_debug(tmp_path):
     from trail.output.capture import with_auto_capture
 
     class RuntimeStub:
@@ -3480,34 +3526,46 @@ def test_render_output_verbose_includes_ocr_mode_effective_ocr_scale_applied_and
             return []
 
         def consume_debug_trace(self):
-            return []
+            return [
+                {
+                    "step": "ocr",
+                    "ts": "2026-04-24T08:15:31.004Z",
+                    "ok": 1,
+                    "dur_ms": 187,
+                    "pieces": 1,
+                    "mode_requested": "fast",
+                    "mode_effective": "high",
+                    "scale_applied": "native",
+                    "retry_high": 1,
+                    "retry_reason": "low_confidence",
+                }
+            ]
 
         def consume_debug_context(self):
-            return {
-                "ocr_mode_requested": "fast",
-                "ocr_mode_effective": "high",
-                "ocr_scale_applied": "native",
-                "ocr_retry_high": 1,
-                "ocr_retry_reason": "low_confidence",
-            }
+            return {}
 
     payload = with_auto_capture(RuntimeStub(), lambda: {"result": [{"text": "点击进入"}]}, verbose=True)
     encoded_screenshot = payload["screenshot"].replace("\\", "\\\\")
+    rendered = render_output("ocr.read", payload, verbose=True)
+    lines = rendered.splitlines()
+    ocr_line = next(line for line in lines if line.startswith("debug kind=trace step=ocr "))
 
-    assert render_output("ocr.read", payload, verbose=True).splitlines() == [
+    assert lines == [
         "ok ocr.read hits=1",
         f'shot path="{encoded_screenshot}"',
         "info read_image_first=1",
         "text value=点击进入",
-        "debug kind=context key=ocr_mode_requested value=fast",
-        "debug kind=context key=ocr_mode_effective value=high",
-        "debug kind=context key=ocr_scale_applied value=native",
-        "debug kind=context key=ocr_retry_high value=1",
-        "debug kind=context key=ocr_retry_reason value=low_confidence",
+        "debug kind=trace step=ocr ts=2026-04-24T08:15:31.004Z ok=1 dur_ms=187 pieces=1 mode_requested=fast mode_effective=high scale_applied=native retry_high=1 retry_reason=low_confidence",
     ]
+    assert "mode_requested=fast" in ocr_line
+    assert "mode_effective=high" in ocr_line
+    assert "scale_applied=native" in ocr_line
+    assert "retry_high=1" in ocr_line
+    assert "retry_reason=low_confidence" in ocr_line
+    assert all(line not in rendered for line in LEGACY_OCR_CONTEXT_DEBUG_LINES)
 
 
-def test_render_output_verbose_includes_ocr_retry_high_zero_and_retry_reason_none_from_capture_context(tmp_path):
+def test_render_output_verbose_includes_ocr_retry_high_zero_and_retry_reason_none_from_capture_trace(tmp_path):
     from trail.output.capture import with_auto_capture
 
     class RuntimeStub:
@@ -3523,31 +3581,43 @@ def test_render_output_verbose_includes_ocr_retry_high_zero_and_retry_reason_non
             return []
 
         def consume_debug_trace(self):
-            return []
+            return [
+                {
+                    "step": "ocr",
+                    "ts": "2026-04-24T08:15:31.004Z",
+                    "ok": 1,
+                    "dur_ms": 187,
+                    "pieces": 1,
+                    "mode_requested": "fast",
+                    "mode_effective": "fast",
+                    "scale_applied": "1280x720",
+                    "retry_high": 0,
+                    "retry_reason": "none",
+                }
+            ]
 
         def consume_debug_context(self):
-            return {
-                "ocr_mode_requested": "fast",
-                "ocr_mode_effective": "fast",
-                "ocr_scale_applied": "1280x720",
-                "ocr_retry_high": 0,
-                "ocr_retry_reason": "none",
-            }
+            return {}
 
     payload = with_auto_capture(RuntimeStub(), lambda: {"result": [{"text": "点击进入"}]}, verbose=True)
     encoded_screenshot = payload["screenshot"].replace("\\", "\\\\")
+    rendered = render_output("ocr.read", payload, verbose=True)
+    lines = rendered.splitlines()
+    ocr_line = next(line for line in lines if line.startswith("debug kind=trace step=ocr "))
 
-    assert render_output("ocr.read", payload, verbose=True).splitlines() == [
+    assert lines == [
         "ok ocr.read hits=1",
         f'shot path="{encoded_screenshot}"',
         "info read_image_first=1",
         "text value=点击进入",
-        "debug kind=context key=ocr_mode_requested value=fast",
-        "debug kind=context key=ocr_mode_effective value=fast",
-        "debug kind=context key=ocr_scale_applied value=1280x720",
-        "debug kind=context key=ocr_retry_high value=0",
-        "debug kind=context key=ocr_retry_reason value=none",
+        "debug kind=trace step=ocr ts=2026-04-24T08:15:31.004Z ok=1 dur_ms=187 pieces=1 mode_requested=fast mode_effective=fast scale_applied=1280x720 retry_high=0 retry_reason=none",
     ]
+    assert "mode_requested=fast" in ocr_line
+    assert "mode_effective=fast" in ocr_line
+    assert "scale_applied=1280x720" in ocr_line
+    assert "retry_high=0" in ocr_line
+    assert "retry_reason=none" in ocr_line
+    assert all(line not in rendered for line in LEGACY_OCR_CONTEXT_DEBUG_LINES)
 
 
 def test_render_output_state_dump_tolerates_non_mapping_data():

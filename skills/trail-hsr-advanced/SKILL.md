@@ -33,6 +33,8 @@ description: 当上层 Trail 技能在自动游玩过程中遇到启动失败、
 - `session`：补建或修复当前会话上下文。
 - `screen` / `image`：需要截图或图像线索确认窗口状态、场景状态时使用。
 - `state`：当 stdout 丢失、request 结果未知或需要回读当前 scene / session 状态时使用。
+- 需要用 `screen` / `image` / `state` 做高级排障时，如果显式开启 `--verbose`，可以把 stdout 里的 major action trace 当作 shared helper 执行证据；finalized 事件至少会带 `ts=<UTC RFC3339 毫秒时间戳>` 与 `ok=0|1`。
+- 这些 `debug kind=trace ...` 行只属于排障层，不改变默认文本协议；没有显式开启 `--verbose` 时，不能假定 stdout 含这些行。
 
 ## Stop Conditions
 

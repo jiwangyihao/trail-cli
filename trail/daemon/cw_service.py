@@ -116,12 +116,39 @@ def _is_valid_cw_start_difficulty(value: str) -> bool:
     return value in {"lowest", "current", "highest"} or is_cw_exact_difficulty_token(value)
 
 
+def _validated_start_payload(payload: dict) -> tuple[str, str, str]:
+    mode = payload.get("mode")
+    difficulty = payload.get("difficulty")
+    battle_mode = payload.get("battle_mode")
+    if not isinstance(mode, str) or not isinstance(difficulty, str) or not isinstance(battle_mode, str):
+        raise TrailError("CW_START_ARGS_REQUIRED", "cw start requires mode/difficulty/battle_mode")
+    if mode not in {"new", "continue"}:
+        raise TrailError("CW_START_MODE_INVALID", f"unsupported cw start mode: {mode}")
+    if not _is_valid_cw_start_difficulty(difficulty):
+        raise TrailError("CW_START_DIFFICULTY_INVALID", f"unsupported cw start difficulty: {difficulty}")
+    if battle_mode not in {"standard", "overclock"}:
+        raise TrailError("CW_START_BATTLE_MODE_INVALID", f"unsupported cw start battle_mode: {battle_mode}")
+    return mode, difficulty, battle_mode
+
+
 def _capture_delay_seconds_for_method(method: str) -> float:
     if method == "cw.portal.select":
         return PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS
     if method == "cw.battle.start":
         return CW_BATTLE_START_EXTRA_CAPTURE_DELAY_SECONDS
     return 0.0
+
+
+def _begin_runtime_scope(runtime) -> None:
+    begin_capture_scope = getattr(runtime, "begin_capture_scope", None)
+    if callable(begin_capture_scope):
+        begin_capture_scope()
+
+
+def _end_runtime_scope(runtime) -> None:
+    end_capture_scope = getattr(runtime, "end_capture_scope", None)
+    if callable(end_capture_scope):
+        end_capture_scope()
 
 
 class _RuntimeSideEffectTracker:
@@ -179,7 +206,7 @@ class CwService:
         self.runtime_service = runtime_service
 
     def handle(self, *, method: str, payload: dict, workspace_root: str, session_service) -> dict | None:
-        session, _, _, handlers, _ = self._context(
+        session, _, _, handlers, _, _ = self._context(
             method=method,
             payload=payload,
             workspace_root=workspace_root,
@@ -200,7 +227,7 @@ class CwService:
         request_id: str,
         verbose: bool = False,
     ) -> dict | None:
-        session, _, runtime, handlers, _ = self._context(
+        session, _, runtime, handlers, _, _ = self._context(
             method=method,
             payload=payload,
             workspace_root=workspace_root,
@@ -224,87 +251,112 @@ class CwService:
         request_id: str,
         verbose: bool = False,
     ) -> dict | None:
-        session, _, runtime, handlers, tracker = self._context(
+        session, _, runtime, handlers, tracker, end_runtime_scope_if_started = self._context(
             method=method,
             payload=payload,
             workspace_root=workspace_root,
             session_service=session_service,
             track_side_effects=True,
+            shared_capture_scope=True,
         )
 
         try:
-            result = handlers[method]()
-        except CwSideEffectAppliedError as error:
-            raise SideEffectAppliedButStateNotPersisted(
-                _unknown_result_envelope(error, last_known_stage="side_effect_applied")
-            ) from error
-        except TrailError as error:
-            if getattr(error, "known_failure_after_save", False):
-                try:
-                    session_service.save_session(session)
-                except Exception as save_error:
-                    raise SideEffectAppliedButStateNotPersisted(
-                        _unknown_result_envelope(save_error, last_known_stage="side_effect_applied")
-                    ) from save_error
+            if method == "cw.start":
+                _validated_start_payload(payload)
+            try:
+                result = handlers[method]()
+            except CwSideEffectAppliedError as error:
+                raise SideEffectAppliedButStateNotPersisted(
+                    _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+                ) from error
+            except TrailError as error:
+                if getattr(error, "known_failure_after_save", False):
+                    try:
+                        session_service.save_session(session)
+                    except Exception as save_error:
+                        raise SideEffectAppliedButStateNotPersisted(
+                            _unknown_result_envelope(save_error, last_known_stage="side_effect_applied")
+                        ) from save_error
 
-                extra_delay_seconds = PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS if method == "cw.portal.select" else 0.0
-                capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id, extra_delay_seconds=extra_delay_seconds)
-                try:
-                    response = with_auto_capture(capture_runtime, lambda: (_ for _ in ()).throw(error), verbose=verbose)
-                    if isinstance(response, dict):
-                        response_data = deepcopy(getattr(error, "data", None)) if isinstance(getattr(error, "data", None), dict) else {}
-                        if hasattr(error, "tainted") and "tainted" not in response_data:
-                            response_data["tainted"] = bool(getattr(error, "tainted"))
-                        if response_data:
-                            response["data"] = response_data
-                    return response
-                except Exception as capture_error:
-                    screenshot = _safe_capture_after_action(capture_runtime)
-                    raise PersistedButResponseUnknown(
-                        _unknown_result_envelope(
-                            capture_error,
-                            last_known_stage="state_persisted",
-                            screenshot=screenshot,
-                            warnings=_safe_collect_warnings(capture_runtime),
-                            references=_safe_match_references(capture_runtime, screenshot=screenshot),
+                    extra_delay_seconds = PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS if method == "cw.portal.select" else 0.0
+                    capture_runtime = None
+                    try:
+                        capture_runtime = _RequestScopedCaptureRuntime(
+                            runtime(),
+                            request_id,
+                            extra_delay_seconds=extra_delay_seconds,
                         )
-                    ) from capture_error
-            if tracker.side_effect_applied or getattr(error, "completed_after_side_effect", False):
+                        response = with_auto_capture(capture_runtime, lambda: (_ for _ in ()).throw(error), verbose=verbose)
+                        if isinstance(response, dict):
+                            response_data = deepcopy(getattr(error, "data", None)) if isinstance(getattr(error, "data", None), dict) else {}
+                            if hasattr(error, "tainted") and "tainted" not in response_data:
+                                response_data["tainted"] = bool(getattr(error, "tainted"))
+                            if response_data:
+                                response["data"] = response_data
+                        return response
+                    except Exception as capture_error:
+                        screenshot = _safe_capture_after_action(capture_runtime)
+                        raise PersistedButResponseUnknown(
+                            _unknown_result_envelope(
+                                capture_error,
+                                last_known_stage="state_persisted",
+                                screenshot=screenshot,
+                                warnings=_safe_collect_warnings(capture_runtime),
+                                references=_safe_match_references(capture_runtime, screenshot=screenshot),
+                            )
+                        ) from capture_error
+                if tracker.side_effect_applied or getattr(error, "completed_after_side_effect", False):
+                    raise SideEffectAppliedButStateNotPersisted(
+                        _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+                    ) from error
+                raise
+            except Exception as error:
+                if tracker.side_effect_applied or getattr(error, "completed_after_side_effect", False):
+                    raise SideEffectAppliedButStateNotPersisted(
+                        _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+                    ) from error
+                raise
+
+            try:
+                session_service.save_session(session)
+            except Exception as error:
                 raise SideEffectAppliedButStateNotPersisted(
                     _unknown_result_envelope(error, last_known_stage="side_effect_applied")
                 ) from error
-            raise
-        except Exception as error:
-            if tracker.side_effect_applied or getattr(error, "completed_after_side_effect", False):
-                raise SideEffectAppliedButStateNotPersisted(
-                    _unknown_result_envelope(error, last_known_stage="side_effect_applied")
-                ) from error
-            raise
 
-        try:
-            session_service.save_session(session)
-        except Exception as error:
-            raise SideEffectAppliedButStateNotPersisted(
-                _unknown_result_envelope(error, last_known_stage="side_effect_applied")
-            ) from error
-
-        extra_delay_seconds = _capture_delay_seconds_for_method(method)
-        capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id, extra_delay_seconds=extra_delay_seconds)
-        try:
-            return with_auto_capture(capture_runtime, lambda: result, verbose=verbose)
-        except Exception as error:
-            screenshot = _safe_capture_after_action(capture_runtime)
-            raise PersistedButResponseUnknown(
-                _unknown_result_envelope(
-                    error,
-                    last_known_stage="state_persisted",
-                    screenshot=screenshot,
-                    warnings=_safe_collect_warnings(capture_runtime),
-                    references=_safe_match_references(capture_runtime, screenshot=screenshot),
+            extra_delay_seconds = _capture_delay_seconds_for_method(method)
+            capture_runtime = None
+            try:
+                capture_runtime = _RequestScopedCaptureRuntime(
+                    runtime(),
+                    request_id,
+                    extra_delay_seconds=extra_delay_seconds,
                 )
-            ) from error
+                return with_auto_capture(capture_runtime, lambda: result, verbose=verbose)
+            except Exception as error:
+                screenshot = _safe_capture_after_action(capture_runtime)
+                raise PersistedButResponseUnknown(
+                    _unknown_result_envelope(
+                        error,
+                        last_known_stage="state_persisted",
+                        screenshot=screenshot,
+                        warnings=_safe_collect_warnings(capture_runtime),
+                        references=_safe_match_references(capture_runtime, screenshot=screenshot),
+                    )
+                ) from error
+        finally:
+            end_runtime_scope_if_started()
 
-    def _context(self, *, method: str, payload: dict, workspace_root: str, session_service, track_side_effects: bool = False):
+    def _context(
+        self,
+        *,
+        method: str,
+        payload: dict,
+        workspace_root: str,
+        session_service,
+        track_side_effects: bool = False,
+        shared_capture_scope: bool = False,
+    ):
         session_id = payload.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise TrailError("SESSION_REQUIRED", f"cw method requires session: {method}")
@@ -312,6 +364,7 @@ class CwService:
         session = session_service.load_session(session_id)
         artifact_store = ArtifactStore(Path(workspace_root) / ".trail" / "artifacts")
         runtime_holder: dict[str, object] = {}
+        scope_state = {"started": False}
         tracker = _RuntimeSideEffectTracker()
 
         def runtime():
@@ -324,7 +377,16 @@ class CwService:
                     setattr(resolved_runtime, "raise_post_input_foreground_error", True)
                     resolved_runtime = _SideEffectTrackingRuntime(resolved_runtime, tracker)
                 runtime_holder["runtime"] = resolved_runtime
+            if shared_capture_scope and not scope_state["started"]:
+                _begin_runtime_scope(runtime_holder["runtime"])
+                scope_state["started"] = True
             return runtime_holder["runtime"]
+
+        def end_runtime_scope_if_started() -> None:
+            if not scope_state["started"]:
+                return
+            _end_runtime_scope(runtime_holder["runtime"])
+            scope_state["started"] = False
 
         def validated_enter_payload() -> dict:
             if any(key in payload for key in ("mode", "difficulty", "battle_mode")):
@@ -334,22 +396,8 @@ class CwService:
                 )
             return payload
 
-        def validated_start_payload() -> tuple[str, str, str]:
-            mode = payload.get("mode")
-            difficulty = payload.get("difficulty")
-            battle_mode = payload.get("battle_mode")
-            if not isinstance(mode, str) or not isinstance(difficulty, str) or not isinstance(battle_mode, str):
-                raise TrailError("CW_START_ARGS_REQUIRED", "cw start requires mode/difficulty/battle_mode")
-            if mode not in {"new", "continue"}:
-                raise TrailError("CW_START_MODE_INVALID", f"unsupported cw start mode: {mode}")
-            if not _is_valid_cw_start_difficulty(difficulty):
-                raise TrailError("CW_START_DIFFICULTY_INVALID", f"unsupported cw start difficulty: {difficulty}")
-            if battle_mode not in {"standard", "overclock"}:
-                raise TrailError("CW_START_BATTLE_MODE_INVALID", f"unsupported cw start battle_mode: {battle_mode}")
-            return mode, difficulty, battle_mode
-
         def run_start() -> dict:
-            mode, difficulty, battle_mode = validated_start_payload()
+            mode, difficulty, battle_mode = _validated_start_payload(payload)
             return _start_cw(
                 session,
                 runtime=runtime(),
@@ -526,7 +574,7 @@ class CwService:
         if method not in handlers:
             raise TrailError("DAEMON_METHOD_NOT_SUPPORTED", f"unsupported method: {method}")
 
-        return session, artifact_store, runtime, handlers, tracker
+        return session, artifact_store, runtime, handlers, tracker, end_runtime_scope_if_started
 
 
 def _handle_and_save_session(handler, session_service, session):

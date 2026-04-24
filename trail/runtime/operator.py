@@ -13,6 +13,7 @@ from typing import Any, Protocol
 from PIL import Image, ImageChops, ImageOps, ImageStat
 
 from trail.core.errors import TrailError
+from trail.runtime.debug_recorder import DebugTraceRecorder
 from trail.runtime.model import Box, Region
 from trail.runtime.ocr_config import OCR_PROVIDER_UNAVAILABLE, OcrRequestConfig, normalize_runtime_ocr_request_config
 from trail.runtime.window import WindowsWindowController
@@ -61,6 +62,11 @@ class _OcrAttemptResult:
     average_score: float | None
 
 
+class _NullDebugAction:
+    def finish(self, *, ok: bool, **payload: Any) -> None:
+        del ok, payload
+
+
 class OcrEngine(Protocol):
     def run(self, image, *, ocr: OcrRequestConfig | None = None) -> OcrRunResult: ...
 
@@ -95,12 +101,26 @@ class RuntimeOperator:
         self._warnings: list[dict[str, Any]] = []
         self._trace: list[dict[str, Any]] = []
         self._debug_context: dict[str, Any] = {}
+        self._debug_recorder = DebugTraceRecorder()
         self._request_local = threading.local()
         self._last_input_at: float | None = None
         self.raise_post_input_foreground_error = False
 
     def _capture_scope_active(self) -> bool:
         return bool(getattr(self._request_local, "capture_scope_depth", 0))
+
+    def _debug_recorder_failed_for_request(self) -> bool:
+        return bool(getattr(self._request_local, "debug_recorder_failed", False))
+
+    def _invalidate_debug_recorder_for_request(self) -> None:
+        self._request_local.debug_recorder_failed = True
+        reset_thread_state = getattr(self._debug_recorder, "reset_thread_state", None)
+        if not callable(reset_thread_state):
+            return
+        try:
+            reset_thread_state()
+        except Exception:
+            return
 
     def begin_capture_scope(self) -> None:
         depth = int(getattr(self._request_local, "capture_scope_depth", 0)) + 1
@@ -109,18 +129,81 @@ class RuntimeOperator:
             self._request_local.warnings = []
             self._request_local.trace = []
             self._request_local.debug_context = {}
+            self._request_local.debug_recorder_failed = False
+            self._request_local.debug_trace_consumed = False
+            self._request_local.debug_context_consumed = False
+        if self._debug_recorder_failed_for_request():
+            return
+        try:
+            self._debug_recorder.begin_scope()
+        except Exception:
+            self._invalidate_debug_recorder_for_request()
+            return
 
     def end_capture_scope(self) -> None:
         depth = int(getattr(self._request_local, "capture_scope_depth", 0))
+        if depth == 1 and not self._debug_recorder_failed_for_request():
+            self._discard_unconsumed_request_debug()
         self._request_local.capture_scope_depth = max(0, depth - 1)
+        if self._debug_recorder_failed_for_request():
+            return
+        try:
+            self._debug_recorder.end_scope()
+        except Exception:
+            self._invalidate_debug_recorder_for_request()
+            return
 
     POST_INPUT_CAPTURE_DELAY_SECONDS = 1.0
 
     def _record_trace(self, step: str, **payload: Any) -> None:
-        self._active_trace_buffer().append({"step": step, **payload})
+        if self._debug_recorder_failed_for_request():
+            return
+        try:
+            self._debug_recorder.append_trace({"step": step, **payload})
+            if self._capture_scope_active():
+                self._request_local.debug_trace_consumed = False
+        except Exception:
+            return
 
     def _append_trace(self, payload: dict[str, Any]) -> None:
-        self._active_trace_buffer().append(dict(payload))
+        if self._debug_recorder_failed_for_request():
+            return
+        try:
+            self._debug_recorder.append_trace(payload)
+            if self._capture_scope_active():
+                self._request_local.debug_trace_consumed = False
+        except Exception:
+            return
+
+    @staticmethod
+    def _debug_error_payload(error: Exception) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "error_type": type(error).__name__,
+            "msg": str(error),
+        }
+        error_code = getattr(error, "code", None)
+        if error_code is not None:
+            payload["error_code"] = error_code
+        return payload
+
+    def _begin_debug_action(self, step: str, **payload: Any):
+        if self._debug_recorder_failed_for_request():
+            return _NullDebugAction()
+        try:
+            return self._debug_recorder.begin_action(step, **payload)
+        except Exception:
+            self._invalidate_debug_recorder_for_request()
+            return _NullDebugAction()
+
+    def _finish_debug_action(self, action, *, ok: bool, **payload: Any) -> None:
+        if self._debug_recorder_failed_for_request():
+            return
+        try:
+            action.finish(ok=ok, **payload)
+            if self._capture_scope_active():
+                self._request_local.debug_trace_consumed = False
+        except Exception:
+            return
 
     def _request_warnings_buffer(self) -> list[dict[str, Any]]:
         warnings = getattr(self._request_local, "warnings", None)
@@ -161,8 +244,27 @@ class RuntimeOperator:
     def _append_warning(self, warning: dict[str, Any]) -> None:
         self._active_warnings_buffer().append(dict(warning))
 
+    def _discard_unconsumed_request_debug(self) -> None:
+        if not bool(getattr(self._request_local, "debug_trace_consumed", False)):
+            try:
+                self._debug_recorder.consume_trace()
+            except Exception:
+                pass
+        if not bool(getattr(self._request_local, "debug_context_consumed", False)):
+            try:
+                self._debug_recorder.consume_context()
+            except Exception:
+                pass
+
     def _set_debug_context(self, **payload: Any) -> None:
-        self._active_debug_context_buffer().update(payload)
+        if self._debug_recorder_failed_for_request():
+            return
+        try:
+            self._debug_recorder.set_context(**payload)
+            if self._capture_scope_active():
+                self._request_local.debug_context_consumed = False
+        except Exception:
+            return
 
     @staticmethod
     def _serialize_box(box: Box | None) -> dict[str, Any] | None:
@@ -180,12 +282,14 @@ class RuntimeOperator:
         is_foreground = getattr(self.window, "is_foreground", None)
         if not callable(is_foreground):
             return
+        action = self._begin_debug_action("foreground_check")
         try:
             foreground = bool(is_foreground())
-        except Exception:
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, **self._debug_error_payload(error))
             return
-        self._record_trace("foreground_check", foreground=foreground)
         if foreground:
+            self._finish_debug_action(action, ok=True, foreground=1)
             return
         self._append_warning(
             {
@@ -193,6 +297,7 @@ class RuntimeOperator:
                 "message": "输入命令执行后窗口不在前台，本次操作可能失败；可能是窗口未在前台，或拉回前台失败",
             }
         )
+        self._finish_debug_action(action, ok=False, foreground=0)
         if not self.raise_post_input_foreground_error:
             return
         error = TrailError("WINDOW_NOT_FOREGROUND", "窗口不在前台，无法执行输入")
@@ -203,14 +308,18 @@ class RuntimeOperator:
         is_foreground = getattr(self.window, "is_foreground", None)
         if not callable(is_foreground):
             return
+        action = self._begin_debug_action("foreground_prepare_check")
         try:
             foreground = bool(is_foreground())
-        except Exception:
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, **self._debug_error_payload(error))
             return
-        self._record_trace("foreground_prepare_check", foreground=foreground)
         if foreground:
+            self._finish_debug_action(action, ok=True, foreground=1)
             return
-        raise TrailError("WINDOW_NOT_FOREGROUND", "窗口不在前台，无法执行输入")
+        error = TrailError("WINDOW_NOT_FOREGROUND", "窗口不在前台，无法执行输入")
+        self._finish_debug_action(action, ok=False, foreground=0, **self._debug_error_payload(error))
+        raise error
 
     def _mark_input_action(self) -> None:
         self._last_input_at = monotonic()
@@ -238,28 +347,43 @@ class RuntimeOperator:
         return warnings
 
     def consume_debug_trace(self) -> list[dict[str, Any]]:
-        if self._capture_scope_active():
-            trace = list(self._request_trace_buffer())
-            self._request_local.trace = []
-            return trace
-        trace = list(self._trace)
-        self._trace.clear()
+        if self._debug_recorder_failed_for_request():
+            return []
+        trace = self._debug_recorder.consume_trace()
+        if self._capture_scope_active() and trace:
+            self._request_local.debug_trace_consumed = True
         return trace
 
     def consume_debug_context(self) -> dict[str, Any]:
-        if self._capture_scope_active():
-            debug_context = dict(self._request_debug_context_buffer())
-            self._request_local.debug_context = {}
-            return debug_context
-        debug_context = dict(self._debug_context)
-        self._debug_context.clear()
-        return debug_context
+        if self._debug_recorder_failed_for_request():
+            return {}
+        context = self._debug_recorder.consume_context()
+        if self._capture_scope_active() and context:
+            self._request_local.debug_context_consumed = True
+        return context
 
     def match_references(self, screenshot_path: Path | str, limit: int = 3) -> list[dict[str, Any]]:
         return _match_reference_images(Path(screenshot_path), limit=limit, reference_root=self.reference_root)
 
     def screenshot(self, *, from_x=None, from_y=None, to_x=None, to_y=None):
-        return self.window.capture(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y)
+        capture_payload = {
+            key: value
+            for key, value in {
+                "from_x": from_x,
+                "from_y": from_y,
+                "to_x": to_x,
+                "to_y": to_y,
+            }.items()
+            if value is not None
+        }
+        action = self._begin_debug_action("screenshot", capture=capture_payload)
+        try:
+            image = self.window.capture(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y)
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, **self._debug_error_payload(error))
+            raise
+        self._finish_debug_action(action, ok=True, source="raw")
+        return image
 
     def capture_image(self, *, from_x=None, from_y=None, to_x=None, to_y=None, normalize: bool = True):
         capture_image = getattr(self.window, "capture_image", None)
@@ -373,16 +497,28 @@ class RuntimeOperator:
             collected.append({"code": OCR_LOW_CONFIDENCE, "message": OCR_LOW_CONFIDENCE_MESSAGE})
         return collected
 
+    @staticmethod
+    def _retry_error_payload(error: Exception) -> dict[str, Any]:
+        payload = {
+            "retry_error_type": type(error).__name__,
+            "retry_msg": str(error),
+        }
+        error_code = getattr(error, "code", None)
+        if error_code is not None:
+            payload["retry_error_code"] = error_code
+        return payload
+
     def _run_ocr_attempt(self, image, *, ocr_config: OcrRequestConfig) -> _OcrAttemptResult:
         prepared_image, scale_x, scale_y = self._prepare_ocr_image(image, ocr=ocr_config)
         scale_applied = "native"
         if ocr_config.ocr_mode == "fast" and (scale_x != 1.0 or scale_y != 1.0):
             scale_applied = f"{self.FAST_OCR_MAX_SIZE[0]}x{self.FAST_OCR_MAX_SIZE[1]}"
-        self._set_debug_context(
-            ocr_mode_effective=ocr_config.ocr_mode,
-            ocr_scale_applied=scale_applied,
-        )
-        result = self.ocr_engine.run(prepared_image, ocr=ocr_config)
+        try:
+            result = self.ocr_engine.run(prepared_image, ocr=ocr_config)
+        except OcrRunFailure as error:
+            error.mode = ocr_config.ocr_mode
+            error.scale_applied = scale_applied
+            raise
         if not isinstance(result, OcrRunResult):
             raise TypeError("ocr engine must return OcrRunResult")
         pieces = self._map_ocr_pieces_to_capture_space(result.pieces, scale_x=scale_x, scale_y=scale_y)
@@ -425,15 +561,26 @@ class RuntimeOperator:
             retry_high=ocr_config.retry_high,
         )
 
-    def _ocr_from_image(self, image, *, ocr: OcrRequestConfig | None = None) -> list[Any]:
-        ocr_config = normalize_runtime_ocr_request_config(ocr)
-        self._set_debug_context(
-            ocr_mode_requested=ocr_config.ocr_mode,
-            ocr_mode_effective=ocr_config.ocr_mode,
-            ocr_scale_applied="native",
-            ocr_retry_high=0,
-            ocr_retry_reason="none",
-        )
+    def _ocr_from_image(
+        self,
+        image,
+        *,
+        ocr: OcrRequestConfig | None = None,
+        step: str,
+        action_payload: dict[str, Any] | None = None,
+        action=None,
+    ) -> list[Any]:
+        if action is None:
+            action = self._begin_debug_action(step, **dict(action_payload or {}))
+        try:
+            ocr_config = normalize_runtime_ocr_request_config(ocr)
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, pieces=0, **self._debug_error_payload(error))
+            raise
+        mode_effective = ocr_config.ocr_mode
+        scale_applied = "native"
+        retry_high = False
+        retry_reason = "none"
         try:
             fast_attempt = self._run_ocr_attempt(image, ocr_config=ocr_config)
         except OcrRunFailure as exc:
@@ -441,81 +588,147 @@ class RuntimeOperator:
                 self._append_warning(warning)
             for trace in exc.trace:
                 self._append_trace(trace)
+            mode_effective = getattr(exc, "mode", ocr_config.ocr_mode)
+            scale_applied = getattr(exc, "scale_applied", "native")
+            self._finish_debug_action(
+                action,
+                ok=False,
+                pieces=0,
+                mode_requested=ocr_config.ocr_mode,
+                mode_effective=mode_effective,
+                scale_applied=scale_applied,
+                retry_high=0,
+                retry_reason="none",
+                **self._debug_error_payload(exc),
+            )
             raise
-        retry_high, retry_reason = self._should_retry_high(ocr_config=ocr_config, attempt=fast_attempt)
-        final_attempt = fast_attempt
-        final_warnings = list(fast_attempt.warnings)
-        effective_mode = fast_attempt.mode
-        scale_applied = fast_attempt.scale_applied
-        trace_payloads = list(fast_attempt.trace)
+        except Exception as error:
+            self._finish_debug_action(
+                action,
+                ok=False,
+                pieces=0,
+                mode_requested=ocr_config.ocr_mode,
+                mode_effective=mode_effective,
+                scale_applied=scale_applied,
+                retry_high=0,
+                retry_reason="none",
+                **self._debug_error_payload(error),
+            )
+            raise
+        try:
+            retry_high, retry_reason = self._should_retry_high(ocr_config=ocr_config, attempt=fast_attempt)
+            final_attempt = fast_attempt
+            final_warnings = list(fast_attempt.warnings)
+            effective_mode = fast_attempt.mode
+            scale_applied = fast_attempt.scale_applied
+            trace_payloads = list(fast_attempt.trace)
+            retry_error_payload: dict[str, Any] = {}
 
-        if retry_high:
-            try:
-                high_attempt = self._run_ocr_attempt(image, ocr_config=self._to_high_ocr_config(ocr_config))
-            except TrailError as exc:
-                trace_payloads.extend([dict(item) for item in getattr(exc, "trace", [])])
-                if fast_attempt.hits == 0:
-                    final_attempt = None
-                    final_warnings = []
-                    effective_mode = "high"
-                    scale_applied = "native"
+            if retry_high:
+                high_ocr_config = self._to_high_ocr_config(ocr_config)
+                mode_effective = high_ocr_config.ocr_mode
+                scale_applied = "native"
+                try:
+                    high_attempt = self._run_ocr_attempt(image, ocr_config=high_ocr_config)
+                except TrailError as exc:
+                    trace_payloads.extend([dict(item) for item in getattr(exc, "trace", [])])
+                    retry_error_payload = self._retry_error_payload(exc)
+                    if fast_attempt.hits == 0:
+                        final_attempt = None
+                        final_warnings = []
+                        effective_mode = "high"
+                        scale_applied = "native"
+                else:
+                    trace_payloads.extend(high_attempt.trace)
+                    if high_attempt.hits > 0 or fast_attempt.hits == 0:
+                        final_attempt = high_attempt
+                        final_warnings = list(high_attempt.warnings)
+                        effective_mode = high_attempt.mode
+                        scale_applied = high_attempt.scale_applied
+
+            if final_attempt is None:
+                pieces: list[Any] = []
             else:
-                trace_payloads.extend(high_attempt.trace)
-                if high_attempt.hits > 0 or fast_attempt.hits == 0:
-                    final_attempt = high_attempt
-                    final_warnings = list(high_attempt.warnings)
-                    effective_mode = high_attempt.mode
-                    scale_applied = high_attempt.scale_applied
+                pieces = list(final_attempt.pieces)
+                final_warnings = list(final_attempt.warnings)
+                effective_mode = final_attempt.mode
+                scale_applied = final_attempt.scale_applied
 
-        if final_attempt is None:
-            pieces: list[Any] = []
-        else:
-            pieces = list(final_attempt.pieces)
-            final_warnings = list(final_attempt.warnings)
-            effective_mode = final_attempt.mode
-            scale_applied = final_attempt.scale_applied
-
-        for warning in final_warnings:
-            self._append_warning(warning)
-        for trace in trace_payloads:
-            self._append_trace(trace)
-        self._set_debug_context(
-            ocr_mode_requested=ocr_config.ocr_mode,
-            ocr_mode_effective=effective_mode,
-            ocr_scale_applied=scale_applied,
-            ocr_retry_high=1 if retry_high else 0,
-            ocr_retry_reason=retry_reason,
-        )
-        return pieces
+            for warning in final_warnings:
+                self._append_warning(warning)
+            for trace in trace_payloads:
+                self._append_trace(trace)
+            self._finish_debug_action(
+                action,
+                ok=True,
+                pieces=len(pieces),
+                mode_requested=ocr_config.ocr_mode,
+                mode_effective=effective_mode,
+                scale_applied=scale_applied,
+                retry_high=1 if retry_high else 0,
+                retry_reason=retry_reason,
+                **retry_error_payload,
+            )
+            return pieces
+        except Exception as error:
+            self._finish_debug_action(
+                action,
+                ok=False,
+                pieces=0,
+                mode_requested=ocr_config.ocr_mode,
+                mode_effective=mode_effective,
+                scale_applied=scale_applied,
+                retry_high=1 if retry_high else 0,
+                retry_reason=retry_reason,
+                **self._debug_error_payload(error),
+            )
+            raise
 
     def locate(self, template: str, **kwargs):
-        image = self.screenshot(**kwargs)
-        box = self.matcher.locate(template, image)
-        if box is not None:
-            resolved = self._offset_box(box, **kwargs)
-            self._record_trace("locate", template=template, kwargs=dict(kwargs), box=self._serialize_box(resolved), retried=False)
-            return resolved
+        action = self._begin_debug_action("locate", template=template, kwargs=dict(kwargs))
+        attempts = 0
+        retried = 0
+        try:
+            attempts = 1
+            image = self.screenshot(**kwargs)
+            box = self.matcher.locate(template, image)
+            if box is not None:
+                resolved = self._offset_box(box, **kwargs)
+                self._finish_debug_action(action, ok=True, found=1, attempts=1, box=self._serialize_box(resolved), retried=0)
+                return resolved
 
-        sleep(0.1)
-        retry_image = self.screenshot(**kwargs)
-        retry_box = self.matcher.locate(template, retry_image)
-        if retry_box is None:
-            self._record_trace("locate", template=template, kwargs=dict(kwargs), box=None, retried=True)
-            return None
-        resolved = self._offset_box(retry_box, **kwargs)
-        self._record_trace("locate", template=template, kwargs=dict(kwargs), box=self._serialize_box(resolved), retried=True)
-        return resolved
+            sleep(0.1)
+            attempts = 2
+            retried = 1
+            retry_image = self.screenshot(**kwargs)
+            retry_box = self.matcher.locate(template, retry_image)
+            if retry_box is None:
+                self._finish_debug_action(action, ok=True, found=0, attempts=2, box=None, retried=1)
+                return None
+            resolved = self._offset_box(retry_box, **kwargs)
+            self._finish_debug_action(action, ok=True, found=1, attempts=2, box=self._serialize_box(resolved), retried=1)
+            return resolved
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, found=0, attempts=attempts, retried=retried, box=None, **self._debug_error_payload(error))
+            raise
 
     def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+        action = self._begin_debug_action("wait_img", template=template, timeout=timeout, interval=interval)
         deadline = monotonic() + timeout
-        while monotonic() < deadline:
-            box = self.locate(template)
-            if box is not None:
-                self._record_trace("wait_img", template=template, timeout=timeout, interval=interval, found=True)
-                return box
-            sleep(interval)
-        self._record_trace("wait_img", template=template, timeout=timeout, interval=interval, found=False)
-        return None
+        attempts = 0
+        try:
+            while monotonic() < deadline:
+                attempts += 1
+                box = self.locate(template)
+                if box is not None:
+                    self._finish_debug_action(action, ok=True, found=1, attempts=attempts, box=self._serialize_box(box))
+                    return box
+                sleep(interval)
+            self._finish_debug_action(action, ok=True, found=0, attempts=attempts, box=None)
+            return None
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, found=0, attempts=attempts, box=None, **self._debug_error_payload(error))
+            raise
 
     def ocr(
         self,
@@ -524,23 +737,45 @@ class RuntimeOperator:
         ocr: OcrRequestConfig | None = None,
     ):
         capture_payload = dict(capture or {})
-        image = self.screenshot(**capture_payload)
-        pieces = self._ocr_from_image(image, ocr=ocr)
-        self._record_trace("ocr", kwargs=dict(capture_payload), pieces=len(pieces))
-        return pieces
+        action = self._begin_debug_action("ocr", capture=capture_payload)
+        try:
+            ocr_config = normalize_runtime_ocr_request_config(ocr)
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, pieces=0, **self._debug_error_payload(error))
+            raise
+        try:
+            image = self.screenshot(**capture_payload)
+        except Exception as error:
+            self._finish_debug_action(
+                action,
+                ok=False,
+                pieces=0,
+                mode_requested=ocr_config.ocr_mode,
+                mode_effective=ocr_config.ocr_mode,
+                scale_applied="native",
+                retry_high=0,
+                retry_reason="none",
+                **self._debug_error_payload(error),
+            )
+            raise
+        return self._ocr_from_image(image, ocr=ocr_config, step="ocr", action=action)
 
     def ocr_image(self, image, *, ocr: OcrRequestConfig | None = None):
-        pieces = self._ocr_from_image(image, ocr=ocr)
-        self._record_trace("ocr_image", pieces=len(pieces))
-        return pieces
+        action = self._begin_debug_action("ocr_image")
+        return self._ocr_from_image(image, ocr=ocr, step="ocr_image", action=action)
 
     def _prepare_input_target(self) -> None:
+        action = self._begin_debug_action("prepare_input")
         ensure_available = getattr(self.input, "ensure_available", None)
-        if callable(ensure_available):
-            ensure_available()
-        self.window.prepare_input()
-        self._record_trace("prepare_input")
-        self._ensure_foreground_before_input()
+        try:
+            if callable(ensure_available):
+                ensure_available()
+            self.window.prepare_input()
+            self._ensure_foreground_before_input()
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, **self._debug_error_payload(error))
+            raise
+        self._finish_debug_action(action, ok=True)
 
     def _to_screen_point(self, x: int | float, y: int | float) -> tuple[int | float, int | float]:
         if hasattr(self.window, "to_screen_point"):
@@ -583,67 +818,100 @@ class RuntimeOperator:
         )
 
     def click_point(self, x: float, y: float, **kwargs):
-        self._prepare_input_target()
-        screen_x, screen_y = self._to_screen_point(x, y)
-        self.input.click(screen_x, screen_y, **kwargs)
-        self._mark_input_action()
-        self._record_trace("click_point", point=[x, y], screen_point=[screen_x, screen_y])
-        self._check_foreground_after_input()
+        action = self._begin_debug_action("click_point", point=[x, y])
+        try:
+            self._prepare_input_target()
+            screen_x, screen_y = self._to_screen_point(x, y)
+            self.input.click(screen_x, screen_y, **kwargs)
+            self._mark_input_action()
+            self._check_foreground_after_input()
+        except Exception as error:
+            payload: dict[str, Any] = {}
+            if "screen_x" in locals() and "screen_y" in locals():
+                payload["screen_point"] = [screen_x, screen_y]
+            self._finish_debug_action(action, ok=False, **payload, **self._debug_error_payload(error))
+            raise
+        self._finish_debug_action(action, ok=True, screen_point=[screen_x, screen_y])
 
     def drag_to(self, from_x: float, from_y: float, to_x: float, to_y: float, *, duration: float | None = None):
-        self._prepare_input_target()
         resolved_duration = self.DEFAULT_DRAG_DURATION_SECONDS if duration is None else duration
-        screen_from_x, screen_from_y = self._to_screen_point(from_x, from_y)
-        screen_to_x, screen_to_y = self._to_screen_point(to_x, to_y)
-        self.input.drag(screen_from_x, screen_from_y, screen_to_x, screen_to_y, duration=resolved_duration)
-        self._mark_input_action()
-        self._record_trace(
+        action = self._begin_debug_action(
             "drag_to",
             from_point=[from_x, from_y],
             to_point=[to_x, to_y],
             duration=resolved_duration,
-            screen_from=[screen_from_x, screen_from_y],
-            screen_to=[screen_to_x, screen_to_y],
         )
-        self._check_foreground_after_input()
+        try:
+            self._prepare_input_target()
+            screen_from_x, screen_from_y = self._to_screen_point(from_x, from_y)
+            screen_to_x, screen_to_y = self._to_screen_point(to_x, to_y)
+            self.input.drag(screen_from_x, screen_from_y, screen_to_x, screen_to_y, duration=resolved_duration)
+            self._mark_input_action()
+            self._check_foreground_after_input()
+        except Exception as error:
+            payload: dict[str, Any] = {}
+            if "screen_from_x" in locals() and "screen_from_y" in locals():
+                payload["screen_from"] = [screen_from_x, screen_from_y]
+            if "screen_to_x" in locals() and "screen_to_y" in locals():
+                payload["screen_to"] = [screen_to_x, screen_to_y]
+            self._finish_debug_action(action, ok=False, **payload, **self._debug_error_payload(error))
+            raise
+        self._finish_debug_action(action, ok=True, screen_from=[screen_from_x, screen_from_y], screen_to=[screen_to_x, screen_to_y])
 
     def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
-        self._prepare_input_target()
-        for index in range(presses):
-            self.input.press(key)
-            if index + 1 < presses:
-                sleep(interval)
-        self._mark_input_action()
-        self._record_trace("press_key", key=key, presses=presses, interval=interval)
-        self._check_foreground_after_input()
+        action = self._begin_debug_action("press_key", key=key, presses=presses, interval=interval)
+        try:
+            self._prepare_input_target()
+            for index in range(presses):
+                self.input.press(key)
+                if index + 1 < presses:
+                    sleep(interval)
+            self._mark_input_action()
+            self._check_foreground_after_input()
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, **self._debug_error_payload(error))
+            raise
+        self._finish_debug_action(action, ok=True)
 
     def hotkey(self, *keys: str):
-        self._prepare_input_target()
-        self.input.hotkey(*keys)
-        self._mark_input_action()
-        self._record_trace("hotkey", keys=list(keys))
-        self._check_foreground_after_input()
+        action = self._begin_debug_action("hotkey", keys=list(keys))
+        try:
+            self._prepare_input_target()
+            self.input.hotkey(*keys)
+            self._mark_input_action()
+            self._check_foreground_after_input()
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, **self._debug_error_payload(error))
+            raise
+        self._finish_debug_action(action, ok=True)
 
     def type_text(self, text: str):
-        self._prepare_input_target()
-        self.input.type_text(text)
-        self._mark_input_action()
-        self._record_trace("type_text", text=text)
-        self._check_foreground_after_input()
+        action = self._begin_debug_action("type_text", text=text)
+        try:
+            self._prepare_input_target()
+            self.input.type_text(text)
+            self._mark_input_action()
+            self._check_foreground_after_input()
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, **self._debug_error_payload(error))
+            raise
+        self._finish_debug_action(action, ok=True)
 
     def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+        action = self._begin_debug_action("capture_after_action", optional=1 if optional else 0)
         try:
             self._wait_for_post_input_settle()
             if request_id is None:
                 path = self.window.capture_to_workspace()
             else:
                 path = self.window.capture_to_workspace(request_id=request_id)
-            self._record_trace("capture_after_action", optional=optional, screenshot=str(path))
+            self._finish_debug_action(action, ok=True, screenshot=str(path))
             return path
-        except Exception:
+        except Exception as error:
             if optional:
-                self._record_trace("capture_after_action", optional=optional, screenshot=None)
+                self._finish_debug_action(action, ok=False, **self._debug_error_payload(error))
                 return None
+            self._finish_debug_action(action, ok=False, **self._debug_error_payload(error))
             raise
 
 
