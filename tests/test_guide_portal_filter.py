@@ -4,7 +4,7 @@ import importlib
 
 import pytest
 
-from tests.test_cw_guide import fake_cw_config_response, fake_lineup_index_item, fake_lineup_url
+from tests.test_cw_guide import fake_cw_config_response, fake_lineup_index_item
 
 
 def load_guide_module():
@@ -87,10 +87,9 @@ def test_fetch_cw_guide_list_rejects_unknown_portal_with_top3_candidates(monkeyp
     assert exc_info.value.candidates[0]["score"] >= exc_info.value.candidates[1]["score"]
 
 
-def test_fetch_cw_guide_list_portal_filter_uses_first_page_60_and_detail_fanout(monkeypatch):
+def test_fetch_cw_guide_list_portal_filter_uses_list_item_detail_without_fanout(monkeypatch):
     guide_module = load_guide_module()
     captured_list_request: dict[str, object] = {}
-    detail_calls: list[str] = []
 
     monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
 
@@ -98,31 +97,20 @@ def test_fetch_cw_guide_list_portal_filter_uses_first_page_60_and_detail_fanout(
         captured_list_request.update(kwargs)
         return {
             "list": [
-                fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["错误摘要"]),
-                fake_lineup_index_item(lineup_id="lineup-event", title="事件阵容", summary_portals=["购物区"]),
-                fake_lineup_index_item(lineup_id="lineup-shop-2", title="购物二号", summary_portals=[]),
+                fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["购物区"]),
+                fake_lineup_index_item(lineup_id="lineup-event", title="事件阵容", summary_portals=["事件区"]),
+                fake_lineup_index_item(lineup_id="lineup-shop-2", title="购物二号", summary_portals=["购物区"]),
             ],
             "next_page_token": "raw-next-token",
         }
 
-    def fake_fetch_lineup_detail(lineup_id: str, *, timeout: int = 10):
-        detail_calls.append(lineup_id)
-        portal_name = "购物区" if lineup_id != "lineup-event" else "事件区"
-        return lineup_id, f"https://example.invalid/{lineup_id}", {
-            "id": lineup_id,
-            "tourn_detail": {
-                "portals": [
-                    {
-                        "id": "shop" if portal_name == "购物区" else "event",
-                        "name": portal_name,
-                        "description": f"{portal_name}描述",
-                    }
-                ]
-            },
-        }
-
     monkeypatch.setattr(guide_module, "_fetch_cw_guide_list_data", fake_fetch_list_data, raising=False)
-    monkeypatch.setattr(guide_module, "_fetch_lineup_detail", fake_fetch_lineup_detail, raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_lineup_detail",
+        lambda *args, **kwargs: pytest.fail("portal filtering should use list item detail"),
+        raising=False,
+    )
 
     payload = guide_module.fetch_cw_guide_list(
         page=1,
@@ -146,39 +134,27 @@ def test_fetch_cw_guide_list_portal_filter_uses_first_page_60_and_detail_fanout(
         "match_hard": False,
         "timeout": 10,
     }
-    assert detail_calls == ["lineup-shop", "lineup-event", "lineup-shop-2"]
     assert [item["id"] for item in payload["list"]] == ["lineup-shop"]
     assert payload["next_page_token"] == "raw-next-token"
 
 
-def test_fetch_cw_guide_list_portal_filter_matches_detail_portal_without_id(monkeypatch):
+def test_fetch_cw_guide_list_portal_filter_matches_list_portal_without_id(monkeypatch):
     guide_module = load_guide_module()
 
     monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
     monkeypatch.setattr(
         guide_module,
         "_fetch_cw_guide_list_data",
-        lambda **kwargs: {"list": [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容")], "next_page_token": None},
+        lambda **kwargs: {
+            "list": [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["购物区"])],
+            "next_page_token": None,
+        },
         raising=False,
     )
     monkeypatch.setattr(
         guide_module,
         "_fetch_lineup_detail",
-        lambda lineup_id, *, timeout=10: (
-            lineup_id,
-            f"https://example.invalid/{lineup_id}",
-            {
-                "id": lineup_id,
-                "tourn_detail": {
-                    "portals": [
-                        {
-                            "name": "购物区",
-                            "description": "购物区描述",
-                        }
-                    ]
-                },
-            },
-        ),
+        lambda *args, **kwargs: pytest.fail("portal filtering should use list item detail"),
         raising=False,
     )
 
@@ -199,7 +175,6 @@ def test_fetch_cw_guide_list_portal_filter_matches_detail_portal_without_id(monk
 def test_fetch_cw_guide_list_portal_filter_paginates_until_limit(monkeypatch):
     guide_module = load_guide_module()
     requests: list[dict[str, object]] = []
-    detail_calls: list[str] = []
 
     monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
 
@@ -207,14 +182,14 @@ def test_fetch_cw_guide_list_portal_filter_paginates_until_limit(monkeypatch):
         [
             {
                 "list": [
-                    fake_lineup_index_item(lineup_id="lineup-shop-1", title="购物阵容一"),
-                    fake_lineup_index_item(lineup_id="lineup-event", title="事件阵容"),
+                    fake_lineup_index_item(lineup_id="lineup-shop-1", title="购物阵容一", summary_portals=["购物区"]),
+                    fake_lineup_index_item(lineup_id="lineup-event", title="事件阵容", summary_portals=["事件区"]),
                 ],
                 "next_page_token": "token-2",
             },
             {
                 "list": [
-                    fake_lineup_index_item(lineup_id="lineup-shop-2", title="购物阵容二"),
+                    fake_lineup_index_item(lineup_id="lineup-shop-2", title="购物阵容二", summary_portals=["购物区"]),
                 ],
                 "next_page_token": "token-3",
             },
@@ -225,24 +200,13 @@ def test_fetch_cw_guide_list_portal_filter_paginates_until_limit(monkeypatch):
         requests.append(kwargs)
         return next(responses)
 
-    def fake_fetch_lineup_detail(lineup_id: str, *, timeout: int = 10):
-        detail_calls.append(lineup_id)
-        portal_name = "购物区" if lineup_id != "lineup-event" else "事件区"
-        return lineup_id, fake_lineup_url(lineup_id), {
-            "id": lineup_id,
-            "tourn_detail": {
-                "portals": [
-                    {
-                        "id": "shop" if portal_name == "购物区" else "event",
-                        "name": portal_name,
-                        "description": f"{portal_name}描述",
-                    }
-                ]
-            },
-        }
-
     monkeypatch.setattr(guide_module, "_fetch_cw_guide_list_data", fake_fetch_list_data, raising=False)
-    monkeypatch.setattr(guide_module, "_fetch_lineup_detail", fake_fetch_lineup_detail, raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_lineup_detail",
+        lambda *args, **kwargs: pytest.fail("portal filtering should use list item detail"),
+        raising=False,
+    )
 
     payload = guide_module.fetch_cw_guide_list(
         page=1,
@@ -279,7 +243,6 @@ def test_fetch_cw_guide_list_portal_filter_paginates_until_limit(monkeypatch):
             "timeout": 10,
         },
     ]
-    assert detail_calls == ["lineup-shop-1", "lineup-event", "lineup-shop-2"]
     assert [item["id"] for item in payload["list"]] == ["lineup-shop-1", "lineup-shop-2"]
     assert payload["next_page_token"] == "token-3"
 
@@ -292,8 +255,8 @@ def test_fetch_cw_guide_list_multi_portal_groups_results(monkeypatch):
         "_fetch_cw_guide_list_data",
         lambda **kwargs: {
             "list": [
-                fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容"),
-                fake_lineup_index_item(lineup_id="lineup-event", title="事件阵容"),
+                fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["购物区"]),
+                fake_lineup_index_item(lineup_id="lineup-event", title="事件阵容", summary_portals=["事件区"]),
             ],
             "next_page_token": None,
         },
@@ -302,22 +265,7 @@ def test_fetch_cw_guide_list_multi_portal_groups_results(monkeypatch):
     monkeypatch.setattr(
         guide_module,
         "_fetch_lineup_detail",
-        lambda lineup_id, *, timeout=10: (
-            lineup_id,
-            fake_lineup_url(lineup_id),
-            {
-                "id": lineup_id,
-                "tourn_detail": {
-                    "portals": [
-                        {
-                            "id": "shop" if lineup_id == "lineup-shop" else "event",
-                            "name": "购物区" if lineup_id == "lineup-shop" else "事件区",
-                            "description": "detail-desc",
-                        }
-                    ]
-                },
-            },
-        ),
+        lambda *args, **kwargs: pytest.fail("portal filtering should use list item detail"),
         raising=False,
     )
 

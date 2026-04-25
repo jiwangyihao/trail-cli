@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 import json
 import math
@@ -39,7 +38,6 @@ PURCHASE_COUNT_BY_STAR = {
 LOOKUP_WHITESPACE_PATTERN = re.compile(r"\s+")
 CW_GUIDE_UPSTREAM_PAGE_SIZE = 10
 CW_GUIDE_PORTAL_MAX_PAGES = 30
-CW_GUIDE_PORTAL_DETAIL_WORKERS = 8
 GUIDE_ROLE_HIGH_RISK_SIMILARITY_THRESHOLD = 0.75
 CW_GUIDE_CONFIG_CACHE_RELATIVE = Path(".trail") / "cache" / "cw-guide-config.json"
 
@@ -1368,14 +1366,13 @@ def _fetch_cw_guide_list_for_portals(
             break
 
         normalized_items = [item for item in lineup_list if isinstance(item, Mapping)]
-        details = _fetch_lineup_details_for_portal_filter(normalized_items, timeout=timeout)
-        for item, lineup_detail in details:
+        for item in normalized_items:
             normalized = _normalize_lineup_summary(item)
             for portal_filter in portal_filters:
                 bucket = grouped[portal_filter["portal_id"]]["list"]
                 if len(bucket) >= limit:
                     continue
-                if _matches_lineup_portal(lineup_detail, portal=portal_filter):
+                if _matches_lineup_portal(item, portal=portal_filter):
                     bucket.append(normalized)
 
         pages_scanned += 1
@@ -1413,27 +1410,6 @@ def _fetch_cw_guide_list_for_portals(
         "count": total_count,
         "more": has_more,
     }
-
-
-def _fetch_lineup_details_for_portal_filter(
-    lineup_items: list[Mapping[str, object]],
-    *,
-    timeout: int,
-) -> list[tuple[Mapping[str, object], Mapping[str, object]]]:
-    jobs: list[tuple[Mapping[str, object], str]] = []
-    for item in lineup_items:
-        lineup_id = item.get("id") or item.get("lineup_id")
-        if lineup_id is None:
-            continue
-        jobs.append((item, str(lineup_id)))
-
-    def fetch(job: tuple[Mapping[str, object], str]) -> tuple[Mapping[str, object], Mapping[str, object]]:
-        item, lineup_id = job
-        _, _, lineup_detail = _fetch_lineup_detail(lineup_id, timeout=timeout)
-        return item, lineup_detail
-
-    with ThreadPoolExecutor(max_workers=min(CW_GUIDE_PORTAL_DETAIL_WORKERS, max(1, len(jobs)))) as executor:
-        return list(executor.map(fetch, jobs))
 
 
 def _wrap_share_code(share_code: object, *, source_url: str) -> str:

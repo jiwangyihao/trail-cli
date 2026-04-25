@@ -1156,17 +1156,16 @@ def test_fetch_cw_guide_list_role_fuzzy_resolution_prefers_highest_similarity_ov
     ]
 
 
-def test_fetch_cw_guide_list_filters_by_portal_id_using_detail_fanout(monkeypatch):
+def test_fetch_cw_guide_list_filters_by_portal_id_using_list_item_detail(monkeypatch):
     guide_module = load_cw_guide_module()
     fetch_cw_guide_list = getattr(guide_module, "fetch_cw_guide_list", None)
     assert fetch_cw_guide_list is not None
 
     raw_items = [
-        fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["错误摘要"]),
-        fake_lineup_index_item(lineup_id="lineup-event", title="事件阵容", summary_portals=["购物区"]),
+        fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["购物区"]),
+        fake_lineup_index_item(lineup_id="lineup-event", title="事件阵容", summary_portals=["事件区"]),
     ]
     captured_list_request: dict[str, object] = {}
-    detail_calls: list[str] = []
 
     monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
 
@@ -1174,24 +1173,13 @@ def test_fetch_cw_guide_list_filters_by_portal_id_using_detail_fanout(monkeypatc
         captured_list_request.update(kwargs)
         return {"list": raw_items, "next_page_token": "raw-next-token"}
 
-    def fake_fetch_lineup_detail(lineup_id: str, *, timeout: int = 10):
-        detail_calls.append(lineup_id)
-        portal_name = "购物区" if lineup_id == "lineup-shop" else "事件区"
-        return lineup_id, fake_lineup_url(lineup_id), {
-            "id": lineup_id,
-            "tourn_detail": {
-                "portals": [
-                    {
-                        "id": "shop" if portal_name == "购物区" else "event",
-                        "name": portal_name,
-                        "description": "detail-desc",
-                    }
-                ]
-            },
-        }
-
     monkeypatch.setattr(guide_module, "_fetch_cw_guide_list_data", fake_fetch_list_data, raising=False)
-    monkeypatch.setattr(guide_module, "_fetch_lineup_detail", fake_fetch_lineup_detail, raising=False)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_lineup_detail",
+        lambda *args, **kwargs: pytest.fail("portal filtering should use list item detail"),
+        raising=False,
+    )
 
     payload = fetch_cw_guide_list(
         page=1,
@@ -1215,7 +1203,6 @@ def test_fetch_cw_guide_list_filters_by_portal_id_using_detail_fanout(monkeypatc
         "match_hard": False,
         "timeout": 10,
     }
-    assert detail_calls == ["lineup-shop", "lineup-event"]
     assert payload["list"] == [
         {
             "id": "lineup-shop",
@@ -1247,7 +1234,7 @@ def test_fetch_cw_guide_list_filters_by_portal_id_using_detail_fanout(monkeypatc
 
 def test_fetch_cw_guide_list_portal_filter_reuses_resolved_role_ids(monkeypatch):
     guide_module = load_cw_guide_module()
-    raw_items = [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容")]
+    raw_items = [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["购物区"])]
     captured_list_request: dict[str, object] = {}
 
     monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fuzzy_role_config_response()["data"], raising=False)
@@ -1259,18 +1246,8 @@ def test_fetch_cw_guide_list_portal_filter_reuses_resolved_role_ids(monkeypatch)
     )
     monkeypatch.setattr(
         guide_module,
-        "_fetch_lineup_details_for_portal_filter",
-        lambda lineup_items, timeout: [
-            (
-                lineup_items[0],
-                {
-                    "id": "lineup-shop",
-                    "tourn_detail": {
-                        "portals": [{"id": "shop", "name": "购物区", "description": "detail-desc"}],
-                    },
-                },
-            )
-        ],
+        "_fetch_lineup_detail",
+        lambda *args, **kwargs: pytest.fail("portal filtering should use list item detail"),
         raising=False,
     )
 
@@ -1295,7 +1272,7 @@ def test_fetch_cw_guide_list_portal_filter_reuses_resolved_role_ids(monkeypatch)
 
 def test_fetch_cw_guide_list_portal_filter_reuses_resolved_trait_id(monkeypatch):
     guide_module = load_cw_guide_module()
-    raw_items = [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容")]
+    raw_items = [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["购物区"])]
     captured_list_request: dict[str, object] = {}
 
     monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
@@ -1307,18 +1284,8 @@ def test_fetch_cw_guide_list_portal_filter_reuses_resolved_trait_id(monkeypatch)
     )
     monkeypatch.setattr(
         guide_module,
-        "_fetch_lineup_details_for_portal_filter",
-        lambda lineup_items, timeout: [
-            (
-                lineup_items[0],
-                {
-                    "id": "lineup-shop",
-                    "tourn_detail": {
-                        "portals": [{"id": "shop", "name": "购物区", "description": "detail-desc"}],
-                    },
-                },
-            )
-        ],
+        "_fetch_lineup_detail",
+        lambda *args, **kwargs: pytest.fail("portal filtering should use list item detail"),
         raising=False,
     )
 
