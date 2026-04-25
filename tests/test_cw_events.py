@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from trail.core.errors import TrailError
 from trail.scenes.cw.models import ensure_cw_state
 from trail.session.store import SessionStore
 
@@ -135,6 +136,33 @@ def test_build_cw_battle_starter_waits_for_template_before_clicking_center(monke
     assert fake_runtime.clicks == [(130, 210)]
 
 
+def test_build_cw_battle_starter_cancels_team_count_confirm_dialog(monkeypatch, fake_runtime):
+    events_module = load_cw_events_module()
+    monkeypatch.setattr(events_module, "_asset", lambda alias: alias, raising=False)
+    fake_runtime.wait_result = {"left": 100, "top": 200, "width": 60, "height": 20}
+    ocr_calls: list[dict] = []
+
+    def fake_ocr(**kwargs):
+        ocr_calls.append(kwargs)
+        return [
+            _ocr_piece("提示", left=820, top=300, width=100, height=36),
+            _ocr_piece("可出战角色人数未达上限，是否确认出战？", left=620, top=430, width=680, height=36),
+            _ocr_piece("取消", left=380, top=600, width=100, height=36),
+            _ocr_piece("确认", left=1160, top=600, width=100, height=36),
+        ]
+
+    monkeypatch.setattr(fake_runtime, "ocr", fake_ocr)
+
+    with pytest.raises(TrailError) as exc_info:
+        events_module.build_cw_battle_starter(fake_runtime)()
+
+    assert exc_info.value.code == "CW_BATTLE_TEAM_COUNT_INSUFFICIENT"
+    assert "可出战角色人数未达上限" in str(exc_info.value)
+    assert "检查场上人数" in str(exc_info.value)
+    assert fake_runtime.clicks == [(130, 210), (430, 618)]
+    assert ocr_calls
+
+
 @pytest.mark.parametrize(
     ("builder_name", "expected_wait_calls", "expected_locate_calls", "ocr_text", "expected_click"),
     [
@@ -193,7 +221,10 @@ def test_cw_action_buttons_use_ocr_box_when_template_misses(
 
     assert fake_runtime.wait_calls == expected_wait_calls
     assert fake_runtime.locate_calls == expected_locate_calls
-    assert ocr_calls == [{"capture": events_module.CW_ACTION_OCR_REGION}]
+    expected_ocr_calls = [{"capture": events_module.CW_ACTION_OCR_REGION}]
+    if builder_name == "build_cw_battle_starter":
+        expected_ocr_calls.append({"capture": events_module.CW_BATTLE_TEAM_COUNT_CONFIRM_REGION})
+    assert ocr_calls == expected_ocr_calls
     assert fake_runtime.clicks == [expected_click]
 
 

@@ -4656,6 +4656,86 @@ def test_command_service_handles_cw_battle_start_waits_extra_before_capture(tmp_
     assert service.request_status("req-cw-battle-start-delay")["final_state"] == "completed"
 
 
+@pytest.mark.parametrize("method", ["cw.battle.start", "cw.battle.run"])
+def test_command_service_keeps_cw_battle_team_count_failure_known_after_cancel(tmp_path: Path, method: str):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def wait_img(self, template: str, timeout: int = 3, interval: float = 0.5):
+            del template, timeout, interval
+            return {"left": 100, "top": 200, "width": 60, "height": 20}
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def ocr(self, **kwargs):
+            capture = kwargs.get("capture")
+            if capture is None:
+                return [{"text": "开始战斗"}]
+            return [
+                {"text": "提示", "box": {"left": 820, "top": 300, "width": 100, "height": 36}},
+                {"text": "可出战角色人数未达上限，是否确认出战？", "box": {"left": 620, "top": 430, "width": 680, "height": 36}},
+                {"text": "取消", "box": {"left": 380, "top": 600, "width": 100, "height": 36}},
+                {"text": "确认", "box": {"left": 1160, "top": 600, "width": 100, "height": 36}},
+            ]
+
+        def click_point(self, x: int, y: int):
+            self.clicks.append((x, y))
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / f"{request_id}.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    request_id = f"req-{method.replace('.', '-')}-team-count"
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id=request_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method=method,
+            payload={"session_id": session.session_id, "timeout": 2} if method == "cw.battle.run" else {"session_id": session.session_id},
+        )
+    )
+    status = service.request_status(request_id)
+    loaded = service.load_session(session.session_id)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "CW_BATTLE_TEAM_COUNT_INSUFFICIENT"
+    assert "请先检查场上人数" in payload["error"]["message"]
+    assert payload["error"]["code"] != "DAEMON_UNAVAILABLE"
+    assert "mutation result unknown" not in payload["error"]["message"]
+    assert status["final_state"] == "completed"
+    assert status["tainted"] is False
+    assert service.is_session_tainted(session.session_id) is False
+    assert loaded.scene_state.get("daemon", {}).get("tainted", False) is False
+    assert runtime.clicks == [(130, 210), (430, 618)]
+
+
 def test_command_service_handles_state_dump_returns_latest_battle_run_snapshot(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 

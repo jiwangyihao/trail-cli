@@ -131,6 +131,28 @@ class ScriptedBattleRuntime:
             self.advance()
 
 
+class TeamCountConfirmRuntime(ScriptedBattleRuntime):
+    def __init__(self):
+        super().__init__(["battle_start"], sleep_advances_from=())
+        self.wait_calls: list[str] = []
+
+    def wait_img(self, template: str, timeout: int = 3, interval: float = 0.5):
+        del timeout, interval
+        self.wait_calls.append(str(template))
+        return {"left": 100, "top": 200, "width": 60, "height": 20}
+
+    def ocr(self, **kwargs):
+        capture = _capture_key(kwargs.get("capture"))
+        if capture is None:
+            return [_ocr_piece("开始战斗")]
+        return [
+            {"text": "提示", "box": {"left": 820, "top": 300, "width": 100, "height": 36}},
+            {"text": "可出战角色人数未达上限，是否确认出战？", "box": {"left": 620, "top": 430, "width": 680, "height": 36}},
+            {"text": "取消", "box": {"left": 380, "top": 600, "width": 100, "height": 36}},
+            {"text": "确认", "box": {"left": 1160, "top": 600, "width": 100, "height": 36}},
+        ]
+
+
 class FakeClock:
     def __init__(self, *, step: float = 1.0):
         self.current = 0.0
@@ -455,6 +477,23 @@ def test_run_cw_battle_starts_from_detected_preparation_when_ocr_misses_start_te
     assert runtime.actions == ["start", "continue", "next"]
     assert session.scene_state["cw"]["stage"] == {"value": "shop", "stale": False}
     assert session.last_stage == {"scene": "cw", "value": "shop"}
+
+
+def test_run_cw_battle_raises_when_start_shows_team_count_confirm_dialog(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = TeamCountConfirmRuntime()
+    clock = FakeClock()
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: runtime.detect_stage)
+    monkeypatch.setattr(battle_scene, "monotonic", clock.monotonic, raising=False)
+
+    with pytest.raises(TrailError) as exc_info:
+        battle_scene.run_cw_battle(session, runtime=runtime, timeout=2)
+
+    assert exc_info.value.code == "CW_BATTLE_TEAM_COUNT_INSUFFICIENT"
+    assert "可出战角色人数未达上限" in str(exc_info.value)
+    assert "检查场上人数" in str(exc_info.value)
+    assert runtime.clicks == [(130, 210), (430, 618)]
 
 
 def test_run_cw_battle_returns_settle_timeout_summary_when_budget_exhausted(tmp_path: Path, monkeypatch):

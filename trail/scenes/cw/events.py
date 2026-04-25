@@ -19,6 +19,12 @@ CW_ACTION_OCR_REGION = {
     "to_x": 0.70,
     "to_y": 0.92,
 }
+CW_BATTLE_TEAM_COUNT_CONFIRM_REGION = {
+    "from_x": 0.25,
+    "from_y": 0.25,
+    "to_x": 0.75,
+    "to_y": 0.75,
+}
 
 
 def _point(x_ratio: float, y_ratio: float) -> tuple[int, int]:
@@ -43,6 +49,35 @@ def _box_center(box: object) -> tuple[int, int]:
 
 def _normalized_action_text(text: object) -> str:
     return "".join(str(text or "").split())
+
+
+def _read_ocr_piece_text(piece: object) -> str:
+    if isinstance(piece, Mapping):
+        for key in ("text", "ocr_text", "value", "name"):
+            value = piece.get(key)
+            if isinstance(value, str | int | float):
+                return str(value)
+        return ""
+
+    if isinstance(piece, (list, tuple)):
+        if len(piece) >= 2 and isinstance(piece[1], str | int | float):
+            return str(piece[1])
+        for value in piece:
+            if isinstance(value, str | int | float):
+                return str(value)
+        return ""
+
+    if isinstance(piece, str | int | float):
+        return str(piece)
+    return ""
+
+
+def _joined_ocr_text(runtime, *, capture: Mapping[str, float] | None = None) -> str:
+    try:
+        pieces = runtime.ocr(capture=capture)
+    except Exception:
+        return ""
+    return "".join(_read_ocr_piece_text(piece).strip() for piece in pieces or [])
 
 
 def _extract_box_values(box: Mapping[object, object]) -> tuple[float, float, float, float] | None:
@@ -120,9 +155,14 @@ def _normalize_ocr_piece(piece: object) -> dict[str, float | str] | None:
     }
 
 
-def _find_ocr_button_box(runtime, *, allowed_texts: set[str]) -> dict[str, float | str] | None:
+def _find_ocr_button_box(
+    runtime,
+    *,
+    allowed_texts: set[str],
+    capture: Mapping[str, float] | None = CW_ACTION_OCR_REGION,
+) -> dict[str, float | str] | None:
     try:
-        pieces = runtime.ocr(capture=CW_ACTION_OCR_REGION)
+        pieces = runtime.ocr(capture=capture)
     except Exception:
         return None
     normalized_allowed_texts = {_normalized_action_text(text) for text in allowed_texts}
@@ -192,6 +232,7 @@ BOSS_PREVIEW_CONFIRM_POINT = _point(0.5, 0.7)
 SETTLE_NEXT_POINT = _point(0.5, 0.82)
 BATTLE_START_POINT = _point(0.5, 0.824)
 BATTLE_CONTINUE_POINT = _point(0.5, 0.824)
+BATTLE_TEAM_COUNT_CANCEL_POINT = _point(0.43, 0.572)
 
 
 def _build_option_chooser(runtime, *, option_points: dict[int, tuple[float, float]], confirm_point: tuple[float, float]):
@@ -245,13 +286,37 @@ def build_cw_settle_continuer(runtime) -> SceneAction:
 
 
 def build_cw_battle_starter(runtime) -> SceneAction:
-    return lambda: _click_cw_action_button(
+    def starter() -> None:
+        _click_cw_action_button(
+            runtime,
+            wait_alias="action.battle_start",
+            locate_aliases=(),
+            allowed_texts={"开始战斗", "开始挑战", "出战"},
+            fallback_point=BATTLE_START_POINT,
+        )
+        _fail_if_battle_team_count_confirm_dialog(runtime)
+
+    return starter
+
+
+def _fail_if_battle_team_count_confirm_dialog(runtime) -> None:
+    dialog_text = _normalized_action_text(_joined_ocr_text(runtime, capture=CW_BATTLE_TEAM_COUNT_CONFIRM_REGION))
+    if "人数未达上限" not in dialog_text or "是否确认出战" not in dialog_text:
+        return
+
+    cancel_box = _find_ocr_button_box(
         runtime,
-        wait_alias="action.battle_start",
-        locate_aliases=(),
-        allowed_texts={"开始战斗", "开始挑战", "出战"},
-        fallback_point=BATTLE_START_POINT,
+        allowed_texts={"取消"},
+        capture=CW_BATTLE_TEAM_COUNT_CONFIRM_REGION,
     )
+    if cancel_box is not None:
+        runtime.click_point(*_box_center(cancel_box))
+    else:
+        runtime.click_point(*BATTLE_TEAM_COUNT_CANCEL_POINT)
+    error = TrailError("CW_BATTLE_TEAM_COUNT_INSUFFICIENT", "可出战角色人数未达上限，请先检查场上人数")
+    error.known_failure_after_save = True
+    error.data = {"reason": "team_count_insufficient"}
+    raise error
 
 
 def build_cw_battle_continuer(runtime) -> SceneAction:
