@@ -50,7 +50,7 @@ def command_failure(
     references: list[dict[str, Any]] | None = None,
     debug: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    envelope = {
         "ok": False,
         "data": {},
         "screenshot": None if screenshot is None else str(screenshot),
@@ -60,3 +60,4 @@ def command_failure(
         "debug": deepcopy(debug),
         "error": {"code": code, "message": message},
     }
+    return _attach_image_guidance(envelope, screenshot=screenshot)

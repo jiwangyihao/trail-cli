@@ -963,6 +963,8 @@ class CommandService:
         data = deepcopy(raw_data) if isinstance(raw_data, dict) else {}
         if hasattr(error, "tainted") and "tainted" not in data:
             data["tainted"] = bool(getattr(error, "tainted"))
+        raw_debug = getattr(error, "debug", None)
+        debug = deepcopy(raw_debug) if isinstance(raw_debug, dict) else None
         return {
             "ok": False,
             "data": data,
@@ -970,7 +972,7 @@ class CommandService:
             "timing": {},
             "warnings": [],
             "references": [],
-            "debug": None,
+            "debug": debug,
             "error": {"code": code, "message": message},
         }
 

@@ -9,6 +9,7 @@ from trail.core.errors import TrailError
 from trail.daemon.command_timeouts import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS, resolve_command_execution_timeout
 from trail.daemon.command_service import PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
 from trail.output.capture import with_auto_capture, with_selective_capture
+from trail.output.envelope import build_image_guidance
 from trail.scenes.cw.battle import run_cw_battle
 from trail.scenes.cw.entry import enter_cw, is_cw_exact_difficulty_token, start_cw
 from trail.scenes.cw.events import (
@@ -204,7 +205,7 @@ class CwService:
         self.runtime_service = runtime_service
 
     def handle(self, *, method: str, payload: dict, workspace_root: str, session_service) -> dict | None:
-        session, _, _, handlers, _, _ = self._context(
+        session, _, _, handlers, _, _, _ = self._context(
             method=method,
             payload=payload,
             workspace_root=workspace_root,
@@ -225,7 +226,7 @@ class CwService:
         request_id: str,
         verbose: bool = False,
     ) -> dict | None:
-        session, _, runtime, handlers, _, _ = self._context(
+        session, _, runtime, handlers, _, _, _ = self._context(
             method=method,
             payload=payload,
             workspace_root=workspace_root,
@@ -249,7 +250,7 @@ class CwService:
         request_id: str,
         verbose: bool = False,
     ) -> dict | None:
-        session, _, runtime, handlers, tracker, end_runtime_scope_if_started = self._context(
+        session, _, runtime, handlers, tracker, end_runtime_scope_if_started, runtime_if_started = self._context(
             method=method,
             payload=payload,
             workspace_root=workspace_root,
@@ -258,6 +259,45 @@ class CwService:
             shared_capture_scope=True,
         )
 
+        def collect_runtime_debug(debug_runtime=None) -> dict | None:
+            if not verbose:
+                return None
+            if debug_runtime is None:
+                debug_runtime = runtime_if_started()
+                if debug_runtime is None:
+                    return None
+            return _safe_collect_debug(debug_runtime, verbose=verbose)
+
+        def unknown_result_envelope(
+            error: Exception,
+            *,
+            last_known_stage: str | None = None,
+            screenshot: str | None = None,
+            warnings: list[dict] | None = None,
+            references: list[dict] | None = None,
+            debug_runtime=None,
+        ) -> dict:
+            return _unknown_result_envelope(
+                error,
+                last_known_stage=last_known_stage,
+                screenshot=screenshot,
+                warnings=warnings,
+                references=references,
+                debug=collect_runtime_debug(debug_runtime),
+            )
+
+        def attach_runtime_debug(error: Exception) -> None:
+            debug = collect_runtime_debug()
+            if not debug:
+                return
+            raw_debug = getattr(error, "debug", None)
+            if isinstance(raw_debug, dict):
+                debug = {**debug, **raw_debug}
+            try:
+                setattr(error, "debug", debug)
+            except Exception:
+                return
+
         try:
             if method == "cw.start":
                 _validated_start_payload(payload)
@@ -265,7 +305,7 @@ class CwService:
                 result = handlers[method]()
             except CwSideEffectAppliedError as error:
                 raise SideEffectAppliedButStateNotPersisted(
-                    _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+                    unknown_result_envelope(error, last_known_stage="side_effect_applied")
                 ) from error
             except TrailError as error:
                 if getattr(error, "known_failure_after_save", False):
@@ -273,7 +313,7 @@ class CwService:
                         session_service.save_session(session)
                     except Exception as save_error:
                         raise SideEffectAppliedButStateNotPersisted(
-                            _unknown_result_envelope(save_error, last_known_stage="side_effect_applied")
+                            unknown_result_envelope(save_error, last_known_stage="side_effect_applied")
                         ) from save_error
 
                     extra_delay_seconds = PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS if method == "cw.portal.select" else 0.0
@@ -295,31 +335,34 @@ class CwService:
                     except Exception as capture_error:
                         screenshot = _safe_capture_after_action(capture_runtime)
                         raise PersistedButResponseUnknown(
-                            _unknown_result_envelope(
+                            unknown_result_envelope(
                                 capture_error,
                                 last_known_stage="state_persisted",
                                 screenshot=screenshot,
                                 warnings=_safe_collect_warnings(capture_runtime),
                                 references=_safe_match_references(capture_runtime, screenshot=screenshot),
+                                debug_runtime=capture_runtime,
                             )
                         ) from capture_error
                 if tracker.side_effect_applied or getattr(error, "completed_after_side_effect", False):
                     raise SideEffectAppliedButStateNotPersisted(
-                        _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+                        unknown_result_envelope(error, last_known_stage="side_effect_applied")
                     ) from error
+                attach_runtime_debug(error)
                 raise
             except Exception as error:
                 if tracker.side_effect_applied or getattr(error, "completed_after_side_effect", False):
                     raise SideEffectAppliedButStateNotPersisted(
-                        _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+                        unknown_result_envelope(error, last_known_stage="side_effect_applied")
                     ) from error
+                attach_runtime_debug(error)
                 raise
 
             try:
                 session_service.save_session(session)
             except Exception as error:
                 raise SideEffectAppliedButStateNotPersisted(
-                    _unknown_result_envelope(error, last_known_stage="side_effect_applied")
+                    unknown_result_envelope(error, last_known_stage="side_effect_applied")
                 ) from error
 
             extra_delay_seconds = _capture_delay_seconds_for_method(method)
@@ -334,12 +377,13 @@ class CwService:
             except Exception as error:
                 screenshot = _safe_capture_after_action(capture_runtime)
                 raise PersistedButResponseUnknown(
-                    _unknown_result_envelope(
+                    unknown_result_envelope(
                         error,
                         last_known_stage="state_persisted",
                         screenshot=screenshot,
                         warnings=_safe_collect_warnings(capture_runtime),
                         references=_safe_match_references(capture_runtime, screenshot=screenshot),
+                        debug_runtime=capture_runtime,
                     )
                 ) from error
         finally:
@@ -385,6 +429,9 @@ class CwService:
                 return
             _end_runtime_scope(runtime_holder["runtime"])
             scope_state["started"] = False
+
+        def runtime_if_started():
+            return runtime_holder.get("runtime")
 
         def validated_enter_payload() -> dict:
             if any(key in payload for key in ("mode", "difficulty", "battle_mode")):
@@ -577,7 +624,7 @@ class CwService:
         if method not in handlers:
             raise TrailError("DAEMON_METHOD_NOT_SUPPORTED", f"unsupported method: {method}")
 
-        return session, artifact_store, runtime, handlers, tracker, end_runtime_scope_if_started
+        return session, artifact_store, runtime, handlers, tracker, end_runtime_scope_if_started, runtime_if_started
 
 
 def _handle_and_save_session(handler, session_service, session):
@@ -781,6 +828,38 @@ def _safe_collect_warnings(runtime) -> list[dict]:
     return warnings if isinstance(warnings, list) else []
 
 
+def _safe_collect_debug(runtime, *, verbose: bool) -> dict | None:
+    if runtime is None or not verbose:
+        return None
+
+    debug: dict = {}
+    consume_debug_trace = getattr(runtime, "consume_debug_trace", None)
+    if callable(consume_debug_trace):
+        try:
+            trace = consume_debug_trace() or []
+        except Exception:
+            trace = []
+        if isinstance(trace, list) and trace:
+            debug["trace"] = trace
+
+    consume_debug_context = getattr(runtime, "consume_debug_context", None)
+    if callable(consume_debug_context):
+        try:
+            context = consume_debug_context() or {}
+        except Exception:
+            context = {}
+        if isinstance(context, dict):
+            debug.update(
+                {
+                    key: value
+                    for key, value in context.items()
+                    if key not in {"trace", "request_id", "detail"}
+                }
+            )
+
+    return debug or None
+
+
 def _unknown_result_envelope(
     error: Exception,
     *,
@@ -788,23 +867,29 @@ def _unknown_result_envelope(
     screenshot: str | None = None,
     warnings: list[dict] | None = None,
     references: list[dict] | None = None,
+    debug: dict | None = None,
 ) -> dict:
-    debug = {"detail": _format_exception_detail(error)}
+    debug_payload = deepcopy(debug or {})
+    debug_payload["detail"] = _format_exception_detail(error)
     if isinstance(last_known_stage, str) and last_known_stage:
-        debug["last_known_stage"] = last_known_stage
-    return {
+        debug_payload["last_known_stage"] = last_known_stage
+    payload = {
         "ok": False,
         "data": {},
         "screenshot": screenshot,
         "timing": {},
         "warnings": deepcopy(warnings or []),
         "references": deepcopy(references or []),
-        "debug": debug,
+        "debug": debug_payload,
         "error": {
             "code": "DAEMON_UNAVAILABLE",
             "message": "mutation result unknown",
         },
     }
+    guidance = build_image_guidance(screenshot)
+    if guidance is not None:
+        payload["image_guidance"] = guidance
+    return payload
 
 
 def _format_exception_detail(error: Exception) -> str:

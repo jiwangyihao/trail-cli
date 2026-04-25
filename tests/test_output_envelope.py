@@ -30,7 +30,7 @@ def test_failure_envelope_contains_error_code_and_screenshot(tmp_path):
     assert result["ok"] is False
     assert result["error"]["code"] == "WINDOW_NOT_FOUND"
     assert result["screenshot"].endswith("fail.png")
-    assert "image_guidance" not in result
+    assert result["image_guidance"] == {"read_image_first": 1}
 
 
 def test_command_success_deep_copies_data(tmp_path):
@@ -49,14 +49,15 @@ def test_command_success_includes_image_guidance_when_screenshot_present():
     assert "image_guidance" not in result["data"]
 
 
-def test_command_failure_omits_image_guidance_with_screenshot():
+def test_command_failure_includes_image_guidance_with_screenshot():
     result = command_failure(
         code="WINDOW_NOT_FOUND",
         message="window missing",
         screenshot=Path("fail.png"),
     )
 
-    assert "image_guidance" not in result
+    assert result["image_guidance"] == {"read_image_first": 1}
+    assert type(result["image_guidance"]["read_image_first"]) is int
 
 
 def test_command_success_omits_image_guidance_without_screenshot():

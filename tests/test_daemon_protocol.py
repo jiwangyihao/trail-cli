@@ -1732,7 +1732,7 @@ def test_command_service_routes_cw_captured_reads_through_handle_with_capture(
                 "ok": True,
                 "data": response_data,
                 "screenshot": tmp_path / ".trail" / "shots" / f"{request_id}.png",
-                "image_guidance": {"read_image_first": True},
+                "image_guidance": {"read_image_first": 1},
                 "timing": {},
                 "warnings": [],
                 "references": [],
@@ -2527,6 +2527,212 @@ def test_cw_mutation_scope_collects_trace_emitted_before_auto_capture(tmp_path: 
                 "ts": "2026-04-24T08:15:30.123Z",
                 "ok": 1,
                 "point": [10, 20],
+            }
+        ]
+    }
+
+
+def test_cw_mutation_scope_keeps_verbose_trace_for_unknown_side_effect_result(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ScopedDebugProtocolRuntime(tmp_path / "cw-start-shared-scope-side-effect-unknown.png")
+    runtime_service = ProtocolRuntimeService(runtime)
+    service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=service)
+
+    def fake_start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None):
+        del session, mode, difficulty, battle_mode, workspace_root
+        runtime.click_point(10, 20)
+        raise RuntimeError("side effect failed")
+
+    monkeypatch.setattr("trail.daemon.cw_service._start_cw", fake_start_cw)
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-start-side-effect-unknown-trace",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=True,
+            method="cw.start",
+            payload={
+                "session_id": session.session_id,
+                "mode": "new",
+                "difficulty": "lowest",
+                "battle_mode": "standard",
+            },
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert payload["debug"] == {
+        "trace": [
+            {
+                "step": "click_point",
+                "ts": "2026-04-24T08:15:30.123Z",
+                "ok": 1,
+                "point": [10, 20],
+            }
+        ],
+        "detail": "RuntimeError: side effect failed",
+        "last_known_stage": "side_effect_applied",
+    }
+
+
+def test_cw_mutation_unknown_result_without_verbose_does_not_initialize_runtime_for_debug(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    loaded = session_service.load_session(session.session_id)
+    loaded.scene_state["cw"] = {
+        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+    }
+    session_service.save_session(loaded)
+    runtime_calls: list[dict[str, object]] = []
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime_calls.append(dict(kwargs)))
+    service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr(session_service, "save_session", lambda model: (_ for _ in ()).throw(OSError("save failed")))
+
+    with pytest.raises(SideEffectAppliedButStateNotPersisted) as error:
+        service.handle_mutation(
+            method="cw.guide.current",
+            payload={"session_id": session.session_id},
+            workspace_root=str(tmp_path),
+            session_service=session_service,
+            request_id="req-cw-current-save-fail-no-verbose",
+            verbose=False,
+        )
+
+    assert runtime_calls == []
+    assert error.value.envelope["debug"] == {
+        "detail": "OSError: save failed",
+        "last_known_stage": "side_effect_applied",
+    }
+
+
+def test_cw_mutation_scope_keeps_verbose_trace_for_state_persisted_unknown_result(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ScopedDebugProtocolRuntime(tmp_path / "cw-start-shared-scope-state-persisted-unknown.png")
+    runtime.collect_warnings = lambda: (_ for _ in ()).throw(RuntimeError("warnings failed"))
+    runtime_service = ProtocolRuntimeService(runtime)
+    service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=service)
+
+    def fake_start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None):
+        del session, mode, difficulty, battle_mode, workspace_root
+        runtime.click_point(10, 20)
+        return {"cards": 1}
+
+    monkeypatch.setattr("trail.daemon.cw_service._start_cw", fake_start_cw)
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-start-state-persisted-unknown-trace",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=True,
+            method="cw.start",
+            payload={
+                "session_id": session.session_id,
+                "mode": "new",
+                "difficulty": "lowest",
+                "battle_mode": "standard",
+            },
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert payload["screenshot"] == "req-cw-start-state-persisted-unknown-trace.png"
+    assert payload["image_guidance"] == {"read_image_first": 1}
+    assert type(payload["image_guidance"]["read_image_first"]) is int
+    assert payload["debug"] == {
+        "trace": [
+            {
+                "step": "click_point",
+                "ts": "2026-04-24T08:15:30.123Z",
+                "ok": 1,
+                "point": [10, 20],
+            }
+        ],
+        "detail": "RuntimeError: warnings failed",
+        "last_known_stage": "state_persisted",
+    }
+
+
+def test_cw_mutation_scope_keeps_verbose_trace_for_failed_before_side_effect(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ScopedDebugProtocolRuntime(tmp_path / "cw-start-shared-scope-failed-before-side-effect.png")
+
+    def emit_trace() -> None:
+        runtime._local.trace.append(
+            {
+                "step": "ocr",
+                "ts": "2026-04-24T08:15:30.123Z",
+                "ok": 1,
+                "pieces": 0,
+            }
+        )
+
+    runtime.emit_trace = emit_trace
+    runtime_service = ProtocolRuntimeService(runtime)
+    service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=service)
+
+    def fake_start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None):
+        del session, mode, difficulty, battle_mode, workspace_root
+        runtime.emit_trace()
+        raise TrailError("CW_START_FAILED", "start failed")
+
+    monkeypatch.setattr("trail.daemon.cw_service._start_cw", fake_start_cw)
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-start-failed-before-side-effect-trace",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=True,
+            method="cw.start",
+            payload={
+                "session_id": session.session_id,
+                "mode": "new",
+                "difficulty": "lowest",
+                "battle_mode": "standard",
+            },
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == {"code": "CW_START_FAILED", "message": "start failed"}
+    assert payload["debug"] == {
+        "trace": [
+            {
+                "step": "ocr",
+                "ts": "2026-04-24T08:15:30.123Z",
+                "ok": 1,
+                "pieces": 0,
             }
         ]
     }
@@ -3928,6 +4134,57 @@ def test_command_service_marks_cw_portal_select_post_click_apply_failure_as_reco
     assert blocked["error"]["code"] == "SESSION_RECONCILE_REQUIRED"
 
 
+def test_command_service_keeps_cw_portal_select_side_effect_failure_verbose_trace(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    session_services = SessionServiceRegistry()
+    service = session_services.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    loaded = service.load_session(session.session_id)
+    loaded.scene_state["cw"] = {
+        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        "portal": {"cards": [{"card_idx": 1, "portal_title": "商店"}], "mode": "new", "difficulty": "normal", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(loaded)
+
+    runtime = ScopedDebugProtocolRuntime(tmp_path / "cw-portal-select-side-effect-trace.png")
+    runtime_service = ProtocolRuntimeService(runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=session_services, cw_service=cw_service)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": "商店"},
+    )
+
+    def fail_after_apply_click(runtime, share_code: str) -> None:
+        del share_code
+        runtime.click_point(10, 20)
+        raise RuntimeError("apply failed")
+
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", fail_after_apply_click)
+
+    response = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-portal-select-side-effect-trace",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=True,
+            method="cw.portal.select",
+            payload={"session_id": session.session_id, "card_idx": 1},
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    trace = response["debug"]["trace"]
+    assert any(event["step"] == "click_point" and event["ts"] and event["ok"] == 1 for event in trace)
+    assert response["debug"]["last_known_stage"] == "side_effect_applied"
+
+
 def test_command_service_handles_cw_portal_refresh_and_updates_snapshot(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 
@@ -5018,7 +5275,8 @@ def test_command_service_unknown_result_envelope_includes_image_guidance_when_sc
 
     assert envelope["ok"] is False
     assert envelope["screenshot"] == ".trail/shots/req-unknown-guidance.png"
-    assert envelope["image_guidance"] == {"read_image_first": True}
+    assert envelope["image_guidance"] == {"read_image_first": 1}
+    assert type(envelope["image_guidance"]["read_image_first"]) is int
 
 
 def test_server_handle_payload_keeps_unknown_result_envelope_for_post_handler_failure(tmp_path: Path, monkeypatch):
