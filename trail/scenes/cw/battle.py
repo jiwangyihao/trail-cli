@@ -34,12 +34,11 @@ STABLE_BATTLE_RETURN_STAGES: frozenset[str] = frozenset(
         "event",
         "fortune",
         "invest",
-        "preparation",
         "replenish",
         "shop",
     }
 )
-_BATTLE_START_KEYWORDS: tuple[str, ...] = ("开始战斗", "开始挑战")
+_BATTLE_START_KEYWORDS: tuple[str, ...] = ("开始战斗", "开始挑战", "出战")
 _SETTLEMENT_ENTRY_KEYWORDS: tuple[str, ...] = ("挑战成功", "挑战失败", "继续挑战")
 _SETTLEMENT_FOLLOWUP_KEYWORDS: tuple[str, ...] = ("下一步", "下一页")
 _GAME_OVER_KEYWORDS: tuple[str, ...] = ("游戏结束", "本局结束")
@@ -159,6 +158,8 @@ def classify_cw_battle_page(runtime, *, session: SessionModel) -> str:
         return "game_over"
     if detected_stage == "settle":
         return "settle_entry"
+    if detected_stage == "preparation":
+        return "battle_start"
     if detected_stage in STABLE_BATTLE_RETURN_STAGES:
         return "stable_stage"
 

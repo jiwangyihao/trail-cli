@@ -249,7 +249,7 @@ def build_cw_battle_starter(runtime) -> SceneAction:
         runtime,
         wait_alias="action.battle_start",
         locate_aliases=(),
-        allowed_texts={"开始战斗", "开始挑战"},
+        allowed_texts={"开始战斗", "开始挑战", "出战"},
         fallback_point=BATTLE_START_POINT,
     )
 
