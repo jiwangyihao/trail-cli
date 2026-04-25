@@ -146,6 +146,13 @@ def test_build_cw_battle_starter_waits_for_template_before_clicking_center(monke
             (460, 518),
         ),
         (
+            "build_cw_battle_starter",
+            ["action.battle_start"],
+            [],
+            "出战",
+            (460, 518),
+        ),
+        (
             "build_cw_battle_continuer",
             [],
             ["action.battle_continue"],
