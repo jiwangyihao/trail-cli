@@ -56,6 +56,8 @@ GUIDE_APPLY_READY_DELAY = 1.0
 GUIDE_APPLY_SETTLE_TIMEOUT = 1.5
 GUIDE_APPLY_SETTLE_INTERVAL = 0.2
 GUIDE_POST_APPLY_SETTLE_DELAY = 1.0
+GUIDE_ENTER_CODE_OCR_INTERVAL = 0.5
+GUIDE_ENTER_CODE_OCR_KEYWORDS = ("输入攻略码", "攻略码", "输入策略码", "策略码")
 
 
 class GuidePortalLookupError(TrailError):
@@ -131,6 +133,103 @@ def _click_required_template(runtime, *, alias: str) -> None:
     runtime.click_point(*_box_center(box))
 
 
+def _normalize_guide_ocr_text(text: object) -> str:
+    if not isinstance(text, str):
+        return ""
+    return re.sub(r"\s+", "", text).strip()
+
+
+def _extract_guide_polygon_box(points: object) -> dict[str, int] | None:
+    if not isinstance(points, (list, tuple)):
+        return None
+    xs: list[float] = []
+    ys: list[float] = []
+    for point in points:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            return None
+        try:
+            xs.append(float(point[0]))
+            ys.append(float(point[1]))
+        except (TypeError, ValueError):
+            return None
+    if not xs or not ys:
+        return None
+    left = min(xs)
+    top = min(ys)
+    right = max(xs)
+    bottom = max(ys)
+    return {
+        "left": int(left),
+        "top": int(top),
+        "width": int(right - left),
+        "height": int(bottom - top),
+    }
+
+
+def _normalize_guide_ocr_piece(piece: object) -> dict[str, int | str] | None:
+    if isinstance(piece, Mapping):
+        text = str(piece.get("text") or piece.get("ocr_text") or "").strip()
+        box_source = piece.get("box") if isinstance(piece.get("box"), Mapping) else piece
+        try:
+            left = int(box_source["left"])
+            top = int(box_source["top"])
+            width = int(box_source["width"])
+            height = int(box_source["height"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        box = {"left": left, "top": top, "width": width, "height": height}
+    elif isinstance(piece, (list, tuple)) and len(piece) >= 2:
+        text = str(piece[1] or "").strip()
+        box = _extract_guide_polygon_box(piece[0])
+    else:
+        return None
+    if not text or box is None:
+        return None
+    return {"text": text, **box}
+
+
+def _find_enter_code_box_by_ocr(runtime) -> dict[str, int] | None:
+    ocr = getattr(runtime, "ocr", None)
+    if not callable(ocr):
+        return None
+    normalized_keywords = tuple(_normalize_guide_ocr_text(keyword) for keyword in GUIDE_ENTER_CODE_OCR_KEYWORDS)
+    try:
+        pieces = ocr() or []
+    except Exception:
+        return None
+    for piece in pieces:
+        normalized_piece = _normalize_guide_ocr_piece(piece)
+        if normalized_piece is None:
+            continue
+        normalized_text = _normalize_guide_ocr_text(normalized_piece["text"])
+        if not any(keyword in normalized_text for keyword in normalized_keywords):
+            continue
+        return {
+            "left": int(normalized_piece["left"]),
+            "top": int(normalized_piece["top"]),
+            "width": int(normalized_piece["width"]),
+            "height": int(normalized_piece["height"]),
+        }
+    return None
+
+
+def _is_enter_code_visible(runtime) -> bool:
+    return _find_enter_code_box_by_ocr(runtime) is not None
+
+
+def _wait_for_enter_code_box(runtime):
+    deadline = monotonic() + GUIDE_UI_WAIT_TIMEOUT
+    while True:
+        ocr_box = _find_enter_code_box_by_ocr(runtime)
+        if ocr_box is not None:
+            return ocr_box
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        sleep(min(GUIDE_ENTER_CODE_OCR_INTERVAL, remaining))
+    raise TrailError("GUIDE_UI_NOT_FOUND", "guide ui element not found: guide.enter_code")
+
+
 def _wait_required_template(runtime, *, alias: str):
     template = str(resolve_scene_asset("cw", alias))
     box = runtime.wait_img(template, timeout=GUIDE_UI_WAIT_TIMEOUT)
@@ -187,9 +286,9 @@ def _wait_for_template_to_clear(runtime, *, alias: str, timeout: float, interval
 
 
 def apply_cw_guide_via_ui(runtime, *, share_code: str) -> None:
-    if not _is_template_visible(runtime, alias="guide.enter_code"):
+    if not _is_enter_code_visible(runtime):
         _click_required_template(runtime, alias="guide.strategy")
-    _click_required_template(runtime, alias="guide.enter_code")
+    runtime.click_point(*_box_center(_wait_for_enter_code_box(runtime)))
     runtime.click_point(*GUIDE_INPUT_POINT)
     sleep(GUIDE_INPUT_FOCUS_DELAY)
     runtime.type_text(share_code)

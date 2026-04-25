@@ -31,6 +31,8 @@ PORTAL_RESTART_EXIT_DIALOG_SECONDARY = "暂时离开"
 PORTAL_RESTART_EXIT_DIALOG_SETTLE_SECONDS = 1.0
 PORTAL_RESTART_SETTLEMENT_MAX_POLLS = 6
 PORTAL_RESTART_SETTLEMENT_INTERVAL = 1.0
+PORTAL_PREPARATION_MAX_POLLS = 20
+PORTAL_PREPARATION_INTERVAL = 0.5
 
 
 def summarize_portal_cards(
@@ -169,6 +171,19 @@ def wait_cw_portal_in_game(session, *, runtime) -> None:
     )
 
 
+def wait_cw_portal_preparation(session, *, runtime) -> None:
+    _wait_for_portal_page(
+        runtime,
+        session=session,
+        expected_page="in_game",
+        expected_stage="preparation",
+        error_code="CW_PORTAL_PREPARATION_TIMEOUT",
+        error_message="cw portal.select did not settle to in_game preparation before guide apply",
+        max_polls=PORTAL_PREPARATION_MAX_POLLS,
+        interval=PORTAL_PREPARATION_INTERVAL,
+    )
+
+
 def _empty_card_summary(card_idx: int) -> dict[str, object]:
     return {
         "card_idx": card_idx,
@@ -289,6 +304,7 @@ def _wait_for_portal_page(
     *,
     session,
     expected_page: str,
+    expected_stage: str | None = None,
     error_code: str,
     error_message: str,
     max_polls: int = PORTAL_SETTLE_MAX_POLLS,
@@ -296,7 +312,9 @@ def _wait_for_portal_page(
 ) -> dict[str, str]:
     for attempt in range(max_polls):
         current = _detect_current_enter_page(runtime, session=session)
-        if current.get("page") == expected_page:
+        if current.get("page") == expected_page and (
+            expected_stage is None or current.get("stage") == expected_stage
+        ):
             return current
         if attempt < max_polls - 1:
             sleep(interval)
@@ -499,5 +517,6 @@ __all__ = [
     "restart_cw_portal_to_settlement_entry",
     "select_cw_portal",
     "summarize_portal_cards",
+    "wait_cw_portal_preparation",
     "wait_cw_portal_in_game",
 ]

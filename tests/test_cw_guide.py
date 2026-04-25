@@ -2223,6 +2223,7 @@ def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit():
     locate_calls: list[str] = []
     texts: list[str] = []
     keys: list[tuple[str, int, float]] = []
+    ocr_calls: list[dict[str, object]] = []
 
     def apply_locate_results() -> list[Box | None]:
         stable_checks = max(1, math.ceil(guide_module.GUIDE_APPLY_READY_DELAY / guide_module.GUIDE_APPLY_SETTLE_INTERVAL))
@@ -2243,6 +2244,10 @@ def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit():
         def type_text(self, text: str):
             texts.append(text)
 
+        def ocr(self, **kwargs):
+            ocr_calls.append(dict(kwargs))
+            return [{"text": "输入攻略码", "box": {"left": 100, "top": 200, "width": 60, "height": 20}}]
+
         def locate(self, template: str, **kwargs):
             locate_calls.append(template)
             if template != apply_template:
@@ -2258,9 +2263,9 @@ def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit():
 
     assert confirm_template in wait_calls
     assert texts == ["##demo##"]
-    assert locate_calls[0] == str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve())
-    assert locate_calls[1:] == [apply_template] * (len(apply_locate_results()))
+    assert locate_calls == [apply_template] * (len(apply_locate_results()))
     assert keys == [("esc", 3, 1)]
+    assert ocr_calls
 
 
 def _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch) -> dict[str, object]:
@@ -2268,7 +2273,6 @@ def _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch) -> dict[s
     assert apply_cw_guide_via_ui is not None
     assert guide_module.GUIDE_CONFIRM_SETTLE_DELAY > 0, "GUIDE_CONFIRM_SETTLE_DELAY must stay > 0"
 
-    enter_code_template = str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve())
     confirm_template = str((CW_ASSET_ROOT / "ensure2.png").resolve())
     apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
     sleep_calls: list[float] = []
@@ -2291,8 +2295,6 @@ def _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch) -> dict[s
             self._apply_locate_results = _guide_apply_ready_locate_results(guide_module, apply_box)
 
         def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
-            if template == enter_code_template:
-                return Box(left=10, top=20, width=40, height=20, source=template)
             if template == confirm_template:
                 return confirm_box
             if template == apply_template:
@@ -2309,9 +2311,10 @@ def _exercise_apply_cw_guide_confirm_settle(guide_module, monkeypatch) -> dict[s
         def type_text(self, text: str):
             return None
 
+        def ocr(self, **kwargs):
+            return [{"text": "输入攻略码", "box": {"left": 100, "top": 200, "width": 60, "height": 20}}]
+
         def locate(self, template: str, **kwargs):
-            if template == enter_code_template:
-                return Box(left=10, top=20, width=40, height=20, source=template)
             if template == apply_template:
                 if self._apply_locate_results:
                     return self._apply_locate_results.pop(0)
@@ -2372,7 +2375,6 @@ def _exercise_apply_cw_guide_apply_ready_settle(
         math.ceil(guide_module.GUIDE_APPLY_READY_DELAY / guide_module.GUIDE_APPLY_SETTLE_INTERVAL),
     )
 
-    enter_code_template = str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve())
     apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
     sleep_calls: list[float] = []
     events: list[object] = []
@@ -2409,9 +2411,10 @@ def _exercise_apply_cw_guide_apply_ready_settle(
         def type_text(self, text: str):
             return None
 
+        def ocr(self, **kwargs):
+            return [{"text": "输入攻略码", "box": {"left": 100, "top": 200, "width": 60, "height": 20}}]
+
         def locate(self, template: str, **kwargs):
-            if template == enter_code_template:
-                return Box(left=10, top=20, width=40, height=20, source=template)
             if template == apply_template:
                 if drop_apply_once and not self._apply_dropped and state["stable_checks"] >= drop_apply_after_checks:
                     self._apply_dropped = True
@@ -2533,6 +2536,9 @@ def test_apply_cw_guide_via_ui_fails_when_apply_button_never_stabilizes(monkeypa
         def type_text(self, text: str):
             return None
 
+        def ocr(self, **kwargs):
+            return [{"text": "输入攻略码", "box": {"left": 100, "top": 200, "width": 60, "height": 20}}]
+
         def locate(self, template: str, **kwargs):
             if template == apply_template:
                 self._toggle = not self._toggle
@@ -2561,7 +2567,6 @@ def _exercise_apply_cw_guide_post_apply_settle(guide_module, monkeypatch) -> dic
     assert apply_cw_guide_via_ui is not None
     assert guide_module.GUIDE_POST_APPLY_SETTLE_DELAY > 0, "GUIDE_POST_APPLY_SETTLE_DELAY must stay > 0"
 
-    enter_code_template = str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve())
     apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
     sleep_calls: list[float] = []
     events: list[object] = []
@@ -2589,9 +2594,10 @@ def _exercise_apply_cw_guide_post_apply_settle(guide_module, monkeypatch) -> dic
         def type_text(self, text: str):
             return None
 
+        def ocr(self, **kwargs):
+            return [{"text": "输入攻略码", "box": {"left": 100, "top": 200, "width": 60, "height": 20}}]
+
         def locate(self, template: str, **kwargs):
-            if template == enter_code_template:
-                return Box(left=10, top=20, width=40, height=20, source=template)
             if template == apply_template:
                 if self._apply_locate_results:
                     result = self._apply_locate_results.pop(0)
@@ -2653,6 +2659,9 @@ def test_apply_cw_guide_via_ui_fails_when_apply_button_does_not_clear():
         def type_text(self, text: str):
             texts.append(text)
 
+        def ocr(self, **kwargs):
+            return [{"text": "输入攻略码", "box": {"left": 100, "top": 200, "width": 60, "height": 20}}]
+
         def locate(self, template: str, **kwargs):
             if template == apply_template:
                 return Box(left=10, top=20, width=40, height=20, source=template)
@@ -2675,11 +2684,11 @@ def test_apply_cw_guide_via_ui_skips_strategy_click_when_guide_page_already_open
     assert apply_cw_guide_via_ui is not None
 
     strategy_template = str((CW_ASSET_ROOT / "strategy.png").resolve())
-    enter_code_template = str((CW_ASSET_ROOT / "enter_strategy_code.png").resolve())
     apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
     wait_calls: list[str] = []
     locate_calls: list[str] = []
     clicks: list[tuple[float, float]] = []
+    ocr_calls: list[dict[str, object]] = []
 
     class RuntimeStub:
         def __init__(self):
@@ -2696,10 +2705,12 @@ def test_apply_cw_guide_via_ui_skips_strategy_click_when_guide_page_already_open
         def type_text(self, text: str):
             return None
 
+        def ocr(self, **kwargs):
+            ocr_calls.append(dict(kwargs))
+            return [{"text": "输入攻略码", "box": {"left": 100, "top": 200, "width": 60, "height": 20}}]
+
         def locate(self, template: str, **kwargs):
             locate_calls.append(template)
-            if template == enter_code_template:
-                return Box(left=10, top=20, width=40, height=20, source=template)
             if template == apply_template:
                 if self._apply_locate_results:
                     return self._apply_locate_results.pop(0)
@@ -2714,10 +2725,129 @@ def test_apply_cw_guide_via_ui_skips_strategy_click_when_guide_page_already_open
     apply_cw_guide_via_ui(RuntimeStub(), share_code="##demo##")
 
     assert strategy_template not in locate_calls
-    assert enter_code_template in locate_calls
     assert strategy_template not in wait_calls
-    assert enter_code_template in wait_calls
-    assert clicks[0] == (30, 30)
+    assert ocr_calls
+    assert clicks[0] != (30, 30)
+
+
+def test_apply_cw_guide_via_ui_uses_ocr_for_enter_code_button_when_template_missing(monkeypatch):
+    guide_module = load_cw_guide_module()
+    apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
+    assert apply_cw_guide_via_ui is not None
+
+    strategy_template = str((CW_ASSET_ROOT / "strategy.png").resolve())
+    confirm_template = str((CW_ASSET_ROOT / "ensure2.png").resolve())
+    apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
+    apply_box = Box(left=200, top=20, width=40, height=20, source=apply_template)
+    clicks: list[tuple[float, float]] = []
+    texts: list[str] = []
+    keys: list[tuple[str, int, float]] = []
+    ocr_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(guide_module, "sleep", lambda seconds: None)
+
+    class RuntimeStub:
+        def __init__(self):
+            self._apply_locate_results = _guide_apply_ready_locate_results(guide_module, apply_box)
+            self._ocr_round = 0
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            if template == strategy_template:
+                return Box(left=10, top=20, width=40, height=20, source=template)
+            if template == confirm_template:
+                return Box(left=60, top=20, width=40, height=20, source=template)
+            if template == apply_template:
+                return apply_box
+            return Box(left=10, top=20, width=40, height=20, source=template)
+
+        def locate(self, template: str, **kwargs):
+            if template == apply_template:
+                if self._apply_locate_results:
+                    return self._apply_locate_results.pop(0)
+                return None
+            return None
+
+        def ocr(self, **kwargs):
+            ocr_calls.append(dict(kwargs))
+            self._ocr_round += 1
+            if self._ocr_round == 1:
+                return []
+            return [
+                {
+                    "text": "输入攻略码",
+                    "box": {"left": 100, "top": 200, "width": 60, "height": 20},
+                }
+            ]
+
+        def click_point(self, x: float, y: float, **kwargs):
+            clicks.append((x, y))
+
+        def type_text(self, text: str):
+            texts.append(text)
+
+        def ocr(self, **kwargs):
+            ocr_calls.append(dict(kwargs))
+            return [{"text": "输入攻略码", "box": {"left": 100, "top": 200, "width": 60, "height": 20}}]
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            keys.append((key, presses, interval))
+
+    apply_cw_guide_via_ui(RuntimeStub(), share_code="##demo##")
+
+    assert len(clicks) >= 2
+    assert texts == ["##demo##"]
+    assert keys == [("esc", 3, 1)]
+    assert ocr_calls, "expected OCR fallback for enter strategy code button"
+
+
+def test_apply_cw_guide_via_ui_uses_ocr_tuple_piece_for_enter_code_button(monkeypatch):
+    guide_module = load_cw_guide_module()
+    apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
+    assert apply_cw_guide_via_ui is not None
+
+    strategy_template = str((CW_ASSET_ROOT / "strategy.png").resolve())
+    confirm_template = str((CW_ASSET_ROOT / "ensure2.png").resolve())
+    apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
+    apply_box = Box(left=200, top=20, width=40, height=20, source=apply_template)
+    clicks: list[tuple[float, float]] = []
+
+    monkeypatch.setattr(guide_module, "sleep", lambda seconds: None)
+
+    class RuntimeStub:
+        def __init__(self):
+            self._apply_locate_results = _guide_apply_ready_locate_results(guide_module, apply_box)
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            if template == strategy_template:
+                return Box(left=10, top=20, width=40, height=20, source=template)
+            if template == confirm_template:
+                return Box(left=60, top=20, width=40, height=20, source=template)
+            if template == apply_template:
+                return apply_box
+            return Box(left=10, top=20, width=40, height=20, source=template)
+
+        def locate(self, template: str, **kwargs):
+            if template == apply_template:
+                if self._apply_locate_results:
+                    return self._apply_locate_results.pop(0)
+                return None
+            return None
+
+        def ocr(self, **kwargs):
+            return [[[[100, 200], [160, 200], [160, 220], [100, 220]], "输入攻略码", 0.99]]
+
+        def click_point(self, x: float, y: float, **kwargs):
+            clicks.append((x, y))
+
+        def type_text(self, text: str):
+            return None
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            return None
+
+    apply_cw_guide_via_ui(RuntimeStub(), share_code="##demo##")
+
+    assert len(clicks) >= 2
 
 
 @pytest.mark.parametrize("field", ["on_field", "off_field", "priority", "positioning"])

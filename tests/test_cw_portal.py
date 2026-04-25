@@ -706,6 +706,11 @@ def test_cw_portal_select_auto_applies_selected_guide_and_invalidates_runtime_st
         "trail.daemon.cw_service.apply_cw_guide_via_ui",
         lambda runtime, share_code: applied_share_codes.append(share_code),
     )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.wait_cw_portal_preparation",
+        lambda session, runtime: None,
+        raising=False,
+    )
 
     envelope = _run_cw_portal_mutation(
         command_service=command_service,
@@ -728,6 +733,44 @@ def test_cw_portal_select_auto_applies_selected_guide_and_invalidates_runtime_st
     assert persisted.scene_state["cw"]["slots"]["stale"] is True
     assert persisted.scene_state["cw"]["shop"]["stale"] is True
     assert persisted.scene_state["cw"]["stage"]["stale"] is True
+
+
+def test_cw_portal_select_waits_for_preparation_before_auto_apply(tmp_path: Path, monkeypatch):
+    runtime = PortalRuntime()
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    events: list[str] = []
+
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: events.append("select") or dict(_portal_cards()[card_idx - 1]),
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.wait_cw_portal_preparation",
+        lambda session, runtime: events.append("wait") or None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.apply_cw_guide_via_ui",
+        lambda runtime, share_code: events.append("apply"),
+    )
+
+    envelope = _run_cw_portal_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-portal-select-wait-preparation",
+        method="cw.portal.select",
+        payload={"card_idx": 2},
+    )
+
+    assert envelope["ok"] is True
+    assert events == ["select", "wait", "apply"]
 
 
 def test_refresh_cw_portal_rejects_non_invest_page(tmp_path: Path, monkeypatch):
