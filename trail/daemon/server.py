@@ -10,6 +10,9 @@ from typing import Any
 from uuid import uuid4
 
 from trail.core.errors import TrailError
+from trail.core.jsonable import format_exception_detail as _format_exception_detail
+from trail.core.jsonable import format_exception_message as _format_exception_message
+from trail.core.jsonable import to_jsonable
 from trail.daemon.command_service import (
     CommandService,
     PersistedButResponseUnknown,
@@ -42,6 +45,20 @@ def _error_response(*, request_id: str, code: str, message: str, debug: dict[str
     return payload
 
 
+def _serialize_response_line(response: dict[str, Any], *, request_id: str) -> bytes:
+    try:
+        payload = to_jsonable(response)
+        return json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n"
+    except Exception as error:
+        fallback = _error_response(
+            request_id=request_id,
+            code="DAEMON_UNAVAILABLE",
+            message="daemon response serialization failed",
+            debug={"detail": _format_exception_detail(error)},
+        )
+        return json.dumps(fallback, ensure_ascii=False).encode("utf-8") + b"\n"
+
+
 class _DaemonTcpServer(ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -63,10 +80,10 @@ class _RequestHandler(StreamRequestHandler):
                 request_id=request_id,
                 code="DAEMON_UNAVAILABLE",
                 message="daemon request failed",
-                debug={"detail": f"{type(error).__name__}: {error}"},
+                debug={"detail": _format_exception_detail(error)},
             )
 
-        self.wfile.write(json.dumps(response, ensure_ascii=False).encode("utf-8") + b"\n")
+        self.wfile.write(_serialize_response_line(response, request_id=request_id))
 
 
 class TrailDaemonServer:
@@ -135,7 +152,7 @@ class TrailDaemonServer:
             return _error_response(
                 request_id=request_id,
                 code=error.code,
-                message=str(error),
+                message=_format_exception_message(error),
             )
         except (SideEffectAppliedButStateNotPersisted, PersistedButResponseUnknown) as error:
             envelope = deepcopy(error.envelope)
@@ -146,7 +163,7 @@ class TrailDaemonServer:
                 request_id=request_id,
                 code="DAEMON_UNAVAILABLE",
                 message="daemon request failed",
-                debug={"detail": f"{type(error).__name__}: {error}"},
+                debug={"detail": _format_exception_detail(error)},
             )
 
         if not isinstance(response, dict):

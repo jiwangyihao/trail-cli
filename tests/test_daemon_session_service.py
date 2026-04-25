@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 import threading
 import time
@@ -205,6 +206,51 @@ def test_finish_mutation_completed_failure_does_not_taint_session(tmp_path: Path
     assert status["final_state"] == "completed"
     assert status["tainted"] is False
     assert loaded.scene_state.get("daemon", {}).get("tainted", False) is False
+
+
+def test_finish_mutation_jsonifies_terminal_envelope_at_journal_boundary(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    service.begin_mutation(session_id=None, request_id="req-jsonable-journal", command_name="input.click")
+    envelope = _envelope(data={"artifact": tmp_path / "artifact.png"})
+    envelope["debug"] = {"tags": {"zeta", "alpha"}}
+
+    service.finish_mutation(
+        session_id=None,
+        request_id="req-jsonable-journal",
+        command_name="input.click",
+        final_state="completed",
+        envelope=envelope,
+    )
+
+    record = json.loads(service._journal_path("req-jsonable-journal").read_text(encoding="utf-8"))
+    assert record["last_envelope"]["data"]["artifact"] == str(tmp_path / "artifact.png")
+    assert record["last_envelope"]["debug"]["tags"] == ["alpha", "zeta"]
+    assert record["last_result"]["data"]["artifact"] == str(tmp_path / "artifact.png")
+
+
+def test_finish_mutation_records_terminal_state_when_debug_value_cannot_stringify(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    service.begin_mutation(session_id=None, request_id="req-broken-debug", command_name="input.click")
+
+    class BrokenStr:
+        def __str__(self) -> str:
+            raise RuntimeError("cannot stringify")
+
+    envelope = _envelope(data={"clicked": True})
+    envelope["debug"] = {"broken": BrokenStr()}
+
+    service.finish_mutation(
+        session_id=None,
+        request_id="req-broken-debug",
+        command_name="input.click",
+        final_state="completed",
+        envelope=envelope,
+    )
+
+    status = service.request_status("req-broken-debug")
+    record = json.loads(service._journal_path("req-broken-debug").read_text(encoding="utf-8"))
+    assert status["final_state"] == "completed"
+    assert record["last_envelope"]["debug"]["broken"] == "<unjsonable BrokenStr: RuntimeError: cannot stringify>"
 
 
 def test_begin_mutation_allows_following_cw_command_after_completed_failure(tmp_path: Path):

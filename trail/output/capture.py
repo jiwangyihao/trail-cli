@@ -4,6 +4,7 @@ from time import perf_counter
 from typing import Callable
 
 from trail.core.errors import TrailError
+from trail.core.jsonable import format_exception_detail, format_exception_message, to_jsonable
 from trail.output.envelope import command_failure, command_success
 
 _CAPTURE_OPTIONS = {"verbose": False}
@@ -30,10 +31,7 @@ def _capture_optional_screenshot(runtime):
 
 
 def _format_unexpected_exception(exc: Exception) -> str:
-    message = str(exc)
-    if not message:
-        return type(exc).__name__
-    return f"{type(exc).__name__}: {message}"
+    return format_exception_detail(exc)
 
 
 def set_capture_options(*, verbose: bool) -> None:
@@ -69,8 +67,11 @@ def _collect_capture_warnings(runtime) -> list[dict]:
 
     collect_warnings = getattr(runtime, "collect_warnings", None)
     if callable(collect_warnings):
-        warnings = collect_warnings() or []
-    return warnings
+        try:
+            warnings = collect_warnings() or []
+        except Exception:
+            return []
+    return to_jsonable(warnings) if isinstance(warnings, list) else []
 
 
 def _collect_capture_references(runtime, *, screenshot) -> list[dict]:
@@ -80,8 +81,11 @@ def _collect_capture_references(runtime, *, screenshot) -> list[dict]:
 
     match_references = getattr(runtime, "match_references", None)
     if screenshot is not None and callable(match_references):
-        references = match_references(screenshot) or []
-    return references
+        try:
+            references = match_references(screenshot) or []
+        except Exception:
+            return []
+    return to_jsonable(references) if isinstance(references, list) else []
 
 
 def _collect_capture_debug(runtime, *, verbose: bool):
@@ -92,10 +96,10 @@ def _collect_capture_debug(runtime, *, verbose: bool):
     consume_debug_context = getattr(runtime, "consume_debug_context", None)
     trace = []
     if callable(consume_debug_trace):
-        trace = consume_debug_trace() or []
+        trace = to_jsonable(consume_debug_trace() or [])
     debug_context = {}
     if callable(consume_debug_context):
-        debug_context = consume_debug_context() or {}
+        debug_context = to_jsonable(consume_debug_context() or {})
     filtered_debug_context = {}
     if isinstance(debug_context, dict):
         filtered_debug_context = {
@@ -153,7 +157,7 @@ def with_auto_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None =
             metadata = _safe_collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
             return command_failure(
                 code=exc.code,
-                message=str(exc),
+                message=format_exception_message(exc),
                 screenshot=screenshot,
                 timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
                 **metadata,
@@ -194,7 +198,7 @@ def with_selective_capture(runtime, fn: Callable[[], dict], *, verbose: bool | N
             metadata = _safe_collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
             return command_failure(
                 code=exc.code,
-                message=str(exc),
+                message=format_exception_message(exc),
                 screenshot=screenshot,
                 timing={"elapsed_ms": int((perf_counter() - started) * 1000)},
                 **metadata,

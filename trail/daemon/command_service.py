@@ -10,8 +10,8 @@ from typing import Any
 from PIL import ImageStat
 
 from trail.artifacts.store import ArtifactStore
-from trail.commands.helpers import to_jsonable
 from trail.core.errors import TrailError
+from trail.core.jsonable import format_exception_detail, format_exception_message, safe_str, to_jsonable
 from trail.daemon.client import daemon_transport_failure
 from trail.daemon.command_timeouts import resolve_command_execution_timeout
 from trail.output.envelope import build_image_guidance
@@ -86,12 +86,12 @@ def success(
     payload = {
         "request_id": request_id,
         "ok": True,
-        "data": deepcopy(data),
+        "data": to_jsonable(data),
         "screenshot": screenshot,
         "timing": {},
         "warnings": [],
-        "references": deepcopy(references or []),
-        "debug": deepcopy(debug),
+        "references": to_jsonable(references or []),
+        "debug": to_jsonable(debug),
         "error": None,
     }
     guidance = build_image_guidance(screenshot)
@@ -816,10 +816,7 @@ class CommandService:
         return payload
 
     def _format_exception_detail(self, error: Exception) -> str:
-        message = str(error)
-        if not message:
-            return type(error).__name__
-        return f"{type(error).__name__}: {message}"
+        return format_exception_detail(error)
 
     def _unknown_result_envelope(
         self,
@@ -829,9 +826,9 @@ class CommandService:
         error: Exception,
         last_known_stage: str,
     ) -> dict[str, Any]:
-        previous = deepcopy(response or {})
+        previous = to_jsonable(response or {})
         screenshot = previous.get("screenshot")
-        debug = deepcopy(previous.get("debug") or {})
+        debug = to_jsonable(previous.get("debug") or {})
         debug["detail"] = self._format_exception_detail(error)
         debug["last_known_stage"] = last_known_stage
         payload = {
@@ -839,9 +836,9 @@ class CommandService:
             "ok": False,
             "data": {},
             "screenshot": screenshot,
-            "timing": deepcopy(previous.get("timing") or {}),
-            "warnings": deepcopy(previous.get("warnings") or []),
-            "references": deepcopy(previous.get("references") or []),
+            "timing": to_jsonable(previous.get("timing") or {}),
+            "warnings": to_jsonable(previous.get("warnings") or []),
+            "references": to_jsonable(previous.get("references") or []),
             "debug": debug,
             "error": {
                 "code": "DAEMON_UNAVAILABLE",
@@ -955,16 +952,17 @@ class CommandService:
     def _failure_envelope(self, *, error: Exception) -> dict[str, Any]:
         if isinstance(error, TrailError):
             code = error.code
-            message = str(error)
+            message = format_exception_message(error)
         else:
             code = type(error).__name__
-            message = str(error) or type(error).__name__
-        raw_data = getattr(error, "data", None)
-        data = deepcopy(raw_data) if isinstance(raw_data, dict) else {}
-        if hasattr(error, "tainted") and "tainted" not in data:
-            data["tainted"] = bool(getattr(error, "tainted"))
-        raw_debug = getattr(error, "debug", None)
-        debug = deepcopy(raw_debug) if isinstance(raw_debug, dict) else None
+            message = safe_str(error) or type(error).__name__
+        raw_data = self._error_attr(error, "data")
+        data = to_jsonable(raw_data) if isinstance(raw_data, dict) else {}
+        tainted = self._error_attr(error, "tainted")
+        if tainted is not None and "tainted" not in data:
+            data["tainted"] = bool(tainted)
+        raw_debug = self._error_attr(error, "debug")
+        debug = to_jsonable(raw_debug) if isinstance(raw_debug, dict) else None
         return {
             "ok": False,
             "data": data,
@@ -975,6 +973,12 @@ class CommandService:
             "debug": debug,
             "error": {"code": code, "message": message},
         }
+
+    def _error_attr(self, error: Exception, name: str):
+        try:
+            return getattr(error, name, None)
+        except Exception:
+            return None
 
     def _run_mutation(
         self,

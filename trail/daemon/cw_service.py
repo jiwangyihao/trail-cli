@@ -6,6 +6,7 @@ from time import sleep
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
+from trail.core.jsonable import format_exception_detail, to_jsonable
 from trail.daemon.command_timeouts import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS, resolve_command_execution_timeout
 from trail.daemon.command_service import PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
 from trail.output.capture import with_auto_capture, with_selective_capture
@@ -51,6 +52,7 @@ from trail.scenes.cw.portal import (
     restart_cw_portal_to_settlement_entry,
     select_cw_portal,
     summarize_portal_cards,
+    wait_cw_portal_preparation,
     wait_cw_portal_in_game,
 )
 from trail.scenes.cw.shop import (
@@ -172,7 +174,7 @@ class _SideEffectTrackingRuntime:
             try:
                 result = attribute(*args, **kwargs)
             except TrailError as error:
-                if getattr(error, "completed_after_side_effect", False):
+                if _safe_error_attr(error, "completed_after_side_effect"):
                     self._tracker.mark_applied()
                 raise
             except Exception:
@@ -290,9 +292,9 @@ class CwService:
             debug = collect_runtime_debug()
             if not debug:
                 return
-            raw_debug = getattr(error, "debug", None)
+            raw_debug = _safe_error_attr(error, "debug")
             if isinstance(raw_debug, dict):
-                debug = {**debug, **raw_debug}
+                debug = to_jsonable({**debug, **raw_debug})
             try:
                 setattr(error, "debug", debug)
             except Exception:
@@ -308,7 +310,7 @@ class CwService:
                     unknown_result_envelope(error, last_known_stage="side_effect_applied")
                 ) from error
             except TrailError as error:
-                if getattr(error, "known_failure_after_save", False):
+                if _safe_error_attr(error, "known_failure_after_save"):
                     try:
                         session_service.save_session(session)
                     except Exception as save_error:
@@ -326,9 +328,7 @@ class CwService:
                         )
                         response = with_auto_capture(capture_runtime, lambda: (_ for _ in ()).throw(error), verbose=verbose)
                         if isinstance(response, dict):
-                            response_data = deepcopy(getattr(error, "data", None)) if isinstance(getattr(error, "data", None), dict) else {}
-                            if hasattr(error, "tainted") and "tainted" not in response_data:
-                                response_data["tainted"] = bool(getattr(error, "tainted"))
+                            response_data = _error_data(error)
                             if response_data:
                                 response["data"] = response_data
                         return response
@@ -344,14 +344,14 @@ class CwService:
                                 debug_runtime=capture_runtime,
                             )
                         ) from capture_error
-                if tracker.side_effect_applied or getattr(error, "completed_after_side_effect", False):
+                if tracker.side_effect_applied or _safe_error_attr(error, "completed_after_side_effect"):
                     raise SideEffectAppliedButStateNotPersisted(
                         unknown_result_envelope(error, last_known_stage="side_effect_applied")
                     ) from error
                 attach_runtime_debug(error)
                 raise
             except Exception as error:
-                if tracker.side_effect_applied or getattr(error, "completed_after_side_effect", False):
+                if tracker.side_effect_applied or _safe_error_attr(error, "completed_after_side_effect"):
                     raise SideEffectAppliedButStateNotPersisted(
                         unknown_result_envelope(error, last_known_stage="side_effect_applied")
                     ) from error
@@ -682,6 +682,7 @@ def _apply_selected_guide_via_ui(session, *, runtime, guide: dict | None = None)
 def _select_portal_and_apply_selected_guide(session, *, runtime, card_idx: int, guide: dict | None = None) -> dict:
     selected_guide = guide if guide is not None else _require_selected_guide(session)
     selected = select_cw_portal(session, card_idx=card_idx, runtime=runtime)
+    wait_cw_portal_preparation(session, runtime=runtime)
     try:
         _apply_selected_guide_via_ui(session, runtime=runtime, guide=selected_guide)
     except Exception as error:
@@ -814,7 +815,7 @@ def _safe_match_references(runtime, *, screenshot) -> list[dict]:
         references = match_references(screenshot) or []
     except Exception:
         return []
-    return references if isinstance(references, list) else []
+    return to_jsonable(references) if isinstance(references, list) else []
 
 
 def _safe_collect_warnings(runtime) -> list[dict]:
@@ -825,7 +826,7 @@ def _safe_collect_warnings(runtime) -> list[dict]:
         warnings = collect_warnings() or []
     except Exception:
         return []
-    return warnings if isinstance(warnings, list) else []
+    return to_jsonable(warnings) if isinstance(warnings, list) else []
 
 
 def _safe_collect_debug(runtime, *, verbose: bool) -> dict | None:
@@ -840,7 +841,7 @@ def _safe_collect_debug(runtime, *, verbose: bool) -> dict | None:
         except Exception:
             trace = []
         if isinstance(trace, list) and trace:
-            debug["trace"] = trace
+            debug["trace"] = to_jsonable(trace)
 
     consume_debug_context = getattr(runtime, "consume_debug_context", None)
     if callable(consume_debug_context):
@@ -849,15 +850,14 @@ def _safe_collect_debug(runtime, *, verbose: bool) -> dict | None:
         except Exception:
             context = {}
         if isinstance(context, dict):
-            debug.update(
-                {
+            filtered_context = {
                     key: value
                     for key, value in context.items()
                     if key not in {"trace", "request_id", "detail"}
-                }
-            )
+            }
+            debug.update(to_jsonable(filtered_context))
 
-    return debug or None
+    return to_jsonable(debug) or None
 
 
 def _unknown_result_envelope(
@@ -869,7 +869,7 @@ def _unknown_result_envelope(
     references: list[dict] | None = None,
     debug: dict | None = None,
 ) -> dict:
-    debug_payload = deepcopy(debug or {})
+    debug_payload = to_jsonable(debug or {})
     debug_payload["detail"] = _format_exception_detail(error)
     if isinstance(last_known_stage, str) and last_known_stage:
         debug_payload["last_known_stage"] = last_known_stage
@@ -878,8 +878,8 @@ def _unknown_result_envelope(
         "data": {},
         "screenshot": screenshot,
         "timing": {},
-        "warnings": deepcopy(warnings or []),
-        "references": deepcopy(references or []),
+        "warnings": to_jsonable(warnings or []),
+        "references": to_jsonable(references or []),
         "debug": debug_payload,
         "error": {
             "code": "DAEMON_UNAVAILABLE",
@@ -893,10 +893,23 @@ def _unknown_result_envelope(
 
 
 def _format_exception_detail(error: Exception) -> str:
-    message = str(error)
-    if not message:
-        return type(error).__name__
-    return f"{type(error).__name__}: {message}"
+    return format_exception_detail(error)
+
+
+def _safe_error_attr(error: Exception, name: str):
+    try:
+        return getattr(error, name, None)
+    except Exception:
+        return None
+
+
+def _error_data(error: Exception) -> dict:
+    raw_data = _safe_error_attr(error, "data")
+    data = to_jsonable(raw_data) if isinstance(raw_data, dict) else {}
+    tainted = _safe_error_attr(error, "tainted")
+    if tainted is not None and "tainted" not in data:
+        data["tainted"] = bool(tainted)
+    return data
 
 
 class CwSideEffectAppliedError(Exception):

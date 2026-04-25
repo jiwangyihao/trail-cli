@@ -1814,7 +1814,7 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_click_reports_window_
     assert persisted.scene_state["cw"]["shop"] == before_shop
 
 
-def test_cw_shop_scan_marks_persisted_but_response_unknown_when_metadata_boom_happens_after_persist(
+def test_cw_shop_scan_ignores_metadata_boom_after_persist(
     tmp_path: Path,
 ):
     shop_module = load_cw_shop_module()
@@ -1879,24 +1879,19 @@ def test_cw_shop_scan_marks_persisted_but_response_unknown_when_metadata_boom_ha
         shop_module.SHOP_LEVEL_REGION,
         None,
     ]
-    assert envelope["ok"] is False
-    assert envelope["error"] == {
-        "code": "DAEMON_UNAVAILABLE",
-        "message": "mutation result unknown",
-    }
+    assert envelope["ok"] is True
+    assert envelope["data"] == expected_snapshot
+    assert envelope["warnings"] == []
     assert envelope["screenshot"] == ".trail/shots/req-cw-shop-scan-metadata-boom.png"
-    assert envelope["debug"]["detail"] == "RuntimeError: metadata boom"
-    assert envelope["debug"]["last_known_stage"] == "state_persisted"
-    assert render_output("cw.shop.scan", envelope).splitlines() == [
-        "fail cw.shop.scan code=DAEMON_UNAVAILABLE tainted=1",
-        "request id=req-cw-shop-scan-metadata-boom",
-        "shot path=.trail/shots/req-cw-shop-scan-metadata-boom.png",
-        'why msg="mutation result unknown"',
-        "ref path=trail/scenes/cw/references/shop.png sim=0.97",
-        "recover action=daemon.request_status request=req-cw-shop-scan-metadata-boom",
+    assert envelope["references"] == [
+        {
+            "path": "trail/scenes/cw/references/shop.png",
+            "similarity": 0.97,
+            "screenshot": ".trail/shots/req-cw-shop-scan-metadata-boom.png",
+        }
     ]
-    assert status["final_state"] == "persisted_but_response_unknown"
-    assert status["tainted"] is True
+    assert status["final_state"] == "completed"
+    assert status["tainted"] is False
     assert persisted.scene_state["cw"]["shop"] == expected_snapshot
 
 

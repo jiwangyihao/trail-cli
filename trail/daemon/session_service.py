@@ -9,6 +9,7 @@ from threading import Lock
 from uuid import uuid4
 
 from trail.core.errors import TrailError
+from trail.core.jsonable import to_jsonable
 from trail.session.store import SessionStore
 
 
@@ -45,7 +46,7 @@ class SessionService:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def _save_record(self, record: dict) -> dict:
-        snapshot = deepcopy(record)
+        snapshot = deepcopy(to_jsonable(record))
         path = self._journal_path(snapshot["request_id"])
         temp_path = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
         temp_path.write_text(
@@ -61,17 +62,18 @@ class SessionService:
         return record.get("final_state") in RISKY_FINAL_STATES
 
     def _apply_terminal_record(self, *, record: dict, command_name: str, final_state: str, envelope: dict, tainted: bool) -> dict:
+        envelope_snapshot = to_jsonable(envelope)
         record["method"] = command_name
         record["final_state"] = final_state
         record["last_visible_stage"] = "responded"
         record["updated_at"] = _utc_now()
         record["tainted"] = bool(tainted)
-        record["last_envelope"] = deepcopy(envelope)
+        record["last_envelope"] = deepcopy(envelope_snapshot)
         record["last_result"] = {
             "command": command_name,
-            "ok": envelope["ok"],
-            "data": deepcopy(envelope["data"]),
-            "error": deepcopy(envelope["error"]),
+            "ok": envelope_snapshot["ok"],
+            "data": deepcopy(envelope_snapshot["data"]),
+            "error": deepcopy(envelope_snapshot["error"]),
         }
         return record
 
@@ -231,7 +233,7 @@ class SessionService:
                     if risky_final_state:
                         session.scene_state.setdefault("daemon", {})["tainted"] = True
                     session.last_result = deepcopy(record["last_result"])
-                    screenshot = envelope.get("screenshot")
+                    screenshot = record["last_envelope"].get("screenshot")
                     if screenshot:
                         session.last_screenshot = screenshot
                     self.save_session(session)

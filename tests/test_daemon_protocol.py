@@ -8,7 +8,7 @@ import pytest
 
 from trail.core.errors import TrailError
 import trail.daemon.server as daemon_server_module
-from trail.daemon.command_service import CommandService, PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
+from trail.daemon.command_service import CommandService, PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted, success
 from trail.daemon.client import TrailDaemonClient, resolve_response_timeout, send_daemon_request
 from trail.daemon.command_timeouts import resolve_command_execution_timeout
 from trail.daemon.models import DaemonRequest
@@ -890,6 +890,11 @@ def test_command_service_tracks_cw_portal_select_request_status_with_top_level_s
     monkeypatch.setattr(
         "trail.daemon.cw_service.apply_cw_guide_via_ui",
         lambda runtime, share_code: None,
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.wait_cw_portal_preparation",
+        lambda session, runtime: None,
+        raising=False,
     )
 
     response = command_service.handle(
@@ -2489,6 +2494,61 @@ def test_command_service_handles_cw_slots_place_known_failure_as_completed(tmp_p
     assert loaded.scene_state["cw"]["slots"]["stale"] is True
 
 
+def test_command_service_handles_cw_known_failure_with_non_deepcopy_data_as_completed(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ProtocolRuntime(tmp_path / "cw-known-fail-bad-data.png")
+    runtime.capture_after_action = lambda optional=False, request_id=None: str(
+        tmp_path / ".trail" / "shots" / f"{request_id}.png"
+    )
+    runtime_service = ProtocolRuntimeService(runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    class BadDeepcopy:
+        def __deepcopy__(self, memo):
+            del memo
+            raise RuntimeError("cannot deepcopy")
+
+        def __str__(self) -> str:
+            return "bad-deepcopy"
+
+    def fail_after_partial_execution(session, actions, placer):
+        del actions, placer
+        session.scene_state.setdefault("cw", {})["slots"] = {"front": ["希儿"], "back": [], "hand": [], "stale": True}
+        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:0")
+        error.known_failure_after_save = True
+        error.data = {"payload": BadDeepcopy()}
+        raise error
+
+    monkeypatch.setattr("trail.daemon.cw_service.place_cw_slots", fail_after_partial_execution)
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-known-fail-bad-data",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.slots.place",
+            payload={
+                "session_id": session.session_id,
+                "actions": [{"source": "hand:0", "target": "front:0"}],
+            },
+        )
+    )
+    status = service.request_status("req-cw-known-fail-bad-data")
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"payload": "bad-deepcopy"}
+    assert payload["error"]["code"] == "SLOTS_CANNOT_BE_FIELDED"
+    assert status["final_state"] == "completed"
+    assert status["tainted"] is False
+
+
 def test_cw_mutation_scope_collects_trace_emitted_before_auto_capture(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 
@@ -2586,6 +2646,57 @@ def test_cw_mutation_scope_keeps_verbose_trace_for_unknown_side_effect_result(tm
     }
 
 
+def test_cw_mutation_verbose_trace_is_jsonable_for_unknown_side_effect_result(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ScopedDebugProtocolRuntime(tmp_path / "cw-start-jsonable-side-effect-unknown.png")
+    runtime_service = ProtocolRuntimeService(runtime)
+    service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=service)
+
+    def fake_start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None):
+        del session, mode, difficulty, battle_mode, workspace_root
+        runtime.click_point(10, 20)
+        runtime._runtime._local.trace.append(
+            {
+                "step": "artifact",
+                "ts": "2026-04-24T08:15:30.123Z",
+                "ok": 1,
+                "path": tmp_path / "artifact.png",
+            }
+        )
+        raise RuntimeError("side effect failed")
+
+    monkeypatch.setattr("trail.daemon.cw_service._start_cw", fake_start_cw)
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-start-side-effect-jsonable-trace",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=True,
+            method="cw.start",
+            payload={
+                "session_id": session.session_id,
+                "mode": "new",
+                "difficulty": "lowest",
+                "battle_mode": "standard",
+            },
+        )
+    )
+
+    json.dumps(payload, ensure_ascii=False)
+    status = session_service.request_status("req-cw-start-side-effect-jsonable-trace")
+    assert status["final_state"] == "applied_but_not_persisted"
+    artifact_event = next(event for event in payload["debug"]["trace"] if event["step"] == "artifact")
+    assert artifact_event["path"].endswith("artifact.png")
+    assert type(artifact_event["path"]) is str
+
+
 def test_cw_mutation_unknown_result_without_verbose_does_not_initialize_runtime_for_debug(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 
@@ -2619,7 +2730,7 @@ def test_cw_mutation_unknown_result_without_verbose_does_not_initialize_runtime_
     }
 
 
-def test_cw_mutation_scope_keeps_verbose_trace_for_state_persisted_unknown_result(tmp_path: Path, monkeypatch):
+def test_cw_mutation_scope_ignores_warning_collection_failure_after_state_persisted(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 
     registry = SessionServiceRegistry()
@@ -2655,11 +2766,9 @@ def test_cw_mutation_scope_keeps_verbose_trace_for_state_persisted_unknown_resul
         )
     )
 
-    assert payload["ok"] is False
-    assert payload["error"] == {
-        "code": "DAEMON_UNAVAILABLE",
-        "message": "mutation result unknown",
-    }
+    assert payload["ok"] is True
+    assert payload["data"] == {"cards": 1}
+    assert payload["warnings"] == []
     assert payload["screenshot"] == "req-cw-start-state-persisted-unknown-trace.png"
     assert payload["image_guidance"] == {"read_image_first": 1}
     assert type(payload["image_guidance"]["read_image_first"]) is int
@@ -2671,9 +2780,7 @@ def test_cw_mutation_scope_keeps_verbose_trace_for_state_persisted_unknown_resul
                 "ok": 1,
                 "point": [10, 20],
             }
-        ],
-        "detail": "RuntimeError: warnings failed",
-        "last_known_stage": "state_persisted",
+        ]
     }
 
 
@@ -2703,7 +2810,9 @@ def test_cw_mutation_scope_keeps_verbose_trace_for_failed_before_side_effect(tmp
     def fake_start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None):
         del session, mode, difficulty, battle_mode, workspace_root
         runtime.emit_trace()
-        raise TrailError("CW_START_FAILED", "start failed")
+        error = TrailError("CW_START_FAILED", "start failed")
+        error.debug = {"artifact": tmp_path / "error-artifact.txt"}
+        raise error
 
     monkeypatch.setattr("trail.daemon.cw_service._start_cw", fake_start_cw)
 
@@ -2734,7 +2843,8 @@ def test_cw_mutation_scope_keeps_verbose_trace_for_failed_before_side_effect(tmp
                 "ok": 1,
                 "pieces": 0,
             }
-        ]
+        ],
+        "artifact": str(tmp_path / "error-artifact.txt"),
     }
 
 
@@ -3970,6 +4080,11 @@ def test_command_service_handles_cw_portal_select_and_auto_applies_selected_guid
         "trail.daemon.cw_service.apply_cw_guide_via_ui",
         lambda runtime, share_code: applied_share_codes.append(share_code),
     )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.wait_cw_portal_preparation",
+        lambda session, runtime: None,
+        raising=False,
+    )
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
         request_id="req-cw-portal-select",
@@ -4032,6 +4147,11 @@ def test_command_service_handles_cw_portal_select_waits_extra_before_capture(tmp
         "trail.daemon.cw_service.apply_cw_guide_via_ui",
         lambda runtime, share_code: applied_share_codes.append(share_code),
     )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.wait_cw_portal_preparation",
+        lambda session, runtime: None,
+        raising=False,
+    )
     monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: sleeps.append(seconds))
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
@@ -4082,6 +4202,11 @@ def test_command_service_marks_cw_portal_select_post_click_apply_failure_as_reco
         "trail.daemon.cw_service.apply_cw_guide_via_ui",
         lambda runtime, share_code: events.append("apply") or (_ for _ in ()).throw(RuntimeError("apply failed")),
     )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.wait_cw_portal_preparation",
+        lambda session, runtime: events.append("wait") or None,
+        raising=False,
+    )
 
     response = command_service.handle(
         DaemonRequest(
@@ -4128,7 +4253,7 @@ def test_command_service_marks_cw_portal_select_post_click_apply_failure_as_reco
     assert status_response["data"]["final_state"] == "applied_but_not_persisted"
     assert status_response["data"]["tainted"] is True
     assert status_response["data"]["last_visible_stage"] == "responded"
-    assert events == ["select", "apply"]
+    assert events == ["select", "wait", "apply"]
     assert service.is_session_tainted(session.session_id) is True
     assert blocked["ok"] is False
     assert blocked["error"]["code"] == "SESSION_RECONCILE_REQUIRED"
@@ -4154,6 +4279,11 @@ def test_command_service_keeps_cw_portal_select_side_effect_failure_verbose_trac
     monkeypatch.setattr(
         "trail.daemon.cw_service.select_cw_portal",
         lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": "商店"},
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.wait_cw_portal_preparation",
+        lambda session, runtime: None,
+        raising=False,
     )
 
     def fail_after_apply_click(runtime, share_code: str) -> None:
@@ -5257,6 +5387,67 @@ def test_server_handle_payload_preserves_unknown_result_envelope(
     assert loaded.scene_state["daemon"]["tainted"] is True
 
 
+def test_daemon_response_line_serializes_non_json_values(tmp_path: Path):
+    from trail.daemon.server import _serialize_response_line
+
+    class CustomValue:
+        def __str__(self) -> str:
+            return "custom-value"
+
+    line = _serialize_response_line(
+        {
+            "ok": False,
+            "data": {},
+            "screenshot": tmp_path / "shot.png",
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": {"custom": CustomValue()},
+            "error": {"code": "DEMO", "message": "demo"},
+        },
+        request_id="req-jsonable-response",
+    )
+
+    decoded = json.loads(line.decode("utf-8"))
+    assert decoded["screenshot"] == str(tmp_path / "shot.png")
+    assert decoded["debug"] == {"custom": "custom-value"}
+
+
+def test_daemon_response_line_returns_failure_when_serialization_fails(monkeypatch):
+    import trail.daemon.server as server_module
+
+    class BrokenException(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError("broken str")
+
+    def fail_to_jsonable(value):
+        del value
+        raise BrokenException()
+
+    monkeypatch.setattr(server_module, "to_jsonable", fail_to_jsonable)
+
+    line = server_module._serialize_response_line(
+        {
+            "ok": False,
+            "data": {},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": {},
+            "error": {"code": "DEMO", "message": "demo"},
+        },
+        request_id="req-serialization-fallback",
+    )
+
+    decoded = json.loads(line.decode("utf-8"))
+    assert decoded["ok"] is False
+    assert decoded["request_id"] == "req-serialization-fallback"
+    assert decoded["error"]["code"] == "DAEMON_UNAVAILABLE"
+    assert decoded["error"]["message"] == "daemon response serialization failed"
+    assert decoded["debug"]["detail"] == "BrokenException: <unprintable RuntimeError: broken str>"
+
+
 def test_command_service_unknown_result_envelope_includes_image_guidance_when_screenshot_present(tmp_path: Path):
     command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
 
@@ -5277,6 +5468,177 @@ def test_command_service_unknown_result_envelope_includes_image_guidance_when_sc
     assert envelope["screenshot"] == ".trail/shots/req-unknown-guidance.png"
     assert envelope["image_guidance"] == {"read_image_first": 1}
     assert type(envelope["image_guidance"]["read_image_first"]) is int
+
+
+def test_command_service_failure_envelope_handles_unprintable_exception_message():
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+
+    class BrokenException(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError("broken str")
+
+    envelope = command_service._failure_envelope(error=BrokenException())
+
+    assert envelope["error"] == {
+        "code": "BrokenException",
+        "message": "<unjsonable BrokenException: RuntimeError: broken str>",
+    }
+
+
+def test_command_service_failure_envelope_handles_non_deepcopy_error_payloads():
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+
+    class BadDeepcopy:
+        def __deepcopy__(self, memo):
+            del memo
+            raise RuntimeError("cannot deepcopy")
+
+        def __str__(self) -> str:
+            return "bad-deepcopy"
+
+    error = TrailError("BROKEN_PAYLOAD", "broken payload")
+    error.data = {"payload": BadDeepcopy()}
+    error.debug = {"detail": BadDeepcopy()}
+
+    envelope = command_service._failure_envelope(error=error)
+
+    assert envelope["data"] == {"payload": "bad-deepcopy"}
+    assert envelope["debug"] == {"detail": "bad-deepcopy"}
+    assert envelope["error"] == {"code": "BROKEN_PAYLOAD", "message": "broken payload"}
+
+
+def test_command_service_failure_envelope_ignores_broken_error_diagnostic_properties():
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+
+    class BrokenDiagnosticProperties(Exception):
+        @property
+        def data(self):
+            raise RuntimeError("data unavailable")
+
+        @property
+        def debug(self):
+            raise RuntimeError("debug unavailable")
+
+        @property
+        def tainted(self):
+            raise RuntimeError("tainted unavailable")
+
+        def __str__(self) -> str:
+            return "broken diagnostics"
+
+    envelope = command_service._failure_envelope(error=BrokenDiagnosticProperties())
+
+    assert envelope["data"] == {}
+    assert envelope["debug"] is None
+    assert envelope["error"] == {"code": "BrokenDiagnosticProperties", "message": "broken diagnostics"}
+
+
+def test_daemon_success_jsonifies_non_deepcopy_payloads_and_metadata():
+    class BadDeepcopy:
+        def __deepcopy__(self, memo):
+            del memo
+            raise RuntimeError("cannot deepcopy")
+
+        def __str__(self) -> str:
+            return "bad-deepcopy"
+
+    result = success(
+        {"payload": BadDeepcopy()},
+        request_id="req-success-jsonable",
+        references=[{"reference": BadDeepcopy()}],
+        debug={"debug": BadDeepcopy()},
+    )
+
+    assert result["data"] == {"payload": "bad-deepcopy"}
+    assert result["references"] == [{"reference": "bad-deepcopy"}]
+    assert result["debug"] == {"debug": "bad-deepcopy"}
+
+
+def test_command_service_unknown_result_envelope_jsonifies_previous_response_metadata():
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
+
+    class BadDeepcopy:
+        def __deepcopy__(self, memo):
+            del memo
+            raise RuntimeError("cannot deepcopy")
+
+        def __str__(self) -> str:
+            return "bad-deepcopy"
+
+    envelope = command_service._unknown_result_envelope(
+        request_id="req-unknown-jsonable",
+        response={
+            "timing": {"value": BadDeepcopy()},
+            "warnings": [{"warning": BadDeepcopy()}],
+            "references": [{"reference": BadDeepcopy()}],
+            "debug": {"debug": BadDeepcopy()},
+        },
+        error=RuntimeError("unknown"),
+        last_known_stage="state_persisted",
+    )
+
+    assert envelope["timing"] == {"value": "bad-deepcopy"}
+    assert envelope["warnings"] == [{"warning": "bad-deepcopy"}]
+    assert envelope["references"] == [{"reference": "bad-deepcopy"}]
+    assert envelope["debug"]["debug"] == "bad-deepcopy"
+
+
+def test_cw_unknown_result_envelope_handles_unprintable_exception_detail():
+    import trail.daemon.cw_service as cw_service_module
+
+    class BrokenException(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError("broken str")
+
+    envelope = cw_service_module._unknown_result_envelope(BrokenException(), last_known_stage="side_effect_applied")
+
+    assert envelope["debug"]["detail"] == "BrokenException: <unprintable RuntimeError: broken str>"
+    assert envelope["debug"]["last_known_stage"] == "side_effect_applied"
+
+
+def test_cw_unknown_result_envelope_jsonifies_non_deepcopy_warnings_and_references():
+    import trail.daemon.cw_service as cw_service_module
+
+    class BadDeepcopy:
+        def __deepcopy__(self, memo):
+            del memo
+            raise RuntimeError("cannot deepcopy")
+
+        def __str__(self) -> str:
+            return "bad-deepcopy"
+
+    envelope = cw_service_module._unknown_result_envelope(
+        RuntimeError("unknown"),
+        warnings=[{"warning": BadDeepcopy()}],
+        references=[{"reference": BadDeepcopy()}],
+        debug={"debug": BadDeepcopy()},
+    )
+
+    assert envelope["warnings"] == [{"warning": "bad-deepcopy"}]
+    assert envelope["references"] == [{"reference": "bad-deepcopy"}]
+    assert envelope["debug"]["debug"] == "bad-deepcopy"
+
+
+def test_side_effect_tracking_runtime_preserves_error_when_completed_flag_property_breaks():
+    from trail.daemon.cw_service import _RuntimeSideEffectTracker, _SideEffectTrackingRuntime
+
+    class BrokenCompletedFlag(TrailError):
+        @property
+        def completed_after_side_effect(self):
+            raise RuntimeError("completed flag unavailable")
+
+    class Runtime:
+        def click_point(self, x, y):
+            del x, y
+            raise BrokenCompletedFlag("BROKEN_FLAG", "original failure")
+
+    tracker = _RuntimeSideEffectTracker()
+    runtime = _SideEffectTrackingRuntime(Runtime(), tracker)
+
+    with pytest.raises(BrokenCompletedFlag):
+        runtime.click_point(1, 2)
+
+    assert tracker.side_effect_applied is False
 
 
 def test_server_handle_payload_keeps_unknown_result_envelope_for_post_handler_failure(tmp_path: Path, monkeypatch):

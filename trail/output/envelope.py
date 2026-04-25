@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
+
+from trail.core.jsonable import to_jsonable
 
 
 def build_image_guidance(screenshot: Path | str | None) -> dict[str, int] | None:
@@ -29,12 +30,12 @@ def command_success(
 ) -> dict[str, Any]:
     envelope = {
         "ok": True,
-        "data": deepcopy(data),
+        "data": to_jsonable(data),
         "screenshot": None if screenshot is None else str(screenshot),
-        "timing": deepcopy(timing or {}),
-        "warnings": deepcopy(warnings or []),
-        "references": deepcopy(references or []),
-        "debug": deepcopy(debug),
+        "timing": to_jsonable(timing or {}),
+        "warnings": to_jsonable(warnings or []),
+        "references": to_jsonable(references or []),
+        "debug": to_jsonable(debug),
         "error": None,
     }
     return _attach_image_guidance(envelope, screenshot=screenshot)
@@ -54,10 +55,10 @@ def command_failure(
         "ok": False,
         "data": {},
         "screenshot": None if screenshot is None else str(screenshot),
-        "timing": deepcopy(timing or {}),
-        "warnings": deepcopy(warnings or []),
-        "references": deepcopy(references or []),
-        "debug": deepcopy(debug),
+        "timing": to_jsonable(timing or {}),
+        "warnings": to_jsonable(warnings or []),
+        "references": to_jsonable(references or []),
+        "debug": to_jsonable(debug),
         "error": {"code": code, "message": message},
     }
     return _attach_image_guidance(envelope, screenshot=screenshot)

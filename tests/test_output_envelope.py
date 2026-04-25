@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import threading
 
@@ -40,6 +41,31 @@ def test_command_success_deep_copies_data(tmp_path):
     payload["items"].append("卡芙卡")
 
     assert result["data"] == {"items": ["银狼"]}
+
+
+def test_command_envelope_jsonifies_non_deepcopy_payloads():
+    class BadDeepcopy:
+        def __deepcopy__(self, memo):
+            del memo
+            raise RuntimeError("cannot deepcopy")
+
+        def __str__(self) -> str:
+            return "bad-deepcopy"
+
+    result = command_success(
+        data={"payload": BadDeepcopy()},
+        screenshot=None,
+        timing={"elapsed_ms": 0},
+        warnings=[{"warning": BadDeepcopy()}],
+        references=[{"reference": BadDeepcopy()}],
+        debug={"debug": BadDeepcopy()},
+    )
+
+    assert result["data"] == {"payload": "bad-deepcopy"}
+    assert result["warnings"] == [{"warning": "bad-deepcopy"}]
+    assert result["references"] == [{"reference": "bad-deepcopy"}]
+    assert result["debug"] == {"debug": "bad-deepcopy"}
+    json.dumps(result, ensure_ascii=False)
 
 
 def test_command_success_includes_image_guidance_when_screenshot_present():
@@ -170,6 +196,23 @@ def test_with_auto_capture_wraps_trail_error_as_failure(tmp_path):
     assert runtime.calls == [True]
 
 
+def test_with_auto_capture_formats_unprintable_unexpected_exception(tmp_path):
+    runtime = FakeRuntime(tmp_path / "failed.png")
+
+    class BrokenException(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError("broken str")
+
+    result = with_auto_capture(runtime, lambda: (_ for _ in ()).throw(BrokenException()))
+
+    assert result["ok"] is False
+    assert result["error"] == {
+        "code": "UNEXPECTED_ERROR",
+        "message": "BrokenException: <unprintable RuntimeError: broken str>",
+    }
+    assert result["screenshot"].endswith("failed.png")
+
+
 def test_with_auto_capture_collects_runtime_metadata_and_debug(tmp_path):
     runtime = MetadataRuntime(tmp_path / "ok.png")
 
@@ -184,6 +227,37 @@ def test_with_auto_capture_collects_runtime_metadata_and_debug(tmp_path):
     ]
     assert result["references"] == [{"path": "trail/scenes/cw/references/1-1.png", "similarity": 0.97}]
     assert result["debug"] == {"trace": [{"step": "click", "point": [10, 20]}]}
+
+
+def test_with_auto_capture_ignores_warning_collection_failure_after_success(tmp_path):
+    runtime = MetadataRuntime(tmp_path / "ok.png")
+
+    def fail_collect_warnings():
+        raise RuntimeError("warnings failed")
+
+    runtime.collect_warnings = fail_collect_warnings
+
+    result = with_auto_capture(runtime, lambda: {"done": True})
+
+    assert result["ok"] is True
+    assert result["data"] == {"done": True}
+    assert result["warnings"] == []
+
+
+def test_with_auto_capture_debug_is_jsonable(tmp_path):
+    runtime = DebugContextRuntime(tmp_path / "ok.png")
+    when = datetime(2026, 4, 25, 13, 50, 0, tzinfo=timezone.utc)
+    runtime.trace = [{"step": "artifact", "path": tmp_path / "artifact.png", "when": when}]
+    runtime.debug_context = {"artifact_root": tmp_path, "when": when}
+
+    result = with_auto_capture(runtime, lambda: {"done": True}, verbose=True)
+
+    json.dumps(result, ensure_ascii=False)
+    assert result["debug"] == {
+        "trace": [{"step": "artifact", "path": str(tmp_path / "artifact.png"), "when": "2026-04-25T13:50:00+00:00"}],
+        "artifact_root": str(tmp_path),
+        "when": "2026-04-25T13:50:00+00:00",
+    }
 
 
 def test_with_auto_capture_omits_debug_without_verbose(tmp_path):
@@ -321,7 +395,7 @@ def test_with_auto_capture_collect_failure_only_drops_debug(tmp_path):
         ("match_references", "references boom"),
     ],
 )
-def test_with_auto_capture_collect_failure_for_warning_or_reference_metadata_propagates(
+def test_with_auto_capture_ignores_warning_or_reference_metadata_collection_failure(
     tmp_path,
     collector_name,
     message,
@@ -334,8 +408,14 @@ def test_with_auto_capture_collect_failure_for_warning_or_reference_metadata_pro
 
     setattr(runtime, collector_name, raise_collect_failure)
 
-    with pytest.raises(RuntimeError, match=message):
-        with_auto_capture(runtime, lambda: {"done": True}, verbose=True)
+    result = with_auto_capture(runtime, lambda: {"done": True}, verbose=True)
+
+    assert result["ok"] is True
+    assert result["data"] == {"done": True}
+    if collector_name == "collect_warnings":
+        assert result["warnings"] == []
+    else:
+        assert result["references"] == []
 
 
 def test_session_store_persists_relative_last_screenshot(tmp_path):

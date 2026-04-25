@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
+from trail.core.jsonable import to_jsonable
 from trail.output.capture import resolve_capture_verbose, with_auto_capture
 from trail.output.rendering import print_output
 from trail.runtime.operator import build_runtime
@@ -42,27 +42,6 @@ def build_default_daemon_client():
         daemon_home=resolve_daemon_home(),
         transport=send_daemon_request,
     )
-
-
-def to_jsonable(value):
-    if isinstance(value, Path):
-        return str(value)
-    if hasattr(value, "item") and callable(value.item):
-        try:
-            return to_jsonable(value.item())
-        except Exception:
-            pass
-    if isinstance(value, dict):
-        return {key: to_jsonable(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [to_jsonable(item) for item in value]
-    if hasattr(value, "to_dict"):
-        return to_jsonable(value.to_dict())
-    if hasattr(value, "model_dump"):
-        return to_jsonable(value.model_dump(mode="json"))
-    if is_dataclass(value):
-        return to_jsonable(asdict(value))
-    return value
 
 
 def print_json(payload: dict) -> None:
