@@ -5644,6 +5644,10 @@ def test_runtime_operator_capture_after_action_waits_after_recent_input(monkeypa
 
     assert path == tmp_path / "req-delay.png"
     assert sleep_calls == [pytest.approx(0.75, rel=0.001)]
+    trace = runtime.consume_debug_trace()
+    delay_event = _find_trace_event(trace, "capture_settle_delay")
+    _assert_finalized_trace_event(delay_event, step="capture_settle_delay", ok=1)
+    assert delay_event["seconds"] == pytest.approx(0.75, rel=0.001)
 
 
 def test_runtime_operator_collect_warnings_includes_window_warnings():

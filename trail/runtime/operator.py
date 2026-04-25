@@ -331,8 +331,13 @@ class RuntimeOperator:
         remaining = self.POST_INPUT_CAPTURE_DELAY_SECONDS - elapsed
         if remaining <= 0:
             return
-        sleep(remaining)
-        self._record_trace("capture_settle_delay", seconds=round(remaining, 3))
+        action = self._begin_debug_action("capture_settle_delay", seconds=round(remaining, 3))
+        try:
+            sleep(remaining)
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, **self._debug_error_payload(error))
+            raise
+        self._finish_debug_action(action, ok=True)
 
     def collect_warnings(self) -> list[dict[str, Any]]:
         if self._capture_scope_active():
