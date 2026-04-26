@@ -3462,6 +3462,38 @@ def test_render_output_adds_cw_slots_sections_without_breaking_screenshot_order(
     ]
 
 
+def test_render_output_skips_cw_slots_stage_line_when_stage_unknown():
+    payload = {
+        "ok": True,
+        "data": {
+            "front": [{"name": "希儿"}],
+            "back": [],
+            "hand": [],
+            "stale": False,
+            "stage": None,
+            "stage_status": {"stale": False, "level": 3, "exp": "0/8", "team_size": "1/2"},
+            "stage_status_stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.slots.read", payload).splitlines()
+
+    assert lines == [
+        "ok cw.slots.read front=1 back=0 hand=0 stale=0",
+        "# 综合信息",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        "# 角色信息",
+        "slot pos=front:0 name=希儿",
+    ]
+    assert "stage=null" not in "\n".join(lines)
+    assert not any(line.startswith("info stage=") for line in lines)
+
+
 def test_render_output_does_not_add_sections_to_single_body_commands():
     payload = {
         "ok": True,
