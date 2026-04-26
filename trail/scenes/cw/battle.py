@@ -5,8 +5,7 @@ from time import monotonic, sleep
 
 from trail.core.errors import TrailError
 from trail.scenes.cw.events import build_cw_battle_continuer, build_cw_battle_starter, build_cw_settle_continuer
-from trail.scenes.cw.models import ensure_cw_state
-from trail.scenes.cw.stage import build_cw_stage_detector, mark_cw_stage_stale
+from trail.scenes.cw.stage import _replace_stage_fields, build_cw_stage_detector, mark_cw_stage_stale
 from trail.session.models import SessionModel
 
 SETTLEMENT_HEADLINE_CAPTURE = {
@@ -191,7 +190,7 @@ def _advance_settlement_page(runtime) -> None:
 
 
 def _set_completed_stage(session: SessionModel, *, stage: str) -> None:
-    ensure_cw_state(session)["stage"] = {"value": stage, "stale": False}
+    _replace_stage_fields(session, value=stage, stale=False)
     session.last_stage = {"scene": "cw", "value": stage}
 
 

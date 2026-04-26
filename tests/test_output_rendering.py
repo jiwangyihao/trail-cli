@@ -308,10 +308,14 @@ def test_readme_mentions_text_output_protocol() -> None:
         "ok cw.shop.scan opened=1 stale=0 count=2",
         "shot path=.trail/shots/req-shop.png\ninfo read_image_first=1",
         "item idx=1 slot=1 name=希儿 cost=2",
-        "info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7",
+        "info coins=40 reserve_full=0",
+        "info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0",
     )
     assert "```text\nok cw.shop.status count=2\nshot path=.trail/shots/req-shop.png\n" not in readme
-    assert "商店快照里的 `coins` / `level` / `exp` / `reserve_full` / `team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" in readme
+    assert "`trail cw slots read` 会顺带刷新 `cw_state.stage.status`" in readme
+    assert "`trail cw shop scan` 只扫描商店页商品/金币切片，不重新识别全局状态" in readme
+    assert "`trail cw shop scan` 与 `trail cw shop status` 只投影 session 中已有的 `cw_state.stage.status`" in readme
+    assert "商店快照里的 `coins` / `level` / `exp` / `reserve_full` / `team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" not in readme
     assert "`guide.fetch.cw` 现在也进入 YAML allowlist" in readme
     assert "`羁绊列表`：按当前攻略各阶段阵容里出现过的羁绊去重汇总，并尽量保留层数" in readme
     assert "`优选装备` / `次选装备`：按角色展开的推荐装备列表" in readme
@@ -343,6 +347,7 @@ def test_agents_document_screenshot_first_protocol_facts() -> None:
     assert "envelope 顶层若带 `screenshot`，同步生成 `image_guidance.read_image_first=1`" in agents
     assert "`image_guidance` 不进入 YAML body" in agents
     assert "`--verbose` 不为 `image_guidance` 新增独立 guidance 事件" in agents
+    assert "`cw.shop.scan|status` 的 stage 投影固定使用 `stage_level/stage_exp/stage_team_size/stage_status_stale`" in agents
 
 
 def test_readme_documents_verbose_major_action_trace_contract() -> None:
@@ -899,6 +904,102 @@ def test_render_output_renders_cw_shop_status_without_shot_or_guidance():
         "item idx=4 name=无槽位条目 cost=9",
         "info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7",
     ]
+
+
+def test_render_output_renders_shop_stage_status_projection():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "opened": True,
+            "stale": False,
+            "stage_status": {"stale": False, "level": 7, "exp": "4/52", "team_size": "3/3"},
+            "stage_status_stale": False,
+        },
+        "screenshot": ".trail/shots/req-shop-stage.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.shop.scan", payload).splitlines()
+
+    assert lines[1:3] == ["shot path=.trail/shots/req-shop-stage.png", "info read_image_first=1"]
+    assert lines[-1] == "info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0"
+
+
+def test_render_output_keeps_stage_status_stale_when_missing():
+    payload = {
+        "ok": True,
+        "data": {"stage_status_stale": True},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert "info stage_status_stale=1" in render_output("cw.shop.scan", payload).splitlines()
+
+
+def test_render_output_hides_stale_stage_values_but_keeps_stale_fact():
+    payload = {
+        "ok": True,
+        "data": {
+            "stage_status": {"stale": True, "level": 7, "exp": "4/52", "team_size": "3/3"},
+            "stage_status_stale": True,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    rendered = render_output("cw.shop.scan", payload)
+
+    assert "info stage_status_stale=1" in rendered
+    assert "stage_level" not in rendered
+    assert "stage_exp" not in rendered
+    assert "stage_team_size" not in rendered
+
+
+def test_render_output_hides_legacy_top_level_stage_values_when_projection_is_stale():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "opened": True,
+            "stale": False,
+            "coins": 40,
+            "level": 7,
+            "exp": "4/52",
+            "reserve_full": False,
+            "team_size": "3/3",
+            "stage_status": {"stale": True, "level": 7, "exp": "4/52", "team_size": "3/3"},
+            "stage_status_stale": True,
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    rendered = render_output("cw.shop.scan", payload)
+
+    assert "info stage_status_stale=1" in rendered
+    assert "level=7" not in rendered
+    assert "exp=4/52" not in rendered
+    assert "team_size=3/3" not in rendered
+    assert "stage_level" not in rendered
+    assert "stage_exp" not in rendered
 
 
 @pytest.mark.parametrize(
@@ -3083,6 +3184,47 @@ def test_render_output_renders_cw_slots_place_known_failure_without_recover():
         "request id=req-cw-slots-place-failed",
         "shot path=.trail/shots/req-cw-slots-place-failed.png",
         'why msg="target slot cannot field character: front:0"',
+    ]
+
+
+@pytest.mark.parametrize(
+    ("command", "payload"),
+    [
+        (
+            "cw.shop.scan",
+            {
+                "ok": True,
+                "data": {"items": [], "opened": True, "stale": False, "stage_status_stale": True},
+                "screenshot": ".trail/shots/req-shop-yaml.png",
+                "image_guidance": {"read_image_first": True},
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": None,
+                "error": None,
+            },
+        ),
+        (
+            "cw.slots.read",
+            {
+                "ok": True,
+                "data": {"front": [], "back": [], "hand": [], "stale": False},
+                "screenshot": ".trail/shots/req-slots-yaml.png",
+                "image_guidance": {"read_image_first": True},
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": None,
+                "error": None,
+            },
+        ),
+    ],
+)
+def test_render_output_rejects_yaml_for_cw_scan_and_slots_read(command: str, payload: dict):
+    assert render_output(command, payload, output_format="yaml").splitlines() == [
+        f"fail {command} code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        f"shot path={payload['screenshot']}",
+        f'why msg="yaml not supported for {command}"',
     ]
 
 

@@ -30,7 +30,7 @@ class CwSceneState:
         }
     )
     strategy: dict = field(default_factory=lambda: {"cards": [], "stale": True})
-    shop: dict = field(default_factory=lambda: {"stale": True, "team_size": None, "exp": None})
+    shop: dict = field(default_factory=lambda: {"stale": True})
     stage: dict = field(default_factory=lambda: {"stale": True})
     metrics: dict = field(default_factory=dict)
 
@@ -50,7 +50,10 @@ class CwSceneState:
 
 def ensure_cw_state(session: SessionModel) -> dict:
     defaults = CwSceneState().model_dump()
-    cw_state = session.scene_state.setdefault("cw", {})
+    cw_state = session.scene_state.get("cw")
+    if not isinstance(cw_state, dict):
+        cw_state = {}
+        session.scene_state["cw"] = cw_state
     for key, value in defaults.items():
         cw_state.setdefault(key, value)
     return cw_state

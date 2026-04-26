@@ -938,6 +938,82 @@ def test_cw_shop_status_renders_items_in_slot_order(cli_runner, fake_daemon_clie
     _assert_single_call(client, method="cw.shop.status", payload={}, tmp_path=tmp_path)
 
 
+def test_cw_shop_scan_renders_fresh_stage_status_projection(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.shop.scan": build_success_response(
+                request_id="req-cw-shop-scan-stage-fresh",
+                data={
+                    "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                    "opened": True,
+                    "stale": False,
+                    "stage_status": {"stale": False, "level": 7, "exp": "4/52", "team_size": "3/3"},
+                    "stage_status_stale": False,
+                },
+                screenshot=".trail/shots/req-cw-shop-scan-stage-fresh.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "shop", "scan", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.shop.scan opened=1 stale=0 count=1",
+        screenshot=".trail/shots/req-cw-shop-scan-stage-fresh.png",
+        body=[
+            "item idx=1 slot=1 name=银狼 cost=20",
+            "info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0",
+        ],
+    )
+    _assert_single_call(client, method="cw.shop.scan", payload={}, tmp_path=tmp_path)
+
+
+def test_cw_shop_status_renders_stale_stage_status_without_stale_values(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.shop.status": build_success_response(
+                request_id="req-cw-shop-status-stage-stale",
+                data={
+                    "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                    "stage_status": {"stale": True, "level": 7, "exp": "4/52", "team_size": "3/3"},
+                    "stage_status_stale": True,
+                },
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "shop", "status", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.shop.status count=1",
+        body=["item idx=1 slot=1 name=银狼 cost=20", "info stage_status_stale=1"],
+    )
+    assert "stage_level=7" not in result.stdout
+    _assert_single_call(client, method="cw.shop.status", payload={}, tmp_path=tmp_path)
+
+
+def test_cw_shop_status_renders_missing_stage_status_as_stale(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.shop.status": build_success_response(
+                request_id="req-cw-shop-status-stage-missing",
+                data={"stale": True, "stage_status_stale": True},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "shop", "status", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok cw.shop.status count=0", "info stage_status_stale=1"]
+    assert "stage_level" not in result.stdout
+    assert "stage_exp" not in result.stdout
+    assert "stage_team_size" not in result.stdout
+    _assert_single_call(client, method="cw.shop.status", payload={}, tmp_path=tmp_path)
+
+
 def test_cw_event_handle_renders_event_result(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {

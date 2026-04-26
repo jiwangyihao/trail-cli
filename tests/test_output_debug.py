@@ -207,6 +207,66 @@ def test_verbose_output_ocr_mode_retry_context_uses_existing_debug_pipeline():
     assert all(line not in rendered for line in LEGACY_OCR_CONTEXT_DEBUG_LINES)
 
 
+def test_default_output_does_not_leak_batch_ocr_debug_data():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "opened": True,
+            "stale": False,
+            "stage_status_stale": True,
+        },
+        "screenshot": ".trail/shots/req-shop-batch-ocr.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "trace": [
+                {
+                    "step": "cw_shop_batch_ocr",
+                    "atlas": "debug-atlas.png",
+                    "rect": "0,0,120,40",
+                    "target_count": 2,
+                }
+            ]
+        },
+        "error": None,
+    }
+
+    rendered = render_output("cw.shop.scan", payload)
+
+    assert "debug" not in rendered
+    assert "atlas" not in rendered
+    assert "rect" not in rendered
+
+
+def test_verbose_output_renders_cw_shop_batch_ocr_trace():
+    payload = {
+        "ok": True,
+        "data": {"items": [], "opened": True, "stale": False, "stage_status_stale": True},
+        "screenshot": ".trail/shots/req-shop-batch-ocr-verbose.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "trace": [
+                {
+                    "step": "cw_shop_batch_ocr",
+                    "target_count": 2,
+                    "atlas_width": 256,
+                    "atlas_height": 64,
+                    "ok": True,
+                }
+            ]
+        },
+        "error": None,
+    }
+
+    assert "debug kind=trace step=cw_shop_batch_ocr" in render_output("cw.shop.scan", payload, verbose=True)
+
+
 def test_verbose_output_ocr_failure_keeps_ocr_trace_from_runtime(tmp_path):
     import trail.runtime.operator as operator_module
     from trail.output.capture import with_auto_capture

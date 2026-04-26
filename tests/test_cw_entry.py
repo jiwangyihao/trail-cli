@@ -873,7 +873,7 @@ def test_enter_cw_records_entry_snapshot_and_invalidates_stage(tmp_path):
     refreshed = enter_cw(session, mode="continue", difficulty="highest", battle_mode="overclock")
 
     assert refreshed.scene_state["cw"]["entry"] == {"page": "home"}
-    assert refreshed.scene_state["cw"]["stage"] == {"stale": True}
+    assert refreshed.scene_state["cw"]["stage"] == {"stale": True, "value": "shop"}
     assert refreshed.scene_state["cw"]["slots"] == {"stale": True, "hand": ["希儿"]}
     assert refreshed.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
     assert refreshed.scene_state["cw"]["sell_plan"] == {"stale": True}

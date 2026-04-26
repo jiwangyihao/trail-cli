@@ -450,14 +450,28 @@ def _append_cw_shop_items(lines: list[str], data: dict[str, Any]) -> None:
 
 
 def _append_cw_shop_snapshot_info(lines: list[str], data: dict[str, Any]) -> None:
+    has_stage_projection = "stage_status_stale" in data
     _append_fact_line(
         lines,
         "info",
         ("coins", data.get("coins") if "coins" in data else None),
-        ("level", data.get("level") if "level" in data else None),
-        ("exp", data.get("exp") if "exp" in data else None),
+        ("level", data.get("level") if "level" in data and not has_stage_projection else None),
+        ("exp", data.get("exp") if "exp" in data and not has_stage_projection else None),
         ("reserve_full", bool(data.get("reserve_full")) if "reserve_full" in data else None),
-        ("team_size", data.get("team_size") if "team_size" in data else None),
+        ("team_size", data.get("team_size") if "team_size" in data and not has_stage_projection else None),
+    )
+    if not has_stage_projection:
+        return
+
+    stage_status = _as_dict(data.get("stage_status"))
+    stage_status_stale = bool(data.get("stage_status_stale"))
+    _append_fact_line(
+        lines,
+        "info",
+        ("stage_level", stage_status.get("level") if not stage_status_stale else None),
+        ("stage_exp", stage_status.get("exp") if not stage_status_stale else None),
+        ("stage_team_size", stage_status.get("team_size") if not stage_status_stale else None),
+        ("stage_status_stale", stage_status_stale),
     )
 
 

@@ -481,8 +481,8 @@ def test_invalidate_cw_guide_runtime_state_resets_runtime_dependent_slices_only(
     }
     assert cw_state["slots"] == {"stale": True}
     assert cw_state["sell_plan"] == {}
-    assert cw_state["shop"] == {"stale": True, "team_size": None, "exp": None}
-    assert cw_state["stage"] == {"stale": True}
+    assert cw_state["shop"] == {"stale": True}
+    assert cw_state["stage"] == {"stale": True, "name": "shop"}
 
 
 def test_fetch_cw_guide_payload_builds_payload_from_lineup_detail(monkeypatch):
@@ -1980,10 +1980,8 @@ def test_cw_shop_status_does_not_recover_guide_summary_from_plain_fetch_artifact
         "stale": False,
         "items": [{"name": "希儿", "price": 3}],
         "coins": 15,
-        "level": 4,
-        "exp": "4/52",
         "reserve_full": False,
-        "team_size": "6/6",
+        "stage_status_stale": True,
     }
     assert artifact.artifact_id
     assert persisted.scene_state["cw"]["guide"] is None
@@ -1992,10 +1990,7 @@ def test_cw_shop_status_does_not_recover_guide_summary_from_plain_fetch_artifact
         "stale": False,
         "items": [{"name": "希儿", "price": 3}],
         "coins": 15,
-        "level": 4,
-        "exp": "4/52",
         "reserve_full": False,
-        "team_size": "6/6",
     }
     assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["银狼"]}
     assert persisted.scene_state["cw"]["stage"] == {"stale": False, "name": "shop"}
@@ -2042,10 +2037,8 @@ def test_cw_shop_status_hides_stale_shop_guide_summary_when_selected_guide_missi
         "stale": False,
         "items": [{"name": "希儿", "price": 3}],
         "coins": 15,
-        "level": 4,
-        "exp": "4/52",
         "reserve_full": False,
-        "team_size": "6/6",
+        "stage_status_stale": True,
     }
     assert persisted.scene_state["cw"]["shop"]["guide_summary"] == {
         "remaining_purchases": {"希儿": 4, "佩拉": 1},
@@ -2065,9 +2058,11 @@ def test_cw_shop_status_handles_non_mapping_cw_state_without_leaking_guide_summa
         workspace_root=str(tmp_path),
         session_service=service,
     )
+    persisted = service.load_session(session.session_id)
 
-    assert payload == {"stale": True}
+    assert payload == {"stale": True, "stage_status_stale": True}
     assert "guide_summary" not in payload
+    assert persisted.scene_state["cw"]["shop"] == {"stale": True}
 
 
 def test_cw_guide_current_service_does_not_recover_from_any_artifact_origin(tmp_path: Path):

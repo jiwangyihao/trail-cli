@@ -38,16 +38,99 @@ def build_fake_cw_session(tmp_path):
     return session
 
 
-def build_slot_name_layouts(slots_module, *targets: tuple[str, int]):
-    compose = getattr(slots_module, "_compose_slot_name_strip_image", None)
-    assert compose is not None
-    _, layouts = compose(
-        [
-            {"area": area, "index": index, "image": Image.new("RGB", (201, 61), color="white")}
-            for area, index in targets
-        ]
-    )
-    return layouts
+def seed_fresh_stage_status(session):
+    session.scene_state["cw"]["stage"] = {
+        "value": "shop",
+        "stale": False,
+        "status": {
+            "stale": False,
+            "level": 7,
+            "role_count": {"front": 1, "back": 1, "hand": 2, "field": 2, "total": 4},
+        },
+    }
+
+
+def _stage_module():
+    return importlib.import_module("trail.scenes.cw.stage")
+
+
+def _assert_slots_read_result(result):
+    assert type(result).__name__ == "CwSlotsReadResult"
+    return result
+
+
+def _stage_status_capture_calls():
+    stage_scene = _stage_module()
+    return [
+        {**stage_scene.CW_STATUS_LEVEL_REGION, "normalize": False},
+        {**stage_scene.CW_STATUS_EXP_REGION, "normalize": False},
+        {**stage_scene.CW_STATUS_TEAM_SIZE_REGION, "normalize": False},
+    ]
+
+
+def _packed_ocr_pieces(targets: list[dict[str, object]]):
+    from trail.runtime.batch_ocr import BatchOcrTarget, pack_batch_ocr_targets
+
+    batch_targets = [
+        BatchOcrTarget(target["key"], Image.new("RGB", target["size"]))
+        for target in targets
+    ]
+    _, packed = pack_batch_ocr_targets(batch_targets)
+    pieces = []
+    for target, item in zip(targets, packed, strict=True):
+        text = target.get("text")
+        if not text:
+            continue
+        rect = item.content_rect
+        pieces.append(
+            {
+                "text": text,
+                "box": {
+                    "left": rect["left"] + 2,
+                    "top": rect["top"] + 2,
+                    "width": max(1, min(60, rect["width"] - 4)),
+                    "height": max(1, min(20, rect["height"] - 4)),
+                },
+            }
+        )
+    return pieces
+
+
+def _record_batch_capture(slots_module, runtime, kwargs, image, *, slot_text: str | None = None):
+    stage_scene = _stage_module()
+    key = None
+    text = None
+    if kwargs == {**stage_scene.CW_STATUS_LEVEL_REGION, "normalize": False}:
+        key = ("stage_status", "level")
+        text = "LV.7"
+    elif kwargs == {**stage_scene.CW_STATUS_EXP_REGION, "normalize": False}:
+        key = ("stage_status", "exp")
+        text = "4/52"
+    elif kwargs == {**stage_scene.CW_STATUS_TEAM_SIZE_REGION, "normalize": False}:
+        key = ("stage_status", "team_size")
+        text = "3/3"
+    elif kwargs == {**slots_module.SLOT_NAME_REGION, "normalize": False}:
+        current_slot = getattr(runtime, "current_slot", None)
+        assert current_slot is not None
+        key = ("slot", *current_slot)
+        text = slot_text
+
+    if key is not None:
+        runtime.batch_targets.append({"key": key, "size": image.size, "text": text})
+
+
+def test_slots_module_does_not_expose_legacy_strip_ocr_helpers():
+    slots_module = load_cw_slots_module()
+
+    for helper_name in (
+        "_compose_slot_name_strip_image",
+        "_map_ocr_pieces_to_slot_names",
+        "_read_batch_slot_names",
+        "_read_piece_box",
+        "_find_slot_name_layout",
+        "_record_slot_name_piece_drops",
+    ):
+        assert not hasattr(slots_module, helper_name)
 
 
 def test_slots_read_refreshes_snapshot(tmp_path):
@@ -73,6 +156,96 @@ def test_slots_read_refreshes_snapshot(tmp_path):
         "stale": False,
     }
     assert refreshed.scene_state["cw"]["sell_plan"] == {}
+
+
+def test_read_cw_slots_persists_stage_status_without_overwriting_stage_value(tmp_path):
+    slots = load_cw_slots_module()
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["stage"] = {"value": "shop", "stale": False}
+    result = slots.CwSlotsReadResult(
+        front=[{"name": "希儿", "star": 4}, None, None, None],
+        back=[None, None, None, None, None, None],
+        hand=[None, None, None, None, None, None, None, None, None],
+        stage_status={"stale": False, "level": 7, "exp": "4/52", "team_size": "3/3"},
+    )
+
+    refreshed = slots.read_cw_slots(session, reader=lambda: result)
+
+    assert refreshed.scene_state["cw"]["stage"]["value"] == "shop"
+    assert refreshed.scene_state["cw"]["stage"]["stale"] is False
+    assert refreshed.scene_state["cw"]["stage"]["status"]["level"] == 7
+    assert refreshed.scene_state["cw"]["stage"]["status"]["exp"] == "4/52"
+    assert refreshed.scene_state["cw"]["stage"]["status"]["team_size"] == "3/3"
+    assert refreshed.scene_state["cw"]["stage"]["status"]["role_count"] == {
+        "front": 1,
+        "back": 0,
+        "hand": 0,
+        "field": 1,
+        "total": 1,
+    }
+
+
+def test_build_cw_slots_reader_batches_stage_status_before_slot_clicks(monkeypatch):
+    slots_module = load_cw_slots_module()
+    build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
+    assert build_cw_slots_reader is not None
+    events: list[str] = []
+    monkeypatch.setattr(slots_module, "sleep", lambda seconds: events.append(f"sleep({seconds})"), raising=False)
+    monkeypatch.setattr(slots_module, "_count_slot_stars_in_image", lambda image: 4, raising=False)
+
+    class RuntimeSpy:
+        def __init__(self):
+            self.batch_targets: list[dict[str, object]] = []
+            self.current_slot: tuple[str, int] | None = None
+            self.ocr_image_calls: list[dict[str, object]] = []
+            self.slot_names = {("front", 0): "希儿", ("back", 0): "佩拉", ("hand", 0): "银狼"}
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            point = (x, y)
+            if point == slots_module.INFO_DISMISS_POINT:
+                events.append("click(INFO_DISMISS_POINT)")
+                return
+            for area, points in slots_module.SLOT_POINTS_BY_AREA.items():
+                if point in points:
+                    self.current_slot = (area, points.index(point))
+                    events.append(f"click({area}:{points.index(point)})")
+                    return
+            events.append(f"click({x},{y})")
+
+        def capture_image(self, **kwargs):
+            stage_calls = _stage_status_capture_calls()
+            if kwargs in stage_calls:
+                event_names = ["CW_STATUS_LEVEL_REGION", "CW_STATUS_EXP_REGION", "CW_STATUS_TEAM_SIZE_REGION"]
+                events.append(f"capture_image({event_names[stage_calls.index(kwargs)]})")
+            image = Image.new("RGB", (201, 61), color="white")
+            slot_text = self.slot_names.get(self.current_slot)
+            _record_batch_capture(slots_module, self, kwargs, image, slot_text=slot_text)
+            return image
+
+        def ocr_image(self, image, *, ocr=None):
+            self.ocr_image_calls.append({"size": image.size, "ocr": ocr})
+            return _packed_ocr_pieces(self.batch_targets)
+
+    runtime = RuntimeSpy()
+
+    result = build_cw_slots_reader(runtime, targets=["front:0", "back:0", "hand:0"])()
+
+    result = _assert_slots_read_result(result)
+    assert result.stage_status == {"stale": False, "level": 7, "exp": "4/52", "team_size": "3/3"}
+    assert result.front == [{"name": "希儿", "star": 4}, None, None, None]
+    assert result.back == [{"name": "佩拉", "star": 4}, None, None, None, None, None]
+    assert result.hand == [{"name": "银狼", "star": 4}, None, None, None, None, None, None, None, None]
+    assert len(runtime.ocr_image_calls) == 1
+    assert events[:2] == ["click(INFO_DISMISS_POINT)", "sleep(1.0)"]
+    first_slot_click = events.index("click(front:0)")
+    assert events.index("capture_image(CW_STATUS_LEVEL_REGION)") < first_slot_click
+    assert events.index("capture_image(CW_STATUS_EXP_REGION)") < first_slot_click
+    assert events.index("capture_image(CW_STATUS_TEAM_SIZE_REGION)") < first_slot_click
 
 
 def test_slots_read_rejects_empty_snapshot_and_preserves_previous_state(tmp_path):
@@ -106,7 +279,10 @@ def test_build_cw_slots_reader_batches_target_captures_into_single_ocr_call(monk
         def __init__(self):
             self.clicks: list[tuple[int, int]] = []
             self.capture_calls: list[dict[str, int | bool]] = []
+            self.batch_targets: list[dict[str, object]] = []
+            self.current_slot: tuple[str, int] | None = None
             self.ocr_image_calls: list[dict[str, object]] = []
+            self.slot_names = {("front", 0): "希儿", ("back", 0): "佩拉", ("hand", 0): "银狼"}
 
         def locate(self, template: str, **kwargs):
             del template, kwargs
@@ -115,28 +291,30 @@ def test_build_cw_slots_reader_batches_target_captures_into_single_ocr_call(monk
         def click_point(self, x: int, y: int, **kwargs):
             del kwargs
             self.clicks.append((x, y))
+            point = (x, y)
+            for area, points in slots_module.SLOT_POINTS_BY_AREA.items():
+                if point in points:
+                    self.current_slot = (area, points.index(point))
+                    break
 
         def capture_image(self, **kwargs):
             self.capture_calls.append(kwargs)
-            return Image.new("RGB", (201, strip_height), color="white")
+            image = Image.new("RGB", (201, strip_height), color="white")
+            _record_batch_capture(slots_module, self, kwargs, image, slot_text=self.slot_names.get(self.current_slot))
+            return image
 
         def ocr_image(self, image, *, ocr=None):
-            gap = (image.size[1] - (strip_height * 3)) // 2
             self.ocr_image_calls.append({"size": image.size, "ocr": ocr})
-            return [
-                ([(0, 10), (60, 10), (60, 30), (0, 30)], "希儿", 0.99),
-                {"text": "佩拉", "box": {"left": 10, "top": strip_height + gap + 10, "width": 60, "height": 20}},
-                {"text": "银狼", "box": {"left": 10, "top": (strip_height + gap) * 2 + 10, "width": 60, "height": 20}},
-            ]
+            return _packed_ocr_pieces(self.batch_targets)
 
     runtime = RuntimeSpy()
 
-    front, back, hand = build_cw_slots_reader(runtime, targets=["front:0", "back:0", "hand:0"])()
+    result = _assert_slots_read_result(build_cw_slots_reader(runtime, targets=["front:0", "back:0", "hand:0"])())
 
-    assert front == [{"name": "希儿", "star": 4}, None, None, None]
-    assert back == [{"name": "佩拉", "star": 4}, None, None, None, None, None]
-    assert hand == [{"name": "银狼", "star": 4}, None, None, None, None, None, None, None, None]
-    assert runtime.capture_calls == [
+    assert result.front == [{"name": "希儿", "star": 4}, None, None, None]
+    assert result.back == [{"name": "佩拉", "star": 4}, None, None, None, None, None]
+    assert result.hand == [{"name": "银狼", "star": 4}, None, None, None, None, None, None, None, None]
+    assert runtime.capture_calls == _stage_status_capture_calls() + [
         {**slots_module.SLOT_NAME_REGION, "normalize": False},
         {**slots_module.SLOT_STAR_REGION, "normalize": False},
         {**slots_module.SLOT_NAME_REGION, "normalize": False},
@@ -158,173 +336,39 @@ def test_build_cw_slots_reader_ignores_geometryless_piece_when_multiple_targets(
     strip_height = 61
 
     class RuntimeSpy:
+        def __init__(self):
+            self.batch_targets: list[dict[str, object]] = []
+            self.current_slot: tuple[str, int] | None = None
+            self.slot_names = {("hand", 0): "银狼"}
+
         def locate(self, template: str, **kwargs):
             del template, kwargs
             return None
 
         def click_point(self, x: int, y: int, **kwargs):
-            del x, y, kwargs
+            del kwargs
+            point = (x, y)
+            for area, points in slots_module.SLOT_POINTS_BY_AREA.items():
+                if point in points:
+                    self.current_slot = (area, points.index(point))
+                    break
 
         def capture_image(self, **kwargs):
-            del kwargs
-            return Image.new("RGB", (201, strip_height), color="white")
+            image = Image.new("RGB", (201, strip_height), color="white")
+            _record_batch_capture(slots_module, self, kwargs, image, slot_text=self.slot_names.get(self.current_slot))
+            return image
 
         def ocr_image(self, image, *, ocr=None):
             del ocr
-            return [
-                {"text": "噪声"},
-                {"text": "银狼", "box": {"left": 10, "top": image.size[1] - strip_height + 10, "width": 60, "height": 20}},
-            ]
+            return [{"text": "噪声"}] + _packed_ocr_pieces(self.batch_targets)
 
     runtime = RuntimeSpy()
 
-    front, back, hand = build_cw_slots_reader(runtime, targets=["front:0", "hand:0"])()
+    result = _assert_slots_read_result(build_cw_slots_reader(runtime, targets=["front:0", "hand:0"])())
 
-    assert front == [None, None, None, None]
-    assert back == [None, None, None, None, None, None]
-    assert hand == [{"name": "银狼", "star": None}, None, None, None, None, None, None, None, None]
-
-
-def test_map_ocr_pieces_to_slot_names_preserves_single_target_piece_order_with_geometryless_piece():
-    slots_module = load_cw_slots_module()
-    mapper = getattr(slots_module, "_map_ocr_pieces_to_slot_names", None)
-    assert mapper is not None
-
-    layouts = build_slot_name_layouts(slots_module, ("front", 0))
-
-    names = mapper(
-        layouts,
-        [
-            {"text": "希", "box": {"left": 10, "top": 10, "width": 10, "height": 10}},
-            {"text": "儿"},
-        ],
-    )
-
-    assert names == {("front", 0): "希儿"}
-
-
-def test_map_ocr_pieces_to_slot_names_keeps_boxed_geometry_order_when_single_target_also_has_geometryless_piece():
-    slots_module = load_cw_slots_module()
-    mapper = getattr(slots_module, "_map_ocr_pieces_to_slot_names", None)
-    assert mapper is not None
-
-    layouts = build_slot_name_layouts(slots_module, ("front", 0))
-
-    names = mapper(
-        layouts,
-        [
-            {"text": "儿", "box": {"left": 40, "top": 10, "width": 10, "height": 10}},
-            {"text": "终"},
-            {"text": "希", "box": {"left": 10, "top": 10, "width": 10, "height": 10}},
-        ],
-    )
-
-    assert names == {("front", 0): "希儿终"}
-
-
-def test_map_ocr_pieces_to_slot_names_ignores_piece_center_in_gap_between_targets():
-    slots_module = load_cw_slots_module()
-    mapper = getattr(slots_module, "_map_ocr_pieces_to_slot_names", None)
-    assert mapper is not None
-
-    layouts = build_slot_name_layouts(slots_module, ("front", 0), ("hand", 0))
-    first = layouts[0]
-
-    names = mapper(
-        layouts,
-        [
-            {
-                "text": "噪声",
-                "box": {"left": 10, "top": first["bottom"] + 1, "width": 60, "height": 10},
-            }
-        ],
-    )
-
-    assert names == {("front", 0): None, ("hand", 0): None}
-
-
-def test_read_batch_slot_names_records_trace_when_multi_target_geometryless_piece_is_dropped():
-    slots_module = load_cw_slots_module()
-    reader = getattr(slots_module, "_read_batch_slot_names", None)
-    assert reader is not None
-
-    class RuntimeSpy:
-        def __init__(self):
-            self.trace: list[dict[str, object]] = []
-
-        def ocr_image(self, image, *, ocr=None):
-            del image, ocr
-            return [
-                {"text": "噪声"},
-                {"text": "银狼", "box": {"left": 10, "top": 95, "width": 60, "height": 20}},
-            ]
-
-        def _record_trace(self, step: str, **payload):
-            self.trace.append({"step": step, **payload})
-
-    runtime = RuntimeSpy()
-    captures = [
-        {"area": "front", "index": 0, "image": Image.new("RGB", (201, 61), color="white")},
-        {"area": "hand", "index": 0, "image": Image.new("RGB", (201, 61), color="white")},
-    ]
-
-    names = reader(runtime, captures)
-
-    assert names == {("front", 0): None, ("hand", 0): "银狼"}
-    assert runtime.trace == [
-        {"step": "cw_slots_batch_ocr_drop", "reason": "missing_box", "order": 0, "text": "噪声"}
-    ]
-
-
-def test_read_batch_slot_names_records_trace_when_piece_center_falls_in_gap():
-    slots_module = load_cw_slots_module()
-    reader = getattr(slots_module, "_read_batch_slot_names", None)
-    assert reader is not None
-
-    class RuntimeSpy:
-        def __init__(self):
-            self.trace: list[dict[str, object]] = []
-
-        def ocr_image(self, image, *, ocr=None):
-            del image, ocr
-            return [{"text": "噪声", "box": {"left": 10, "top": 62, "width": 60, "height": 10}}]
-
-        def _record_trace(self, step: str, **payload):
-            self.trace.append({"step": step, **payload})
-
-    runtime = RuntimeSpy()
-    captures = [
-        {"area": "front", "index": 0, "image": Image.new("RGB", (201, 61), color="white")},
-        {"area": "hand", "index": 0, "image": Image.new("RGB", (201, 61), color="white")},
-    ]
-
-    names = reader(runtime, captures)
-
-    assert names == {("front", 0): None, ("hand", 0): None}
-    assert runtime.trace == [
-        {"step": "cw_slots_batch_ocr_drop", "reason": "center_y_outside_layout", "order": 0, "text": "噪声", "center_y": 67.0}
-    ]
-
-
-def test_map_ocr_pieces_to_slot_names_sorts_interleaved_boxed_pieces_stably_within_slot():
-    slots_module = load_cw_slots_module()
-    mapper = getattr(slots_module, "_map_ocr_pieces_to_slot_names", None)
-    assert mapper is not None
-
-    layouts = build_slot_name_layouts(slots_module, ("front", 0), ("back", 0))
-    back_top = layouts[1]["top"]
-
-    names = mapper(
-        layouts,
-        [
-            {"text": "佩拉", "box": {"left": 10, "top": back_top + 10, "width": 20, "height": 10}},
-            {"text": "儿", "box": {"left": 40, "top": 10, "width": 10, "height": 10}},
-            {"text": "希", "box": {"left": 10, "top": 10, "width": 10, "height": 10}},
-            {"text": "终", "box": {"left": 10, "top": 30, "width": 10, "height": 10}},
-        ],
-    )
-
-    assert names == {("front", 0): "希儿终", ("back", 0): "佩拉"}
+    assert result.front == [None, None, None, None]
+    assert result.back == [None, None, None, None, None, None]
+    assert result.hand == [{"name": "银狼", "star": None}, None, None, None, None, None, None, None, None]
 
 
 def test_build_cw_slots_reader_reads_runtime_slot_snapshots_and_closes_overlay(monkeypatch):
@@ -340,7 +384,15 @@ def test_build_cw_slots_reader_reads_runtime_slot_snapshots_and_closes_overlay(m
             self.clicks: list[tuple[int, int]] = []
             self.locate_calls = 0
             self.capture_calls: list[dict[str, int | bool]] = []
+            self.batch_targets: list[dict[str, object]] = []
+            self.current_slot: tuple[str, int] | None = None
             self.ocr_image_calls: list[dict[str, object]] = []
+            self.slot_names = {
+                ("front", 0): "希儿",
+                ("back", 0): "佩拉",
+                ("hand", 0): "银狼",
+                ("hand", 2): "阮·梅",
+            }
 
         def locate(self, template: str, **kwargs):
             del template, kwargs
@@ -352,31 +404,32 @@ def test_build_cw_slots_reader_reads_runtime_slot_snapshots_and_closes_overlay(m
         def click_point(self, x: int, y: int, **kwargs):
             del kwargs
             self.clicks.append((x, y))
+            point = (x, y)
+            for area, points in slots_module.SLOT_POINTS_BY_AREA.items():
+                if point in points:
+                    self.current_slot = (area, points.index(point))
+                    break
 
         def capture_image(self, **kwargs):
             self.capture_calls.append(kwargs)
-            return Image.new("RGB", (201, strip_height), color="white")
+            image = Image.new("RGB", (201, strip_height), color="white")
+            _record_batch_capture(slots_module, self, kwargs, image, slot_text=self.slot_names.get(self.current_slot))
+            return image
 
         def ocr_image(self, image, *, ocr=None):
-            gap = (image.size[1] - (strip_height * 19)) // 18
             self.ocr_image_calls.append({"size": image.size, "ocr": ocr})
-            return [
-                {"text": "希儿", "box": {"left": 10, "top": 10, "width": 60, "height": 20}},
-                {"text": "佩拉", "box": {"left": 10, "top": (strip_height + gap) * 4 + 10, "width": 60, "height": 20}},
-                {"text": "银狼", "box": {"left": 10, "top": (strip_height + gap) * 10 + 10, "width": 60, "height": 20}},
-                {"text": "阮·梅", "box": {"left": 10, "top": (strip_height + gap) * 12 + 10, "width": 60, "height": 20}},
-            ]
+            return _packed_ocr_pieces(self.batch_targets)
 
     runtime = RuntimeSpy()
 
-    front, back, hand = build_cw_slots_reader(runtime)()
+    result = _assert_slots_read_result(build_cw_slots_reader(runtime)())
 
-    assert front == [{"name": "希儿", "star": None}, None, None, None]
-    assert back == [{"name": "佩拉", "star": None}, None, None, None, None, None]
-    assert hand == [{"name": "银狼", "star": None}, None, {"name": "阮·梅", "star": None}, None, None, None, None, None, None]
+    assert result.front == [{"name": "希儿", "star": None}, None, None, None]
+    assert result.back == [{"name": "佩拉", "star": None}, None, None, None, None, None]
+    assert result.hand == [{"name": "银狼", "star": None}, None, {"name": "阮·梅", "star": None}, None, None, None, None, None, None]
     assert runtime.clicks[0] == (25, 40)
     assert runtime.clicks[1] == slots_module.HAND_EXPAND_DISMISS_POINT
-    assert runtime.capture_calls == [
+    assert runtime.capture_calls == _stage_status_capture_calls() + [
         item
         for _ in range(19)
         for item in (
@@ -400,7 +453,10 @@ def test_build_cw_slots_reader_reads_only_requested_slots(monkeypatch):
             self.clicks: list[tuple[int, int]] = []
             self.locate_calls = 0
             self.capture_calls: list[dict[str, int | bool]] = []
+            self.batch_targets: list[dict[str, object]] = []
+            self.current_slot: tuple[str, int] | None = None
             self.ocr_image_calls: list[dict[str, object]] = []
+            self.slot_names = {("front", 0): "希儿", ("hand", 2): "阮·梅"}
 
         def locate(self, template: str, **kwargs):
             del template, kwargs
@@ -412,27 +468,30 @@ def test_build_cw_slots_reader_reads_only_requested_slots(monkeypatch):
         def click_point(self, x: int, y: int, **kwargs):
             del kwargs
             self.clicks.append((x, y))
+            point = (x, y)
+            for area, points in slots_module.SLOT_POINTS_BY_AREA.items():
+                if point in points:
+                    self.current_slot = (area, points.index(point))
+                    break
 
         def capture_image(self, **kwargs):
             self.capture_calls.append(kwargs)
-            return Image.new("RGB", (201, strip_height), color="white")
+            image = Image.new("RGB", (201, strip_height), color="white")
+            _record_batch_capture(slots_module, self, kwargs, image, slot_text=self.slot_names.get(self.current_slot))
+            return image
 
         def ocr_image(self, image, *, ocr=None):
-            gap = image.size[1] - (strip_height * 2)
             self.ocr_image_calls.append({"size": image.size, "ocr": ocr})
-            return [
-                {"text": "希儿", "box": {"left": 10, "top": 10, "width": 60, "height": 20}},
-                {"text": "阮·梅", "box": {"left": 10, "top": strip_height + gap + 10, "width": 60, "height": 20}},
-            ]
+            return _packed_ocr_pieces(self.batch_targets)
 
     runtime = RuntimeSpy()
 
-    front, back, hand = build_cw_slots_reader(runtime, targets=["front:0", "hand:2"])()
+    result = _assert_slots_read_result(build_cw_slots_reader(runtime, targets=["front:0", "hand:2"])())
 
-    assert front == [{"name": "希儿", "star": None}, None, None, None]
-    assert back == [None, None, None, None, None, None]
-    assert hand == [None, None, {"name": "阮·梅", "star": None}, None, None, None, None, None, None]
-    assert runtime.capture_calls == [
+    assert result.front == [{"name": "希儿", "star": None}, None, None, None]
+    assert result.back == [None, None, None, None, None, None]
+    assert result.hand == [None, None, {"name": "阮·梅", "star": None}, None, None, None, None, None, None]
+    assert runtime.capture_calls == _stage_status_capture_calls() + [
         {**slots_module.SLOT_NAME_REGION, "normalize": False},
         {**slots_module.SLOT_STAR_REGION, "normalize": False},
         {**slots_module.SLOT_NAME_REGION, "normalize": False},
@@ -517,10 +576,13 @@ def test_build_cw_slots_reader_waits_for_slot_panel_settle_between_interactions(
             self.clicks: list[tuple[int, int]] = []
             self.state = "idle"
             self.current_name: str | None = None
+            self.current_slot: tuple[str, int] | None = None
+            self.batch_targets: list[dict[str, object]] = []
             self.names = {
                 slots_module.FRONT_SLOT_POINTS[0]: "希儿",
                 slots_module.HAND_SLOT_POINTS[0]: "银狼",
             }
+            self.slot_names = {("front", 0): "希儿", ("hand", 0): "银狼"}
             self.capture_index = 0
 
         def locate(self, template: str, **kwargs):
@@ -538,22 +600,24 @@ def test_build_cw_slots_reader_waits_for_slot_panel_settle_between_interactions(
             if self.state != "idle":
                 return
             self.current_name = self.names.get(point)
+            for area, points in slots_module.SLOT_POINTS_BY_AREA.items():
+                if point in points:
+                    self.current_slot = (area, points.index(point))
+                    break
             self.state = "panel-opening"
 
         def capture_image(self, **kwargs):
-            del kwargs
-            assert self.state == "panel-open"
-            assert self.current_name is not None
+            if kwargs not in _stage_status_capture_calls():
+                assert self.state == "panel-open"
+                assert self.current_name is not None
             self.capture_index += 1
-            return Image.new("RGB", (201, 61), color="white")
+            image = Image.new("RGB", (201, 61), color="white")
+            _record_batch_capture(slots_module, self, kwargs, image, slot_text=self.slot_names.get(self.current_slot))
+            return image
 
         def ocr_image(self, image, *, ocr=None):
-            del ocr
-            gap = image.size[1] - (61 * 2)
-            return [
-                {"text": "希儿", "box": {"left": 10, "top": 10, "width": 60, "height": 20}},
-                {"text": "银狼", "box": {"left": 10, "top": 61 + gap + 10, "width": 60, "height": 20}},
-            ]
+            del image, ocr
+            return _packed_ocr_pieces(self.batch_targets)
 
         def settle(self, seconds: float):
             assert seconds > 0
@@ -567,11 +631,11 @@ def test_build_cw_slots_reader_waits_for_slot_panel_settle_between_interactions(
     runtime = RuntimeSpy()
     monkeypatch.setattr(slots_module, "sleep", runtime.settle, raising=False)
 
-    front, back, hand = build_cw_slots_reader(runtime, targets=["front:0", "hand:0"])()
+    result = _assert_slots_read_result(build_cw_slots_reader(runtime, targets=["front:0", "hand:0"])())
 
-    assert front == [{"name": "希儿", "star": None}, None, None, None]
-    assert back == [None, None, None, None, None, None]
-    assert hand == [{"name": "银狼", "star": None}, None, None, None, None, None, None, None, None]
+    assert result.front == [{"name": "希儿", "star": None}, None, None, None]
+    assert result.back == [None, None, None, None, None, None]
+    assert result.hand == [{"name": "银狼", "star": None}, None, None, None, None, None, None, None, None]
 
 
 def test_slots_read_partial_refresh_preserves_existing_unknown_positions(tmp_path):
@@ -1253,6 +1317,72 @@ def test_slots_mutations_clear_sell_plan(tmp_path, method_name, kwargs):
     refreshed = method(session, **kwargs)
 
     assert refreshed.scene_state["cw"]["sell_plan"] == {}
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs"),
+    [
+        ("swap_cw_slots", {"source": "hand:0", "target": "front:0"}),
+        ("place_cw_slots", {"actions": [{"source": "hand:2", "target": "back:0"}]}),
+        ("place_one_cw_slot", {"source": "hand:0", "target": "front:0"}),
+        ("sell_cw_hand_slots", {"slots": [2]}),
+        ("sell_one_cw_hand", {"slot": 2}),
+    ],
+)
+def test_slots_mutations_mark_stage_status_stale_without_losing_values(tmp_path, method_name, kwargs):
+    slots_module = load_cw_slots_module()
+    method = getattr(slots_module, method_name, None)
+    assert method is not None
+
+    session = build_fake_cw_session(tmp_path)
+    seed_fresh_stage_status(session)
+
+    refreshed = method(session, **kwargs)
+
+    assert refreshed.scene_state["cw"]["stage"]["value"] == "shop"
+    assert refreshed.scene_state["cw"]["stage"]["status"] == {
+        "stale": True,
+        "level": 7,
+        "role_count": {"front": 1, "back": 1, "hand": 2, "field": 2, "total": 4},
+    }
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "runtime_kwarg"),
+    [
+        ("swap_cw_slots", {"source": "hand:0", "target": "front:0"}, "swapper"),
+        ("place_one_cw_slot", {"source": "hand:0", "target": "front:0"}, "placer"),
+        ("sell_one_cw_hand", {"slot": 2}, "seller"),
+    ],
+)
+def test_single_slot_mutation_failures_mark_slots_and_stage_status_stale(tmp_path, method_name, kwargs, runtime_kwarg):
+    slots_module = load_cw_slots_module()
+    method = getattr(slots_module, method_name, None)
+    assert method is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"]["stale"] = False
+    session.scene_state["cw"]["stage"] = {
+        "value": "shop",
+        "stale": False,
+        "status": {"stale": False, "level": 7, "role_count": {"total": 3}},
+    }
+
+    def fail(*args):
+        del args
+        raise TrailError("UNEXPECTED_ERROR", "single slot mutation failed")
+
+    with pytest.raises(TrailError) as exc_info:
+        method(session, **kwargs, **{runtime_kwarg: fail})
+
+    assert exc_info.value.code == "UNEXPECTED_ERROR"
+    assert exc_info.value.known_failure_after_save is True
+    assert session.scene_state["cw"]["slots"]["stale"] is True
+    assert session.scene_state["cw"]["stage"]["status"] == {
+        "stale": True,
+        "level": 7,
+        "role_count": {"total": 3},
+    }
 
 
 def test_sell_cw_hand_slots_requires_non_empty_list_without_mutating_session(tmp_path):

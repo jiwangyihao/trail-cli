@@ -65,6 +65,7 @@ from trail.scenes.cw.shop import (
     buy_cw_shop_slot,
     close_cw_shop,
     open_cw_shop,
+    project_cw_shop_snapshot,
     refresh_cw_shop,
     scan_cw_shop,
     shop_cw_status,
@@ -537,10 +538,12 @@ class CwService:
                 session,
                 opener=shop_opener_factory(runtime()),
             ).scene_state["cw"]["shop"],
-            "cw.shop.scan": lambda: scan_cw_shop(
-                session,
-                scanner=shop_scan_snapshot_reader_factory(runtime()),
-            ).scene_state["cw"]["shop"],
+            "cw.shop.scan": lambda: project_cw_shop_snapshot(
+                scan_cw_shop(
+                    session,
+                    scanner=shop_scan_snapshot_reader_factory(runtime()),
+                )
+            ),
             "cw.shop.buy_slot": lambda: buy_cw_shop_slot(
                 session,
                 slot=payload["slot"],
@@ -654,11 +657,9 @@ def _require_selected_guide(session) -> dict:
 
 def _shop_status(session, *, artifact_store: ArtifactStore) -> dict:
     del artifact_store
-    cw_state = session.scene_state.get("cw")
-    if not isinstance(cw_state, dict):
-        return {"stale": True}
     payload = shop_cw_status(session)
-    guide_state = cw_state.get("guide")
+    cw_state = session.scene_state.get("cw")
+    guide_state = cw_state.get("guide") if isinstance(cw_state, dict) else None
     if not isinstance(guide_state, dict):
         payload.pop("guide_summary", None)
     return payload

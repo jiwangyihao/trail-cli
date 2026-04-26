@@ -99,6 +99,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 不传 `--slot` 时，`trail cw slots read --session <id>` 仍保留现有全量读取语义，只作为完整快照兜底，不表示默认行为已经改变。
 - 如果局部读取结果带 `stale=1`，它不等于新的完整 fresh 快照；后续判断仍要结合已有截图和基线来源。
 - `slots.read` 的 `slot ...` 行现在可能附带 `star=<n>`；没有稳定数出星级时不会强行输出 `star=`。
+- `trail cw slots read` 会顺带刷新 `cw_state.stage.status`，用于记录当前等级、经验、人口与槽位角色数量等全局状态。
 
 ## 命令面概览
 
@@ -294,10 +295,13 @@ shot path=.trail/shots/req-shop.png
 info read_image_first=1
 item idx=1 slot=1 name=希儿 cost=2
 item idx=2 slot=2 name=停云 cost=1
-info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7
+info coins=40 reserve_full=0
+info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0
 ```
 
-- 商店快照里的 `coins` / `level` / `exp` / `reserve_full` / `team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露；`open` / `refresh` / `close` 不重复输出旧快照事实
+- 商店快照里的 `coins` / `reserve_full` 来自 `trail cw shop scan` 的商店页扫描；`open` / `refresh` / `close` 不重复输出旧快照事实
+- `trail cw shop scan` 只扫描商店页商品/金币切片，不重新识别全局状态；需要刷新全局状态时先执行 `trail cw slots read`
+- `trail cw shop scan` 与 `trail cw shop status` 只投影 session 中已有的 `cw_state.stage.status`；fresh 时输出 `stage_level/stage_exp/stage_team_size stage_status_stale=0`，缺失或 stale 时只输出 `stage_status_stale=1`
 - `trail cw shop scan` 是当前画面读命令，所以会带 `shot path=...` 与 `info read_image_first=1`；`trail cw shop status` 仍是 session / artifact 汇总读，不默认带图
 
 ```text

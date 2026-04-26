@@ -552,7 +552,7 @@ def test_select_cw_strategy_marks_strategy_and_stage_stale_on_success(tmp_path: 
 
     assert selected == {"card_idx": 2, "strategy_title": "旧卡2"}
     assert session.scene_state["cw"]["strategy"]["stale"] is True
-    assert session.scene_state["cw"]["stage"] == {"stale": True}
+    assert session.scene_state["cw"]["stage"] == {"value": "invest", "stale": True}
     assert session.last_stage is None
     assert runtime.clicks == [
         strategy_module._strategy_card_point(2),
@@ -585,7 +585,7 @@ def test_select_cw_strategy_supports_sparse_snapshot_card_idx_roundtrip(tmp_path
 
     assert selected == {"card_idx": 3, "strategy_title": "右列卡"}
     assert session.scene_state["cw"]["strategy"]["stale"] is True
-    assert session.scene_state["cw"]["stage"] == {"stale": True}
+    assert session.scene_state["cw"]["stage"] == {"value": "invest", "stale": True}
     assert session.last_stage is None
     assert runtime.clicks == [
         strategy_module._strategy_card_point(3),
@@ -793,7 +793,7 @@ def test_refresh_cw_strategy_overwrites_all_cards_and_invalidates_stage(tmp_path
     }
     assert runtime.clicks == [strategy_module._strategy_refresh_point(2)]
     assert session.scene_state["cw"]["strategy"] == snapshot
-    assert session.scene_state["cw"]["stage"] == {"stale": True}
+    assert session.scene_state["cw"]["stage"] == {"value": "invest", "stale": True}
     assert session.last_stage is None
 
 

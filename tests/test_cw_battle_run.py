@@ -379,12 +379,12 @@ def test_mark_cw_stage_stale_clears_last_stage(tmp_path: Path):
     from trail.scenes.cw.stage import mark_cw_stage_stale
 
     session = build_session(tmp_path)
-    ensure_cw_state(session)["stage"] = {"value": "shop", "stale": False}
+    ensure_cw_state(session)["stage"] = {"value": "shop", "stale": False, "status": {"stale": False, "level": 7}}
     session.last_stage = {"scene": "cw", "value": "shop"}
 
     mark_cw_stage_stale(session)
 
-    assert session.scene_state["cw"]["stage"] == {"stale": True}
+    assert session.scene_state["cw"]["stage"] == {"stale": True, "status": {"stale": False, "level": 7}}
     assert session.last_stage is None
 
 

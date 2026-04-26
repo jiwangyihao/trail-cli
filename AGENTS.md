@@ -84,6 +84,9 @@
 - `cw.strategy.select` success 首行固定为 `ok cw.strategy.select idx=... 投资策略=...`。
 - `cw.strategy.detect|refresh` 的 cards family 正文字段固定使用 `投资策略/攻略推荐/刷新次数`；说明继续使用 `opt idx=... 说明=...`。
 - `cw.strategy.detect|refresh` 必须输出 `info 已加载攻略=0|1`，且固定在所有 `opt` 行之后。
+- `cw.shop.scan|status` 的 stage 投影固定使用 `stage_level/stage_exp/stage_team_size/stage_status_stale`，属于既有 `info` 行，不新增正文前缀。
+- `cw.shop.scan|status` 必须保留 `stage_status_stale=0|1`；只有 `stage_status_stale=0` 时才允许输出 `stage_level/stage_exp/stage_team_size`，stale 或缺失时不得把旧值渲染成有效事实。
+- `cw.slots.read` 会刷新 `cw_state.stage.status`；`cw.shop.scan` 只扫描商店页商品/金币切片，并只投影 session 中已有的 `cw_state.stage.status`，不得重新 OCR 全局状态。
 - `cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id。
 - `cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径；`current/apply` 只看当前已选攻略摘要，完整攻略仍由 `guide.fetch.cw` 提供。
 - `guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。

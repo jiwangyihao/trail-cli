@@ -2,20 +2,29 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 from time import sleep
 from typing import Any
 
-from PIL import Image
-
 from trail.core.errors import TrailError
-from trail.runtime.ocr_config import OcrRequestConfig
+from trail.runtime.batch_ocr import BatchOcrTarget, run_batch_ocr
+from trail.scenes.cw import stage
 from trail.scenes.cw.models import ensure_cw_state
 from trail.runtime.resources import resolve_scene_asset
 from trail.session.models import SessionModel
 
-SlotsSnapshotReader = Callable[[], tuple[list[Any], list[Any], list[Any]]]
+
+@dataclass(frozen=True)
+class CwSlotsReadResult:
+    front: list[Any]
+    back: list[Any]
+    hand: list[Any]
+    stage_status: dict[str, Any] | None = None
+
+
+SlotsSnapshotReader = Callable[[], CwSlotsReadResult | tuple[list[Any], list[Any], list[Any]]]
 SlotMover = Callable[[str, str], object]
 HandSeller = Callable[[int], object]
 CrystalCollector = Callable[[], object]
@@ -88,7 +97,6 @@ CANNOT_BE_FIELDED_ALIAS = "slots.cannot_be_fielded"
 HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS = 5
 SLOT_PANEL_SETTLE_SECONDS = 0.2
 INITIAL_UI_DISMISS_SETTLE_SECONDS = 1.0
-SLOT_NAME_STRIP_GAP = 24
 
 
 def _clear_sell_plan(cw_state: dict) -> None:
@@ -98,6 +106,7 @@ def _clear_sell_plan(cw_state: dict) -> None:
 def _mark_slots_stale(session: SessionModel) -> SessionModel:
     cw_state = ensure_cw_state(session)
     cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
+    stage.mark_cw_stage_status_stale(session)
     _clear_sell_plan(cw_state)
     return session
 
@@ -129,25 +138,6 @@ def _box_center(box: Any) -> tuple[int, int]:
         return int(box["left"]) + int(box["width"]) // 2, int(box["top"]) + int(box["height"]) // 2
 
     raise TrailError("SLOTS_UI_INVALID", "slot ui match result missing box coordinates")
-
-
-def _read_ocr_piece(item: Any) -> str:
-    if isinstance(item, dict):
-        for key in ("text", "value", "name"):
-            value = item.get(key)
-            if isinstance(value, str | int | float):
-                return str(value)
-        return ""
-    if isinstance(item, (list, tuple)):
-        if len(item) >= 2 and isinstance(item[1], str | int | float):
-            return str(item[1])
-        for value in item:
-            if isinstance(value, str | int | float):
-                return str(value)
-        return ""
-    if isinstance(item, str | int | float):
-        return str(item)
-    return ""
 
 
 def _capture_slot_panel_images(runtime, *, point: tuple[int, int]):
@@ -190,128 +180,6 @@ def _count_slot_stars_in_image(image) -> int | None:
             continue
         centers.append(center)
     return len(centers) or None
-
-
-def _compose_slot_name_strip_image(captures: list[dict[str, Any]]) -> tuple[Image.Image, list[dict[str, Any]]]:
-    if not captures:
-        return Image.new("RGB", (1, 1), color="white"), []
-
-    converted = [
-        (capture.get("name_image") if capture.get("name_image") is not None else capture["image"]).convert("RGB")
-        for capture in captures
-    ]
-    width = max(image.width for image in converted)
-    total_height = sum(image.height for image in converted) + SLOT_NAME_STRIP_GAP * (len(converted) - 1)
-    strip = Image.new("RGB", (width, total_height), color="white")
-    layouts: list[dict[str, Any]] = []
-    cursor_y = 0
-    for capture, image in zip(captures, converted, strict=False):
-        strip.paste(image, (0, cursor_y))
-        layouts.append({
-            "area": capture["area"],
-            "index": capture["index"],
-            "top": cursor_y,
-            "bottom": cursor_y + image.height,
-        })
-        cursor_y += image.height + SLOT_NAME_STRIP_GAP
-    return strip, layouts
-
-
-def _read_piece_box(piece: Any) -> tuple[int, int, int, int] | None:
-    box = None
-    if isinstance(piece, dict):
-        box = piece.get("box") or piece.get("points")
-        if box is None and {"left", "top", "width", "height"}.issubset(piece):
-            box = piece
-    elif isinstance(piece, (list, tuple)) and piece:
-        box = piece[0]
-
-    if box is None:
-        return None
-    if isinstance(box, dict) and {"left", "top", "width", "height"}.issubset(box):
-        return int(box["left"]), int(box["top"]), int(box["width"]), int(box["height"])
-    if all(hasattr(box, attr) for attr in ("left", "top", "width", "height")):
-        return int(box.left), int(box.top), int(box.width), int(box.height)
-    if isinstance(box, (list, tuple)) and box and all(isinstance(point, (list, tuple)) and len(point) >= 2 for point in box):
-        xs = [int(point[0]) for point in box]
-        ys = [int(point[1]) for point in box]
-        left = min(xs)
-        top = min(ys)
-        return left, top, max(xs) - left, max(ys) - top
-    return None
-
-
-def _find_slot_name_layout(layouts: list[dict[str, Any]], *, center_y: float) -> dict[str, Any] | None:
-    for index, layout in enumerate(layouts):
-        if layout["top"] <= center_y < layout["bottom"]:
-            return layout
-        if index == len(layouts) - 1 and center_y == layout["bottom"]:
-            return layout
-    return None
-
-
-def _map_ocr_pieces_to_slot_names(
-    layouts: list[dict[str, Any]],
-    pieces: list[Any],
-    *,
-    dropped: list[dict[str, Any]] | None = None,
-) -> dict[tuple[str, int], str | None]:
-    grouped: dict[tuple[str, int], list[tuple[int, int | None, int | None, str, bool]]] = {
-        (layout["area"], layout["index"]): [] for layout in layouts
-    }
-    single_target = (layouts[0]["area"], layouts[0]["index"]) if len(layouts) == 1 else None
-    for order, piece in enumerate(pieces):
-        text = _read_ocr_piece(piece).strip()
-        if not text:
-            continue
-        bounds = _read_piece_box(piece)
-        if bounds is None:
-            if single_target is not None:
-                grouped[single_target].append((order, None, None, text, False))
-            elif dropped is not None:
-                dropped.append({"reason": "missing_box", "order": order, "text": text})
-            continue
-        left, top, width, height = bounds
-        center_y = top + (height / 2)
-        layout = _find_slot_name_layout(layouts, center_y=center_y)
-        if layout is None:
-            if dropped is not None:
-                dropped.append({"reason": "center_y_outside_layout", "order": order, "text": text, "center_y": center_y})
-            continue
-        grouped[(layout["area"], layout["index"])].append((order, top, left, text, True))
-
-    names: dict[tuple[str, int], str | None] = {}
-    for layout in layouts:
-        key = (layout["area"], layout["index"])
-        entries = grouped[key]
-        boxed_entries = [item for item in entries if item[4]]
-        geometryless_entries = [item for item in entries if not item[4]]
-        boxed_entries.sort(key=lambda item: (item[1], item[2], item[0]))
-        geometryless_entries.sort(key=lambda item: item[0])
-        ordered_entries = boxed_entries + geometryless_entries if boxed_entries else geometryless_entries
-        name = "".join(text for _, _, _, text, _ in ordered_entries).strip()
-        names[key] = name or None
-    return names
-
-
-def _record_slot_name_piece_drops(runtime, dropped: list[dict[str, Any]]) -> None:
-    record_trace = getattr(runtime, "_record_trace", None)
-    if not callable(record_trace):
-        return
-    for payload in dropped:
-        record_trace("cw_slots_batch_ocr_drop", **payload)
-
-
-def _read_batch_slot_names(runtime, captures: list[dict[str, Any]]) -> dict[tuple[str, int], str | None]:
-    strip, layouts = _compose_slot_name_strip_image(captures)
-    pieces = runtime.ocr_image(
-        strip,
-        ocr=OcrRequestConfig(ocr_mode="high", retry_high="never"),
-    ) or []
-    dropped: list[dict[str, Any]] = []
-    names = _map_ocr_pieces_to_slot_names(layouts, pieces, dropped=dropped)
-    _record_slot_name_piece_drops(runtime, dropped)
-    return names
 
 
 def _read_slot_star_counts(captures: list[dict[str, Any]]) -> dict[tuple[str, int], int | None]:
@@ -611,6 +479,19 @@ def _slots_read_empty_snapshot(
     return not _snapshot_has_any_name(front, back, hand)
 
 
+def _slot_role_count(front: list[Any], back: list[Any], hand: list[Any]) -> dict[str, int]:
+    front_count = sum(1 for item in front if item)
+    back_count = sum(1 for item in back if item)
+    hand_count = sum(1 for item in hand if item)
+    return {
+        "front": front_count,
+        "back": back_count,
+        "hand": hand_count,
+        "field": front_count + back_count,
+        "total": front_count + back_count + hand_count,
+    }
+
+
 def _parse_slot_reference(value: str, *, allowed_areas: set[str] | None = None) -> tuple[str, int]:
     area, separator, raw_index = value.partition(":")
     if separator != ":" or not raw_index.isdecimal():
@@ -636,7 +517,7 @@ def _ensure_fieldable_target(runtime, *, target: str) -> None:
 def build_cw_slots_reader(runtime, targets: list[str] | None = None) -> SlotsSnapshotReader:
     parsed_targets = _parse_slot_targets(targets)
 
-    def reader() -> tuple[list[Any], list[Any], list[Any]]:
+    def reader() -> CwSlotsReadResult:
         _collapse_expanded_hand_card(runtime)
         front, back, hand = _empty_slots_snapshot()
         targets_by_area = parsed_targets or {
@@ -648,16 +529,27 @@ def build_cw_slots_reader(runtime, targets: list[str] | None = None) -> SlotsSna
         captures: list[dict[str, Any]] = []
         runtime.click_point(*INFO_DISMISS_POINT)
         sleep(INITIAL_UI_DISMISS_SETTLE_SECONDS)
+        batch_targets = [
+            BatchOcrTarget(("stage_status", "level"), runtime.capture_image(**stage.CW_STATUS_LEVEL_REGION, normalize=False)),
+            BatchOcrTarget(("stage_status", "exp"), runtime.capture_image(**stage.CW_STATUS_EXP_REGION, normalize=False)),
+            BatchOcrTarget(("stage_status", "team_size"), runtime.capture_image(**stage.CW_STATUS_TEAM_SIZE_REGION, normalize=False)),
+        ]
         for area in ("front", "back", "hand"):
             points = SLOT_POINTS_BY_AREA[area]
             for index in sorted(targets_by_area[area]):
-                captures.append({
+                capture = {
                     "area": area,
                     "index": index,
                     **_capture_slot_panel_images(runtime, point=points[index]),
-                })
+                }
+                captures.append(capture)
+                batch_targets.append(BatchOcrTarget(("slot", area, index), capture["name_image"]))
 
-        names_by_slot = _read_batch_slot_names(runtime, captures)
+        batch_result = run_batch_ocr(runtime, batch_targets, trace_prefix="cw_slots_batch_ocr")
+        names_by_slot = {
+            (capture["area"], capture["index"]): (batch_result.by_key[("slot", capture["area"], capture["index"])].text)
+            for capture in captures
+        }
         stars_by_slot = _read_slot_star_counts(captures)
         for (area, index), value in names_by_slot.items():
             slot_value = None if value is None else {"name": value, "star": stars_by_slot.get((area, index))}
@@ -667,7 +559,12 @@ def build_cw_slots_reader(runtime, targets: list[str] | None = None) -> SlotsSna
                 back[index] = slot_value
             else:
                 hand[index] = slot_value
-        return front, back, hand
+        return CwSlotsReadResult(
+            front=front,
+            back=back,
+            hand=hand,
+            stage_status=stage.parse_cw_stage_status(batch_result.by_key),
+        )
 
     return reader
 
@@ -707,7 +604,13 @@ def read_cw_slots(
     targets: list[str] | None = None,
     guide_config: dict[str, Any] | None = None,
 ) -> SessionModel:
-    front, back, hand = reader()
+    result = reader()
+    if isinstance(result, CwSlotsReadResult):
+        front, back, hand = result.front, result.back, result.hand
+        stage_status = result.stage_status
+    else:
+        front, back, hand = result
+        stage_status = None
     cw_state = ensure_cw_state(session)
     previous = cw_state.get("slots") if isinstance(cw_state.get("slots"), dict) else {}
     parsed_targets = _parse_slot_targets(targets)
@@ -744,6 +647,11 @@ def read_cw_slots(
         trait_summary = _summarize_field_trait_status(merged_front, merged_back, guide_config=guide_config)
         if trait_summary:
             cw_state["slots"]["trait_summary"] = deepcopy(trait_summary)
+    if stage_status is not None:
+        stage._replace_stage_fields(
+            session,
+            status={**stage_status, "role_count": _slot_role_count(merged_front, merged_back, merged_hand)},
+        )
     _clear_sell_plan(cw_state)
     return session
 
@@ -781,8 +689,13 @@ def _normalize_sell_slots(slots: list[int]) -> list[int]:
 
 
 def swap_cw_slots(session: SessionModel, *, source: str, target: str, swapper: SlotMover | None = None) -> SessionModel:
-    if swapper is not None:
-        swapper(source, target)
+    try:
+        if swapper is not None:
+            swapper(source, target)
+    except TrailError as error:
+        _mark_slots_stale(session)
+        error.known_failure_after_save = True
+        raise
     del source, target
     return _mark_slots_stale(session)
 
@@ -801,8 +714,13 @@ def place_cw_slots(session: SessionModel, *, actions: list[dict[str, str]], plac
 
 
 def place_one_cw_slot(session: SessionModel, *, source: str, target: str, placer: SlotMover | None = None) -> SessionModel:
-    if placer is not None:
-        placer(source, target)
+    try:
+        if placer is not None:
+            placer(source, target)
+    except TrailError as error:
+        _mark_slots_stale(session)
+        error.known_failure_after_save = True
+        raise
     del source, target
     return _mark_slots_stale(session)
 
@@ -841,7 +759,12 @@ def sell_cw_hand_slots(session: SessionModel, *, slots: list[int], seller: HandS
 
 
 def sell_one_cw_hand(session: SessionModel, *, slot: int, seller: HandSeller | None = None) -> SessionModel:
-    if seller is not None:
-        seller(slot)
+    try:
+        if seller is not None:
+            seller(slot)
+    except TrailError as error:
+        _mark_slots_stale(session)
+        error.known_failure_after_save = True
+        raise
     del slot
     return _mark_slots_stale(session)

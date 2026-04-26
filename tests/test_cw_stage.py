@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,35 @@ from trail.core.errors import TrailError
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw import stage as stage_scene
 from trail.session.store import SessionStore
+
+
+def _rapidocr_piece(text: str):
+    return ([[0, 0], [10, 0], [10, 10], [0, 10]], text, 0.99)
+
+
+def _build_stage_session(tmp_path: Path):
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    ensure_cw_state(session)
+    return session
+
+
+def _seed_stage_status(session, *, stage: dict | None = None) -> dict:
+    status = {"stale": False, "level": 7}
+    session.scene_state["cw"]["stage"] = {
+        "value": "shop",
+        "stale": False,
+        **(stage or {}),
+        "status": status,
+    }
+    return status
+
+
+class _ClickRuntime:
+    def __init__(self):
+        self.clicks: list[tuple[int, int]] = []
+
+    def click_point(self, x: int, y: int) -> None:
+        self.clicks.append((x, y))
 
 
 def test_build_cw_stage_detector_maps_resource_aliases_to_stage_values():
@@ -116,6 +146,254 @@ def test_detect_cw_stage_refreshes_stage_snapshot(tmp_path):
 
     assert refreshed.scene_state["cw"]["stage"] == {"value": "shop", "stale": False}
     assert refreshed.last_stage == {"scene": "cw", "value": "shop"}
+
+
+def test_stage_status_parser_preserves_zero_role_counts():
+    by_key = {
+        ("stage_status", "level"): SimpleNamespace(pieces=[_rapidocr_piece("LV.7")]),
+        ("stage_status", "exp"): SimpleNamespace(pieces=[_rapidocr_piece("4/52")]),
+        ("stage_status", "team_size"): SimpleNamespace(pieces=[_rapidocr_piece("3/3")]),
+    }
+
+    status = stage_scene.parse_cw_stage_status(
+        by_key,
+        role_count={"front": 0, "back": 0, "hand": 0, "field": 0, "total": 0},
+    )
+
+    assert status == {
+        "stale": False,
+        "level": 7,
+        "exp": "4/52",
+        "team_size": "3/3",
+        "role_count": {"front": 0, "back": 0, "hand": 0, "field": 0, "total": 0},
+    }
+
+
+def test_stage_replace_fields_preserves_existing_stage_status(tmp_path):
+    session = _build_stage_session(tmp_path)
+    status = {"stale": False, "level": 7, "role_count": {"front": 1}}
+    session.scene_state["cw"]["stage"] = {
+        "value": "shop",
+        "stale": False,
+        "error": {"code": "OLD", "message": "old"},
+        "status": status,
+    }
+
+    stage_scene._replace_stage_fields(session, stale=True)
+
+    assert session.scene_state["cw"]["stage"] == {
+        "value": "shop",
+        "stale": True,
+        "error": {"code": "OLD", "message": "old"},
+        "status": {"stale": False, "level": 7, "role_count": {"front": 1}},
+    }
+    assert session.scene_state["cw"]["stage"]["status"] == status
+    assert session.scene_state["cw"]["stage"]["status"] is not status
+    session.scene_state["cw"]["stage"]["status"]["role_count"]["front"] = 2
+    assert status["role_count"]["front"] == 1
+
+
+def test_stage_replace_fields_copies_new_status_when_no_existing_status(tmp_path):
+    session = _build_stage_session(tmp_path)
+    new_status = {"stale": False, "level": 8, "role_count": {"front": 2}}
+    session.scene_state["cw"]["stage"] = {"value": "shop", "stale": False}
+
+    stage_scene._replace_stage_fields(session, status=new_status)
+
+    assert session.scene_state["cw"]["stage"]["status"] == new_status
+    assert session.scene_state["cw"]["stage"]["status"] is not new_status
+    session.scene_state["cw"]["stage"]["status"]["role_count"]["front"] = 3
+    assert new_status["role_count"]["front"] == 2
+
+
+def test_stage_replace_fields_replaces_existing_status(tmp_path):
+    session = _build_stage_session(tmp_path)
+    old_status = {"stale": False, "level": 7, "role_count": {"front": 1}}
+    new_status = {"stale": False, "level": 8, "role_count": {"front": 2}}
+    session.scene_state["cw"]["stage"] = {
+        "value": "shop",
+        "stale": False,
+        "status": old_status,
+    }
+
+    stage_scene._replace_stage_fields(session, status=new_status)
+
+    assert session.scene_state["cw"]["stage"]["status"] == new_status
+    assert session.scene_state["cw"]["stage"]["status"] is not new_status
+    session.scene_state["cw"]["stage"]["status"]["role_count"]["front"] = 3
+    assert old_status["role_count"]["front"] == 1
+    assert new_status["role_count"]["front"] == 2
+
+
+def test_detect_cw_stage_preserves_existing_stage_status(tmp_path):
+    session = _build_stage_session(tmp_path)
+    session.scene_state["cw"]["stage"] = {"status": {"stale": False, "level": 7}}
+
+    refreshed = stage_scene.detect_cw_stage(session, detector=lambda: "shop")
+
+    assert refreshed.scene_state["cw"]["stage"]["value"] == "shop"
+    assert refreshed.scene_state["cw"]["stage"]["status"] == {"stale": False, "level": 7}
+
+
+def test_mark_cw_stage_status_stale_keeps_values(tmp_path):
+    session = _build_stage_session(tmp_path)
+    session.scene_state["cw"]["stage"] = {
+        "value": "shop",
+        "stale": False,
+        "status": {"stale": False, "team_size": "3/3"},
+    }
+
+    stage_scene.mark_cw_stage_status_stale(session)
+
+    assert session.scene_state["cw"]["stage"]["value"] == "shop"
+    assert session.scene_state["cw"]["stage"]["status"] == {"stale": True, "team_size": "3/3"}
+
+
+def test_stage_error_and_stale_paths_preserve_existing_stage_status(tmp_path):
+    session = _build_stage_session(tmp_path)
+    session.scene_state["cw"]["stage"] = {"value": "shop", "stale": False, "status": {"stale": False, "level": 7}}
+
+    stage_scene.mark_cw_stage_stale(session)
+    assert session.scene_state["cw"]["stage"] == {"stale": True, "status": {"stale": False, "level": 7}}
+
+    session.scene_state["cw"]["stage"] = {"value": "shop", "stale": False, "status": {"stale": False, "level": 7}}
+    with pytest.raises(TrailError):
+        stage_scene.detect_cw_stage(
+            session,
+            detector=lambda: (_ for _ in ()).throw(TrailError("STAGE_AMBIGUOUS", "ambiguous")),
+        )
+    assert "value" not in session.scene_state["cw"]["stage"]
+    assert session.scene_state["cw"]["stage"]["stale"] is True
+    assert session.scene_state["cw"]["stage"]["status"] == {"stale": False, "level": 7}
+
+
+def test_battle_completed_stage_update_preserves_existing_stage_status(tmp_path):
+    from trail.scenes.cw import battle as battle_scene
+
+    session = _build_stage_session(tmp_path)
+    _seed_stage_status(session, stage={"error": {"code": "OLD", "message": "old"}})
+
+    battle_scene._set_completed_stage(session, stage="replenish")
+
+    assert session.scene_state["cw"]["stage"]["value"] == "replenish"
+    assert session.scene_state["cw"]["stage"]["error"] == {"code": "OLD", "message": "old"}
+    assert session.scene_state["cw"]["stage"]["status"] == {"stale": False, "level": 7}
+
+
+def test_portal_selection_stage_update_preserves_existing_stage_status(tmp_path, monkeypatch):
+    from trail.scenes.cw import portal as portal_scene
+
+    session = _build_stage_session(tmp_path)
+    _seed_stage_status(session)
+    session.scene_state["cw"]["entry"] = {
+        "page": "invest",
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+    session.scene_state["cw"]["portal"] = {
+        "cards": [{"card_idx": 1, "portal_title": "A"}, {"card_idx": 2, "portal_title": "B"}],
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+        "stale": False,
+    }
+    monkeypatch.setattr(portal_scene, "_detect_current_enter_page", lambda runtime, session=None, preferred_mode=None: {"page": "invest"})
+
+    portal_scene.select_cw_portal(session, card_idx=2, runtime=_ClickRuntime())
+
+    assert session.scene_state["cw"]["stage"]["value"] == "shop"
+    assert session.scene_state["cw"]["stage"]["stale"] is True
+    assert session.scene_state["cw"]["stage"]["status"] == {"stale": False, "level": 7}
+
+
+def test_strategy_selection_stage_update_preserves_existing_stage_status(tmp_path, monkeypatch):
+    from trail.scenes.cw import strategy as strategy_scene
+
+    session = _build_stage_session(tmp_path)
+    _seed_stage_status(session, stage={"value": "invest"})
+    session.scene_state["cw"]["strategy"] = {
+        "cards": [{"card_idx": 1, "strategy_title": "快攻"}],
+        "stale": False,
+    }
+    monkeypatch.setattr(
+        strategy_scene,
+        "_detect_strategy_page_state",
+        lambda runtime, session=None: {"page": "in_game", "stage": "invest", "title": "请选择投资策略"},
+    )
+
+    strategy_scene.select_cw_strategy(session, card_idx=1, runtime=_ClickRuntime())
+
+    assert session.scene_state["cw"]["stage"]["value"] == "invest"
+    assert session.scene_state["cw"]["stage"]["stale"] is True
+    assert session.scene_state["cw"]["stage"]["status"] == {"stale": False, "level": 7}
+
+
+def test_entry_invalidation_stage_update_preserves_existing_stage_status(tmp_path):
+    from trail.scenes.cw.entry import enter_cw
+
+    session = _build_stage_session(tmp_path)
+    _seed_stage_status(session)
+
+    enter_cw(session, mode="continue", difficulty="highest", battle_mode="overclock")
+
+    assert session.scene_state["cw"]["stage"]["value"] == "shop"
+    assert session.scene_state["cw"]["stage"]["stale"] is True
+    assert session.scene_state["cw"]["stage"]["status"] == {"stale": False, "level": 7}
+
+
+def test_guide_runtime_invalidation_stage_update_preserves_existing_stage_status(tmp_path):
+    from trail.scenes.cw.guide import invalidate_cw_guide_runtime_state
+
+    session = _build_stage_session(tmp_path)
+    _seed_stage_status(session)
+
+    invalidate_cw_guide_runtime_state(session)
+
+    assert session.scene_state["cw"]["stage"]["value"] == "shop"
+    assert session.scene_state["cw"]["stage"]["stale"] is True
+    assert session.scene_state["cw"]["stage"]["status"] == {"stale": False, "level": 7}
+
+
+def test_shop_stage_status_parsers_have_no_duplicate_implementations():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "trail" / "scenes" / "cw" / "shop.py").read_text(encoding="utf-8")
+
+    assert "def _parse_shop_level" not in source
+    assert "def _parse_shop_exp" not in source
+    assert "def _parse_shop_team_size" not in source
+    assert "def _parse_last_int" not in source
+    assert "def _ocr_shop_capture_items" not in source
+    assert "def _ocr_shop_exp_items" not in source
+    assert "def _filter_ocr_items_to_region" not in source
+    assert "def _ocr_box_center_in_region" not in source
+    assert "BytesIO" not in source
+    assert "ImageEnhance" not in source
+    assert "OcrRequestConfig" not in source
+    assert "CW_STATUS_" not in source
+    assert "_parse_shop_level = _shared_parse_cw_stage_level" in source
+    assert "_parse_shop_exp = _shared_parse_cw_stage_exp" in source
+    assert "_parse_shop_team_size = _shared_parse_cw_stage_team_size" in source
+
+
+def test_known_cw_stage_writers_use_preserving_helper():
+    root = Path(__file__).resolve().parents[1]
+    checked_files = [
+        root / "trail" / "scenes" / "cw" / "battle.py",
+        root / "trail" / "scenes" / "cw" / "portal.py",
+        root / "trail" / "scenes" / "cw" / "strategy.py",
+        root / "trail" / "scenes" / "cw" / "entry.py",
+        root / "trail" / "scenes" / "cw" / "guide.py",
+    ]
+    direct_stage_assignment = re.compile(r'(?:cw_state|ensure_cw_state\(session\))\["stage"\]\s*=')
+
+    offenders = []
+    for path in checked_files:
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if direct_stage_assignment.search(line):
+                offenders.append(f"{path.relative_to(root)}:{line_no}: {line.strip()}")
+
+    assert offenders == []
 
 
 def test_wait_cw_stage_retries_until_stage_is_detected(tmp_path):
