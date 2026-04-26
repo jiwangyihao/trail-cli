@@ -6,7 +6,7 @@ import typer
 
 from trail.commands.helpers import call_daemon
 from trail.core.errors import TrailError
-from trail.daemon.client import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS
+from trail.daemon.command_timeouts import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS
 from trail.output.capture import with_auto_capture as _with_auto_capture
 from trail.output.rendering import print_output
 
@@ -388,6 +388,11 @@ def cw_battle_run(
     timeout: int = typer.Option(DEFAULT_CW_BATTLE_RUN_TIMEOUT, "--timeout"),
 ) -> None:
     _print_cw("cw.battle.run", session_id=session, payload={"timeout": timeout})
+
+
+@battle_app.command("clear-in-progress")
+def cw_battle_clear_in_progress(session: str = typer.Option(..., "--session")) -> None:
+    _print_cw("cw.battle.clear_in_progress", session_id=session, payload={})
 
 
 @battle_app.command("continue")

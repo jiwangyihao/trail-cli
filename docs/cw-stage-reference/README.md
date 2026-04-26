@@ -163,10 +163,11 @@
      - `trail cw crystals collect --session <id>`
   2. 若要布阵、看卖牌参考、看商店，再按局内流程运行对应 `cw slots` / `cw hand sell-plan` / `cw shop` 命令；`sell-plan` 只提供参考，不会自动卖牌
   3. 准备完成后再运行：
-     - `trail cw battle run --session <id> --timeout 570`
+     - `trail cw battle run --session <id>`
   4. `trail cw battle start --session <id>` 仍保留为 advanced/manual fallback，只在需要手工拆 battle / settle 链时使用，不是默认主流程
 - 额外说明：
   - 这里已经进入局内，出现了 `备战阶段`、`出战`、`商店` 和手牌栏
+  - `trail cw battle run` 默认 timeout 现在是 `90s`；若返回 `status=in_progress`，先看截图，仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`
 
 ## 07-cw-shop-open-page.jpg
 
@@ -203,11 +204,12 @@
   - 中间区域展示本小局的收益与数据统计
 - 对应命令语义：
   - 这是局内战斗结束后的单局结算页，不是整局结算链
-  - 当前命令链里，它通常是 `trail cw stage wait --session <id>` 之后可能停下来的页面之一
+  - 结算页也属于 battle flow；battle flow 包含战斗中、结算页、结算翻页但未回到下一稳定阶段
+  - 当前默认命令链里，它应继续由 `trail cw battle run --session <id>` 收口，不应切回旧 `trail cw settle next --session <id>`
 - 到达该页面后的推荐下一步：
-  1. 若要继续当前对局的下一小节，运行：
-     - `trail cw settle next --session <id>`
-  2. 若只是做阶段确认，可先记录截图/OCR，再继续后续局内链路
+  1. 先看当前截图；若仍在 battle flow 中，继续运行：
+     - `trail cw battle run --session <id>`
+  2. 只有在内部 advanced/manual fallback 拆链时，才考虑旧 `trail cw settle next --session <id>`
 - 额外说明：
   - 这页和整局结算链的区别在于：这里的主按钮是 `继续挑战`，而不是 `下一步 / 下一页 / 返回货币战争`
 

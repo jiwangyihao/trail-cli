@@ -855,7 +855,7 @@ def test_cw_battle_continue_renders_stage_summary(cli_runner, fake_daemon_client
     _assert_single_call(client, method="cw.battle.continue", payload={}, tmp_path=tmp_path)
 
 
-def test_cw_battle_run_forwards_timeout(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_battle_run_forwards_new_default_timeout(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.battle.run": build_success_response(
@@ -868,7 +868,7 @@ def test_cw_battle_run_forwards_timeout(cli_runner, fake_daemon_client, tmp_path
     result = cli_runner.invoke(app, ["cw", "battle", "run", "--session", SESSION_ID])
 
     assert result.exit_code == 0
-    _assert_single_call(client, method="cw.battle.run", payload={"timeout": 570}, tmp_path=tmp_path)
+    _assert_single_call(client, method="cw.battle.run", payload={"timeout": 90}, tmp_path=tmp_path)
 
 
 def test_cw_battle_run_renders_completed_summary(cli_runner, fake_daemon_client, tmp_path):
@@ -925,8 +925,63 @@ def test_cw_battle_run_renders_timeout_summary(cli_runner, fake_daemon_client, t
         "shot path=.trail/shots/req-cw-battle-run-timeout.png",
         "info read_image_first=1",
         "info timeout_seconds=570",
+        "info next_action=cw.battle.run why=battle_flow_not_finished",
     ]
     _assert_single_call(client, method="cw.battle.run", payload={"timeout": 570}, tmp_path=tmp_path)
+
+
+def test_cw_battle_clear_in_progress_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.battle.clear_in_progress": build_success_response(
+                request_id="req-cw-battle-clear-in-progress",
+                data={},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "battle", "clear-in-progress", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    _assert_single_call(client, method="cw.battle.clear_in_progress", payload={}, tmp_path=tmp_path)
+
+
+def test_cw_battle_clear_in_progress_renders_summary(cli_runner, fake_daemon_client):
+    fake_daemon_client(
+        {
+            "cw.battle.clear_in_progress": build_success_response(
+                request_id="req-cw-battle-clear-in-progress",
+                data={"cleared": True},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "battle", "clear-in-progress", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok cw.battle.clear_in_progress cleared=1"]
+
+
+def test_cw_battle_clear_in_progress_rejects_yaml_output(cli_runner, fake_daemon_client):
+    fake_daemon_client(
+        {
+            "cw.battle.clear_in_progress": build_success_response(
+                request_id="req-cw-battle-clear-in-progress-yaml",
+                data={"cleared": True},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        ["--format", "yaml", "cw", "battle", "clear-in-progress", "--session", SESSION_ID],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.battle.clear_in_progress code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        'why msg="yaml not supported for cw.battle.clear_in_progress"',
+    ]
 
 
 def test_cw_stage_wait_renders_stage_and_shot(cli_runner, fake_daemon_client, tmp_path):

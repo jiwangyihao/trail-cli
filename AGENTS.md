@@ -88,8 +88,13 @@
 - `cw.strategy.detect|refresh` 必须输出 `info 已加载攻略=0|1`，且固定在所有 `opt` 行之后。
 - `cw.shop.buy_exp` 属于 shop action renderer family；canonical command 是 `cw.shop.buy_exp`，success 首行固定为 `ok cw.shop.buy_exp opened=1 stale=0 count=<n>`，正文先输出 `item idx=... slot=... name=... cost=...`，再输出 snapshot facts `coins/level/exp/reserve_full/team_size`。
 - `cw.shop.buy_exp` 的 `team_size=null` 是 must-keep null fact；`cw.shop.buy_exp` 不在 YAML allowlist，`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`。
-- `cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，只看当前已选攻略摘要，不输出额外追踪产物；完整攻略由 `guide.fetch.cw --select` 写入 session。
-- `guide.fetch.cw --select` 只负责把完整攻略写入 session，不创建当前攻略快照或额外追踪产物，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。
+- `cw.battle.run` 属于检测/状态摘要 renderer 家族；success 首行固定使用 `ok cw.battle.run status=... result=... stage=... stale=... in_battle=...` 的顺序，缺失语义值按默认省略规则处理。
+- `cw.battle.run` 的 `status=in_progress` success 必须输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，提示 Agent 先看截图并在仍处于 battle flow 时重跑 `cw.battle.run`。
+- `cw.battle.clear_in_progress` canonical command 固定为 `cw.battle.clear_in_progress`，归入检测/状态摘要 renderer 家族；success 首行固定为 `ok cw.battle.clear_in_progress cleared=0|1`。
+- `cw.battle.clear_in_progress` 只清 battle.run 的内部续跑提示位，不清 battle 摘要、`last_result`、`last_screenshot` 或阶段事实；它不产出截图，不加入 YAML allowlist。
+- `cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id。
+- `cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径；`current/apply` 只看当前已选攻略摘要，完整攻略仍由 `guide.fetch.cw` 提供。
+- `guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。
 - `guide.config.cw` 使用 `赛季/子赛季/大版本/搜牌档位/羁绊/角色/角色标签/投资环境`；这五个统计项即使为 `0` 也必须保留。
 - `guide.config.cw --format yaml` 仍然先输出中文摘要，再追加原英文 key 的 YAML shape，不得回退成纯英文首屏。
 - `cw.hand.sell_plan` success 首行固定为 `ok cw.hand.sell_plan count=... reference_only=1 candidates=... todos=...`；该命令只提供 Agent 参考信息，不是权威出售计划。

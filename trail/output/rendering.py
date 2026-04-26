@@ -514,9 +514,21 @@ def _render_cw_battle_run(command: str, payload: dict[str, Any]) -> list[str]:
         "info",
         ("timeout_seconds", data.get("timeout_seconds") if "timeout_seconds" in data else None),
     )
+    if data.get("status") == "in_progress":
+        _append_fact_line(
+            lines,
+            "info",
+            ("next_action", "cw.battle.run"),
+            ("why", "battle_flow_not_finished"),
+        )
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
+
+
+def _render_cw_battle_clear_in_progress(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    return _render_success_summary(command, payload, ("cleared", bool(data.get("cleared"))))
 
 
 def _render_cw_entry(command: str, payload: dict[str, Any]) -> list[str]:
@@ -1414,6 +1426,7 @@ TEXT_RENDERERS = {
     "cw.battle.start": _render_cw_stage,
     "cw.battle.continue": _render_cw_stage,
     "cw.battle.run": _render_cw_battle_run,
+    "cw.battle.clear_in_progress": _render_cw_battle_clear_in_progress,
     "cw.settle.next": _render_cw_stage,
     "cw.event.handle": _render_cw_event_result,
     "window.attach": _render_window_attach,

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from trail.core.errors import TrailError
+from trail.scenes.cw.models import ensure_cw_state
 from trail.session.models import SessionModel
 
 
@@ -81,6 +82,8 @@ class ScriptedBattleRuntime:
     def _ocr_map_for_state(self) -> dict[object, list[object]]:
         if self.state == "battle_start":
             return {None: [_ocr_piece(self.battle_start_text)]}
+        if self.state == "preparation":
+            return {None: [_ocr_piece(self.battle_start_text)] if self.battle_start_text else []}
         if self.state == "battle_progress":
             return {None: [_ocr_piece("自动战斗"), _ocr_piece("暂停")]}
         if self.state == "settle_entry":
@@ -122,6 +125,8 @@ class ScriptedBattleRuntime:
             return "game_over"
         if self.state == "settle_entry":
             return "settle"
+        if self.state == "preparation":
+            return "preparation"
         return None
 
     def run_action(self, name: str, *, advance: bool = True) -> None:
@@ -355,6 +360,27 @@ def test_parse_cw_settlement_summary_reads_stable_fields():
     }
 
 
+def test_parse_cw_settlement_summary_treats_challenge_end_with_continue_as_win():
+    battle_scene = load_cw_battle_module()
+    runtime = FakeRuntime(
+        ocr_map={
+            None: [_ocr_piece("挑战结束"), _ocr_piece("继续挑战")],
+            HEADLINE_CAPTURE_KEY: [_ocr_piece("挑战结束")],
+            ROUND_CAPTURE_KEY: [_ocr_piece("1-4 X战斗")],
+            STATS_CAPTURE_KEY: [_ocr_piece("小队生命值82"), _ocr_piece("获得金币总览")],
+        }
+    )
+
+    result = battle_scene.parse_cw_settlement_summary(runtime)
+
+    assert result == {
+        "result": "win",
+        "round": "1-4",
+        "hp": 82,
+        "settle_text": "挑战结束",
+    }
+
+
 def test_parse_cw_settlement_summary_omits_missing_secondary_fields():
     battle_scene = load_cw_battle_module()
     runtime = FakeRuntime(ocr_map={HEADLINE_CAPTURE_KEY: [_ocr_piece("挑战失败")]})
@@ -479,6 +505,152 @@ def test_run_cw_battle_starts_from_detected_preparation_when_ocr_misses_start_te
     assert session.last_stage == {"scene": "cw", "value": "shop"}
 
 
+def test_run_cw_battle_stops_on_next_round_preparation_after_settle(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(
+        ["battle_start", "battle_progress", "settle_entry", "settle_followup", "preparation"],
+        battle_start_text="出战",
+    )
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=30)
+
+    assert result == {
+        "status": "completed",
+        "result": "win",
+        "stage": "preparation",
+        "stale": False,
+        "in_battle": False,
+        "round": "1-1",
+        "hp": 82,
+        "coins": 4,
+        "exp": 2,
+        "settle_text": "挑战成功",
+    }
+    assert runtime.actions == ["start", "continue", "next"]
+    assert session.scene_state["cw"]["stage"] == {"value": "preparation", "stale": False}
+    assert session.last_stage == {"scene": "cw", "value": "preparation"}
+
+
+def test_run_cw_battle_stops_on_detected_next_round_preparation_when_ocr_misses_start_text(
+    tmp_path: Path, monkeypatch
+):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(
+        ["preparation", "battle_progress", "settle_entry", "settle_followup", "preparation"],
+        battle_start_text="",
+    )
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=30)
+
+    assert result == {
+        "status": "completed",
+        "result": "win",
+        "stage": "preparation",
+        "stale": False,
+        "in_battle": False,
+        "round": "1-1",
+        "hp": 82,
+        "coins": 4,
+        "exp": 2,
+        "settle_text": "挑战成功",
+    }
+    assert runtime.actions == ["start", "continue", "next"]
+    assert session.scene_state["cw"]["stage"] == {"value": "preparation", "stale": False}
+    assert session.last_stage == {"scene": "cw", "value": "preparation"}
+
+
+def test_run_cw_battle_keeps_first_preparation_detector_hit_when_second_read_misses(
+    tmp_path: Path, monkeypatch
+):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(
+        ["settle_entry", "settle_followup", "preparation"],
+        battle_start_text="",
+    )
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+    preparation_reads = 0
+
+    def build_racy_stage_detector(_runtime):
+        def detect_stage():
+            nonlocal preparation_reads
+            if runtime.state != "preparation":
+                return runtime.detect_stage()
+            preparation_reads += 1
+            return "preparation" if preparation_reads == 1 else None
+
+        return detect_stage
+
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", build_racy_stage_detector)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=30)
+
+    assert result == {
+        "status": "completed",
+        "result": "win",
+        "stage": "preparation",
+        "stale": False,
+        "in_battle": False,
+        "round": "1-1",
+        "hp": 82,
+        "coins": 4,
+        "exp": 2,
+        "settle_text": "挑战成功",
+    }
+    assert runtime.actions == ["continue", "next"]
+    assert preparation_reads == 1
+    assert session.scene_state["cw"]["stage"] == {"value": "preparation", "stale": False}
+    assert session.last_stage == {"scene": "cw", "value": "preparation"}
+
+
+def test_run_cw_battle_does_not_recheck_detector_when_first_preparation_read_misses(
+    tmp_path: Path, monkeypatch
+):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(
+        ["settle_entry", "settle_followup", "preparation"],
+        battle_start_text="",
+    )
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+    preparation_reads = 0
+
+    def build_racy_stage_detector(_runtime):
+        def detect_stage():
+            nonlocal preparation_reads
+            if runtime.state != "preparation":
+                return runtime.detect_stage()
+            preparation_reads += 1
+            return None if preparation_reads == 1 else "preparation"
+
+        return detect_stage
+
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", build_racy_stage_detector)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=30)
+
+    assert result == {
+        "status": "completed",
+        "result": "win",
+        "stage": "preparation",
+        "stale": False,
+        "in_battle": False,
+        "round": "1-1",
+        "hp": 82,
+        "coins": 4,
+        "exp": 2,
+        "settle_text": "挑战成功",
+    }
+    assert runtime.actions == ["continue", "next"]
+    assert preparation_reads == 2
+    assert session.scene_state["cw"]["stage"] == {"value": "preparation", "stale": False}
+    assert session.last_stage == {"scene": "cw", "value": "preparation"}
+
+
 def test_run_cw_battle_raises_when_start_shows_team_count_confirm_dialog(tmp_path: Path, monkeypatch):
     battle_scene = load_cw_battle_module()
     session = build_session(tmp_path)
@@ -518,6 +690,35 @@ def test_run_cw_battle_returns_settle_timeout_summary_when_budget_exhausted(tmp_
         "timeout_seconds": 2,
     }
     assert session.scene_state["cw"]["stage"] == {"stale": True}
+    assert session.last_stage is None
+
+
+def test_run_cw_battle_persists_last_battle_round(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(["settle_entry", "settle_followup", "stable_stage"])
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=10)
+
+    assert result["round"] == "1-1"
+    assert ensure_cw_state(session)["metrics"]["last_battle_round"] == "1-1"
+
+
+def test_run_cw_battle_persists_last_battle_round_for_settle_timeout(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(["settle_entry", "settle_followup", "unknown"], sleep_advances_from=("unknown",))
+
+    _patch_run_loop(monkeypatch, battle_scene, runtime, clock=FakeClock(step=0.1))
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: lambda: None)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=1)
+
+    assert result["status"] == "in_progress"
+    assert result["stage"] == "settle"
+    assert ensure_cw_state(session)["metrics"]["last_battle_round"] == "1-1"
+    assert ensure_cw_state(session)["stage"] == {"stale": True}
     assert session.last_stage is None
 
 
@@ -613,6 +814,128 @@ def test_run_cw_battle_returns_in_battle_timeout_when_only_progress_seen(tmp_pat
     }
     assert session.scene_state["cw"]["stage"] == {"stale": True}
     assert session.last_stage is None
+
+
+def test_run_cw_battle_tolerates_unknown_opening_when_resume_hint_is_set(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    ensure_cw_state(session)["battle_resume"] = {"in_battle_hint": True}
+    runtime = ScriptedBattleRuntime(["unknown", "battle_progress"], sleep_advances_from=("unknown",))
+
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: lambda: None)
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=5)
+
+    assert result["status"] == "in_progress"
+    assert result["in_battle"] is True
+
+
+def test_run_cw_battle_resume_hint_completes_when_opening_on_preparation(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    ensure_cw_state(session)["battle_resume"] = {"in_battle_hint": True}
+    runtime = ScriptedBattleRuntime(["preparation"], battle_start_text="出战")
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=5)
+
+    assert result == {
+        "status": "completed",
+        "stage": "preparation",
+        "stale": False,
+        "in_battle": False,
+    }
+    assert runtime.actions == []
+    assert ensure_cw_state(session).get("battle_resume") == {}
+
+
+def test_run_cw_battle_resume_hint_ocr_only_preparation_completes_when_detector_misses(
+    tmp_path: Path, monkeypatch
+):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    ensure_cw_state(session)["battle_resume"] = {"in_battle_hint": True}
+    runtime = ScriptedBattleRuntime(["preparation"], battle_start_text="出战")
+
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: lambda: None)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=5)
+
+    assert result == {
+        "status": "completed",
+        "stage": "preparation",
+        "stale": False,
+        "in_battle": False,
+    }
+    assert runtime.actions == []
+    assert ensure_cw_state(session).get("battle_resume") == {}
+
+
+def test_run_cw_battle_sets_resume_hint_after_in_battle_timeout(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(["battle_progress"])
+
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: lambda: None)
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=1)
+
+    assert result["status"] == "in_progress"
+    assert result["in_battle"] is True
+    assert ensure_cw_state(session)["battle_resume"] == {"in_battle_hint": True}
+
+
+def test_run_cw_battle_does_not_set_resume_hint_for_settle_timeout(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(["settle_entry", "settle_followup", "unknown"], sleep_advances_from=("unknown",))
+
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: lambda: None)
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=1)
+
+    assert result["status"] == "in_progress"
+    assert result["stage"] == "settle"
+    assert result["in_battle"] is False
+    assert ensure_cw_state(session).get("battle_resume") == {}
+
+
+def test_run_cw_battle_clears_resume_hint_after_completed_result(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    ensure_cw_state(session)["battle_resume"] = {"in_battle_hint": True}
+    runtime = ScriptedBattleRuntime(["battle_progress", "stable_stage"])
+
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: lambda: "shop")
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=5)
+
+    assert result["status"] == "completed"
+    assert ensure_cw_state(session).get("battle_resume") == {}
+
+
+def test_run_cw_battle_clears_resume_hint_when_settlement_parse_failure_raises(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    ensure_cw_state(session)["battle_resume"] = {"in_battle_hint": True}
+    runtime = ScriptedBattleRuntime(["settle_entry"])
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    def fail_settlement_summary(_runtime):
+        raise TrailError("CW_SETTLEMENT_UNREADABLE", "无法识别货币战争结算结果")
+
+    monkeypatch.setattr(battle_scene, "parse_cw_settlement_summary", fail_settlement_summary)
+
+    with pytest.raises(TrailError) as exc_info:
+        battle_scene.run_cw_battle(session, runtime=runtime, timeout=5)
+
+    assert exc_info.value.code == "CW_SETTLEMENT_UNREADABLE"
+    assert ensure_cw_state(session).get("battle_resume") == {}
 
 
 def test_run_cw_battle_returns_game_over_when_chain_ends(tmp_path: Path, monkeypatch):

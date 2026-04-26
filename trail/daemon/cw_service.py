@@ -613,6 +613,7 @@ class CwService:
                     else DEFAULT_CW_BATTLE_RUN_TIMEOUT
                 ),
             ),
+            "cw.battle.clear_in_progress": lambda: clear_cw_battle_resume_hint(session),
             "cw.battle.start": lambda: start_cw_battle(
                 session,
                 starter=battle_starter_factory(runtime()),
@@ -645,6 +646,14 @@ def _handle_and_save_session(handler, session_service, session):
 def _current_guide(session, *, artifact_store: ArtifactStore):
     del artifact_store
     return _require_selected_guide(session)
+
+
+def clear_cw_battle_resume_hint(session) -> dict:
+    resume = ensure_cw_state(session).get("battle_resume")
+    had_hint = isinstance(resume, dict) and bool(resume.get("in_battle_hint"))
+    if isinstance(resume, dict):
+        resume.pop("in_battle_hint", None)
+    return {"cleared": had_hint}
 
 
 def _require_selected_guide(session) -> dict:
