@@ -652,6 +652,7 @@ def read_cw_slots(
         if exc.code == "STAGE_AMBIGUOUS":
             stage._invalidate_cw_stage(session, code=exc.code, message=str(exc))
             session.last_stage = None
+            exc.known_failure_after_save = True
         raise
     if isinstance(result, CwSlotsReadResult):
         front, back, hand = result.front, result.back, result.hand

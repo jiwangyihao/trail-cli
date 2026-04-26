@@ -242,6 +242,39 @@ def test_read_cw_slots_projects_stage_and_status_into_slots_payload(tmp_path):
     assert session.last_stage == {"scene": "cw", "value": "preparation"}
 
 
+def test_read_cw_slots_projects_unknown_stage_status_into_slots_payload(tmp_path):
+    slots_module = load_cw_slots_module()
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    ensure_cw_state(session)["stage"] = {"value": "shop", "stale": False}
+    session.last_stage = {"scene": "cw", "value": "shop"}
+
+    def reader():
+        return slots_module.CwSlotsReadResult(
+            front=[{"name": "希儿"}],
+            back=[],
+            hand=[],
+            stage=None,
+            stage_status={"stale": False, "level": 3, "exp": "0/8", "team_size": "1/2"},
+        )
+
+    slots_module.read_cw_slots(session, reader=reader)
+
+    payload = session.scene_state["cw"]["slots"]
+    assert payload["stage"] is None
+    assert payload["stage_stale"] is False
+    assert payload["stage_status"] == {
+        "stale": False,
+        "level": 3,
+        "exp": "0/8",
+        "team_size": "1/2",
+        "role_count": {"front": 1, "back": 0, "hand": 0, "field": 1, "total": 1},
+    }
+    assert payload["stage_status_stale"] is False
+    assert session.scene_state["cw"]["stage"]["value"] == "shop"
+    assert session.scene_state["cw"]["stage"]["stale"] is False
+    assert session.last_stage == {"scene": "cw", "value": "shop"}
+
+
 def test_read_cw_slots_directed_read_still_projects_status_from_merged_slots(tmp_path):
     slots_module = load_cw_slots_module()
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})

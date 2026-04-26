@@ -655,7 +655,12 @@ class CwService:
 
 
 def _handle_and_save_session(handler, session_service, session):
-    result = handler()
+    try:
+        result = handler()
+    except TrailError as error:
+        if _safe_error_attr(error, "known_failure_after_save"):
+            session_service.save_session(session)
+        raise
     session_service.save_session(session)
     return result
 

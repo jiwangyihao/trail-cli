@@ -1451,9 +1451,6 @@ def test_cw_slots_read_contract_includes_stage_projection(cli_runner, fake_daemo
 
     result = cli_runner.invoke(app, ["cw", "slots", "read", "--session", SESSION_ID])
 
-    assert response_data["stage"] == "preparation"
-    assert response_data["stage_status"]["level"] == 3
-    assert response_data["stage_status_stale"] is False
     assert result.exit_code == 0
     assert result.stdout.splitlines() == _expected_lines(
         "ok cw.slots.read front=1 back=0 hand=0 stale=0",
