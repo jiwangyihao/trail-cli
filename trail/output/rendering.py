@@ -268,6 +268,10 @@ def _append_fact_line(lines: list[str], prefix: str, *facts: tuple[str, Any]) ->
         lines.append(f"{prefix} {rendered}")
 
 
+def _append_section(lines: list[str], title: str) -> None:
+    lines.append(f"# {title}")
+
+
 def _append_skill_info(lines: list[str], data: dict[str, Any]) -> None:
     for item in _as_list(data.get("skill_info")):
         if not isinstance(item, dict):
@@ -277,6 +281,16 @@ def _append_skill_info(lines: list[str], data: dict[str, Any]) -> None:
         if name is None or text is None:
             continue
         _append_fact_line(lines, "info", ("skill_info", name), ("text", text))
+
+
+def _append_skill_info_section(lines: list[str], data: dict[str, Any]) -> None:
+    if not _as_list(data.get("skill_info")):
+        return
+    before = len(lines)
+    _append_section(lines, "攻略提示")
+    _append_skill_info(lines, data)
+    if len(lines) == before + 1:
+        lines.pop()
 
 
 @lru_cache(maxsize=1)
@@ -748,12 +762,58 @@ def _append_cw_slot_trait_summary(lines: list[str], data: dict[str, Any]) -> Non
         )
 
 
+def _append_cw_status_section(lines: list[str], data: dict[str, Any]) -> None:
+    stage_value = data.get("stage")
+    has_stage = stage_value is not None
+    stage_status = _as_dict(data.get("stage_status"))
+    has_stage_status = "stage_status_stale" in data or bool(stage_status)
+    if not has_stage and not has_stage_status:
+        return
+
+    _append_section(lines, "综合信息")
+    if has_stage:
+        _append_fact_line(
+            lines,
+            "info",
+            ("stage", stage_value),
+            ("stale", bool(data.get("stage_stale")) if "stage_stale" in data else None),
+        )
+    if has_stage_status:
+        stage_status_stale = (
+            bool(data["stage_status_stale"]) if "stage_status_stale" in data else bool(stage_status.get("stale", True))
+        )
+        _append_fact_line(
+            lines,
+            "info",
+            ("stage_level", stage_status.get("level") if not stage_status_stale else None),
+            ("stage_exp", stage_status.get("exp") if not stage_status_stale else None),
+            ("stage_team_size", stage_status.get("team_size") if not stage_status_stale else None),
+            ("stage_status_stale", stage_status_stale),
+        )
+
+
+def _append_cw_slot_section(lines: list[str], data: dict[str, Any]) -> None:
+    has_slots = any(len(_as_list(data.get(zone))) > 0 for zone in ("front", "back", "hand"))
+    if not has_slots:
+        return
+    _append_section(lines, "角色信息")
+    _append_cw_slot_lines(lines, data)
+
+
+def _append_cw_trait_section(lines: list[str], data: dict[str, Any]) -> None:
+    if not _as_list(data.get("trait_summary")):
+        return
+    _append_section(lines, "羁绊信息")
+    _append_cw_slot_trait_summary(lines, data)
+
+
 def _render_cw_slots_read(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     lines = [_render_cw_slots_summary_line(command, data)]
     _append_success_capture_block(lines, payload)
-    _append_cw_slot_lines(lines, data)
-    _append_cw_slot_trait_summary(lines, data)
+    _append_cw_status_section(lines, data)
+    _append_cw_slot_section(lines, data)
+    _append_cw_trait_section(lines, data)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines

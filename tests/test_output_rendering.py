@@ -3413,12 +3413,105 @@ def test_render_output_renders_cw_slots_summary_text():
         "ok cw.slots.read front=1 back=1 hand=1 stale=1",
         "shot path=.trail/shots/req-slots.png",
         "info read_image_first=1",
+        "# 角色信息",
         "slot pos=front:0 name=希儿 star=4",
         "slot pos=front:1 empty=1",
         "slot pos=back:0 name=佩拉 rarity=2",
         "slot pos=hand:0 name=停云 carry=1 cost=2",
         "slot pos=hand:1 empty=1",
     ]
+
+
+def test_render_output_adds_cw_slots_sections_without_breaking_screenshot_order():
+    payload = {
+        "ok": True,
+        "data": {
+            "front": [{"name": "希儿", "star": 1, "traits": ["巡猎"]}],
+            "back": [],
+            "hand": [{"name": "停云"}],
+            "stale": False,
+            "stage": "preparation",
+            "stage_stale": False,
+            "stage_status": {"stale": False, "level": 3, "exp": "0/8", "team_size": "1/2"},
+            "stage_status_stale": False,
+            "trait_summary": [
+                {"trait": "巡猎", "tiers": [1, 2], "owned_roles": 1, "active_tier": 1, "total_tiers": 2, "ratio": 0.5},
+            ],
+        },
+        "screenshot": ".trail/shots/req-slots.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.slots.read", payload).splitlines() == [
+        "ok cw.slots.read front=1 back=0 hand=1 stale=0",
+        "shot path=.trail/shots/req-slots.png",
+        "info read_image_first=1",
+        "# 综合信息",
+        "info stage=preparation stale=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        "# 角色信息",
+        "slot pos=front:0 name=希儿 star=1 traits=巡猎",
+        "slot pos=hand:0 name=停云",
+        "# 羁绊信息",
+        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+    ]
+
+
+def test_render_output_does_not_add_sections_to_single_body_commands():
+    payload = {
+        "ok": True,
+        "data": {"value": "preparation", "stale": False},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.stage.detect", payload).splitlines()
+
+    assert lines == ["ok cw.stage.detect stage=preparation stale=0"]
+    assert not any(line.startswith("# ") for line in lines)
+
+
+def test_render_output_does_not_add_sections_to_failures_or_single_action_outputs():
+    failure = {
+        "ok": False,
+        "data": {},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"request_id": "req-1"},
+        "error": {"code": "X", "message": "failed"},
+    }
+    assert not any(line.startswith("# ") for line in render_output("cw.slots.read", failure).splitlines())
+
+    place = {
+        "ok": True,
+        "data": {"front": ["希儿"], "back": [], "hand": [], "stale": False},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    assert not any(line.startswith("# ") for line in render_output("cw.slots.place", place).splitlines())
+
+    strategy = {
+        "ok": True,
+        "data": {"cards": [{"name": "存钱"}]},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    assert not any(line.startswith("# ") for line in render_output("cw.strategy.detect", strategy).splitlines())
 
 
 def test_render_output_renders_cw_slots_before_warn_and_ref():
@@ -3443,6 +3536,7 @@ def test_render_output_renders_cw_slots_before_warn_and_ref():
         "ok cw.slots.read front=1 back=0 hand=0 stale=0",
         "shot path=.trail/shots/req-slots-order.png",
         "info read_image_first=1",
+        "# 角色信息",
         "slot pos=front:0 name=希儿 star=4",
         'warn code=SLOTS_STALE msg="slots may be stale"',
         "ref path=refs/slots.png sim=0.88",
@@ -3471,9 +3565,11 @@ def test_render_output_renders_cw_slots_traits_and_trait_summary():
 
     assert render_output("cw.slots.read", payload).splitlines() == [
         "ok cw.slots.read front=1 back=1 hand=1 stale=0",
+        "# 角色信息",
         "slot pos=front:0 name=希儿 star=4 traits=巡猎|量子",
         "slot pos=back:0 name=佩拉 traits=量子",
         "slot pos=hand:0 name=布洛妮娅 traits=巡猎|辅助",
+        "# 羁绊信息",
         'info 羁绊=量子 档位="1,2" 当前角色=2 已激活档位=2/2 占比=1.00',
         'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
     ]

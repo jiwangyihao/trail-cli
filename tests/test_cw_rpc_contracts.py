@@ -1163,6 +1163,7 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
                 "ok cw.slots.read front=1 back=0 hand=1 stale=0",
                 screenshot=".trail/shots/req-cw-slots-read.png",
                 body=[
+                    "# 角色信息",
                     "slot pos=front:0 name=希儿",
                     "slot pos=front:1 empty=1",
                     "slot pos=back:0 empty=1",
