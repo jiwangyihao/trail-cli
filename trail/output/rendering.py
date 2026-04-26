@@ -605,6 +605,14 @@ def _render_cw_portal_select(command: str, payload: dict[str, Any]) -> list[str]
     ]
     _append_success_capture_block(lines, payload)
     _append_skill_info(lines, data)
+    slots = _as_dict(data.get("slots"))
+    if slots:
+        _append_cw_slot_lines(lines, slots)
+        _append_cw_slot_trait_summary(lines, slots)
+    shop = _as_dict(data.get("shop"))
+    if shop:
+        _append_cw_shop_items(lines, shop)
+        _append_cw_shop_snapshot_info(lines, shop)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines

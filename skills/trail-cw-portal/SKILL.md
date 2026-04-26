@@ -28,14 +28,14 @@ description: 当上游已经用 `cw start` 成功进入货币战争投资环境�
 - 如果当前还没定攻略，就先切到 `trail-cw-guide` 的无人值守模式，让它在当前环境页上下文里挑出最合适的攻略，再回到 portal 流程决定选哪个环境。
 - 如果不允许刷开局，仍可先做一次 refresh；只有在已确认 `环境优先` 时，portal 才在当前可见环境里选最贴近目标的一项；如果未确定攻略，则必须切到 `trail-cw-guide` 的无人值守模式，不由 portal 直接拍板。
 - 只有当没有带 `待收集=1` 的环境，或所有推荐攻略互动数据都 < 5000 时，才允许先做一次 refresh，然后再综合选择；`版本过旧` 只作为权衡因素，不设硬阈值。
-- `cw.portal.select` / `portal select --card-idx ...` 成功后会输出 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`，此时进入普通备战阶段并交给 `trail-cw-prep` 继续事实收集。
+- `cw.portal.select` / `portal select --card-idx ...` 成功后会输出 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`，并自动收集水晶、slots/shop/stage 预备事实并关闭商店；先读 screenshot，再参考输出中的 slots/shop/stage facts，不要手动再跑 slots/shop 初始扫描，按 handoff 切到 `trail-cw-prep`；如果 auto-collect 失败并输出 recover/taint 或失败状态，先按恢复语义处理，不要继续假设已进入 prep 并操作商店。
 
 ## When To Hand Off To trail-cw-guide
 
 - 如果未确定攻略，但投资环境页已经出来，就切到 `trail-cw-guide` 的无人值守模式，让它按当前环境页里的推荐攻略、热度、版本、`待收集=1` 和其他已知限制自动定攻略。
 - 如果用户明确说“按当前环境直接定攻略”，也切到 `trail-cw-guide`，不要在这里继续追问。
 - 选定攻略后，回到 portal 流程，用 `portal select --card-idx ...` 选中对应投资环境，再继续后续流程。
-- 选中环境并成功进入普通备战后，后续不再由 portal 继续 owner，而是按 `cw.portal.select -> trail-cw-prep` 的 handoff 转入普通备战阶段。
+- 选中环境并成功进入普通备战后，后续不再由 portal 继续 owner，而是消费 `cw.portal.select` 已带回的备战事实，并按 `cw.portal.select -> trail-cw-prep` 的 handoff 转入普通备战阶段。
 
 ## Reference Map
 

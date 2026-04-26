@@ -979,6 +979,7 @@ def test_command_service_tracks_cw_portal_select_request_status_with_top_level_s
         lambda session, runtime: None,
         raising=False,
     )
+    _patch_cw_portal_select_auto_collect_success(monkeypatch, [])
 
     response = command_service.handle(
         DaemonRequest(
@@ -1035,6 +1036,7 @@ def _run_cw_portal_select_with_operation_guide(tmp_path: Path, monkeypatch, *, o
     )
     monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
     monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+    _patch_cw_portal_select_auto_collect_success(monkeypatch, [])
 
     return command_service.handle(
         DaemonRequest(
@@ -4198,14 +4200,88 @@ def test_cw_strategy_refresh_handler_routes_strategy_list_through_mutation_journ
     assert service.load_session(session.session_id).scene_state["cw"]["strategy"] == snapshot
 
 
+def _patch_cw_portal_select_auto_collect_success(monkeypatch, events: list[str], *, sleeps: list[float] | None = None):
+    def fake_collect(session, collector):
+        events.append("crystal.collect")
+        session.scene_state.setdefault("cw", {})["metrics"] = {"last_crystal_collection": "done"}
+        return session
+
+    def fake_read_slots(session, reader, targets=None, guide_config=None):
+        assert reader == "slots-reader"
+        assert targets is None
+        assert guide_config == {"roles": [], "traits": []}
+        events.append("slots.read")
+        session.scene_state.setdefault("cw", {})["slots"] = {
+            "front": [{"name": "希儿"}],
+            "back": [],
+            "hand": [],
+            "stale": False,
+        }
+        return session
+
+    def fake_scan_shop(session, scanner):
+        assert scanner == "page-reader"
+        events.append("shop.scan")
+        session.scene_state.setdefault("cw", {})["shop"] = {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "coins": 40,
+            "reserve_full": False,
+        }
+        return session
+
+    def fake_project_shop(session):
+        events.append("shop.project")
+        return {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "coins": 40,
+            "reserve_full": False,
+            "stage_status_stale": True,
+        }
+
+    def fake_close_shop(session, closer):
+        assert closer == "shop-closer"
+        events.append("shop.close")
+        session.scene_state.setdefault("cw", {})["shop"] = {"opened": False, "stale": True}
+        return session
+
+    monkeypatch.setattr("trail.daemon.cw_service.collect_cw_crystals", fake_collect)
+    monkeypatch.setattr("trail.daemon.cw_service.dismiss_cw_slots_overlay", lambda runtime: events.append("slots.dismiss"))
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {"roles": [], "traits": []})
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.slots_reader_factory",
+        lambda runtime, **kwargs: events.append(f"slots.reader({kwargs})") or "slots-reader",
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.read_cw_slots", fake_read_slots)
+    monkeypatch.setattr("trail.daemon.cw_service.open_cw_shop", lambda session, opener: events.append("shop.open") or session)
+    monkeypatch.setattr("trail.daemon.cw_service.shop_page_snapshot_reader_factory", lambda runtime, **kwargs: "page-reader")
+    monkeypatch.setattr("trail.daemon.cw_service.scan_cw_shop", fake_scan_shop)
+    monkeypatch.setattr("trail.daemon.cw_service.project_cw_shop_snapshot", fake_project_shop)
+    monkeypatch.setattr("trail.daemon.cw_service.close_cw_shop", fake_close_shop)
+    monkeypatch.setattr("trail.daemon.cw_service.crystal_collector_factory", lambda runtime: "crystal-collector")
+    monkeypatch.setattr("trail.daemon.cw_service.shop_opener_factory", lambda runtime: "shop-opener")
+    monkeypatch.setattr("trail.daemon.cw_service.shop_closer_factory", lambda runtime: "shop-closer")
+    if sleeps is None:
+        monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: None)
+    else:
+        monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: sleeps.append(seconds))
+
+
 def test_command_service_handles_cw_portal_select_and_auto_applies_selected_guide(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
+
+    events: list[str] = []
 
     class Runtime:
         def __init__(self):
             self.capture_requests: list[tuple[bool, str | None]] = []
+            self.capture_after_shop_close = False
 
         def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_after_shop_close = bool(events and events[-1] == "shop.close")
             self.capture_requests.append((optional, request_id))
             return tmp_path / ".trail" / "shots" / "req-cw-portal-select.png"
 
@@ -4243,6 +4319,7 @@ def test_command_service_handles_cw_portal_select_and_auto_applies_selected_guid
         lambda session, runtime: None,
         raising=False,
     )
+    _patch_cw_portal_select_auto_collect_success(monkeypatch, events)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
         request_id="req-cw-portal-select",
@@ -4263,12 +4340,24 @@ def test_command_service_handles_cw_portal_select_and_auto_applies_selected_guid
         "portal_description": "Desc",
         "score": 0.88,
         "skill_info": [{"name": "运营思路", "text": "前期按测试运营"}],
+        "crystals": {"last_crystal_collection": "done"},
+        "slots": {"front": [{"name": "希儿"}], "back": [], "hand": [], "stale": False},
+        "shop": {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "coins": 40,
+            "reserve_full": False,
+            "stage_status_stale": True,
+        },
     }
+    assert events[-2:] == ["shop.project", "shop.close"]
     assert payload["screenshot"] == ".trail/shots/req-cw-portal-select.png"
     assert applied_share_codes == ["##demo##"]
     assert service.load_session(session.session_id).scene_state["cw"]["portal"]["stale"] is True
     assert service.request_status("req-cw-portal-select")["final_state"] == "completed"
     assert runtime.capture_requests == [(False, "req-cw-portal-select")]
+    assert runtime.capture_after_shop_close is True
 
 
 def test_command_service_handles_cw_portal_select_waits_extra_before_capture(tmp_path: Path, monkeypatch):
@@ -4317,7 +4406,7 @@ def test_command_service_handles_cw_portal_select_waits_extra_before_capture(tmp
         lambda session, runtime: None,
         raising=False,
     )
-    monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: sleeps.append(seconds))
+    _patch_cw_portal_select_auto_collect_success(monkeypatch, [], sleeps=sleeps)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
         request_id="req-cw-portal-select-delay",
@@ -4333,8 +4422,118 @@ def test_command_service_handles_cw_portal_select_waits_extra_before_capture(tmp
 
     assert payload["ok"] is True
     assert applied_share_codes == ["##demo##"]
-    assert sleeps == [2.0]
+    assert sleeps == [1.5, 2.0]
     assert runtime.capture_requests == [(False, "req-cw-portal-select-delay")]
+
+
+def test_command_service_marks_cw_portal_select_auto_collect_failure_as_recoverable_and_blocks_followup_mutations(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+
+    session_services = SessionServiceRegistry()
+    service = session_services.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    loaded = service.load_session(session.session_id)
+    loaded.scene_state["cw"] = {
+        "guide": _complete_cw_guide_fixture(),
+        "constraints": _complete_cw_constraints_fixture(),
+        "portal": {"cards": [{"card_idx": 1, "portal_title": "商店"}], "mode": "new", "difficulty": "normal", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(loaded)
+
+    class Runtime:
+        def click_point(self, x, y):
+            return None
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            return tmp_path / ".trail" / "shots" / "req-cw-portal-select-auto-collect-fail.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            return []
+
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **_: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=session_services, cw_service=cw_service)
+    events: list[str] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: events.append("select")
+        or runtime.click_point(1, 1)
+        or session.scene_state["cw"]["portal"].__setitem__("stale", True)
+        or {"card_idx": card_idx, "portal_title": "商店"},
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.wait_cw_portal_preparation",
+        lambda session, runtime: events.append("wait") or None,
+        raising=False,
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: events.append("apply"))
+    monkeypatch.setattr("trail.daemon.cw_service.collect_cw_crystals", lambda session, collector: events.append("crystal.collect") or session)
+    monkeypatch.setattr("trail.daemon.cw_service.dismiss_cw_slots_overlay", lambda runtime: events.append("slots.dismiss"))
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {"roles": [], "traits": []})
+    monkeypatch.setattr("trail.daemon.cw_service.crystal_collector_factory", lambda runtime: "crystal-collector")
+    monkeypatch.setattr("trail.daemon.cw_service.slots_reader_factory", lambda runtime, **kwargs: events.append(f"slots.reader({kwargs})") or "slots-reader")
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.read_cw_slots",
+        lambda session, reader, targets=None, guide_config=None: events.append("slots.read")
+        or (_ for _ in ()).throw(TrailError("SLOTS_READ_EMPTY", "empty")),
+    )
+
+    response = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-portal-select-auto-collect-fail",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.portal.select",
+            payload={"session_id": session.session_id, "card_idx": 1},
+        )
+    )
+    status_response = command_service.handle(
+        DaemonRequest(
+            request_id="req-daemon-request-status-portal-select-auto-collect-fail",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="daemon.request_status",
+            payload={"request_id": "req-cw-portal-select-auto-collect-fail"},
+        )
+    )
+    blocked = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-guide-apply-blocked-after-auto-collect-taint",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.guide.apply",
+            payload={"session_id": session.session_id},
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["request_id"] == "req-cw-portal-select-auto-collect-fail"
+    assert response["error"] == {
+        "code": "DAEMON_UNAVAILABLE",
+        "message": "mutation result unknown",
+    }
+    assert response["debug"]["last_known_stage"] == "side_effect_applied"
+    assert status_response["ok"] is True
+    assert status_response["data"]["final_state"] == "applied_but_not_persisted"
+    assert status_response["data"]["tainted"] is True
+    assert status_response["data"]["last_visible_stage"] == "responded"
+    assert events == ["select", "wait", "apply", "crystal.collect", "slots.dismiss", "slots.reader({'dismiss_initial_overlay': False})", "slots.read"]
+    assert service.is_session_tainted(session.session_id) is True
+    assert blocked["ok"] is False
+    assert blocked["error"]["code"] == "SESSION_RECONCILE_REQUIRED"
 
 
 def test_command_service_marks_cw_portal_select_post_click_apply_failure_as_recoverable_and_blocks_followup_mutations(

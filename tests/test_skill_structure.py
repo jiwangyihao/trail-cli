@@ -228,6 +228,14 @@ def _lines_with_tokens(text: str, *tokens: str) -> list[str]:
     ]
 
 
+def _assert_text_contains_in_order(text: str, *snippets: str) -> None:
+    cursor = 0
+    for snippet in snippets:
+        index = text.find(snippet, cursor)
+        assert index != -1, snippet
+        cursor = index + len(snippet)
+
+
 def _load_triggers() -> list[dict]:
     return json.loads(TRIGGERS.read_text(encoding="utf-8"))
 
@@ -1446,6 +1454,40 @@ def test_active_cw_skills_document_prep_handoff_without_direct_user_prep() -> No
     prep_lines = [line for line in entry_text.splitlines() if "trail-cw-prep" in line]
     assert prep_lines
     assert all("direct-user" not in line and "公共入口" not in line for line in prep_lines)
+
+
+def test_active_cw_skills_document_portal_select_auto_collect_prep_facts() -> None:
+    entry_text = CW_ENTRY_SKILL.read_text(encoding="utf-8")
+    portal_text = CW_PORTAL_SKILL.read_text(encoding="utf-8")
+    prep_text = CW_PREP_SKILL.read_text(encoding="utf-8")
+    scene_index_text = SCENE_ENTRY_INDEX.read_text(encoding="utf-8")
+
+    assert "不是整局 owner" in entry_text
+    assert "自动收集初始备战 slots/shop 信息" in entry_text
+    assert "不需要再立即重复扫描相同事实" in entry_text
+
+    _assert_text_contains_in_order(
+        portal_text,
+        "`cw.portal.select` / `portal select --card-idx ...` 成功后",
+        "自动收集水晶、slots/shop/stage 预备事实并关闭商店",
+        "先读 screenshot",
+        "不要手动再跑 slots/shop 初始扫描",
+        "按 handoff 切到 `trail-cw-prep`",
+    )
+    assert "recover/taint" in portal_text
+    assert "不要继续假设已进入 prep 并操作商店" in portal_text
+
+    _assert_text_contains_in_order(
+        prep_text,
+        "若上一条 `cw.portal.select` success 输出含 `slot`、`item` 或 `info stage_` 事实",
+        "必须先读截图",
+        "制定第一步备战动作",
+        "只有事实缺失、stale 或页面已变化时",
+        "才主动调用 `trail cw slots read` 或 `trail cw shop scan`",
+    )
+
+    assert "自动收集 slots/shop 初始快照" in scene_index_text
+    assert "不会改变 `trail-cw-prep` 的 internal 身份" in scene_index_text
 
 
 def test_cw_portal_reference_files_exist_with_required_content() -> None:

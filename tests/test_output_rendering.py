@@ -653,7 +653,7 @@ def test_readme_documents_selected_guide_and_portal_auto_apply_flow() -> None:
         cw_flow_section,
         "- 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入当前 session；这一步不执行 UI 应用，也不创建当前攻略快照或额外追踪产物",
         "- 回到开局链路后，`trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略",
-        "- `cw.portal.select` 成功进入普通备战后会 handoff 到 internal 的 `trail-cw-prep`，由它先读截图和收集普通备战事实",
+        "- `cw.portal.select` 成功进入普通备战后会自动收集水晶、slots/shop 预备事实并关闭商店；输出仍要求先读截图，再消费 `slot`、羁绊 `info`、商店 `item`、coins/stage `info`，最后按 handoff 切到 internal 的 `trail-cw-prep`",
         "- `trail cw guide apply --session <id>` 只作为手动兜底；如需回顾当前已选攻略：`trail cw guide current --session <id>`",
     )
     _assert_text_contains_in_order(
@@ -681,10 +681,53 @@ def test_readme_documents_selected_guide_and_portal_auto_apply_flow() -> None:
 def test_readme_locks_cw_portal_select_success_screenshot_order() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert (
-        "```text\nok cw.portal.select idx=1 投资环境=击破概念股\nshot path=.trail/shots/req-portal-select.png\ninfo read_image_first=1\ninfo skill_info=运营思路 text=\"前期：先收集事实，再按后续策略处理\"\ninfo handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered\n```"
-        in readme
+    portal_example = (
+        readme.split("```text\nok cw.portal.select idx=1 投资环境=击破概念股\n", 1)[1]
+        .split("\n```", 1)[0]
     )
+    portal_lines = ["ok cw.portal.select idx=1 投资环境=击破概念股", *portal_example.splitlines()]
+
+    _assert_text_contains_in_order(
+        "\n".join(portal_lines),
+        "ok cw.portal.select idx=1 投资环境=击破概念股",
+        "shot path=.trail/shots/req-portal-select.png",
+        "info read_image_first=1",
+        "info skill_info=运营思路 text=前期：先收集事实，再按后续策略处理",
+        "slot pos=front:0 name=希儿 star=1 traits=巡猎",
+        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+        "item idx=1 slot=1 name=银狼 cost=20",
+        "info coins=40 reserve_full=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    )
+    assert portal_lines[1:3] == [
+        "shot path=.trail/shots/req-portal-select.png",
+        "info read_image_first=1",
+    ]
+    assert portal_lines[-1] == "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered"
+    assert "`cw.portal.select` 应用攻略后会自动收集水晶、读取槽位、扫描商店并关闭商店" in readme
+    assert "最终截图停留在无浮层普通备战页" in readme
+    assert "即使 `cw.portal.select` 已输出 slots/shop 文本事实，Agent 仍必须先读 `shot path=...` 对应原始截图" in readme
+    assert " opened=" not in portal_example
+    assert " stale=" not in portal_example
+
+
+def test_agents_document_cw_portal_select_auto_collect_contract() -> None:
+    agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    _assert_text_contains_in_order(
+        agents,
+        "`cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`",
+        "`cw.portal.select` 成功进入备战页后会自动收集 slots/shop 预备事实",
+        "`shot path=...` 后必须紧跟 `info read_image_first=1`",
+        "`info skill_info=运营思路 text=...`",
+        "（如有）之后复用 `cw.slots.read` 的 `slot` 行与羁绊 `info` 摘要",
+        "复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影",
+        "`warn`、`ref` 之前输出",
+        "success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`",
+    )
+    assert "自动收集得到的 shop `opened/stale` 不进入首行，也不作为 body 事实渲染" in agents
+    assert "不要因为已有 slots/shop 文本就跳过截图" in agents
 
 
 def test_readme_routes_stage_invest_to_strategy() -> None:
@@ -3072,6 +3115,66 @@ def test_portal_select_renders_skill_info_before_warn_ref_and_handoff_last(capsy
         index for index, line in enumerate(lines) if line.startswith("warn ")
     )
     assert lines[-1] == "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered"
+
+
+def test_portal_select_renders_collected_slots_and_shop_before_warn_ref_and_handoff(capsys) -> None:
+    print_output(
+        "cw.portal.select",
+        {
+            "ok": True,
+            "screenshot": ".trail/shots/portal-prep.png",
+            "data": {
+                "card_idx": 1,
+                "portal_title": "击破概念股",
+                "skill_info": [{"name": "运营思路", "text": "先收集事实"}],
+                "slots": {
+                    "front": [{"name": "希儿", "star": 1, "traits": ["巡猎"]}],
+                    "back": [],
+                    "hand": [{"name": "停云"}],
+                    "stale": False,
+                    "trait_summary": [
+                        {
+                            "trait": "巡猎",
+                            "tiers": [1, 2],
+                            "owned_roles": 1,
+                            "active_tier": 1,
+                            "total_tiers": 2,
+                            "ratio": 0.5,
+                        }
+                    ],
+                },
+                "shop": {
+                    "opened": True,
+                    "stale": False,
+                    "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                    "coins": 40,
+                    "reserve_full": False,
+                    "stage_status": {"level": 3, "exp": "0/8", "team_size": "1/2", "stale": False},
+                    "stage_status_stale": False,
+                },
+            },
+            "warnings": [{"code": "W", "message": "warn text"}],
+            "references": [{"path": "p", "similarity": 0.9}],
+        },
+    )
+    lines = capsys.readouterr().out.strip().splitlines()
+
+    assert lines == [
+        "ok cw.portal.select idx=1 投资环境=击破概念股",
+        "shot path=.trail/shots/portal-prep.png",
+        "info read_image_first=1",
+        "info skill_info=运营思路 text=先收集事实",
+        "slot pos=front:0 name=希儿 star=1 traits=巡猎",
+        "slot pos=hand:0 name=停云",
+        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+        "item idx=1 slot=1 name=银狼 cost=20",
+        "info coins=40 reserve_full=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        'warn code=W msg="warn text"',
+        "ref path=p sim=0.9",
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+    assert not any(" opened=" in line or " stale=" in line for line in lines)
 
 
 def test_portal_select_skips_malformed_skill_info_items(capsys) -> None:

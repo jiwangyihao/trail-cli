@@ -558,6 +558,55 @@ def test_build_cw_slots_reader_dismisses_center_before_first_slot_capture(monkey
     assert sleeps[0] == 1.0
 
 
+def test_build_cw_slots_reader_can_skip_initial_overlay_dismiss(monkeypatch):
+    slots_module = load_cw_slots_module()
+    build_cw_slots_reader = getattr(slots_module, "build_cw_slots_reader", None)
+    assert build_cw_slots_reader is not None
+    events: list[str] = []
+
+    class RuntimeSpy:
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            point = (x, y)
+            if point == slots_module.INFO_DISMISS_POINT:
+                events.append("click(INFO_DISMISS_POINT)")
+            else:
+                events.append(f"click({point})")
+
+        def capture_image(self, **kwargs):
+            del kwargs
+            return object()
+
+    batch_by_key = {
+        ("stage_status", "level"): SimpleNamespace(text="1"),
+        ("stage_status", "exp"): SimpleNamespace(text="0/2"),
+        ("stage_status", "team_size"): SimpleNamespace(text="1/2"),
+        ("slot", "front", 0): SimpleNamespace(text="希儿"),
+    }
+
+    monkeypatch.setattr(slots_module, "sleep", lambda seconds: events.append(f"sleep({seconds})"), raising=False)
+    monkeypatch.setattr(
+        slots_module,
+        "run_batch_ocr",
+        lambda runtime, targets, trace_prefix: SimpleNamespace(by_key=batch_by_key),
+        raising=False,
+    )
+    monkeypatch.setattr(slots_module, "_read_slot_star_counts", lambda captures: {("front", 0): 1}, raising=False)
+
+    reader = build_cw_slots_reader(RuntimeSpy(), targets=["front:0"], dismiss_initial_overlay=False)
+
+    result = _assert_slots_read_result(reader())
+
+    assert result.front[0] == {"name": "希儿", "star": 1}
+    assert events[0] == f"click({slots_module.FRONT_SLOT_POINTS[0]})"
+    assert "sleep(1.0)" not in events[:1]
+    assert events.count("click(INFO_DISMISS_POINT)") == 1
+
+
 def test_capture_slot_name_panel_image_waits_longer_before_capture_and_keeps_dismiss_settle(monkeypatch):
     slots_module = load_cw_slots_module()
     capture_slot_name_panel_image = getattr(slots_module, "_capture_slot_name_panel_image", None)

@@ -29,7 +29,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `trail-cw-guide` 不是 scene entry、不是默认 owner、也不是整局 owner；真正进入开局流程仍要回到 `trail-cw-entry`。
 - `trail-cw-portal` 是 internal portal-page skill；主要在 `trail cw start` 或 `trail cw portal refresh` 成功停留在投资环境页后切入，不是 direct-user 公共入口、不是 scene entry、也不是 owner。
 - `trail-cw-portal` 在投资环境页负责 `portal detect/refresh/restart/select` 与环境优先逻辑；如果攻略还没定，就切到 `trail-cw-guide` 的无人值守模式按当前环境定攻略，再回到当前投资环境页流程。
-- `trail-cw-prep` 是 internal 普通备战阶段 skill；只在 `cw.portal.select` 成功后的 post-portal handoff 中切入，不是 public scene entry、不是 direct-user、不是 owner。
+- `trail-cw-prep` 是 internal 普通备战阶段 skill；只在 `cw.portal.select` 成功后的 post-portal handoff 中切入，不是 public scene entry、不是 direct-user、不是 owner；接手时优先消费上一条 `cw.portal.select` 自动带回的 slots/shop/stage facts。
 - `trail-hsr-advanced` 是内部恢复层，用于启动失败、窗口接管异常、daemon / session 恢复等底层问题。
 - `trail-hsr-advanced` 不作为用户入口；只有 `trail-hsr` 或当前 active 的 scene entry 需要恢复链路时才会内部升级到它。
 - 旧货币战争 archive skill 已归档，不再作为 active owner 或推荐入口。
@@ -79,7 +79,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
   - `trail cw portal restart --session <id>`
 - 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入当前 session；这一步不执行 UI 应用，也不创建当前攻略快照或额外追踪产物
 - 回到开局链路后，`trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略
-- `cw.portal.select` 成功进入普通备战后会 handoff 到 internal 的 `trail-cw-prep`，由它先读截图和收集普通备战事实
+- `cw.portal.select` 成功进入普通备战后会自动收集水晶、slots/shop 预备事实并关闭商店；输出仍要求先读截图，再消费 `slot`、羁绊 `info`、商店 `item`、coins/stage `info`，最后按 handoff 切到 internal 的 `trail-cw-prep`
 - `trail cw guide apply --session <id>` 只作为手动兜底；如需回顾当前已选攻略：`trail cw guide current --session <id>`
 - `trail cw guide` 只负责当前对局已选攻略的 current/apply；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
 - `stage=invest` 时，不要默认走 `trail cw invest.*`
@@ -237,9 +237,17 @@ guide idx=1 gid=1 最终阵容=希儿/carry:1/star:5/rarity:3
 ok cw.portal.select idx=1 投资环境=击破概念股
 shot path=.trail/shots/req-portal-select.png
 info read_image_first=1
-info skill_info=运营思路 text="前期：先收集事实，再按后续策略处理"
+info skill_info=运营思路 text=前期：先收集事实，再按后续策略处理
+slot pos=front:0 name=希儿 star=1 traits=巡猎
+info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50
+item idx=1 slot=1 name=银狼 cost=20
+info coins=40 reserve_full=0
+info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0
 info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered
 ```
+
+- `cw.portal.select` 应用攻略后会自动收集水晶、读取槽位、扫描商店并关闭商店；最终截图停留在无浮层普通备战页。
+- 即使 `cw.portal.select` 已输出 slots/shop 文本事实，Agent 仍必须先读 `shot path=...` 对应原始截图，再消费后续压缩文本。
 
 - `cw.strategy.detect|refresh` 的 `info 已加载攻略=0|1` 固定在所有 `opt` 行之后
 
