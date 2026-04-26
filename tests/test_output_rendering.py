@@ -459,8 +459,9 @@ def test_readme_and_active_skills_document_help_boundaries() -> None:
     request_status_and_taint = REQUEST_STATUS_AND_TAINT_PATH.read_text(encoding="utf-8")
 
     assert "货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页" in readme
-    assert "常规 battle / settle 流程默认执行：`trail cw battle run --session <id> --timeout 570`" in readme
-    assert "命令行工具的外部 timeout 至少调到 11 分钟" in readme
+    assert "常规 battle / settle 流程默认执行：`trail cw battle run --session <id>`；默认 timeout 现在是 `90s`" in readme
+    assert "info next_action=cw.battle.run why=battle_flow_not_finished" in readme
+    assert "结算页也属于 battle flow" in readme
     assert "`trail state dump --session <id> --format yaml`" in readme
     assert "`trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断" in readme
     assert "`cw`：货币战争固定流程命令" in readme
@@ -491,6 +492,68 @@ def test_readme_and_active_skills_document_help_boundaries() -> None:
     assert "trail daemon request-status --request-id <id>" in request_status_and_taint
     assert "trail daemon reconcile-session --session <id>" in request_status_and_taint
     assert "trail state dump --session <id> --format yaml" in advanced_command_surface
+
+
+def test_readme_documents_battle_run_short_timeout_and_resume_contract() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    stage_reference = (PROJECT_ROOT / "docs" / "cw-stage-reference" / "README.md").read_text(encoding="utf-8")
+    entry_skill = CW_ENTRY_SKILL_PATH.read_text(encoding="utf-8")
+    simple_surface = SIMPLE_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
+    cw_flow_section = _markdown_section(readme, "货币战争流程")
+    command_overview_section = _markdown_section(readme, "命令面概览")
+    skill_boundary_section = _markdown_section(readme, "Skill 边界")
+    settle_reference_section = _markdown_section(stage_reference, "08-cw-round-settle-success.jpg")
+    entry_battle_resume_section = _markdown_section(entry_skill, "Battle Flow Resume")
+
+    for section in (cw_flow_section, command_overview_section, skill_boundary_section):
+        assert "默认 timeout 现在是 `90s`" in section
+        assert "结算页也属于 battle flow" in section
+        assert "info next_action=cw.battle.run why=battle_flow_not_finished" in section
+        assert "trail cw battle clear-in-progress --session <id>" in section
+        assert "只清内部提示位" in section
+        assert "--timeout 570" not in section
+        assert "timeout 570" not in section
+        assert "570s" not in section
+
+    assert "结算页也属于 battle flow" in settle_reference_section
+    assert "`trail cw battle run --session <id>`" in settle_reference_section
+    assert "若要继续当前对局的下一小节，运行" not in settle_reference_section
+    assert "- `trail cw settle next --session <id>`" not in settle_reference_section
+    assert "--timeout 570" not in settle_reference_section
+    assert "570s" not in settle_reference_section
+
+    assert "默认 timeout 现在是 `90s`" in entry_battle_resume_section
+    assert "返回 `status=in_progress` 时，先读取本次截图" in entry_battle_resume_section
+    assert "结算页也属于 battle flow" in entry_battle_resume_section
+    assert "trail cw battle clear-in-progress --session <id>" in entry_battle_resume_section
+    assert "只清 battle.run 的内部续跑提示位" in entry_battle_resume_section
+    assert "不实现新的 skill 本体" in entry_battle_resume_section
+    assert "--timeout 570" not in entry_battle_resume_section
+    assert "570s" not in entry_battle_resume_section
+
+    _assert_text_contains_in_order(
+        simple_surface,
+        "battle in-progress 当前只是场景/命令说明，不实现新的 skill 本体",
+        "info next_action=cw.battle.run why=battle_flow_not_finished",
+        "若仍在 battle flow 中，就继续运行 `trail cw battle run --session <id>`",
+        "结算页也属于 battle flow",
+        "默认 timeout 现在是 `90s`",
+        "trail cw battle clear-in-progress --session <id>",
+        "只清 battle.run 的内部续跑提示位",
+    )
+    assert "--timeout 570" not in simple_surface
+    assert "570s" not in simple_surface
+
+    assert "默认 timeout 现在是 `90s`" in readme
+    assert "结算页也属于 battle flow" in readme
+    assert "info next_action=cw.battle.run why=battle_flow_not_finished" in readme
+    assert "trail cw battle clear-in-progress --session <id>" in readme
+    assert "cw.battle.clear_in_progress" in agents
+    assert "不加入 YAML allowlist" in agents
+    assert "结算页也属于 battle flow" in stage_reference
+    assert "仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`" in entry_skill
+    assert "battle in-progress" in simple_surface
 
 
 def test_readme_documents_portal_detect_recovery_contract() -> None:
@@ -660,13 +723,15 @@ def test_battle_run_as_default_entry_is_documented_across_readme_and_skills() ->
     preparation_stage_section = _markdown_section(stage_reference, "06-cw-preparation-stage.jpg")
     advanced_command_surface = ADVANCED_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
 
-    assert "`trail cw battle run --session <id> --timeout 570`" in cw_flow_section
-    assert "命令行工具的外部 timeout 至少调到 11 分钟" in cw_flow_section
+    assert "`trail cw battle run --session <id>`；默认 timeout 现在是 `90s`" in cw_flow_section
+    assert "info next_action=cw.battle.run why=battle_flow_not_finished" in cw_flow_section
+    assert "结算页也属于 battle flow" in cw_flow_section
     assert "`trail state dump --session <id> --format yaml`" in cw_flow_section
     assert "`trail cw battle start` / `trail cw battle continue` / `trail cw settle next`" in cw_flow_section
     assert "只建议在内部 fallback 流程中手工拆链使用" in cw_flow_section
     assert "`battle` / `settle` 分组仍保留兼容原子命令" in command_overview_section
-    assert "常规 battle / settle 默认入口是 `trail cw battle run --session <id> --timeout 570`" in command_overview_section
+    assert "常规 battle / settle 默认入口是 `trail cw battle run --session <id>`" in command_overview_section
+    assert "默认 timeout 现在是 `90s`" in command_overview_section
     assert "只建议在内部 fallback 流程使用" in command_overview_section
     assert "`trail-hsr` 是对外总入口" in skill_boundary_section
     assert "`trail-<scene>-entry` 是对外场景入口" in skill_boundary_section
@@ -674,7 +739,8 @@ def test_battle_run_as_default_entry_is_documented_across_readme_and_skills() ->
     assert "`trail-hsr-advanced` 是内部恢复层" in skill_boundary_section
     assert "`trail-hsr-advanced` 不作为用户入口" in skill_boundary_section
     assert "`trail state dump --session <id> --format yaml`" in advanced_command_surface
-    assert "`trail cw battle run --session <id> --timeout 570`" in preparation_stage_section
+    assert "`trail cw battle run --session <id>`" in preparation_stage_section
+    assert "默认 timeout 现在是 `90s`" in preparation_stage_section
     assert "`trail cw battle start --session <id>`" in preparation_stage_section
     assert "advanced/manual fallback" in preparation_stage_section
 
@@ -768,7 +834,7 @@ def test_render_output_cw_battle_run_timeout_in_settle_chain():
             "coins": 4,
             "exp": 2,
             "settle_text": "挑战成功",
-            "timeout_seconds": 570,
+            "timeout_seconds": 90,
         },
         "screenshot": ".trail/shots/req-cw-battle-run-settle-timeout.png",
         "timing": {},
@@ -784,7 +850,8 @@ def test_render_output_cw_battle_run_timeout_in_settle_chain():
         "info read_image_first=1",
         "info round=1-1 hp=82 coins=4 exp=2",
         "info settle_text=挑战成功",
-        "info timeout_seconds=570",
+        "info timeout_seconds=90",
+        "info next_action=cw.battle.run why=battle_flow_not_finished",
     ]
 
 
@@ -795,7 +862,7 @@ def test_render_output_cw_battle_run_timeout_in_battle_only():
             "status": "in_progress",
             "stale": True,
             "in_battle": True,
-            "timeout_seconds": 570,
+            "timeout_seconds": 90,
         },
         "screenshot": ".trail/shots/req-cw-battle-run-timeout.png",
         "timing": {},
@@ -809,7 +876,78 @@ def test_render_output_cw_battle_run_timeout_in_battle_only():
         "ok cw.battle.run status=in_progress stale=1 in_battle=1",
         "shot path=.trail/shots/req-cw-battle-run-timeout.png",
         "info read_image_first=1",
-        "info timeout_seconds=570",
+        "info timeout_seconds=90",
+        "info next_action=cw.battle.run why=battle_flow_not_finished",
+    ]
+
+
+def test_render_output_cw_battle_run_in_progress_adds_next_action_hint():
+    payload = {
+        "ok": True,
+        "data": {
+            "status": "in_progress",
+            "stale": True,
+            "in_battle": True,
+            "timeout_seconds": 90,
+        },
+        "screenshot": ".trail/shots/req-cw-battle-run-in-progress.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.battle.run", payload).splitlines() == [
+        "ok cw.battle.run status=in_progress stale=1 in_battle=1",
+        "shot path=.trail/shots/req-cw-battle-run-in-progress.png",
+        "info read_image_first=1",
+        "info timeout_seconds=90",
+        "info next_action=cw.battle.run why=battle_flow_not_finished",
+    ]
+
+
+def test_render_output_cw_battle_run_settle_in_progress_adds_next_action_hint():
+    payload = {
+        "ok": True,
+        "data": {
+            "status": "in_progress",
+            "stage": "settle",
+            "stale": True,
+            "in_battle": False,
+            "timeout_seconds": 90,
+        },
+        "screenshot": ".trail/shots/req-cw-battle-run-settle-in-progress.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.battle.run", payload).splitlines() == [
+        "ok cw.battle.run status=in_progress stage=settle stale=1 in_battle=0",
+        "shot path=.trail/shots/req-cw-battle-run-settle-in-progress.png",
+        "info read_image_first=1",
+        "info timeout_seconds=90",
+        "info next_action=cw.battle.run why=battle_flow_not_finished",
+    ]
+
+
+def test_render_output_cw_battle_clear_in_progress_summary():
+    payload = {
+        "ok": True,
+        "data": {"cleared": False},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.battle.clear_in_progress", payload).splitlines() == [
+        "ok cw.battle.clear_in_progress cleared=0",
     ]
 
 
@@ -840,7 +978,7 @@ def test_render_output_cw_battle_run_timeout_in_battle_only():
                     "status": "in_progress",
                     "stale": True,
                     "in_battle": False,
-                    "timeout_seconds": 570,
+                    "timeout_seconds": 90,
                 },
                 "screenshot": ".trail/shots/req-cw-battle-run-sparse-timeout.png",
                 "timing": {},
@@ -853,7 +991,8 @@ def test_render_output_cw_battle_run_timeout_in_battle_only():
                 "ok cw.battle.run status=in_progress stale=1 in_battle=0",
                 "shot path=.trail/shots/req-cw-battle-run-sparse-timeout.png",
                 "info read_image_first=1",
-                "info timeout_seconds=570",
+                "info timeout_seconds=90",
+                "info next_action=cw.battle.run why=battle_flow_not_finished",
             ],
         ),
     ],

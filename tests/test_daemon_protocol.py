@@ -4599,13 +4599,103 @@ def _run_cw_battle_run_timeout_capture(tmp_path: Path, monkeypatch, raw_timeout=
 _run_cw_battle_run_timeout_capture.sentinel = object()
 
 
-@pytest.mark.parametrize("raw_timeout", [0, -1, False, "42", _run_cw_battle_run_timeout_capture.sentinel])
+@pytest.mark.parametrize("raw_timeout", [0, -1, False, True, "45", _run_cw_battle_run_timeout_capture.sentinel])
 def test_cw_battle_run_timeout_invalid_values_fall_back_to_default(tmp_path: Path, monkeypatch, raw_timeout):
-    assert _run_cw_battle_run_timeout_capture(tmp_path, monkeypatch, raw_timeout) == 570
+    assert _run_cw_battle_run_timeout_capture(tmp_path, monkeypatch, raw_timeout) == 90
 
 
 def test_cw_battle_run_timeout_keeps_positive_int(tmp_path: Path, monkeypatch):
-    assert _run_cw_battle_run_timeout_capture(tmp_path, monkeypatch, 42) == 42
+    assert _run_cw_battle_run_timeout_capture(tmp_path, monkeypatch, 45) == 45
+
+
+def test_command_service_clear_in_progress_preserves_last_battle_summary(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw.models import ensure_cw_state
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.last_result = {
+        "command": "cw.battle.run",
+        "ok": True,
+        "data": {"status": "in_progress", "in_battle": True, "round": "1-4"},
+        "error": None,
+    }
+    session.last_screenshot = ".trail/shots/req-battle.png"
+    ensure_cw_state(session)["battle_resume"] = {"in_battle_hint": True}
+    ensure_cw_state(session)["stage"] = {"stale": True}
+    session.last_stage = {"scene": "cw", "value": "shop"}
+    session_service.save_session(session)
+
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: None)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-clear-in-progress",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.battle.clear_in_progress",
+            payload={},
+        )
+    )
+
+    refreshed = session_service.load_session(session.session_id)
+    assert payload["ok"] is True
+    assert payload["data"] == {"cleared": True}
+    assert refreshed.last_result == session.last_result
+    assert refreshed.last_screenshot == session.last_screenshot
+    assert ensure_cw_state(refreshed).get("stage") == {"stale": True}
+    assert refreshed.last_stage == {"scene": "cw", "value": "shop"}
+    assert ensure_cw_state(refreshed).get("battle_resume") == {}
+
+
+def test_command_service_clear_in_progress_without_hint_preserves_last_battle_summary(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw.models import ensure_cw_state
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.last_result = {
+        "command": "cw.battle.run",
+        "ok": True,
+        "data": {"status": "in_progress", "stage": "settle", "in_battle": False, "round": "1-4"},
+        "error": None,
+    }
+    session.last_screenshot = ".trail/shots/req-battle-settle.png"
+    ensure_cw_state(session)["battle_resume"] = {}
+    ensure_cw_state(session)["stage"] = {"stale": True}
+    session.last_stage = None
+    session_service.save_session(session)
+
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: None)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-clear-in-progress-empty",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.battle.clear_in_progress",
+            payload={},
+        )
+    )
+
+    refreshed = session_service.load_session(session.session_id)
+    assert payload["ok"] is True
+    assert payload["data"] == {"cleared": False}
+    assert refreshed.last_result == session.last_result
+    assert refreshed.last_screenshot == session.last_screenshot
+    assert ensure_cw_state(refreshed).get("stage") == {"stale": True}
+    assert refreshed.last_stage is None
+    assert ensure_cw_state(refreshed).get("battle_resume") == {}
 
 
 def test_command_service_handles_cw_battle_start_waits_extra_before_capture(tmp_path: Path, monkeypatch):
@@ -6088,18 +6178,23 @@ def test_start_run_and_battle_run_timeouts_share_unified_command_policy():
     assert resolve_command_execution_timeout("start.run", {}) == 180
     assert resolve_response_timeout("start.run", {}) == 180.0
     assert resolve_response_timeout("start.run", {"window_title": "崩坏：星穹铁道"}) == 180.0
-    assert resolve_command_execution_timeout("cw.battle.run", {}) == 570
-    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": 42}) == 42
-    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": 0}) == 570
-    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": -1}) == 570
-    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": False}) == 570
-    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": "42"}) == 570
-    assert resolve_response_timeout("cw.battle.run", {}) == 600.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": 42}) == 72.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": 0}) == 600.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": -1}) == 600.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": False}) == 600.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": "42"}) == 600.0
+    assert resolve_command_execution_timeout("cw.battle.run", {}) == 90
+    assert resolve_command_execution_timeout("cw.battle.run", None) == 90
+    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": 45}) == 45
+    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": 0}) == 90
+    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": -1}) == 90
+    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": False}) == 90
+    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": True}) == 90
+    assert resolve_command_execution_timeout("cw.battle.run", {"timeout": "45"}) == 90
+    assert resolve_response_timeout("cw.battle.run", {}) == 120.0
+    assert resolve_response_timeout("cw.battle.run", None) == 120.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": 90}) == 120.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": 45}) == 75.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": 0}) == 120.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": -1}) == 120.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": False}) == 120.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": True}) == 120.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": "45"}) == 120.0
 
 
 def test_client_returns_daemon_unavailable_when_transport_returns_non_object_json(tmp_path: Path):

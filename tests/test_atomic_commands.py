@@ -1574,6 +1574,35 @@ def test_state_dump_yaml_includes_latest_battle_run_summary(cli_runner, fake_dae
     ]
 
 
+def test_state_dump_yaml_includes_last_battle_round(cli_runner, fake_daemon_client, tmp_path):
+    session_id = "session-1"
+    client = fake_daemon_client(
+        {
+            "state.dump": build_success_response(
+                request_id="req-state-dump-round",
+                data={
+                    "session_id": session_id,
+                    "scene_state": {"cw": {"metrics": {"last_battle_round": "1-1"}}},
+                },
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["--format", "yaml", "state", "dump", "--session", session_id])
+
+    assert result.exit_code == 0
+    assert "last_battle_round: 1-1" in result.stdout
+    assert client.calls == [
+        {
+            "method": "state.dump",
+            "payload": {"session_id": session_id},
+            "workspace_root": str(tmp_path),
+            "session_id": session_id,
+            "verbose": False,
+        }
+    ]
+
+
 def test_state_dump_returns_structured_error_for_missing_session(cli_runner, fake_daemon_client, tmp_path, monkeypatch):
     session_id = "deadbeefdeadbeefdeadbeefdeadbeef"
 

@@ -31,6 +31,14 @@ description: 当用户已经明确要进入《崩坏：星穹铁道》的货币�
 
 `cw enter` 的定位仍是进入货币战争首页，也就是开局前决策点。`cw start` 的定位仍是在目标、优先级与默认难度表达确认后，把首页推进到投资环境页并真正开局。
 
+## Battle Flow Resume
+
+- 常规 battle / settle 流程默认使用 `trail cw battle run --session <id>`；默认 timeout 现在是 `90s`，不要再把长 timeout 当默认流程。
+- `trail cw battle run` 返回 `status=in_progress` 时，先读取本次截图；如果判断仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`。
+- battle flow 包含战斗中、结算页、结算翻页但未回到下一稳定阶段；结算页也属于 battle flow，仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`，不要因为看到结算页就切回旧 `settle next`。
+- `trail cw battle clear-in-progress --session <id>` 只清 battle.run 的内部续跑提示位，不清 battle 摘要、截图或阶段事实。
+- battle in-progress 本轮只补场景/命令说明，不实现新的 skill 本体。
+
 ## Workflow Handoff
 
 - 用户直接说“玩货币战争”时，可以直接命中这个 skill。

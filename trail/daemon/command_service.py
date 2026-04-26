@@ -65,6 +65,10 @@ CW_CAPTURED_READ_METHODS = {
     "cw.fortune.read",
 }
 
+CW_SESSION_SAVE_METHODS = {
+    "cw.battle.clear_in_progress",
+}
+
 START_RUN_STATUS_ALLOWLIST = {
     "attached",
     "launched_needs_check",
@@ -520,6 +524,8 @@ class CommandService:
             payload, session_id = self._canonicalize_cw_payload(request)
             if request.method in CW_CAPTURE_METHODS or request.method in CW_CAPTURED_READ_METHODS:
                 return self._run_cw_with_capture(request, service=service, payload=payload)
+            if request.method in CW_SESSION_SAVE_METHODS:
+                return success(self._run_cw(request, service=service, payload=payload), request_id=request.request_id)
             if request.method in CW_MUTATING_METHODS:
                 return self._run_mutation(
                     request,

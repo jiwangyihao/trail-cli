@@ -8,10 +8,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from trail.daemon.command_timeouts import (
-    CW_BATTLE_RUN_TIMEOUT_BUFFER_SECONDS,
-    DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS,
     SOCKET_RESPONSE_TIMEOUT_SECONDS,
-    normalize_cw_battle_run_timeout,
     resolve_command_response_timeout,
 )
 from trail.daemon.bootstrap import start_bootstrap, wait_until_runtime_ready
