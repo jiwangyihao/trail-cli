@@ -92,6 +92,9 @@
 - `cw.battle.run` 的 `status=in_progress` success 必须输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，提示 Agent 先看截图并在仍处于 battle flow 时重跑 `cw.battle.run`。
 - `cw.battle.clear_in_progress` canonical command 固定为 `cw.battle.clear_in_progress`，归入检测/状态摘要 renderer 家族；success 首行固定为 `ok cw.battle.clear_in_progress cleared=0|1`。
 - `cw.battle.clear_in_progress` 只清 battle.run 的内部续跑提示位，不清 battle 摘要、`last_result`、`last_screenshot` 或阶段事实；它不产出截图，不加入 YAML allowlist。
+- `cw.shop.scan|status` 的 stage 投影固定使用 `stage_level/stage_exp/stage_team_size/stage_status_stale`，属于既有 `info` 行，不新增正文前缀。
+- `cw.shop.scan|status` 必须保留 `stage_status_stale=0|1`；只有 `stage_status_stale=0` 时才允许输出 `stage_level/stage_exp/stage_team_size`，stale 或缺失时不得把旧值渲染成有效事实。
+- `cw.slots.read` 会刷新 `cw_state.stage.status`；`cw.shop.scan` 只扫描商店页商品/金币切片，并只投影 session 中已有的 `cw_state.stage.status`，不得重新 OCR 全局状态。
 - `cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id。
 - `cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径；`current/apply` 只看当前已选攻略摘要，完整攻略仍由 `guide.fetch.cw` 提供。
 - `guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。

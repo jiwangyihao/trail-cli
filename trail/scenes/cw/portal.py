@@ -11,6 +11,7 @@ from trail.runtime.model import Box
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.entry import _detect_current_enter_page
 from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.stage import _replace_stage_fields
 
 
 PORTAL_SCREEN_WIDTH = 1920
@@ -252,7 +253,7 @@ def _mark_portal_stale_after_selection(session) -> None:
         "difficulty": truth.get("difficulty"),
         "battle_mode": truth.get("battle_mode"),
     }
-    cw_state["stage"] = {"stale": True}
+    _replace_stage_fields(session, stale=True)
 
 
 def _card_center(card_idx: int) -> tuple[int, int]:

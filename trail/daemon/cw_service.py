@@ -68,6 +68,7 @@ from trail.scenes.cw.shop import (
     buy_cw_shop_slot,
     close_cw_shop,
     open_cw_shop,
+    project_cw_shop_snapshot,
     refresh_cw_shop,
     scan_cw_shop,
     shop_cw_status,
@@ -115,6 +116,15 @@ SIDE_EFFECT_RUNTIME_METHODS = {"click_point", "drag_to", "press_key", "type_text
 PORTAL_SELECT_EXTRA_CAPTURE_DELAY_SECONDS = 2.0
 CW_BATTLE_START_EXTRA_CAPTURE_DELAY_SECONDS = 3.0
 DEFAULT_CW_BATTLE_RUN_TIMEOUT = DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS
+
+
+def _build_shop_snapshot_reader(runtime, *, read_stage_status: bool = False):
+    try:
+        return shop_scan_snapshot_reader_factory(runtime, read_stage_status=read_stage_status)
+    except TypeError as exc:
+        if "read_stage_status" not in str(exc):
+            raise
+        return shop_scan_snapshot_reader_factory(runtime)
 
 
 def _is_valid_cw_start_difficulty(value: str) -> bool:
@@ -541,10 +551,12 @@ class CwService:
                 session,
                 opener=shop_opener_factory(runtime()),
             ).scene_state["cw"]["shop"],
-            "cw.shop.scan": lambda: scan_cw_shop(
-                session,
-                scanner=shop_scan_snapshot_reader_factory(runtime()),
-            ).scene_state["cw"]["shop"],
+            "cw.shop.scan": lambda: project_cw_shop_snapshot(
+                scan_cw_shop(
+                    session,
+                    scanner=_build_shop_snapshot_reader(runtime()),
+                )
+            ),
             "cw.shop.buy_slot": lambda: buy_cw_shop_slot(
                 session,
                 slot=payload["slot"],
@@ -555,7 +567,7 @@ class CwService:
             "cw.shop.buy_exp": lambda: buy_cw_shop_exp(
                 session,
                 buyer=shop_exp_buyer_factory(runtime()),
-                scanner=shop_scan_snapshot_reader_factory(runtime()),
+                scanner=_build_shop_snapshot_reader(runtime(), read_stage_status=True),
             ).scene_state["cw"]["shop"],
             "cw.shop.refresh": lambda: refresh_cw_shop(
                 session,
@@ -672,11 +684,10 @@ def _operation_guide_skill_info(guide: dict | None) -> list[dict[str, str]]:
 
 def _shop_status(session, *, artifact_store: ArtifactStore) -> dict:
     del artifact_store
-    cw_state = session.scene_state.get("cw")
-    if not isinstance(cw_state, dict):
-        return {"stale": True}
     payload = shop_cw_status(session)
-    if complete_cw_guide_or_none(cw_state) is None:
+    cw_state = session.scene_state.get("cw")
+    guide_state = cw_state.get("guide") if isinstance(cw_state, dict) else None
+    if not isinstance(guide_state, dict):
         payload.pop("guide_summary", None)
     return payload
 

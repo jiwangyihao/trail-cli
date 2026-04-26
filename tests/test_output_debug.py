@@ -207,6 +207,66 @@ def test_verbose_output_ocr_mode_retry_context_uses_existing_debug_pipeline():
     assert all(line not in rendered for line in LEGACY_OCR_CONTEXT_DEBUG_LINES)
 
 
+def test_default_output_does_not_leak_batch_ocr_debug_data():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "opened": True,
+            "stale": False,
+            "stage_status_stale": True,
+        },
+        "screenshot": ".trail/shots/req-shop-batch-ocr.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "trace": [
+                {
+                    "step": "cw_shop_batch_ocr",
+                    "atlas": "debug-atlas.png",
+                    "rect": "0,0,120,40",
+                    "target_count": 2,
+                }
+            ]
+        },
+        "error": None,
+    }
+
+    rendered = render_output("cw.shop.scan", payload)
+
+    assert "debug" not in rendered
+    assert "atlas" not in rendered
+    assert "rect" not in rendered
+
+
+def test_verbose_output_renders_cw_shop_batch_ocr_trace():
+    payload = {
+        "ok": True,
+        "data": {"items": [], "opened": True, "stale": False, "stage_status_stale": True},
+        "screenshot": ".trail/shots/req-shop-batch-ocr-verbose.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {
+            "trace": [
+                {
+                    "step": "cw_shop_batch_ocr",
+                    "target_count": 2,
+                    "atlas_width": 256,
+                    "atlas_height": 64,
+                    "ok": True,
+                }
+            ]
+        },
+        "error": None,
+    }
+
+    assert "debug kind=trace step=cw_shop_batch_ocr" in render_output("cw.shop.scan", payload, verbose=True)
+
+
 def test_verbose_output_ocr_failure_keeps_ocr_trace_from_runtime(tmp_path):
     import trail.runtime.operator as operator_module
     from trail.output.capture import with_auto_capture
@@ -315,11 +375,9 @@ def test_project_agents_declares_renderer_contracts() -> None:
     assert "当前 YAML allowlist 是 `daemon.status`、`state.dump`、`guide.fetch.cw`、`guide.config.cw`。" in agents
     assert "guide.list.cw 的默认文本改用 攻略ID/攻略标题/版本/主C/攻略标签/最终阵容" in agents
     assert "cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`" in agents
-    assert "cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，只看当前已选攻略摘要，不输出额外追踪产物" in agents
-    assert "guide.fetch.cw --select` 只负责把完整攻略写入 session，不创建当前攻略快照或额外追踪产物，不扩张 success / YAML shape" in agents
-    assert "攻略快照ID" not in agents
-    assert "current-guide artifact" not in agents
-    assert "artifact id / 恢复追踪 id" not in agents
+    assert "cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id" in agents
+    assert "cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径" in agents
+    assert "guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape" in agents
     assert "cw.portal.select` 若响应 `data.skill_info` 非空，默认正文使用 `info skill_info=运营思路 text=...`" in agents
     assert "必须在 `warn`、`ref` 之前输出" in agents
     assert "cw.portal.select` 命中 workflow handoff 时，success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`" in agents
@@ -327,7 +385,7 @@ def test_project_agents_declares_renderer_contracts() -> None:
     assert "team_size=null` 是 must-keep null fact" in agents
     assert "cw.shop.buy_exp` 不在 YAML allowlist，`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`" in agents
     assert "不扩张 success / YAML shape" in agents
-    assert "guide.fetch.cw --select` 只负责把完整攻略写入 session" in agents
+    assert "guide.fetch.cw --select` 只负责把当前攻略写入 session" in agents
     assert "由 `cw.portal.select` 成功时自动兑现当前已选攻略" in agents
     assert "current/apply` 只看当前已应用攻略摘要" not in agents
     assert "在进入游戏并完成投资环境选择后，再执行" not in agents

@@ -8,7 +8,7 @@ from trail.core.errors import TrailError
 from trail.runtime.ocr_config import OcrRequestConfig
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.models import ensure_cw_state
-from trail.scenes.cw.stage import STAGE_RESOURCE_ALIASES, _detect_cw_stage_from_ocr
+from trail.scenes.cw.stage import STAGE_RESOURCE_ALIASES, _detect_cw_stage_from_ocr, _replace_stage_fields
 from trail.session.models import SessionModel
 
 
@@ -476,7 +476,7 @@ def _detect_continue_settlement_page(runtime) -> dict[str, str] | None:
 
 
 def _invalidate_stage(session: SessionModel) -> None:
-    ensure_cw_state(session)["stage"] = {"stale": True}
+    _replace_stage_fields(session, stale=True)
     session.last_stage = None
 
 

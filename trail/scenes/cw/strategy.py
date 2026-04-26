@@ -10,6 +10,7 @@ from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.entry import _detect_current_enter_page
 from trail.scenes.cw.guide import SHARE_CODE_PATTERN, complete_cw_guide_or_none
 from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.stage import _replace_stage_fields
 
 STRATEGY_SCREEN_WIDTH = 1920
 STRATEGY_LANE_COUNT = 3
@@ -179,7 +180,7 @@ def _read_strategy_page_heading_from_ocr(ocr_pieces: object) -> str:
 
 
 def _invalidate_strategy_stage(session) -> None:
-    ensure_cw_state(session)["stage"] = {"stale": True}
+    _replace_stage_fields(session, stale=True)
     session.last_stage = None
 
 

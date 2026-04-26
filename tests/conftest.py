@@ -147,6 +147,7 @@ def complete_cw_guide_state(*, purchases: dict | None = None, share_code: str = 
         "title": "测试攻略",
         "share_code": share_code,
         "version": "4.0",
+        "remaining_purchases": purchases or {},
         "operation_guide": "前期按测试运营",
         "role_stages": [
             {

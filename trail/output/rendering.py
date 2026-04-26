@@ -461,16 +461,33 @@ def _append_cw_shop_items(lines: list[str], data: dict[str, Any]) -> None:
 
 
 def _append_cw_shop_snapshot_info(lines: list[str], data: dict[str, Any]) -> None:
+    has_stage_projection = "stage_status_stale" in data
     facts: list[tuple[str, Any]] = []
-    for key in ("coins", "level", "exp"):
-        if key in data and data.get(key) is not None:
-            facts.append((key, data.get(key)))
+    if "coins" in data and data.get("coins") is not None:
+        facts.append(("coins", data.get("coins")))
+    if not has_stage_projection:
+        for key in ("level", "exp"):
+            if key in data and data.get(key) is not None:
+                facts.append((key, data.get(key)))
     if "reserve_full" in data:
         facts.append(("reserve_full", bool(data.get("reserve_full"))))
-    if "team_size" in data:
+    if "team_size" in data and not has_stage_projection:
         facts.append(("team_size", data.get("team_size")))
     if facts:
         lines.append("info " + " ".join(f"{key}={_encode_value(value)}" for key, value in facts))
+    if not has_stage_projection:
+        return
+
+    stage_status = _as_dict(data.get("stage_status"))
+    stage_status_stale = bool(data.get("stage_status_stale"))
+    _append_fact_line(
+        lines,
+        "info",
+        ("stage_level", stage_status.get("level") if not stage_status_stale else None),
+        ("stage_exp", stage_status.get("exp") if not stage_status_stale else None),
+        ("stage_team_size", stage_status.get("team_size") if not stage_status_stale else None),
+        ("stage_status_stale", stage_status_stale),
+    )
 
 
 def _should_render_recover(payload: dict[str, Any]) -> bool:

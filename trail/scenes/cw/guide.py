@@ -15,6 +15,7 @@ from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.models import CwSceneState, ensure_cw_state
+from trail.scenes.cw.stage import _replace_stage_fields
 from trail.session.models import SessionModel
 
 
@@ -1636,5 +1637,5 @@ def invalidate_cw_guide_runtime_state(session: SessionModel) -> SessionModel:
     cw_state["slots"] = defaults["slots"]
     cw_state["sell_plan"] = defaults["sell_plan"]
     cw_state["shop"] = defaults["shop"]
-    cw_state["stage"] = defaults["stage"]
+    _replace_stage_fields(session, **defaults["stage"])
     return session
