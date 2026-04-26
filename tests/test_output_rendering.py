@@ -3363,6 +3363,121 @@ def test_portal_select_renders_collected_slots_and_shop_before_warn_ref_and_hand
     assert not any(" opened=" in line or " stale=" in line for line in lines if not line.startswith("info stage="))
 
 
+def test_portal_select_status_projection_falls_back_to_slots_when_shop_status_stale() -> None:
+    for shop_status in (
+        {"stage_status": {"level": 9, "exp": "7/8", "team_size": "9/9", "stale": True}, "stage_status_stale": True},
+        {},
+    ):
+        payload = {
+            "ok": True,
+            "data": {
+                "card_idx": 1,
+                "portal_title": "击破概念股",
+                "slots": {
+                    "front": [],
+                    "back": [],
+                    "hand": [],
+                    "stage": "preparation",
+                    "stage_stale": False,
+                    "stage_status": {"level": 2, "exp": "4/8", "team_size": "2/2", "stale": False},
+                    "stage_status_stale": False,
+                },
+                "shop": {
+                    "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                    "coins": 40,
+                    "reserve_full": False,
+                    **shop_status,
+                },
+            },
+            "warnings": [],
+            "references": [],
+        }
+
+        lines = render_output("cw.portal.select", payload).splitlines()
+
+        assert lines == [
+            "ok cw.portal.select idx=1 投资环境=击破概念股",
+            "# 综合信息",
+            "info stage=preparation stale=0",
+            "info stage_level=2 stage_exp=4/8 stage_team_size=2/2 stage_status_stale=0",
+            "# 商店信息",
+            "item idx=1 slot=1 name=银狼 cost=20",
+            "info coins=40 reserve_full=0",
+            "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+        ]
+
+
+def test_portal_select_skill_info_section_has_no_empty_sections() -> None:
+    payload = {
+        "ok": True,
+        "screenshot": ".trail/shots/portal.png",
+        "image_guidance": {"read_image_first": True},
+        "data": {
+            "card_idx": 1,
+            "portal_title": "击破概念股",
+            "skill_info": [{"name": "运营思路", "text": "先读图"}],
+        },
+        "warnings": [],
+        "references": [],
+    }
+
+    lines = render_output("cw.portal.select", payload).splitlines()
+
+    assert lines == [
+        "ok cw.portal.select idx=1 投资环境=击破概念股",
+        "shot path=.trail/shots/portal.png",
+        "info read_image_first=1",
+        "# 攻略提示",
+        "info skill_info=运营思路 text=先读图",
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+    assert lines[-1].startswith("info handoff_skill=trail-cw-prep ")
+    assert "# 综合信息" not in lines
+    assert "# 角色信息" not in lines
+    assert "# 羁绊信息" not in lines
+    assert "# 商店信息" not in lines
+
+
+def test_portal_select_omits_status_section_when_no_status_projection() -> None:
+    payload = {
+        "ok": True,
+        "data": {
+            "card_idx": 1,
+            "portal_title": "击破概念股",
+            "skill_info": [{"name": "运营思路", "text": "先收集事实"}],
+            "slots": {
+                "front": [{"name": "希儿", "star": 1}],
+                "back": [],
+                "hand": [],
+            },
+            "shop": {
+                "opened": True,
+                "stale": False,
+                "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                "coins": 40,
+                "reserve_full": False,
+            },
+        },
+        "warnings": [],
+        "references": [],
+    }
+
+    lines = render_output("cw.portal.select", payload).splitlines()
+
+    assert lines == [
+        "ok cw.portal.select idx=1 投资环境=击破概念股",
+        "# 攻略提示",
+        "info skill_info=运营思路 text=先收集事实",
+        "# 角色信息",
+        "slot pos=front:0 name=希儿 star=1",
+        "# 商店信息",
+        "item idx=1 slot=1 name=银狼 cost=20",
+        "info coins=40 reserve_full=0",
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+    assert "# 综合信息" not in lines
+
+
 def test_portal_select_skips_malformed_skill_info_items(capsys) -> None:
     print_output(
         "cw.portal.select",
