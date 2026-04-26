@@ -565,8 +565,11 @@ def test_cw_shop_buy_exp_maps_to_canonical_command(cli_runner, fake_daemon_clien
         "ok cw.shop.buy_exp opened=1 stale=0 count=1",
         screenshot=".trail/shots/req-cw-shop-buy-exp.png",
         body=[
+            "# 商店信息",
             "item idx=1 slot=1 name=灵砂 cost=3",
-            "info coins=36 level=4 exp=0/8 reserve_full=0 team_size=4/4",
+            "info coins=36 reserve_full=0",
+            "# 综合信息",
+            "info level=4 exp=0/8 team_size=4/4",
         ],
     )
     _assert_single_call(client, method="cw.shop.buy_exp", payload={}, tmp_path=tmp_path)
@@ -1059,7 +1062,9 @@ def test_cw_shop_scan_renders_fresh_stage_status_projection(cli_runner, fake_dae
         "ok cw.shop.scan opened=1 stale=0 count=1",
         screenshot=".trail/shots/req-cw-shop-scan-stage-fresh.png",
         body=[
+            "# 商店信息",
             "item idx=1 slot=1 name=银狼 cost=20",
+            "# 综合信息",
             "info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0",
         ],
     )
@@ -1085,7 +1090,7 @@ def test_cw_shop_status_renders_stale_stage_status_without_stale_values(cli_runn
     assert result.exit_code == 0
     assert result.stdout.splitlines() == _expected_lines(
         "ok cw.shop.status count=1",
-        body=["item idx=1 slot=1 name=银狼 cost=20", "info stage_status_stale=1"],
+        body=["# 商店信息", "item idx=1 slot=1 name=银狼 cost=20", "# 综合信息", "info stage_status_stale=1"],
     )
     assert "stage_level=7" not in result.stdout
     _assert_single_call(client, method="cw.shop.status", payload={}, tmp_path=tmp_path)

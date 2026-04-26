@@ -504,6 +504,75 @@ def _append_cw_shop_snapshot_info(lines: list[str], data: dict[str, Any]) -> Non
     )
 
 
+def _has_cw_shop_fact_lines(data: dict[str, Any]) -> bool:
+    return ("coins" in data and data.get("coins") is not None) or "reserve_full" in data
+
+
+def _has_cw_shop_facts(data: dict[str, Any]) -> bool:
+    return bool(_iter_sorted_cw_shop_items(data)) or _has_cw_shop_fact_lines(data)
+
+
+def _append_cw_shop_fact_lines(lines: list[str], data: dict[str, Any]) -> None:
+    _append_fact_line(
+        lines,
+        "info",
+        ("coins", data.get("coins") if "coins" in data and data.get("coins") is not None else None),
+        ("reserve_full", bool(data.get("reserve_full")) if "reserve_full" in data else None),
+    )
+
+
+def _append_cw_shop_section(lines: list[str], data: dict[str, Any], *, force_section: bool = False) -> None:
+    if not _has_cw_shop_facts(data):
+        return
+    if force_section:
+        _append_section(lines, "商店信息")
+    _append_cw_shop_items(lines, data)
+    _append_cw_shop_fact_lines(lines, data)
+
+
+def _has_cw_status_projection(data: dict[str, Any]) -> bool:
+    return data.get("stage") is not None or "stage_status_stale" in data or bool(_as_dict(data.get("stage_status")))
+
+
+def _append_cw_status_lines(lines: list[str], data: dict[str, Any]) -> None:
+    stage_value = data.get("stage")
+    if stage_value is not None:
+        _append_fact_line(
+            lines,
+            "info",
+            ("stage", stage_value),
+            ("stale", bool(data.get("stage_stale")) if "stage_stale" in data else None),
+        )
+
+    stage_status = _as_dict(data.get("stage_status"))
+    if "stage_status_stale" not in data and not stage_status:
+        return
+    stage_status_stale = bool(data["stage_status_stale"]) if "stage_status_stale" in data else bool(stage_status.get("stale", True))
+    _append_fact_line(
+        lines,
+        "info",
+        ("stage_level", stage_status.get("level") if not stage_status_stale else None),
+        ("stage_exp", stage_status.get("exp") if not stage_status_stale else None),
+        ("stage_team_size", stage_status.get("team_size") if not stage_status_stale else None),
+        ("stage_status_stale", stage_status_stale),
+    )
+
+
+def _has_cw_shop_buy_exp_status(data: dict[str, Any]) -> bool:
+    return any(key in data and (data.get(key) is not None or key == "team_size") for key in ("level", "exp", "team_size"))
+
+
+def _append_cw_shop_buy_exp_status_lines(lines: list[str], data: dict[str, Any]) -> None:
+    facts: list[tuple[str, Any]] = []
+    for key in ("level", "exp"):
+        if key in data and data.get(key) is not None:
+            facts.append((key, data.get(key)))
+    if "team_size" in data:
+        facts.append(("team_size", data.get("team_size")))
+    if facts:
+        lines.append("info " + " ".join(f"{key}={_encode_value(value)}" for key, value in facts))
+
+
 def _should_render_recover(payload: dict[str, Any]) -> bool:
     debug = payload.get("debug") or {}
     return isinstance(debug.get("last_known_stage"), str) and bool(debug.get("last_known_stage"))
@@ -855,8 +924,14 @@ def _render_cw_shop_status(command: str, payload: dict[str, Any]) -> list[str]:
     items = _as_list(data.get("items"))
     lines = [f"ok {command} count={_encode_value(_count_cw_shop_items(items))}"]
     _append_success_capture_block(lines, payload)
-    _append_cw_shop_items(lines, data)
-    _append_cw_shop_snapshot_info(lines, data)
+    has_shop_facts = _has_cw_shop_facts(data)
+    has_status_projection = _has_cw_status_projection(data)
+    if has_shop_facts and has_status_projection:
+        _append_cw_shop_section(lines, data, force_section=True)
+        _append_cw_status_section(lines, data)
+    else:
+        _append_cw_shop_section(lines, data)
+        _append_cw_status_lines(lines, data)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
@@ -875,10 +950,27 @@ def _render_cw_shop_action(command: str, payload: dict[str, Any]) -> list[str]:
     )
     lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
     _append_success_capture_block(lines, payload)
-    if items is not None:
+    if command == "cw.shop.scan":
+        has_shop_facts = _has_cw_shop_facts(data)
+        has_status_projection = _has_cw_status_projection(data)
+        if has_shop_facts and has_status_projection:
+            _append_cw_shop_section(lines, data, force_section=True)
+            _append_cw_status_section(lines, data)
+        else:
+            _append_cw_shop_section(lines, data)
+            _append_cw_status_lines(lines, data)
+    elif command == "cw.shop.buy_exp":
+        has_shop_facts = _has_cw_shop_facts(data)
+        has_status_facts = _has_cw_shop_buy_exp_status(data)
+        if has_shop_facts and has_status_facts:
+            _append_cw_shop_section(lines, data, force_section=True)
+            _append_section(lines, "综合信息")
+            _append_cw_shop_buy_exp_status_lines(lines, data)
+        else:
+            _append_cw_shop_section(lines, data)
+            _append_cw_shop_buy_exp_status_lines(lines, data)
+    elif items is not None:
         _append_cw_shop_items(lines, data)
-    if command in {"cw.shop.scan", "cw.shop.buy_exp"}:
-        _append_cw_shop_snapshot_info(lines, data)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines

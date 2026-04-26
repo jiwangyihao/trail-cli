@@ -1099,7 +1099,7 @@ def test_render_output_renders_cw_shop_status_without_shot_or_guidance():
         "item idx=2 slot=2 name=停云 cost=1",
         "item idx=3 slot=3 name=布洛妮娅 cost=4",
         "item idx=4 name=无槽位条目 cost=9",
-        "info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7",
+        "info coins=40 reserve_full=0",
     ]
 
 
@@ -1126,6 +1126,131 @@ def test_render_output_renders_shop_stage_status_projection():
 
     assert lines[1:3] == ["shot path=.trail/shots/req-shop-stage.png", "info read_image_first=1"]
     assert lines[-1] == "info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0"
+
+
+def test_render_output_sections_shop_scan_items_and_status():
+    payload = {
+        "ok": True,
+        "data": {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "coins": 40,
+            "reserve_full": False,
+            "stage": "shop",
+            "stage_stale": False,
+            "stage_status": {"stale": False, "level": 3, "exp": "0/8", "team_size": "1/2"},
+            "stage_status_stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.scan", payload).splitlines() == [
+        "ok cw.shop.scan opened=1 stale=0 count=1",
+        "# 商店信息",
+        "item idx=1 slot=1 name=银狼 cost=20",
+        "info coins=40 reserve_full=0",
+        "# 综合信息",
+        "info stage=shop stale=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+    ]
+
+
+def test_render_output_sections_shop_status_only_when_multiple_fact_groups():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "opened": True,
+            "stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.shop.status", payload).splitlines()
+
+    assert lines == ["ok cw.shop.status count=1", "item idx=1 slot=1 name=银狼 cost=20"]
+    assert not any(line.startswith("# ") for line in lines)
+
+
+def test_render_output_sections_shop_status_when_stage_projection_exists():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "opened": True,
+            "stale": False,
+            "stage_status": {"stale": False, "level": 3, "exp": "0/8", "team_size": "2/2"},
+            "stage_status_stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.status", payload).splitlines() == [
+        "ok cw.shop.status count=1",
+        "# 商店信息",
+        "item idx=1 slot=1 name=银狼 cost=20",
+        "# 综合信息",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=2/2 stage_status_stale=0",
+    ]
+
+
+def test_render_output_shop_status_only_stage_stale_has_no_section_heading():
+    payload = {
+        "ok": True,
+        "data": {"items": [], "stage_status_stale": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.status", payload).splitlines() == [
+        "ok cw.shop.status count=0",
+        "info stage_status_stale=1",
+    ]
+
+
+def test_render_output_sections_shop_buy_exp_and_preserves_null_team_size():
+    payload = {
+        "ok": True,
+        "data": {
+            "opened": True,
+            "stale": False,
+            "items": [],
+            "coins": 36,
+            "level": 4,
+            "exp": "0/8",
+            "reserve_full": False,
+            "team_size": None,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.buy_exp", payload).splitlines() == [
+        "ok cw.shop.buy_exp opened=1 stale=0 count=0",
+        "# 商店信息",
+        "info coins=36 reserve_full=0",
+        "# 综合信息",
+        "info level=4 exp=0/8 team_size=null",
+    ]
 
 
 def test_render_output_keeps_stage_status_stale_when_missing():
@@ -3819,7 +3944,7 @@ def test_render_output_renders_cw_shop_scan_snapshot_info_text():
         "shot path=.trail/shots/req-shop-scan.png",
         "info read_image_first=1",
         "item idx=1 slot=1 name=银狼 cost=20",
-        "info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7",
+        "info coins=40 reserve_full=0",
     ]
 
 
@@ -3846,8 +3971,13 @@ def test_cw_shop_buy_exp_outputs_snapshot_facts(capsys) -> None:
     assert lines[0] == "ok cw.shop.buy_exp opened=1 stale=0 count=1"
     assert lines[1] == "shot path=.trail/shots/buy-exp.png"
     assert lines[2] == "info read_image_first=1"
-    assert "item idx=1 slot=1 name=灵砂 cost=3" in lines
-    assert "info coins=36 level=4 exp=0/8 reserve_full=0 team_size=null" in lines
+    assert lines[3:] == [
+        "# 商店信息",
+        "item idx=1 slot=1 name=灵砂 cost=3",
+        "info coins=36 reserve_full=0",
+        "# 综合信息",
+        "info level=4 exp=0/8 team_size=null",
+    ]
 
 
 def test_render_output_renders_cw_shop_scan_with_empty_slot_placeholder():
