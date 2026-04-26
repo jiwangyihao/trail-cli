@@ -324,8 +324,12 @@ def test_apply_guide_populates_cw_scene_state(tmp_path):
     apply_cw_guide = getattr(guide_module, "apply_cw_guide", None)
     assert apply_cw_guide is not None
 
+    role_stages = [
+        {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+        {"stage": "Final", "front_roles": [{"name": "希儿", "star": 3}], "back_roles": [{"name": "佩拉", "star": 2}]},
+    ]
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
-    refreshed = apply_cw_guide(session, guide_data=fake_guide())
+    refreshed = apply_cw_guide(session, guide_data={**fake_guide(), "role_stages": role_stages})
 
     cw_state = refreshed.scene_state["cw"]
     assert "guide" in cw_state
@@ -333,9 +337,10 @@ def test_apply_guide_populates_cw_scene_state(tmp_path):
     assert "slots" in cw_state
     assert cw_state["guide"]["artifact"] == "guide-demo"
     assert cw_state["guide"]["share_code"] == "##demo##"
-    assert cw_state["guide"]["on_field"] == {"希儿": 9}
-    assert cw_state["guide"]["off_field"] == {"佩拉": 3}
-    assert cw_state["guide"]["remaining_purchases"] == {"希儿": 9, "佩拉": 3}
+    assert "on_field" not in cw_state["guide"]
+    assert "off_field" not in cw_state["guide"]
+    assert "remaining_purchases" not in cw_state["guide"]
+    assert cw_state["guide"]["role_stages"] == role_stages
     assert cw_state["constraints"]["min_coins"] == 40
     assert cw_state["constraints"]["min_level"] == 7
     assert cw_state["constraints"]["mid_level"] == 9
@@ -347,11 +352,16 @@ def test_apply_guide_preserves_source_metadata_for_later_scene_steps(tmp_path):
     apply_cw_guide = getattr(guide_module, "apply_cw_guide", None)
     assert apply_cw_guide is not None
 
+    role_stages = [
+        {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+        {"stage": "Final", "front_roles": [{"name": "希儿", "star": 3}], "back_roles": [{"name": "佩拉", "star": 2}]},
+    ]
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
     refreshed = apply_cw_guide(
         session,
         guide_data={
             **fake_guide(),
+            "role_stages": role_stages,
             "source_url": fake_lineup_url("70472857"),
             "lineup_id": "70472857",
             "title": "货币战争攻略码",
@@ -373,15 +383,12 @@ def test_apply_guide_preserves_source_metadata_for_later_scene_steps(tmp_path):
         "has_change_equip": False,
         "has_expert": False,
         "version": None,
-        "on_field": {"希儿": 9},
-        "off_field": {"佩拉": 3},
-        "role_stages": [],
+        "role_stages": role_stages,
         "first_fight_augments": [],
         "second_fight_augments": [],
         "portals": [],
         "order_basic": [],
         "order_compose": [],
-        "remaining_purchases": {"希儿": 9, "佩拉": 3},
     }
 
 
@@ -2019,10 +2026,7 @@ def test_cw_shop_status_hides_stale_shop_guide_summary_when_selected_guide_missi
             "exp": "4/52",
             "reserve_full": False,
             "team_size": "6/6",
-            "guide_summary": {
-                "remaining_purchases": {"希儿": 4, "佩拉": 1},
-                "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9},
-            },
+            "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9}},
         },
         "stage": {"stale": False, "name": "shop"},
         "metrics": {},
@@ -2047,10 +2051,7 @@ def test_cw_shop_status_hides_stale_shop_guide_summary_when_selected_guide_missi
         "reserve_full": False,
         "team_size": "6/6",
     }
-    assert persisted.scene_state["cw"]["shop"]["guide_summary"] == {
-        "remaining_purchases": {"希儿": 4, "佩拉": 1},
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9},
-    }
+    assert persisted.scene_state["cw"]["shop"]["guide_summary"] == {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9}}
 
 
 def test_cw_shop_status_handles_non_mapping_cw_state_without_leaking_guide_summary(tmp_path: Path):
@@ -2127,7 +2128,7 @@ def test_cw_guide_current_service_does_not_recover_from_any_artifact_origin(tmp_
     assert not isinstance(persisted.scene_state.get("cw"), dict) or persisted.scene_state["cw"].get("guide") is None
 
 
-def test_cw_guide_current_service_does_not_recover_remaining_purchases_from_shop_summary_without_selection(tmp_path: Path):
+def test_cw_guide_current_service_does_not_recover_from_shop_summary_without_selection(tmp_path: Path):
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
     loaded = service.load_session(session.session_id)
     loaded.scene_state["cw"] = {
@@ -2139,10 +2140,7 @@ def test_cw_guide_current_service_does_not_recover_remaining_purchases_from_shop
             "opened": True,
             "stale": False,
             "items": [{"name": "希儿", "price": 3}],
-            "guide_summary": {
-                "remaining_purchases": {"希儿": 4, "佩拉": 1},
-                "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9},
-            },
+            "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9}},
         },
         "stage": {"stale": False, "name": "shop"},
         "metrics": {},
@@ -2173,10 +2171,7 @@ def test_cw_guide_current_service_does_not_recover_remaining_purchases_from_shop
     assert artifact.artifact_id
     assert exc_info.value.code == "CW_GUIDE_SELECTION_REQUIRED"
     assert persisted.scene_state["cw"]["guide"] is None
-    assert persisted.scene_state["cw"]["shop"]["guide_summary"] == {
-        "remaining_purchases": {"希儿": 4, "佩拉": 1},
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9},
-    }
+    assert persisted.scene_state["cw"]["shop"]["guide_summary"] == {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9}}
 
 
 def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit():

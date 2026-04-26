@@ -790,7 +790,45 @@ def _render_cw_metrics(command: str, payload: dict[str, Any]) -> list[str]:
 
 def _render_cw_sell_plan(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
-    return _render_success_summary(command, payload, ("count", len(_as_list(data.get("candidates")))))
+    items = _as_list(data.get("items"))
+    candidates = _as_list(data.get("candidates"))
+    todos = [todo.strip() for todo in _as_list(data.get("todos")) if isinstance(todo, str) and todo.strip()]
+    lines = [
+        f"ok {command} "
+        + _format_fact_sequence(
+            ("count", len(items)),
+            ("reference_only", True),
+            ("candidates", len(candidates)),
+            ("todos", len(todos)),
+        )
+    ]
+    _append_success_capture_block(lines, payload)
+    for item in items:
+        entry = _as_dict(item)
+        slot = _coerce_int(entry.get("slot"))
+        if slot is None:
+            continue
+        protected = entry.get("protected") if isinstance(entry.get("protected"), bool) else None
+        lines.append(
+            "slot "
+            + _format_fact_sequence(
+                ("pos", f"hand:{slot}"),
+                ("name", entry.get("name")),
+                ("star", entry.get("star")),
+                ("target_star", entry.get("target_star")),
+                ("current_star", entry.get("current_star")),
+                ("分类", entry.get("category")),
+                ("推荐度", entry.get("recommendation")),
+                ("priority", entry.get("priority")),
+                ("protected", protected),
+                ("reason", entry.get("reason")),
+            )
+        )
+    for todo in todos:
+        lines.append("info " + _format_fact_sequence(("todo", todo)))
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
 
 
 def _render_cw_options(command: str, payload: dict[str, Any]) -> list[str]:

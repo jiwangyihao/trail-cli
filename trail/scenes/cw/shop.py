@@ -422,14 +422,6 @@ def _guide_state(cw_state: dict) -> dict | None:
     return guide if isinstance(guide, dict) else None
 
 
-def _remaining_purchases(cw_state: dict) -> dict[str, Any]:
-    guide = _guide_state(cw_state)
-    if guide is None:
-        return {}
-    remaining = guide.get("remaining_purchases")
-    return remaining if isinstance(remaining, dict) else {}
-
-
 def _stable_constraints_summary(cw_state: dict) -> dict[str, Any]:
     constraints = cw_state.get("constraints")
     if not isinstance(constraints, dict):
@@ -440,10 +432,7 @@ def _stable_constraints_summary(cw_state: dict) -> dict[str, Any]:
 def _guide_summary(cw_state: dict) -> dict[str, Any] | None:
     if _guide_state(cw_state) is None:
         return None
-    return {
-        "remaining_purchases": deepcopy(_remaining_purchases(cw_state)),
-        "constraints": _stable_constraints_summary(cw_state),
-    }
+    return {"constraints": _stable_constraints_summary(cw_state)}
 
 
 def _shop_state(cw_state: dict) -> dict[str, Any]:
@@ -469,7 +458,7 @@ def _build_shop_snapshot(
     team_size: str | None,
 ) -> dict[str, Any]:
     preserved_team_size = _shop_state(cw_state).get("team_size") if team_size is None else team_size
-    return {
+    snapshot = {
         **_preserved_shop_flags(cw_state),
         "items": deepcopy(items),
         "coins": coins,
@@ -477,12 +466,12 @@ def _build_shop_snapshot(
         "exp": exp,
         "reserve_full": reserve_full,
         "team_size": preserved_team_size,
-        "guide_summary": {
-            "remaining_purchases": deepcopy(_remaining_purchases(cw_state)),
-            "constraints": _stable_constraints_summary(cw_state),
-        },
         "stale": False,
     }
+    guide_summary = _guide_summary(cw_state)
+    if guide_summary is not None:
+        snapshot["guide_summary"] = guide_summary
+    return snapshot
 
 
 def _scan_shop_snapshot(cw_state: dict, *, scanner: ShopSnapshotSource) -> dict[str, Any]:
@@ -566,17 +555,6 @@ def _scan_until_purchase_confirmed(cw_state: dict, *, before_items: list[dict[st
         if _purchase_confirmed(before_items=before_items, after_items=after_items, slot=slot, expect=expect):
             return updated_shop
     raise TrailError("SHOP_BUY_NOT_CONFIRMED", f"shop purchase not confirmed for slot {slot}: {expect}")
-
-
-def _decrement_remaining_purchase(cw_state: dict, *, expect: str) -> None:
-    guide = _guide_state(cw_state)
-    if guide is None:
-        return
-    remaining = guide.get("remaining_purchases")
-    if not isinstance(remaining, dict):
-        remaining = {}
-        guide["remaining_purchases"] = remaining
-    remaining[expect] = max(0, remaining.get(expect, 0) - 1)
 
 
 def build_cw_shop_opener(runtime) -> ShopAction:
@@ -674,13 +652,12 @@ def buy_cw_shop_slot(session: SessionModel, *, slot: int, expect: str, buyer: Sh
     _require_fresh_shop_item(cw_state, slot=slot, expect=expect)
     buyer(slot=slot, expect=expect)
     updated_shop = _scan_until_purchase_confirmed(cw_state, before_items=before_items, slot=slot, expect=expect, scanner=scanner)
-    _decrement_remaining_purchase(cw_state, expect=expect)
-    updated_shop["guide_summary"] = {
-        "remaining_purchases": deepcopy(_remaining_purchases(cw_state)),
-        "constraints": _stable_constraints_summary(cw_state),
-    }
+    guide_summary = _guide_summary(cw_state)
+    if guide_summary is not None:
+        updated_shop["guide_summary"] = guide_summary
     cw_state["shop"] = updated_shop
     cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
+    cw_state["sell_plan"] = {}
     return session
 
 
@@ -703,6 +680,9 @@ def close_cw_shop(session: SessionModel, *, closer: ShopAction | None = None) ->
 def shop_cw_status(session: SessionModel) -> dict:
     cw_state = ensure_cw_state(session)
     status = deepcopy(cw_state.get("shop", {"stale": True}))
+    if not isinstance(status, dict):
+        status = {"stale": True}
+    status.pop("guide_summary", None)
     guide_summary = _guide_summary(cw_state)
     if guide_summary is not None:
         status["guide_summary"] = guide_summary

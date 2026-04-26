@@ -375,18 +375,25 @@ def _score_slot_name_candidates(text: str, *, candidates: list[str]) -> list[tup
     return sorted(scored, key=lambda item: (-item[1], item[0]))
 
 
-def _collect_nested_slot_name_candidates(value: Any, *, candidates: list[str]) -> None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if key == "name":
-                text = str(item or "").strip()
+def _collect_role_stage_name_candidates(guide: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    role_stages = guide.get("role_stages")
+    if not isinstance(role_stages, list):
+        return candidates
+    for stage in role_stages:
+        if not isinstance(stage, dict):
+            continue
+        for key in ("front_roles", "back_roles"):
+            roles = stage.get(key)
+            if not isinstance(roles, list):
+                continue
+            for role in roles:
+                if not isinstance(role, dict):
+                    continue
+                text = str(role.get("name") or "").strip()
                 if text:
                     candidates.append(text)
-            _collect_nested_slot_name_candidates(item, candidates=candidates)
-        return
-    if isinstance(value, list):
-        for item in value:
-            _collect_nested_slot_name_candidates(item, candidates=candidates)
+    return candidates
 
 
 def _dedupe_slot_name_candidates(candidates: list[str]) -> list[str]:
@@ -394,18 +401,8 @@ def _dedupe_slot_name_candidates(candidates: list[str]) -> list[str]:
 
 
 def _session_slot_name_candidates(cw_state: dict[str, Any]) -> tuple[list[str], list[str]]:
-    authoritative_candidates: list[str] = []
     guide = cw_state.get("guide") if isinstance(cw_state.get("guide"), dict) else {}
-    for group in (guide.get("on_field", {}), guide.get("off_field", {})):
-        if isinstance(group, dict):
-            for name in group:
-                text = str(name).strip()
-                if text:
-                    authoritative_candidates.append(text)
-    _collect_nested_slot_name_candidates(guide, candidates=authoritative_candidates)
-
-    portal = cw_state.get("portal") if isinstance(cw_state.get("portal"), dict) else {}
-    _collect_nested_slot_name_candidates(portal, candidates=authoritative_candidates)
+    authoritative_candidates = _collect_role_stage_name_candidates(guide)
 
     slot_candidates: list[str] = []
     slots = cw_state.get("slots") if isinstance(cw_state.get("slots"), dict) else {}
@@ -816,14 +813,282 @@ def collect_cw_crystals(session: SessionModel, *, collector: CrystalCollector | 
     return session
 
 
+SELL_PLAN_CATEGORY_PRIORITY = {
+    "非攻略": 10,
+    "前期": 20,
+    "中期": 30,
+    "后期超买": 40,
+    "后期": 50,
+}
+
+
+def _slot_star(value: Any) -> int | None:
+    if not isinstance(value, dict):
+        return None
+    star = value.get("star")
+    parsed: int | None = None
+    if isinstance(star, bool):
+        return None
+    if isinstance(star, int):
+        parsed = star
+    if isinstance(star, str) and star.strip().isdigit():
+        parsed = int(star.strip())
+    if parsed in {1, 2, 3}:
+        return parsed
+    return None
+
+
+def _iter_stage_roles(stage: dict[str, Any]) -> list[dict[str, Any]]:
+    roles: list[dict[str, Any]] = []
+    for key in ("front_roles", "back_roles"):
+        values = stage.get(key)
+        if not isinstance(values, list):
+            continue
+        roles.extend(dict(item) for item in values if isinstance(item, dict) and _slot_value_name(item))
+    return roles
+
+
+def _parse_team_size(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str):
+        text = value.strip()
+        left, separator, right = text.partition("/")
+        if separator:
+            left_text = left.strip()
+            right_text = right.strip()
+            if left_text.isdigit() and right_text.isdigit():
+                current_size = int(left_text)
+                max_size = int(right_text)
+                if current_size > 0 and max_size > 0:
+                    return max_size
+            return None
+        if text.isdigit():
+            parsed = int(text)
+            return parsed if parsed > 0 else None
+    return None
+
+
+def _add_sell_plan_todo(todos: list[str], value: str) -> None:
+    if value not in todos:
+        todos.append(value)
+
+
+def _is_final_role_stage(stage: dict[str, Any]) -> bool:
+    return str(stage.get("stage") or "").strip().casefold() == "final"
+
+
+def _sell_plan_stage_reference(guide: dict[str, Any], *, todos: list[str]) -> tuple[dict[str, str], dict[str, int | None]]:
+    role_stages = guide.get("role_stages") if isinstance(guide, dict) else None
+    if not isinstance(role_stages, list):
+        _add_sell_plan_todo(todos, "stage_granularity")
+        return {}, {}
+    stages = [stage for stage in role_stages if isinstance(stage, dict)]
+    if not stages:
+        _add_sell_plan_todo(todos, "stage_granularity")
+        return {}, {}
+
+    explicit_final_indexes = [index for index, stage in enumerate(stages) if _is_final_role_stage(stage)]
+    if explicit_final_indexes:
+        final_indexes = explicit_final_indexes
+        final_index = explicit_final_indexes[-1]
+    else:
+        final_index = len(stages) - 1
+        final_indexes = [final_index]
+        _add_sell_plan_todo(todos, "missing_final")
+    if len(stages) < 3:
+        _add_sell_plan_todo(todos, "stage_granularity")
+
+    non_final_before = [
+        index for index, stage in enumerate(stages[:final_index]) if not _is_final_role_stage(stage)
+    ]
+    first_non_final = non_final_before[0] if non_final_before else None
+    role_categories: dict[str, str] = {}
+    for index, stage in enumerate(stages):
+        if index in final_indexes:
+            category = "后期"
+        elif first_non_final is not None and index == first_non_final:
+            category = "前期"
+        elif index < final_index:
+            category = "中期"
+        else:
+            category = "后期"
+        for role in _iter_stage_roles(stage):
+            name = _slot_value_name(role)
+            current = role_categories.get(name)
+            if current is None or SELL_PLAN_CATEGORY_PRIORITY[category] < SELL_PLAN_CATEGORY_PRIORITY[current]:
+                role_categories[name] = category
+
+    final_targets: dict[str, int | None] = {}
+    for index in final_indexes:
+        for role in _iter_stage_roles(stages[index]):
+            name = _slot_value_name(role)
+            star = _slot_star(role)
+            if name not in final_targets or star is not None:
+                final_targets[name] = star
+    return role_categories, final_targets
+
+
+def _parse_sell_plan_stage(cw_state: dict[str, Any], *, todos: list[str]) -> tuple[int | None, bool]:
+    stage = cw_state.get("stage") if isinstance(cw_state.get("stage"), dict) else None
+    if stage is None or stage.get("stale") is not False:
+        _add_sell_plan_todo(todos, "stage")
+        return None, False
+    value = str(stage.get("value") or "").strip()
+    layer, separator, section = value.partition("-")
+    if separator != "-" or layer not in {"1", "2", "3"} or not section:
+        _add_sell_plan_todo(todos, "stage")
+        return None, False
+    boss_preview = stage.get("boss_preview")
+    if not isinstance(boss_preview, bool):
+        _add_sell_plan_todo(todos, "boss_preview")
+        boss_preview = False
+    return int(layer), boss_preview
+
+
+def _sell_plan_recommendation(category: str, *, layer: int | None, boss_preview: bool) -> str:
+    if layer is None:
+        return "不推荐"
+    if category == "后期":
+        return "不推荐"
+    if layer == 1:
+        return "可以" if category == "非攻略" else "不推荐"
+    if layer == 2:
+        if boss_preview:
+            return "推荐" if category in {"非攻略", "前期"} else "不推荐"
+        if category == "非攻略":
+            return "推荐"
+        if category == "前期":
+            return "可以"
+        return "不推荐"
+    if layer == 3:
+        if boss_preview:
+            if category in {"非攻略", "前期", "中期"}:
+                return "推荐"
+            if category == "后期超买":
+                return "可以"
+            return "不推荐"
+        if category in {"非攻略", "前期"}:
+            return "推荐"
+        if category == "中期":
+            return "可以"
+    return "不推荐"
+
+
+def _field_star_status(slots: dict[str, Any], *, name: str) -> tuple[bool, int | None]:
+    field_present = False
+    stars: list[int] = []
+    for area in ("front", "back"):
+        values = slots.get(area)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if _slot_value_name(value) != name:
+                continue
+            field_present = True
+            star = _slot_star(value)
+            if star is not None:
+                stars.append(star)
+    return field_present, max(stars) if stars else None
+
+
+def _non_empty_slot_count(values: Any) -> int:
+    if not isinstance(values, list):
+        return 0
+    return sum(1 for value in values if _slot_value_name(value))
+
+
+def _sell_plan_reason(category: str, *, protected: bool, layer: int | None, under_team_size: bool) -> str:
+    if under_team_size:
+        return "人口不足，保守不推荐"
+    if protected:
+        return "Final目标未达成，保护"
+    if layer is None:
+        return "缺少当前阶段，仅提供参考"
+    if category == "后期超买":
+        return "Final目标已达成，手牌为超买参考"
+    return f"{category}角色"
+
+
 def plan_cw_hand_sell(session: SessionModel) -> dict:
     cw_state = ensure_cw_state(session)
-    slots = cw_state.get("slots", {})
-    if slots.get("stale", True):
+    slots = cw_state.get("slots")
+    if not isinstance(slots, dict) or slots.get("stale") is not False:
         raise TrailError("SLOTS_STALE", "槽位快照已失效，请先执行 trail cw slots read")
     hand = slots.get("hand", [])
-    candidates = [index for index, value in enumerate(hand) if value is not None]
-    cw_state["sell_plan"] = {"candidates": candidates}
+    if not isinstance(hand, list):
+        hand = []
+
+    todos: list[str] = []
+    guide = cw_state.get("guide") if isinstance(cw_state.get("guide"), dict) else {}
+    role_categories, final_targets = _sell_plan_stage_reference(guide, todos=todos)
+    layer, boss_preview = _parse_sell_plan_stage(cw_state, todos=todos)
+
+    shop = cw_state.get("shop") if isinstance(cw_state.get("shop"), dict) else {}
+    team_size = _parse_team_size(shop.get("team_size")) if shop.get("stale") is False else None
+    if team_size is None:
+        _add_sell_plan_todo(todos, "team_size")
+    field_count = _non_empty_slot_count(slots.get("front")) + _non_empty_slot_count(slots.get("back"))
+    hand_count = _non_empty_slot_count(hand)
+    under_team_size = team_size is not None and field_count + hand_count < team_size
+
+    items: list[dict[str, Any]] = []
+    for index, value in enumerate(hand):
+        name = _slot_value_name(value)
+        if not name:
+            continue
+        star = _slot_star(value)
+        target_star = final_targets.get(name)
+        field_present, current_star = _field_star_status(slots, name=name)
+        protected = False
+        category = role_categories.get(name, "非攻略")
+
+        if name in final_targets:
+            if target_star is None:
+                protected = True
+                category = "后期"
+                _add_sell_plan_todo(todos, "star")
+            elif not field_present:
+                protected = True
+                category = "后期"
+            elif current_star is None:
+                protected = True
+                category = "后期"
+                _add_sell_plan_todo(todos, "star")
+            elif current_star < target_star:
+                protected = True
+                category = "后期"
+            else:
+                category = "后期超买"
+
+        recommendation = _sell_plan_recommendation(category, layer=layer, boss_preview=boss_preview)
+        if protected or under_team_size:
+            recommendation = "不推荐"
+        priority = SELL_PLAN_CATEGORY_PRIORITY[category]
+        items.append(
+            {
+                "slot": index,
+                "name": name,
+                "star": star,
+                "target_star": target_star,
+                "current_star": current_star,
+                "category": category,
+                "recommendation": recommendation,
+                "priority": priority,
+                "protected": protected,
+                "reason": _sell_plan_reason(category, protected=protected, layer=layer, under_team_size=under_team_size),
+            }
+        )
+
+    items.sort(key=lambda item: (int(item["priority"]), int(item["slot"])))
+    cw_state["sell_plan"] = {
+        "reference_only": True,
+        "candidates": [],
+        "items": deepcopy(items),
+        "todos": list(todos),
+    }
     return deepcopy(cw_state["sell_plan"])
 
 

@@ -89,6 +89,9 @@
 - `guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。
 - `guide.config.cw` 使用 `赛季/子赛季/大版本/搜牌档位/羁绊/角色/角色标签/投资环境`；这五个统计项即使为 `0` 也必须保留。
 - `guide.config.cw --format yaml` 仍然先输出中文摘要，再追加原英文 key 的 YAML shape，不得回退成纯英文首屏。
+- `cw.hand.sell_plan` success 首行固定为 `ok cw.hand.sell_plan count=... reference_only=1 candidates=... todos=...`；该命令只提供 Agent 参考信息，不是权威出售计划。
+- `cw.hand.sell_plan` 正文 `slot` 行固定使用 `pos/name/star/target_star/current_star/分类/推荐度/priority/protected/reason`，缺失值按默认 key=value 省略规则处理。
+- `cw.hand.sell_plan` 缺失参考信息用 `info todo=stage|team_size|boss_preview|missing_final|stage_granularity|star`；不新增正文前缀，不进入 YAML allowlist。
 
 ## skill 拓扑约束
 

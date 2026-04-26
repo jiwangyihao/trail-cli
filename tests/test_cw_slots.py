@@ -705,26 +705,35 @@ def test_slots_read_partial_refresh_from_fresh_base_empty_target_preserves_snaps
     }
 
 
-def test_slots_read_normalizes_name_from_fresh_session_candidates_only(tmp_path):
+def test_slots_read_uses_role_stages_as_authoritative_name_candidates(tmp_path):
     slots_module = load_cw_slots_module()
     read_cw_slots = getattr(slots_module, "read_cw_slots", None)
     assert read_cw_slots is not None
 
     session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["guide"] = {
-        "on_field": {"布洛妮娅": 1},
-        "off_field": {"椒丘": 1},
+        "role_stages": [
+            {
+                "stage": "Final",
+                "front_roles": [{"name": "布洛妮娅", "star": 3, "first_equipments": [{"name": "不要作为候选"}]}],
+                "back_roles": [{"name": "椒丘", "star": 2}],
+            }
+        ]
     }
-    session.scene_state["cw"]["slots"]["front"] = ["布洛妮娅", None, None, None]
-    session.scene_state["cw"]["slots"]["stale"] = False
+
+    authoritative, _ = slots_module._session_slot_name_candidates(session.scene_state["cw"])
+    assert "布洛妮娅" in authoritative
+    assert "椒丘" in authoritative
+    assert "不要作为候选" not in authoritative
 
     refreshed = read_cw_slots(
         session,
-        reader=lambda: (["布罗妮娅", None, None, None], [None] * 6, [None] * 9),
-        targets=["front:0"],
+        reader=lambda: (["布罗妮娅", None, None, None], ["椒丘", None, None, None, None, None], [None] * 9),
+        guide_config=None,
     )
 
     assert refreshed.scene_state["cw"]["slots"]["front"][0] == "布洛妮娅"
+    assert refreshed.scene_state["cw"]["slots"]["back"][0] == "椒丘"
 
 
 def test_slots_read_preserves_star_metadata_when_normalizing_name(tmp_path):
@@ -734,8 +743,9 @@ def test_slots_read_preserves_star_metadata_when_normalizing_name(tmp_path):
 
     session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["guide"] = {
-        "on_field": {"布洛妮娅": 1},
-        "off_field": {},
+        "role_stages": [
+            {"stage": "Final", "front_roles": [{"name": "布洛妮娅"}], "back_roles": []}
+        ],
     }
     session.scene_state["cw"]["slots"]["front"] = [{"name": "布洛妮娅", "star": 2}, None, None, None]
     session.scene_state["cw"]["slots"]["stale"] = False
@@ -818,8 +828,9 @@ def test_slots_read_does_not_use_stale_slot_names_as_normalization_candidates(tm
 
     session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["guide"] = {
-        "on_field": {"布罗妮娅": 1},
-        "off_field": {},
+        "role_stages": [
+            {"stage": "Final", "front_roles": [{"name": "布罗妮娅"}], "back_roles": []}
+        ],
     }
     session.scene_state["cw"]["slots"]["front"] = ["布洛妮娅", None, None, None]
     session.scene_state["cw"]["slots"]["stale"] = True
@@ -832,15 +843,14 @@ def test_slots_read_does_not_use_stale_slot_names_as_normalization_candidates(tm
     assert refreshed.scene_state["cw"]["slots"]["front"][0] == "布罗妮娅"
 
 
-def test_slots_read_normalizes_name_from_nested_portal_guide_role_candidates(tmp_path):
+def test_slots_read_ignores_nested_portal_names_as_authoritative_candidates(tmp_path):
     slots_module = load_cw_slots_module()
     read_cw_slots = getattr(slots_module, "read_cw_slots", None)
     assert read_cw_slots is not None
 
     session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["guide"] = {
-        "on_field": {},
-        "off_field": {},
+        "role_stages": [],
     }
     session.scene_state["cw"]["portal"] = {
         "cards": [
@@ -862,31 +872,19 @@ def test_slots_read_normalizes_name_from_nested_portal_guide_role_candidates(tmp
         targets=["hand:6"],
     )
 
-    assert refreshed.scene_state["cw"]["slots"]["hand"][6] == "爻光"
+    assert refreshed.scene_state["cw"]["slots"]["hand"][6] == "交光"
 
 
-def test_slots_read_prefers_portal_candidates_over_previous_fresh_slot_noise(tmp_path):
+def test_slots_read_prefers_role_stage_candidates_over_previous_fresh_slot_noise(tmp_path):
     slots_module = load_cw_slots_module()
     read_cw_slots = getattr(slots_module, "read_cw_slots", None)
     assert read_cw_slots is not None
 
     session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["guide"] = {
-        "on_field": {},
-        "off_field": {},
-    }
-    session.scene_state["cw"]["portal"] = {
-        "cards": [
-            {
-                "guides": [
-                    {
-                        "final_role_cards": [
-                            {"name": "爻光"},
-                        ]
-                    }
-                ]
-            }
-        ]
+        "role_stages": [
+            {"stage": "Final", "front_roles": [], "back_roles": [{"name": "爻光"}]}
+        ],
     }
     session.scene_state["cw"]["slots"]["hand"] = ["银狼", None, "阮·梅", None, None, None, "目交光", None, None]
     session.scene_state["cw"]["slots"]["stale"] = False
@@ -907,8 +905,13 @@ def test_slots_read_keeps_ambiguous_name_when_best_match_is_not_unique(tmp_path)
 
     session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["guide"] = {
-        "on_field": {"布洛妮娅": 1},
-        "off_field": {"布罗妮娅": 1},
+        "role_stages": [
+            {
+                "stage": "Final",
+                "front_roles": [{"name": "布洛妮娅"}],
+                "back_roles": [{"name": "布罗妮娅"}],
+            }
+        ],
     }
 
     refreshed = read_cw_slots(
@@ -1196,21 +1199,423 @@ def test_build_cw_hand_seller_and_crystal_collector_use_runtime_drags():
     assert runtime.drags[1:] == [(*drag, 0.2) for drag in slots_module.CRYSTAL_DRAG_PATHS]
 
 
-def test_sell_plan_returns_candidates_and_refreshes_snapshot(tmp_path):
+def test_sell_plan_returns_reference_items_ordered_by_priority(tmp_path):
     slots_module = load_cw_slots_module()
     plan_cw_hand_sell = getattr(slots_module, "plan_cw_hand_sell", None)
     assert plan_cw_hand_sell is not None
 
     session = build_fake_cw_session(tmp_path)
-    before_slots = deepcopy(session.scene_state["cw"]["slots"])
+    session.scene_state["cw"]["guide"] = {
+        "role_stages": [
+            {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+            {"stage": "Mid", "front_roles": [{"name": "停云", "star": 2}], "back_roles": []},
+            {"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []},
+        ]
+    }
+    session.scene_state["cw"]["slots"] = {
+        "front": [{"name": "银狼", "star": 3}],
+        "back": [],
+        "hand": [
+            {"name": "阮·梅", "star": 1},
+            {"name": "黑塔", "star": 1},
+            {"name": "停云", "star": 2},
+            {"name": "银狼", "star": 3},
+        ],
+        "stale": False,
+    }
+    session.scene_state["cw"]["stage"] = {"value": "3-5", "boss_preview": True, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "5/5", "stale": False}
+
     result = plan_cw_hand_sell(session)
 
-    assert result == {"candidates": [0, 2]}
-    assert session.scene_state["cw"]["sell_plan"] == {"candidates": [0, 2]}
-    assert session.scene_state["cw"]["slots"] == before_slots
+    assert result["reference_only"] is True
+    assert result["candidates"] == []
+    assert [item["name"] for item in result["items"]] == ["阮·梅", "黑塔", "停云", "银狼"]
+    assert [item["category"] for item in result["items"]] == ["非攻略", "前期", "中期", "后期超买"]
+    assert [item["recommendation"] for item in result["items"]] == ["推荐", "推荐", "推荐", "可以"]
+    assert result["todos"] == []
+    assert session.scene_state["cw"]["sell_plan"] == result
 
-    result["candidates"].append(9)
-    assert session.scene_state["cw"]["sell_plan"] == {"candidates": [0, 2]}
+    result["items"].append({"slot": 9, "name": "噪声"})
+    assert [item["name"] for item in session.scene_state["cw"]["sell_plan"]["items"]] == ["阮·梅", "黑塔", "停云", "银狼"]
+
+
+@pytest.mark.parametrize(
+    ("stage_value", "boss_preview", "expected"),
+    [
+        ("1-2", False, {"非攻略": "可以", "前期": "不推荐", "中期": "不推荐", "后期超买": "不推荐"}),
+        ("2-1", False, {"非攻略": "推荐", "前期": "可以", "中期": "不推荐", "后期超买": "不推荐"}),
+        ("2-5", True, {"非攻略": "推荐", "前期": "推荐", "中期": "不推荐", "后期超买": "不推荐"}),
+        ("3-1", False, {"非攻略": "推荐", "前期": "推荐", "中期": "可以", "后期超买": "不推荐"}),
+        ("3-5", True, {"非攻略": "推荐", "前期": "推荐", "中期": "推荐", "后期超买": "可以"}),
+    ],
+)
+def test_sell_plan_recommendation_table_by_stage(tmp_path, stage_value, boss_preview, expected):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "role_stages": [
+            {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+            {"stage": "Mid", "front_roles": [{"name": "停云", "star": 2}], "back_roles": []},
+            {"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []},
+        ]
+    }
+    session.scene_state["cw"]["slots"] = {
+        "front": [{"name": "银狼", "star": 3}],
+        "back": [],
+        "hand": [
+            {"name": "阮·梅", "star": 1},
+            {"name": "黑塔", "star": 1},
+            {"name": "停云", "star": 2},
+            {"name": "银狼", "star": 3},
+        ],
+        "stale": False,
+    }
+    session.scene_state["cw"]["stage"] = {"value": stage_value, "boss_preview": boss_preview, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "5/5", "stale": False}
+
+    plan = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    by_category = {item["category"]: item["recommendation"] for item in plan["items"]}
+    for category, recommendation in expected.items():
+        assert by_category[category] == recommendation
+
+
+def test_sell_plan_protects_final_role_when_missing_from_field(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": [{"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []}]}
+    session.scene_state["cw"]["slots"] = {"front": [], "back": [], "hand": [{"name": "银狼", "star": 1}], "stale": False}
+    session.scene_state["cw"]["stage"] = {"value": "3-5", "boss_preview": True, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "1/1", "stale": False}
+
+    item = load_cw_slots_module().plan_cw_hand_sell(session)["items"][0]
+
+    assert item["category"] == "后期"
+    assert item["protected"] is True
+    assert item["recommendation"] == "不推荐"
+    assert item["target_star"] == 3
+    assert item["current_star"] is None
+
+
+def test_sell_plan_protects_final_role_when_field_star_below_target(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": [{"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []}]}
+    session.scene_state["cw"]["slots"] = {"front": [{"name": "银狼", "star": 2}], "back": [], "hand": [{"name": "银狼", "star": 1}], "stale": False}
+    session.scene_state["cw"]["stage"] = {"value": "3-5", "boss_preview": True, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "2/2", "stale": False}
+
+    item = load_cw_slots_module().plan_cw_hand_sell(session)["items"][0]
+
+    assert item["category"] == "后期"
+    assert item["protected"] is True
+    assert item["recommendation"] == "不推荐"
+    assert item["current_star"] == 2
+
+
+def test_sell_plan_missing_star_marks_todo_and_protects_final_role(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": [{"stage": "Final", "front_roles": [{"name": "银狼"}], "back_roles": []}]}
+    session.scene_state["cw"]["slots"] = {"front": [{"name": "银狼"}], "back": [], "hand": [{"name": "银狼"}], "stale": False}
+    session.scene_state["cw"]["stage"] = {"value": "3-5", "boss_preview": True, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "2/2", "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert "star" in result["todos"]
+    assert result["items"][0]["protected"] is True
+    assert result["items"][0]["recommendation"] == "不推荐"
+
+
+def test_sell_plan_marks_star_todo_when_final_current_star_missing_on_field(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": [{"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []}]}
+    session.scene_state["cw"]["slots"] = {"front": [{"name": "银狼"}], "back": [], "hand": [{"name": "银狼", "star": 1}], "stale": False}
+    session.scene_state["cw"]["stage"] = {"value": "3-5", "boss_preview": True, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "2/2", "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+    item = result["items"][0]
+
+    assert item["protected"] is True
+    assert item["recommendation"] == "不推荐"
+    assert item["target_star"] == 3
+    assert item["current_star"] is None
+    assert "star" in result["todos"]
+
+
+def test_sell_plan_missing_stage_or_team_size_marks_todos_and_avoids_authoritative_candidates(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "role_stages": [
+            {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+            {"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []},
+        ]
+    }
+    session.scene_state["cw"]["slots"] = {"front": [], "back": [], "hand": [{"name": "黑塔", "star": 1}], "stale": False}
+    session.scene_state["cw"]["stage"] = {"stale": True}
+    session.scene_state["cw"]["shop"] = {"stale": True}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert result["reference_only"] is True
+    assert result["candidates"] == []
+    assert "stage" in result["todos"]
+    assert "team_size" in result["todos"]
+
+
+@pytest.mark.parametrize(
+    "stage_state",
+    [
+        {"value": "2-1", "boss_preview": False},
+        {"value": "2-1", "boss_preview": False, "stale": 1},
+        {"value": "2-1", "boss_preview": False, "stale": "true"},
+    ],
+)
+def test_sell_plan_non_false_stage_stale_marks_stage_todo(tmp_path, stage_state):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "role_stages": [
+            {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+            {"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []},
+        ]
+    }
+    session.scene_state["cw"]["slots"] = {"front": [], "back": [], "hand": [{"name": "黑塔", "star": 1}], "stale": False}
+    session.scene_state["cw"]["stage"] = stage_state
+    session.scene_state["cw"]["shop"] = {"team_size": "1/1", "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert "stage" in result["todos"]
+
+
+@pytest.mark.parametrize(
+    "shop_state",
+    [
+        {"team_size": "1/1"},
+        {"team_size": "1/1", "stale": 1},
+        {"team_size": "1/1", "stale": "true"},
+    ],
+)
+def test_sell_plan_non_false_shop_stale_marks_team_size_todo(tmp_path, shop_state):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "role_stages": [
+            {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+            {"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []},
+        ]
+    }
+    session.scene_state["cw"]["slots"] = {"front": [], "back": [], "hand": [{"name": "黑塔", "star": 1}], "stale": False}
+    session.scene_state["cw"]["stage"] = {"value": "2-1", "boss_preview": False, "stale": False}
+    session.scene_state["cw"]["shop"] = shop_state
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert "team_size" in result["todos"]
+
+
+def test_sell_plan_missing_stage_state_marks_stage_todo(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "role_stages": [
+            {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+            {"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []},
+        ]
+    }
+    session.scene_state["cw"]["slots"] = {"front": [], "back": [], "hand": [{"name": "黑塔", "star": 1}], "stale": False}
+    session.scene_state["cw"].pop("stage", None)
+    session.scene_state["cw"]["shop"] = {"team_size": "1/1", "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert result["reference_only"] is True
+    assert result["candidates"] == []
+    assert "stage" in result["todos"]
+
+
+def test_sell_plan_missing_team_size_value_marks_team_size_todo(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "role_stages": [
+            {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+            {"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []},
+        ]
+    }
+    session.scene_state["cw"]["slots"] = {"front": [], "back": [], "hand": [{"name": "黑塔", "star": 1}], "stale": False}
+    session.scene_state["cw"]["stage"] = {"value": "2-1", "boss_preview": False, "stale": False}
+    session.scene_state["cw"]["shop"] = {"stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert result["reference_only"] is True
+    assert result["candidates"] == []
+    assert "team_size" in result["todos"]
+
+
+def test_sell_plan_marks_all_items_not_recommended_when_under_team_size(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": [{"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []}]}
+    session.scene_state["cw"]["slots"] = {"front": [{"name": "银狼", "star": 3}], "back": [], "hand": [{"name": "阮·梅", "star": 1}], "stale": False}
+    session.scene_state["cw"]["stage"] = {"value": "3-5", "boss_preview": True, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "3/3", "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert [item["name"] for item in result["items"]] == ["阮·梅"]
+    assert all(item["recommendation"] == "不推荐" for item in result["items"])
+
+
+@pytest.mark.parametrize("team_size", ["1/3", 3, "3"])
+def test_sell_plan_team_size_ratio_uses_right_side(tmp_path, team_size):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": [{"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []}]}
+    session.scene_state["cw"]["slots"] = {
+        "front": [{"name": "银狼", "star": 3}],
+        "back": [],
+        "hand": [{"name": "阮·梅", "star": 1}],
+        "stale": False,
+    }
+    session.scene_state["cw"]["stage"] = {"value": "3-5", "boss_preview": True, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": team_size, "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert [item["name"] for item in result["items"]] == ["阮·梅"]
+    assert all(item["recommendation"] == "不推荐" for item in result["items"])
+
+
+@pytest.mark.parametrize("team_size", [0, -1, True, "0", "-1", "abc/7", "1/0", "-1/3", "1/-3", "abc"])
+def test_sell_plan_invalid_team_size_marks_team_size_todo(tmp_path, team_size):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": [{"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []}]}
+    session.scene_state["cw"]["slots"] = {
+        "front": [{"name": "银狼", "star": 3}],
+        "back": [],
+        "hand": [{"name": "阮·梅", "star": 1}],
+        "stale": False,
+    }
+    session.scene_state["cw"]["stage"] = {"value": "3-5", "boss_preview": True, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": team_size, "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert "team_size" in result["todos"]
+
+
+@pytest.mark.parametrize("star", [0, -1, 99, True, "0", "-1", "99", "abc"])
+def test_sell_plan_invalid_final_star_marks_todo_and_protects_role(tmp_path, star):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": [{"stage": "Final", "front_roles": [{"name": "银狼", "star": star}], "back_roles": []}]}
+    session.scene_state["cw"]["slots"] = {"front": [{"name": "银狼", "star": star}], "back": [], "hand": [{"name": "银狼", "star": star}], "stale": False}
+    session.scene_state["cw"]["stage"] = {"value": "3-5", "boss_preview": True, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "2/2", "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert "star" in result["todos"]
+    assert result["items"][0]["protected"] is True
+
+
+def test_sell_plan_marks_missing_final_when_last_stage_is_used_as_final(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "role_stages": [
+            {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+            {"stage": "Mid", "front_roles": [{"name": "停云", "star": 2}], "back_roles": []},
+        ]
+    }
+    session.scene_state["cw"]["slots"] = {
+        "front": [{"name": "停云", "star": 2}],
+        "back": [],
+        "hand": [{"name": "停云", "star": 2}],
+        "stale": False,
+    }
+    session.scene_state["cw"]["stage"] = {"value": "3-5", "boss_preview": True, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "2/2", "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert "missing_final" in result["todos"]
+    assert result["items"][0]["category"] == "后期超买"
+
+
+@pytest.mark.parametrize(
+    "role_stages",
+    [
+        [{"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []}],
+        [
+            {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+            {"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []},
+        ],
+    ],
+)
+def test_sell_plan_marks_stage_granularity_when_stage_roles_are_too_coarse(tmp_path, role_stages):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": role_stages}
+    session.scene_state["cw"]["slots"] = {
+        "front": [{"name": "银狼", "star": 3}],
+        "back": [],
+        "hand": [{"name": "银狼", "star": 3}],
+        "stale": False,
+    }
+    session.scene_state["cw"]["stage"] = {"value": "3-5", "boss_preview": True, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "2/2", "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert "stage_granularity" in result["todos"]
+
+
+def test_sell_plan_marks_stage_granularity_when_role_stages_are_empty(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": []}
+    session.scene_state["cw"]["slots"] = {"front": [], "back": [], "hand": [{"name": "阮·梅", "star": 1}], "stale": False}
+    session.scene_state["cw"]["stage"] = {"value": "2-1", "boss_preview": False, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "1/1", "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert "stage_granularity" in result["todos"]
+
+
+def test_sell_plan_missing_boss_preview_uses_non_boss_recommendation(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "role_stages": [
+            {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+            {"stage": "Mid", "front_roles": [{"name": "停云", "star": 2}], "back_roles": []},
+            {"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []},
+        ]
+    }
+    session.scene_state["cw"]["slots"] = {
+        "front": [{"name": "银狼", "star": 3}],
+        "back": [],
+        "hand": [{"name": "黑塔", "star": 1}, {"name": "停云", "star": 2}, {"name": "银狼", "star": 3}],
+        "stale": False,
+    }
+    session.scene_state["cw"]["stage"] = {"value": "2-5", "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "4/4", "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert "boss_preview" in result["todos"]
+    assert {item["category"]: item["recommendation"] for item in result["items"]}["前期"] == "可以"
+
+
+@pytest.mark.parametrize("stage_value", ["shop", "battle", "boss_preview"])
+def test_sell_plan_unparseable_stage_value_marks_stage_todo(tmp_path, stage_value):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {
+        "role_stages": [
+            {"stage": "Opening", "front_roles": [{"name": "黑塔", "star": 1}], "back_roles": []},
+            {"stage": "Final", "front_roles": [{"name": "银狼", "star": 3}], "back_roles": []},
+        ]
+    }
+    session.scene_state["cw"]["slots"] = {"front": [], "back": [], "hand": [{"name": "黑塔", "star": 1}], "stale": False}
+    session.scene_state["cw"]["stage"] = {"value": stage_value, "stale": False}
+    session.scene_state["cw"]["shop"] = {"team_size": "1/1", "stale": False}
+
+    result = load_cw_slots_module().plan_cw_hand_sell(session)
+
+    assert "stage" in result["todos"]
 
 
 def test_sell_plan_rejects_stale_slots_snapshot(tmp_path):
@@ -1220,6 +1625,39 @@ def test_sell_plan_rejects_stale_slots_snapshot(tmp_path):
 
     session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["slots"]["stale"] = True
+    session.scene_state["cw"]["sell_plan"] = {}
+
+    with pytest.raises(TrailError) as exc_info:
+        plan_cw_hand_sell(session)
+
+    assert exc_info.value.code == "SLOTS_STALE"
+    assert session.scene_state["cw"]["sell_plan"] == {}
+
+
+def test_sell_plan_rejects_non_false_stale_slots_snapshot(tmp_path):
+    slots_module = load_cw_slots_module()
+    plan_cw_hand_sell = getattr(slots_module, "plan_cw_hand_sell", None)
+    assert plan_cw_hand_sell is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"]["stale"] = ""
+    session.scene_state["cw"]["sell_plan"] = {}
+
+    with pytest.raises(TrailError) as exc_info:
+        plan_cw_hand_sell(session)
+
+    assert exc_info.value.code == "SLOTS_STALE"
+    assert session.scene_state["cw"]["sell_plan"] == {}
+
+
+@pytest.mark.parametrize("slots_value", [None, [], "stale"])
+def test_sell_plan_rejects_malformed_slots_snapshot_as_stale(tmp_path, slots_value):
+    slots_module = load_cw_slots_module()
+    plan_cw_hand_sell = getattr(slots_module, "plan_cw_hand_sell", None)
+    assert plan_cw_hand_sell is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"] = slots_value
     session.scene_state["cw"]["sell_plan"] = {}
 
     with pytest.raises(TrailError) as exc_info:
@@ -1404,6 +1842,28 @@ def _set_metrics(session, metrics: dict):
 def _set_sell_plan(session, plan: dict):
     session.scene_state.setdefault("cw", {})["sell_plan"] = dict(plan)
     return session
+
+
+def _fake_reference_sell_plan():
+    return {
+        "reference_only": True,
+        "candidates": [],
+        "items": [
+            {
+                "slot": 0,
+                "name": "阮·梅",
+                "star": 1,
+                "target_star": None,
+                "current_star": None,
+                "category": "非攻略",
+                "recommendation": "推荐",
+                "priority": 10,
+                "protected": False,
+                "reason": "非攻略角色",
+            }
+        ],
+        "todos": [],
+    }
 
 
 def test_cw_slots_read_service_persists_incremental_snapshot(tmp_path: Path, monkeypatch):
@@ -1657,11 +2117,11 @@ def test_cw_slots_read_command_service_preserves_unexpected_exception_semantics(
             {},
             lambda monkeypatch: monkeypatch.setattr(
                 "trail.daemon.cw_service.plan_cw_hand_sell",
-                lambda session: (_set_sell_plan(session, {"candidates": [0, 2]}), {"candidates": [0, 2]})[1],
+                lambda session: (_set_sell_plan(session, _fake_reference_sell_plan()), _fake_reference_sell_plan())[1],
             ),
-            "candidates",
-            [0, 2],
-            ("sell_plan", "candidates"),
+            "reference_only",
+            True,
+            ("sell_plan", "reference_only"),
         ),
     ],
 )
@@ -1694,3 +2154,6 @@ def test_cw_slots_and_hand_mutations_flow_through_command_service_journal(
     assert envelope["data"][assertion_key] == assertion_value
     assert status["final_state"] == "completed"
     assert persisted[state_path[0]][state_path[1]] == assertion_value
+    if method == "cw.hand.sell_plan":
+        assert envelope["data"]["items"] == _fake_reference_sell_plan()["items"]
+        assert persisted["sell_plan"]["items"] == _fake_reference_sell_plan()["items"]

@@ -1570,8 +1570,6 @@ def resolve_guide_input(value: str, *, artifact_store: ArtifactStore) -> dict:
 def apply_cw_guide(session: SessionModel, guide_data: dict, *, reset_dependent_state: bool = True) -> SessionModel:
     guide_payload = normalize_cw_guide_payload(guide_data)
     cw_state = ensure_cw_state(session)
-    on_field = dict(guide_payload.get("on_field", {}))
-    off_field = dict(guide_payload.get("off_field", {}))
     cw_state["guide"] = {
         "artifact": guide_payload.get("artifact_id"),
         "lineup_id": guide_payload.get("lineup_id"),
@@ -1585,18 +1583,12 @@ def apply_cw_guide(session: SessionModel, guide_data: dict, *, reset_dependent_s
         "has_change_equip": bool(guide_payload.get("has_change_equip")),
         "has_expert": bool(guide_payload.get("has_expert")),
         "version": guide_payload.get("version"),
-        "on_field": on_field,
-        "off_field": off_field,
         "role_stages": guide_payload.get("role_stages", []),
         "first_fight_augments": guide_payload.get("first_fight_augments", []),
         "second_fight_augments": guide_payload.get("second_fight_augments", []),
         "portals": guide_payload.get("portals", []),
         "order_basic": guide_payload.get("order_basic", []),
         "order_compose": guide_payload.get("order_compose", []),
-        "remaining_purchases": {
-            **on_field,
-            **off_field,
-        },
     }
     cw_state["constraints"] = {
         "min_coins": guide_payload.get("min_coins", 40),

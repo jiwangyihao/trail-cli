@@ -161,7 +161,7 @@
 - 到达该页面后的推荐下一步：
   1. 如果右侧有可领的晶球/奖励，优先运行：
      - `trail cw crystals collect --session <id>`
-  2. 若要布阵、卖牌、看商店，再按局内流程运行对应 `cw slots` / `cw hand` / `cw shop` 命令
+  2. 若要布阵、看卖牌参考、看商店，再按局内流程运行对应 `cw slots` / `cw hand sell-plan` / `cw shop` 命令；`sell-plan` 只提供参考，不会自动卖牌
   3. 准备完成后再运行：
      - `trail cw battle run --session <id> --timeout 570`
   4. `trail cw battle start --session <id>` 仍保留为 advanced/manual fallback，只在需要手工拆 battle / settle 链时使用，不是默认主流程
@@ -224,8 +224,11 @@
   - 通常出现在继续上阵、拖牌或摆放角色时超过当前可用席位
 - 到达该页面后的推荐下一步：
   1. 先不要继续上阵更多角色
-  2. 优先考虑：
-     - `trail cw hand sell-one|sell-plan --session <id>`
+  2. 优先先看卖牌参考：
+     - `trail cw hand sell-plan --session <id>`
+  3. `sell-plan` 只提供参考，不是自动卖牌或权威计划；由 Agent 判断后，如确需出售再显式执行：
+     - `trail cw hand sell --session <id> --slot <n>`
+  4. 也可考虑：
      - `trail cw slots swap --session <id> --source ... --target ...`
      - 或先提升等级 / 扩容
 - 额外说明：

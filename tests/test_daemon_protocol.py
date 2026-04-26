@@ -3548,7 +3548,15 @@ def test_command_service_handles_cw_hand_sell_plan_runtime_failure_after_save_as
     assert "WINDOW_NOT_FOUND" not in payload["error"]["code"]
     assert status["final_state"] == "persisted_but_response_unknown"
     assert status["tainted"] is True
-    assert loaded.scene_state["cw"]["sell_plan"] == {"candidates": [1, 3]}
+    sell_plan = loaded.scene_state["cw"]["sell_plan"]
+    assert sell_plan["reference_only"] is True
+    assert sell_plan["candidates"] == []
+    assert sell_plan["todos"] == ["stage_granularity", "stage", "team_size"]
+    assert [item["slot"] for item in sell_plan["items"]] == [1, 3]
+    assert [item["name"] for item in sell_plan["items"]] == ["希儿", "布洛妮娅"]
+    assert all(item["category"] == "非攻略" for item in sell_plan["items"])
+    assert all(item["recommendation"] == "不推荐" for item in sell_plan["items"])
+    assert all(item["protected"] is False for item in sell_plan["items"])
 
 
 def test_command_service_handles_cw_start_valid_ax_x_does_not_leak_public_invalid_codes(tmp_path: Path, monkeypatch):

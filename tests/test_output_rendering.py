@@ -882,6 +882,7 @@ def test_render_output_renders_cw_shop_status_without_shot_or_guidance():
             "exp": "4/52",
             "reserve_full": False,
             "team_size": "7/7",
+            "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         },
         "screenshot": None,
         "timing": {},
@@ -3162,7 +3163,7 @@ def test_render_output_renders_cw_shop_buy_slot_summary_text():
             "items": [{"slot": 2, "name": "停云", "price": 10}, {"slot": 1, "name": "银狼", "price": 20}],
             "opened": True,
             "stale": False,
-            "guide_summary": {"remaining_purchases": {"银狼": 0}},
+            "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         },
         "screenshot": ".trail/shots/req-buy-slot.png",
         "image_guidance": {"read_image_first": True},
@@ -3194,6 +3195,7 @@ def test_render_output_renders_cw_shop_scan_snapshot_info_text():
             "exp": "4/52",
             "reserve_full": False,
             "team_size": "7/7",
+            "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         },
         "screenshot": ".trail/shots/req-shop-scan.png",
         "image_guidance": {"read_image_first": True},
@@ -3355,7 +3357,25 @@ def test_render_output_renders_cw_event_handle_summary_text():
 def test_render_output_renders_cw_hand_sell_plan_text():
     payload = {
         "ok": True,
-        "data": {"candidates": [0, 2]},
+        "data": {
+            "reference_only": True,
+            "candidates": [],
+            "todos": ["stage"],
+            "items": [
+                {
+                    "slot": 0,
+                    "name": "阮·梅",
+                    "star": 1,
+                    "target_star": None,
+                    "current_star": None,
+                    "category": "非攻略",
+                    "recommendation": "不推荐",
+                    "priority": 10,
+                    "protected": False,
+                    "reason": "缺少当前阶段，仅提供参考",
+                }
+            ],
+        },
         "screenshot": None,
         "timing": {},
         "warnings": [],
@@ -3365,7 +3385,66 @@ def test_render_output_renders_cw_hand_sell_plan_text():
     }
 
     assert render_output("cw.hand.sell_plan", payload).splitlines() == [
-        "ok cw.hand.sell_plan count=2"
+        "ok cw.hand.sell_plan count=1 reference_only=1 candidates=0 todos=1",
+        "slot pos=hand:0 name=阮·梅 star=1 分类=非攻略 推荐度=不推荐 priority=10 protected=0 reason=缺少当前阶段，仅提供参考",
+        "info todo=stage",
+    ]
+
+
+def test_render_output_filters_malformed_cw_hand_sell_plan_payload():
+    payload = {
+        "ok": True,
+        "data": {
+            "reference_only": True,
+            "candidates": [],
+            "todos": ["stage", None, "", "  "],
+            "items": [
+                {
+                    "slot": 0,
+                    "name": "阮·梅",
+                    "category": "非攻略",
+                    "recommendation": "不推荐",
+                    "priority": 10,
+                    "protected": "0",
+                    "reason": "缺少当前阶段，仅提供参考",
+                }
+            ],
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.hand.sell_plan", payload).splitlines() == [
+        "ok cw.hand.sell_plan count=1 reference_only=1 candidates=0 todos=1",
+        "slot pos=hand:0 name=阮·梅 分类=非攻略 推荐度=不推荐 priority=10 reason=缺少当前阶段，仅提供参考",
+        "info todo=stage",
+    ]
+
+
+def test_render_output_rejects_yaml_for_cw_hand_sell_plan():
+    payload = {
+        "ok": True,
+        "data": {
+            "reference_only": True,
+            "candidates": [],
+            "todos": [],
+            "items": [],
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.hand.sell_plan", payload, output_format="yaml").splitlines() == [
+        "fail cw.hand.sell_plan code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        'why msg="yaml not supported for cw.hand.sell_plan"',
     ]
 
 

@@ -1357,15 +1357,12 @@ def test_command_service_handles_guide_fetch_cw_select_and_persists_session(tmp_
         "has_change_equip": False,
         "has_expert": False,
         "version": "3.2",
-        "on_field": {"front_a": 1},
-        "off_field": {"back_b": 2},
         "role_stages": [],
         "first_fight_augments": [],
         "second_fight_augments": [],
         "portals": [],
         "order_basic": [],
         "order_compose": [],
-        "remaining_purchases": {"front_a": 1, "back_b": 2},
     }
     assert loaded.scene_state["cw"]["constraints"] == {
         "min_coins": 40,

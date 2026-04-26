@@ -847,10 +847,7 @@ def test_scan_cw_shop_converges_to_same_snapshot_from_opened_or_closed_start(tmp
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "3/3",
-        "guide_summary": {
-            "remaining_purchases": {},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": False,
     }
 
@@ -880,7 +877,7 @@ def test_shop_scan_refreshes_store_snapshot(tmp_path):
 
     from tests.conftest import build_fake_cw_session
 
-    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session = build_fake_cw_session(tmp_path)
     refreshed = scan_cw_shop(session, scanner=fake_shop_snapshot)
 
     assert refreshed.scene_state["cw"]["shop"] == {
@@ -890,10 +887,7 @@ def test_shop_scan_refreshes_store_snapshot(tmp_path):
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "7/7",
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 1},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": False,
     }
 
@@ -1045,10 +1039,6 @@ def test_shop_scan_without_guide_keeps_opened_and_filters_guide_summary(tmp_path
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "7/7",
-        "guide_summary": {
-            "remaining_purchases": {},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
         "stale": False,
     }
 
@@ -1066,14 +1056,72 @@ def test_shop_status_returns_current_snapshot(tmp_path):
     assert shop_cw_status(scanned) == scanned.scene_state["cw"]["shop"]
 
 
-def test_shop_buy_slot_mutates_remaining_purchases(tmp_path):
+def test_shop_status_without_selected_guide_filters_legacy_guide_summary(tmp_path):
+    shop_module = load_cw_shop_module()
+    shop_cw_status = getattr(shop_module, "shop_cw_status", None)
+    assert shop_cw_status is not None
+
+    from tests.conftest import build_fake_cw_session
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = None
+    session.scene_state["cw"]["shop"] = {
+        "items": [{"name": "银狼", "price": 20}],
+        "coins": 40,
+        "level": 7,
+        "exp": "4/52",
+        "reserve_full": False,
+        "team_size": "7/7",
+        "guide_summary": {
+            "remaining_purchases": {"银狼": 4},
+            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
+        },
+        "stale": False,
+    }
+
+    assert shop_cw_status(session) == {
+        "items": [{"name": "银狼", "price": 20}],
+        "coins": 40,
+        "level": 7,
+        "exp": "4/52",
+        "reserve_full": False,
+        "team_size": "7/7",
+        "stale": False,
+    }
+
+
+def test_shop_status_ignores_legacy_guide_remaining_purchases_in_summary(tmp_path):
+    shop_module = load_cw_shop_module()
+    shop_cw_status = getattr(shop_module, "shop_cw_status", None)
+    assert shop_cw_status is not None
+
+    from tests.conftest import build_fake_cw_session
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": [], "remaining_purchases": {"银狼": 4}}
+    session.scene_state["cw"]["shop"] = {
+        "items": [{"name": "银狼", "price": 20}],
+        "coins": 40,
+        "level": 7,
+        "exp": "4/52",
+        "reserve_full": False,
+        "team_size": "7/7",
+        "guide_summary": {"remaining_purchases": {"银狼": 4}},
+        "stale": False,
+    }
+
+    assert shop_cw_status(session)["guide_summary"] == {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}}
+
+
+def test_shop_buy_slot_does_not_mutate_guide_purchase_state(tmp_path):
     shop_module = load_cw_shop_module()
     buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
     assert buy_cw_shop_slot is not None
 
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
-    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = {"role_stages": []}
     session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
     getattr(shop_module, "scan_cw_shop")(session, scanner=fake_shop_snapshot)
     refreshed = buy_cw_shop_slot(
@@ -1084,7 +1132,7 @@ def test_shop_buy_slot_mutates_remaining_purchases(tmp_path):
         scanner=fake_shop_snapshot_after_purchase,
     )
 
-    assert refreshed.scene_state["cw"]["guide"]["remaining_purchases"]["银狼"] == 0
+    assert refreshed.scene_state["cw"]["guide"] == {"role_stages": []}
     assert refreshed.scene_state["cw"]["shop"] == {
         "items": [{"name": "阮·梅", "price": 30}],
         "coins": 22,
@@ -1093,13 +1141,78 @@ def test_shop_buy_slot_mutates_remaining_purchases(tmp_path):
         "reserve_full": False,
         "team_size": "7/7",
         "opened": True,
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 0},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": False,
     }
     assert refreshed.scene_state["cw"]["slots"]["stale"] is True
+
+
+def test_shop_buy_slot_clears_sell_plan_and_marks_slots_stale(tmp_path):
+    shop_module = load_cw_shop_module()
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session, fake_buy_success
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    getattr(shop_module, "scan_cw_shop")(session, scanner=fake_shop_snapshot)
+    session.scene_state["cw"]["sell_plan"] = {"items": [{"slot": 0, "name": "银狼"}]}
+
+    refreshed = buy_cw_shop_slot(
+        session,
+        slot=1,
+        expect="银狼",
+        buyer=fake_buy_success,
+        scanner=fake_shop_snapshot_after_purchase,
+    )
+
+    assert refreshed.scene_state["cw"]["sell_plan"] == {}
+    assert refreshed.scene_state["cw"]["slots"]["stale"] is True
+
+
+def test_shop_scan_ignores_legacy_guide_remaining_purchases_in_summary(tmp_path):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    assert scan_cw_shop is not None
+
+    from tests.conftest import build_fake_cw_session
+
+    session = build_fake_cw_session(tmp_path)
+    before_guide = {"role_stages": [], "remaining_purchases": {"银狼": 4}}
+    session.scene_state["cw"]["guide"] = deepcopy(before_guide)
+
+    refreshed = scan_cw_shop(session, scanner=fake_shop_snapshot)
+
+    assert refreshed.scene_state["cw"]["guide"] == before_guide
+    assert refreshed.scene_state["cw"]["shop"]["guide_summary"] == {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}}
+
+
+def test_shop_buy_slot_ignores_legacy_guide_remaining_purchases_in_summary(tmp_path):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert scan_cw_shop is not None
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session, fake_buy_success
+
+    session = build_fake_cw_session(tmp_path)
+    before_guide = {"role_stages": [], "remaining_purchases": {"银狼": 4}}
+    session.scene_state["cw"]["guide"] = deepcopy(before_guide)
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    scan_cw_shop(session, scanner=fake_shop_snapshot)
+
+    refreshed = buy_cw_shop_slot(
+        session,
+        slot=1,
+        expect="银狼",
+        buyer=fake_buy_success,
+        scanner=fake_shop_snapshot_after_purchase,
+    )
+
+    assert refreshed.scene_state["cw"]["guide"] == before_guide
+    assert refreshed.scene_state["cw"]["shop"]["guide_summary"] == {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}}
 
 
 def test_shop_buy_slot_without_guide_does_not_crash_or_create_guide(tmp_path):
@@ -1127,6 +1240,7 @@ def test_shop_buy_slot_without_guide_does_not_crash_or_create_guide(tmp_path):
     assert refreshed.scene_state["cw"]["guide"] is None
     assert refreshed.scene_state["cw"]["shop"]["opened"] is True
     assert refreshed.scene_state["cw"]["shop"]["items"] == [{"name": "阮·梅", "price": 30}]
+    assert "guide_summary" not in refreshed.scene_state["cw"]["shop"]
     assert refreshed.scene_state["cw"]["slots"]["stale"] is True
 
 
@@ -1139,9 +1253,10 @@ def test_shop_buy_slot_retries_confirmation_until_slot_changes(tmp_path, monkeyp
 
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
-    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
     scan_cw_shop(session, scanner=fake_shop_snapshot)
+    before_guide = deepcopy(session.scene_state["cw"]["guide"])
 
     sleep_calls: list[float] = []
     snapshots = iter((fake_shop_snapshot(), fake_shop_snapshot_after_purchase()))
@@ -1156,7 +1271,7 @@ def test_shop_buy_slot_retries_confirmation_until_slot_changes(tmp_path, monkeyp
         scanner=lambda: next(snapshots),
     )
 
-    assert refreshed.scene_state["cw"]["guide"]["remaining_purchases"]["银狼"] == 0
+    assert refreshed.scene_state["cw"]["guide"] == before_guide
     assert refreshed.scene_state["cw"]["shop"]["items"][0]["name"] == "阮·梅"
     assert refreshed.scene_state["cw"]["shop"]["items"][0]["price"] == 30
     assert sleep_calls == [shop_module.SHOP_BUY_CONFIRM_RETRY_SECONDS]
@@ -1178,9 +1293,10 @@ def test_shop_buy_slot_rejects_invalid_purchase_without_consuming_purchase(tmp_p
 
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
-    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
     scan_cw_shop(session, scanner=fake_shop_snapshot)
+    before_guide = deepcopy(session.scene_state["cw"]["guide"])
 
     with pytest.raises(TrailError) as exc_info:
         buy_cw_shop_slot(
@@ -1192,7 +1308,7 @@ def test_shop_buy_slot_rejects_invalid_purchase_without_consuming_purchase(tmp_p
         )
 
     assert exc_info.value.code == code
-    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
+    assert session.scene_state["cw"]["guide"] == before_guide
     assert session.scene_state["cw"]["shop"]["items"] == [{"name": "银狼", "price": 20}]
 
 
@@ -1205,9 +1321,10 @@ def test_shop_buy_slot_rejects_other_slot_change_without_target_change(tmp_path)
 
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
-    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
     scan_cw_shop(session, scanner=fake_shop_snapshot)
+    before_guide = deepcopy(session.scene_state["cw"]["guide"])
     before_shop = deepcopy(session.scene_state["cw"]["shop"])
 
     with pytest.raises(TrailError) as exc_info:
@@ -1220,7 +1337,7 @@ def test_shop_buy_slot_rejects_other_slot_change_without_target_change(tmp_path)
         )
 
     assert exc_info.value.code == "SHOP_BUY_NOT_CONFIRMED"
-    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
+    assert session.scene_state["cw"]["guide"] == before_guide
     assert session.scene_state["cw"]["shop"] == before_shop
 
 
@@ -1233,9 +1350,10 @@ def test_shop_buy_slot_noop_failure_keeps_shop_snapshot_unchanged(tmp_path):
 
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
-    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
     scan_cw_shop(session, scanner=fake_shop_snapshot)
+    before_guide = deepcopy(session.scene_state["cw"]["guide"])
     before_shop = deepcopy(session.scene_state["cw"]["shop"])
 
     with pytest.raises(TrailError) as exc_info:
@@ -1248,7 +1366,7 @@ def test_shop_buy_slot_noop_failure_keeps_shop_snapshot_unchanged(tmp_path):
         )
 
     assert exc_info.value.code == "SHOP_BUY_NOT_CONFIRMED"
-    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
+    assert session.scene_state["cw"]["guide"] == before_guide
     assert session.scene_state["cw"]["shop"] == before_shop
 
 
@@ -1410,7 +1528,7 @@ def test_cw_shop_scan_read_commands_persist_two_phase_snapshot(tmp_path: Path):
     runtime = _build_cw_shop_scan_runtime(shop_module)
     registry, service, session, cw_service, _ = _build_cw_harness(tmp_path, runtime=runtime)
     loaded = service.load_session(session.session_id)
-    loaded.scene_state.setdefault("cw", {})["guide"] = {"remaining_purchases": {"银狼": 2}}
+    loaded.scene_state.setdefault("cw", {})["guide"] = {"role_stages": []}
     loaded.scene_state["cw"]["constraints"] = {"min_coins": 40, "min_level": 7, "mid_level": 7}
     loaded.scene_state["cw"]["shop"] = {"opened": False, "stale": True}
     service.save_session(loaded)
@@ -1436,10 +1554,7 @@ def test_cw_shop_scan_read_commands_persist_two_phase_snapshot(tmp_path: Path):
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "3/3",
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 2},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": False,
     }
 
@@ -1461,7 +1576,7 @@ def test_cw_shop_scan_flows_through_command_service_mutation_journal_and_persist
     runtime = _build_cw_shop_scan_runtime(shop_module)
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     loaded = service.load_session(session.session_id)
-    loaded.scene_state.setdefault("cw", {})["guide"] = {"remaining_purchases": {"银狼": 2}}
+    loaded.scene_state.setdefault("cw", {})["guide"] = {"role_stages": []}
     loaded.scene_state["cw"]["constraints"] = {"min_coins": 40, "min_level": 7, "mid_level": 7}
     loaded.scene_state["cw"]["shop"] = {"opened": False, "stale": True}
     service.save_session(loaded)
@@ -1485,10 +1600,7 @@ def test_cw_shop_scan_flows_through_command_service_mutation_journal_and_persist
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "3/3",
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 2},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": False,
     }
 
@@ -1521,14 +1633,11 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_save_fails_after_clic
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "7/7",
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 2},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": True,
     }
     loaded = service.load_session(session.session_id)
-    loaded.scene_state.setdefault("cw", {})["guide"] = {"remaining_purchases": {"银狼": 2}}
+    loaded.scene_state.setdefault("cw", {})["guide"] = {"role_stages": []}
     loaded.scene_state["cw"]["constraints"] = {"min_coins": 40, "min_level": 7, "mid_level": 7}
     loaded.scene_state["cw"]["shop"] = deepcopy(before_shop)
     service.save_session(loaded)
@@ -1593,14 +1702,11 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_click_side_effect_rai
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "7/7",
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 2},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": True,
     }
     loaded = service.load_session(session.session_id)
-    loaded.scene_state.setdefault("cw", {})["guide"] = {"remaining_purchases": {"银狼": 2}}
+    loaded.scene_state.setdefault("cw", {})["guide"] = {"role_stages": []}
     loaded.scene_state["cw"]["constraints"] = {"min_coins": 40, "min_level": 7, "mid_level": 7}
     loaded.scene_state["cw"]["shop"] = deepcopy(before_shop)
     service.save_session(loaded)
@@ -1653,14 +1759,11 @@ def test_cw_shop_scan_keeps_failed_before_side_effect_when_click_fails_before_in
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "7/7",
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 2},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": True,
     }
     loaded = service.load_session(session.session_id)
-    loaded.scene_state.setdefault("cw", {})["guide"] = {"remaining_purchases": {"银狼": 2}}
+    loaded.scene_state.setdefault("cw", {})["guide"] = {"role_stages": []}
     loaded.scene_state["cw"]["constraints"] = {"min_coins": 40, "min_level": 7, "mid_level": 7}
     loaded.scene_state["cw"]["shop"] = deepcopy(before_shop)
     service.save_session(loaded)
@@ -1712,14 +1815,11 @@ def test_cw_shop_scan_keeps_failed_before_side_effect_when_window_not_foreground
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "7/7",
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 2},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": True,
     }
     loaded = service.load_session(session.session_id)
-    loaded.scene_state.setdefault("cw", {})["guide"] = {"remaining_purchases": {"银狼": 2}}
+    loaded.scene_state.setdefault("cw", {})["guide"] = {"role_stages": []}
     loaded.scene_state["cw"]["constraints"] = {"min_coins": 40, "min_level": 7, "mid_level": 7}
     loaded.scene_state["cw"]["shop"] = deepcopy(before_shop)
     service.save_session(loaded)
@@ -1772,14 +1872,11 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_click_reports_window_
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "7/7",
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 2},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": True,
     }
     loaded = service.load_session(session.session_id)
-    loaded.scene_state.setdefault("cw", {})["guide"] = {"remaining_purchases": {"银狼": 2}}
+    loaded.scene_state.setdefault("cw", {})["guide"] = {"role_stages": []}
     loaded.scene_state["cw"]["constraints"] = {"min_coins": 40, "min_level": 7, "mid_level": 7}
     loaded.scene_state["cw"]["shop"] = deepcopy(before_shop)
     service.save_session(loaded)
@@ -1834,14 +1931,11 @@ def test_cw_shop_scan_ignores_metadata_boom_after_persist(
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "7/7",
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 2},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": True,
     }
     loaded = service.load_session(session.session_id)
-    loaded.scene_state.setdefault("cw", {})["guide"] = {"remaining_purchases": {"银狼": 2}}
+    loaded.scene_state.setdefault("cw", {})["guide"] = {"role_stages": []}
     loaded.scene_state["cw"]["constraints"] = {"min_coins": 40, "min_level": 7, "mid_level": 7}
     loaded.scene_state["cw"]["shop"] = deepcopy(before_shop)
     service.save_session(loaded)
@@ -1864,10 +1958,7 @@ def test_cw_shop_scan_ignores_metadata_boom_after_persist(
         "exp": "4/52",
         "reserve_full": False,
         "team_size": "3/3",
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 2},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": False,
     }
 
@@ -1910,7 +2001,7 @@ def test_cw_shop_buy_slot_marks_applied_but_not_persisted_when_confirmation_fail
     runtime = Runtime()
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     loaded = service.load_session(session.session_id)
-    loaded.scene_state.setdefault("cw", {})["guide"] = {"remaining_purchases": {"银狼": 1}}
+    loaded.scene_state.setdefault("cw", {})["guide"] = {"role_stages": []}
     loaded.scene_state["cw"]["constraints"] = {"min_coins": 40, "min_level": 7, "mid_level": 7}
     loaded.scene_state["cw"]["shop"] = {
         "items": [{"name": "银狼", "price": 20}],
@@ -1920,10 +2011,7 @@ def test_cw_shop_buy_slot_marks_applied_but_not_persisted_when_confirmation_fail
         "reserve_full": False,
         "team_size": "7/7",
         "opened": True,
-        "guide_summary": {
-            "remaining_purchases": {"银狼": 1},
-            "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
-        },
+        "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         "stale": False,
     }
     service.save_session(loaded)
@@ -1953,5 +2041,5 @@ def test_cw_shop_buy_slot_marks_applied_but_not_persisted_when_confirmation_fail
     assert "shop purchase not confirmed for slot 1: 银狼" in envelope["debug"]["detail"]
     assert status["final_state"] == "applied_but_not_persisted"
     assert status["tainted"] is True
-    assert persisted.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 1}
+    assert persisted.scene_state["cw"]["guide"] == {"role_stages": []}
     assert persisted.scene_state["cw"]["shop"]["items"] == [{"name": "银狼", "price": 20}]

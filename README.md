@@ -85,7 +85,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `trail cw invest read|choose` 继续只表示局内 invest 事件，不是开局投资环境页命令
 - 策略页显式流程示例：`trail cw stage detect --session <id>` -> `trail cw strategy detect --session <id>` -> `trail cw strategy refresh --session <id> --card-idx <n>` -> `trail cw strategy select --session <id> --card-idx <n>`
 - 如需批量从手牌上场：`trail cw slots place --session <id> --action hand:0,front:0 --action hand:1,back:2`
-- 如需卖牌，先看建议：`trail cw hand sell-plan --session <id>`；真正出售时执行：`trail cw hand sell --session <id> --slot 0 --slot 2`
+- 如需卖牌，先看参考：`trail cw hand sell-plan --session <id>`；它会基于当前攻略 `role_stages`、槽位星级、阶段与人口信息输出 `slot ... 分类=... 推荐度=...`，但不是权威售出计划；真正出售时仍需显式执行 `trail cw hand sell --session <id> --slot 0 --slot 2`
 - 这两类命令都严格保序、遇错即停；只要中途失败且前面动作可能已生效，就应重新执行 `trail cw slots read`
 - 常规 battle / settle 流程默认执行：`trail cw battle run --session <id> --timeout 570`
 - `trail cw battle run` 可能耗时接近 10 分钟，命令行工具的外部 timeout 至少调到 11 分钟
@@ -262,6 +262,14 @@ ok cw.strategy.select idx=2 投资策略=回蓝
 shot path=.trail/shots/req-strategy-select.png
 info read_image_first=1
 ```
+
+```text
+ok cw.hand.sell_plan count=1 reference_only=1 candidates=0 todos=1
+slot pos=hand:0 name=阮·梅 star=1 分类=非攻略 推荐度=不推荐 priority=10 protected=0 reason=缺少当前阶段，仅提供参考
+info todo=stage
+```
+
+- `cw.hand.sell_plan` 只提供 Agent 参考信息；`candidates=0` 不代表已经生成可自动执行的售出计划，实际卖牌仍需显式运行 `trail cw hand sell --session <id> --slot <n>`
 
 ```text
 ok cw.guide.current 攻略ID=abc 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2

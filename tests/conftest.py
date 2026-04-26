@@ -140,7 +140,7 @@ def build_fake_cw_session(tmp_path, purchases: dict | None = None):
     store = SessionStore(tmp_path)
     session = store.create(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
     session.scene_state["cw"] = {
-        "guide": {"remaining_purchases": purchases or {}},
+        "guide": {"role_stages": []},
         "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
         "slots": {"stale": True, "hand": []},
         "shop": {"stale": True},

@@ -508,7 +508,7 @@ def test_cw_shop_buy_slot_renders_purchase_summary_and_shot(cli_runner, fake_dae
                     ],
                     "opened": True,
                     "stale": False,
-                    "guide_summary": {"remaining_purchases": {"银狼": 0}},
+                    "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
                 },
                 screenshot=".trail/shots/req-cw-shop-buy-slot.png",
             )
@@ -918,7 +918,8 @@ def test_cw_shop_status_renders_items_in_slot_order(cli_runner, fake_daemon_clie
                     "items": [
                         {"slot": 2, "name": "停云", "price": 1},
                         {"slot": 1, "name": "希儿", "price": 2},
-                    ]
+                    ],
+                    "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
                 },
                 screenshot=None,
             )
@@ -1047,9 +1048,31 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
             ["cw", "hand", "sell-plan", "--session", SESSION_ID],
             "cw.hand.sell_plan",
             {},
-            {"candidates": [0, 2]},
+            {
+                "reference_only": True,
+                "candidates": [],
+                "todos": ["stage"],
+                "items": [
+                    {
+                        "slot": 0,
+                        "name": "阮·梅",
+                        "star": 1,
+                        "target_star": None,
+                        "current_star": None,
+                        "category": "非攻略",
+                        "recommendation": "不推荐",
+                        "priority": 10,
+                        "protected": False,
+                        "reason": "缺少当前阶段，仅提供参考",
+                    }
+                ],
+            },
             None,
-            ["ok cw.hand.sell_plan count=2"],
+            [
+                "ok cw.hand.sell_plan count=1 reference_only=1 candidates=0 todos=1",
+                "slot pos=hand:0 name=阮·梅 star=1 分类=非攻略 推荐度=不推荐 priority=10 protected=0 reason=缺少当前阶段，仅提供参考",
+                "info todo=stage",
+            ],
         ),
         (
             ["cw", "shop", "open", "--session", SESSION_ID],
@@ -1071,7 +1094,12 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
             ["cw", "shop", "scan", "--session", SESSION_ID],
             "cw.shop.scan",
             {},
-            {"items": [{"slot": 1, "name": "银狼", "price": 20}], "opened": True, "stale": False},
+            {
+                "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                "opened": True,
+                "stale": False,
+                "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
+            },
             ".trail/shots/req-cw-shop-scan.png",
             _expected_lines(
                 "ok cw.shop.scan opened=1 stale=0 count=1",
