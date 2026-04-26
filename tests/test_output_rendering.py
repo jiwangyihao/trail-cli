@@ -3309,6 +3309,8 @@ def test_portal_select_renders_collected_slots_and_shop_before_warn_ref_and_hand
                     "back": [],
                     "hand": [{"name": "停云"}],
                     "stale": False,
+                    "stage": "preparation",
+                    "stage_stale": False,
                     "trait_summary": [
                         {
                             "trait": "巡猎",
@@ -3340,18 +3342,25 @@ def test_portal_select_renders_collected_slots_and_shop_before_warn_ref_and_hand
         "ok cw.portal.select idx=1 投资环境=击破概念股",
         "shot path=.trail/shots/portal-prep.png",
         "info read_image_first=1",
+        "# 综合信息",
+        "info stage=preparation stale=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        "# 攻略提示",
         "info skill_info=运营思路 text=先收集事实",
+        "# 角色信息",
         "slot pos=front:0 name=希儿 star=1 traits=巡猎",
         "slot pos=hand:0 name=停云",
+        "# 羁绊信息",
         'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+        "# 商店信息",
         "item idx=1 slot=1 name=银狼 cost=20",
         "info coins=40 reserve_full=0",
-        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
         'warn code=W msg="warn text"',
         "ref path=p sim=0.9",
         "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
     ]
-    assert not any(" opened=" in line or " stale=" in line for line in lines)
+    assert lines[-1].startswith("info handoff_skill=trail-cw-prep ")
+    assert not any(" opened=" in line or " stale=" in line for line in lines if not line.startswith("info stage="))
 
 
 def test_portal_select_skips_malformed_skill_info_items(capsys) -> None:

@@ -578,6 +578,57 @@ def _append_cw_shop_buy_exp_status_lines(lines: list[str], data: dict[str, Any])
         lines.append("info " + " ".join(f"{key}={_encode_value(value)}" for key, value in facts))
 
 
+def _cw_status_projection(data: dict[str, Any]) -> dict[str, Any]:
+    projection: dict[str, Any] = {}
+    if data.get("stage") is not None:
+        projection["stage"] = data.get("stage")
+    if "stage_stale" in data:
+        projection["stage_stale"] = data.get("stage_stale")
+    stage_status = _as_dict(data.get("stage_status"))
+    if stage_status:
+        projection["stage_status"] = stage_status
+    if "stage_status_stale" in data:
+        projection["stage_status_stale"] = data.get("stage_status_stale")
+    return projection
+
+
+def _has_fresh_cw_stage_status(data: dict[str, Any]) -> bool:
+    stage_status = _as_dict(data.get("stage_status"))
+    if not stage_status:
+        return False
+    if "stage_status_stale" in data:
+        return not bool(data.get("stage_status_stale"))
+    return not bool(stage_status.get("stale", True))
+
+
+def _merge_cw_status_projection(
+    slots: dict[str, Any],
+    shop: dict[str, Any],
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    slots_projection = _cw_status_projection(slots)
+    shop_projection = _cw_status_projection(shop)
+    data_projection = _cw_status_projection(data)
+
+    if _has_fresh_cw_stage_status(shop_projection):
+        merged: dict[str, Any] = {}
+        for source in (shop_projection, slots_projection, data_projection):
+            if source.get("stage") is not None:
+                merged["stage"] = source.get("stage")
+                if "stage_stale" in source:
+                    merged["stage_stale"] = source.get("stage_stale")
+                break
+        merged["stage_status"] = shop_projection["stage_status"]
+        if "stage_status_stale" in shop_projection:
+            merged["stage_status_stale"] = shop_projection.get("stage_status_stale")
+        return merged
+
+    for source in (slots_projection, data_projection, shop_projection):
+        if _has_cw_status_projection(source):
+            return source
+    return {}
+
+
 def _should_render_recover(payload: dict[str, Any]) -> bool:
     debug = payload.get("debug") or {}
     return isinstance(debug.get("last_known_stage"), str) and bool(debug.get("last_known_stage"))
@@ -692,15 +743,14 @@ def _render_cw_portal_select(command: str, payload: dict[str, Any]) -> list[str]
         f"ok {command} {summary}" if summary else f"ok {command}"
     ]
     _append_success_capture_block(lines, payload)
-    _append_skill_info(lines, data)
     slots = _as_dict(data.get("slots"))
-    if slots:
-        _append_cw_slot_lines(lines, slots)
-        _append_cw_slot_trait_summary(lines, slots)
     shop = _as_dict(data.get("shop"))
-    if shop:
-        _append_cw_shop_items(lines, shop)
-        _append_cw_shop_snapshot_info(lines, shop)
+    status_source = _merge_cw_status_projection(slots, shop, data)
+    _append_cw_status_section(lines, status_source)
+    _append_skill_info_section(lines, data)
+    _append_cw_slot_section(lines, slots)
+    _append_cw_trait_section(lines, slots)
+    _append_cw_shop_section(lines, shop)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
