@@ -164,13 +164,6 @@ CW_PREP_STAGE_BOUNDARIES = (
     / "references"
     / "stage-boundaries.md"
 )
-CW_PREP_DECISION_POINTS = (
-    PROJECT_ROOT
-    / "skills"
-    / "trail-cw-prep"
-    / "references"
-    / "decision-points-pending-strategy.md"
-)
 CW_PREP_TRIGGERS = (
     PROJECT_ROOT / "skills" / "trail-cw-prep" / "evals" / "triggers.json"
 )
@@ -1655,11 +1648,14 @@ def test_cw_prep_skill_has_required_sections_and_no_strategy_defaults() -> None:
         "## Required First Actions",
         "## Command Surface",
         "## Autonomy Boundary",
-        "## Decision Points Pending Strategy",
         "## Stop Conditions",
         "## Reference Map",
     ):
         assert section in text
+    assert "## Decision Points Pending Strategy" not in text
+    assert "## Strategy Maintenance" not in text
+    assert "decision-points-pending-strategy.md" not in text
+    assert "strategy-maintenance.md" not in text
     assert "不是 scene entry" in text
     assert "不是 direct-user 公共入口" in text
     assert "不得" in text and "具体经营策略" in text
@@ -1676,7 +1672,6 @@ def test_cw_prep_skill_has_required_sections_and_no_strategy_defaults() -> None:
 def test_cw_prep_reference_files_exist_with_required_content() -> None:
     command_surface = CW_PREP_COMMAND_SURFACE.read_text(encoding="utf-8")
     stage_boundaries = CW_PREP_STAGE_BOUNDARIES.read_text(encoding="utf-8")
-    decision_points = CW_PREP_DECISION_POINTS.read_text(encoding="utf-8")
 
     for command in (
         "trail cw stage detect",
@@ -1705,9 +1700,6 @@ def test_cw_prep_reference_files_exist_with_required_content() -> None:
         assert fragment in stage_boundaries
     for forbidden in ("优先买", "必须刷新", "默认卖", "直接出战"):
         assert forbidden not in command_surface
-        assert forbidden not in decision_points
-    for pending in ("哪些角色值得买", "如何决定卖牌", "什么时候买经验", "是否刷新商店", "何时结束备战"):
-        assert pending in decision_points
 
 
 def test_cw_prep_trigger_fixture_has_required_boundary_cases() -> None:
