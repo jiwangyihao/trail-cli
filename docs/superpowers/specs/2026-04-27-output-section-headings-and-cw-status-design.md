@@ -38,6 +38,7 @@
 - 标题行只用于分组，不包含 `key=value`，不携带 must-keep 事实。
 - 标题行不是 renderer family 前缀，不进入冻结 prefix 列表。
 - 标题行只能出现在首行和截图引导之后、业务事实行之前或不同事实组之间。
+- 消费者可以直接跳过 `# ` 行；标题不能被当作 prefix、事实、recover、handoff 或决策数据。
 - 如果命令有 `shot path=...`，仍必须保持 `shot path=...` 后紧跟 `info read_image_first=1`；标题行不得插入二者之间。
 - failure 路径暂不加标题，保持恢复链路顺序稳定。
 - handoff 行仍是 success 最后一行；标题行不得出现在 handoff 之后。
@@ -49,6 +50,8 @@
 - `# 羁绊信息`：羁绊摘要、档位、已激活档位、占比等。
 - `# 商店信息`：商店商品、金币、手牌满位等商店页事实。
 - `# 攻略提示`：`skill_info`、攻略动态提醒等提示性事实。
+
+本轮固定标题集合只包含以上五个标题。新增标题必须同步更新 `AGENTS.md`、`README.md` 和对应测试，不能由单个 renderer 临时自造。
 
 ## CW 综合状态读取
 
@@ -65,7 +68,13 @@
 
 综合状态 reader 应复用现有 stage 识别能力，例如 `stage.build_cw_stage_detector(runtime)` 使用 stage 模板和 settle OCR fallback。状态 OCR 仍复用 `CW_STATUS_LEVEL_REGION`、`CW_STATUS_EXP_REGION`、`CW_STATUS_TEAM_SIZE_REGION` 与 `stage.parse_cw_stage_status`。
 
-`read_cw_slots` 继续负责把合并后的角色快照写入 `cw_state["slots"]`，并把综合状态写入 `cw_state.stage.status`。如果综合状态 reader 读到了当前阶段，也同步刷新 `cw_state.stage.value` 和 `session.last_stage`。如果只读角色、不读综合状态，则不得伪造综合信息输出。
+页面准备由组合 reader/orchestrator 负责：先 `_collapse_expanded_hand_card`，再按需要执行 `dismiss_cw_slots_overlay`，再读取综合状态和角色槽位。综合状态 reader 不点击 slot 详情面板；角色槽位 reader 不 capture `CW_STATUS_LEVEL_REGION`、`CW_STATUS_EXP_REGION`、`CW_STATUS_TEAM_SIZE_REGION`，也不调用 stage detector。
+
+`cw.slots.read` 默认无论是否传 `--slot`，都会读取综合状态。定向读取只限制角色槽位读取范围，不跳过综合状态；这样“命令实际读取到的信息必须输出”的规则稳定且可测试。如果未来需要“只读角色不读综合状态”的性能模式，必须新增显式参数并单独更新协议。
+
+`read_cw_slots` 继续负责把合并后的角色快照写入 `cw_state["slots"]`，并把综合状态写入 `cw_state.stage.status`。如果综合状态 reader 读到了当前阶段，也按 `detect_cw_stage` 的成功语义刷新 `cw_state.stage.value`、`cw_state.stage.stale=False` 和 `session.last_stage`。如果 stage detector 返回 `None`，保留 `value=None` 或当前缺失值但不伪造阶段；综合状态 OCR 仍可输出。若 stage detector 抛出 `STAGE_AMBIGUOUS`，沿用 `detect_cw_stage` 的错误语义：invalidate stage、保留可恢复错误并让命令失败，不继续输出伪造的 `# 综合信息`。
+
+`cw.slots.read` 的响应 data 必须包含 renderer 所需的综合事实。推荐保持现有角色字段在顶层，同时追加稳定投影键：`stage`、`stage_stale`、`stage_status`、`stage_status_stale`。`stage_status` 内保留 `level`、`exp`、`team_size`、`role_count` 等内部已读事实；renderer 只把它们渲染为标题板块下的紧凑文本行。
 
 ## Renderer 设计
 
@@ -86,6 +95,8 @@ def _append_section(lines: list[str], title: str) -> None:
 
 helper 应只在对应事实存在时输出标题，避免空标题。比如没有 `trait_summary` 时，不输出 `# 羁绊信息`。
 
+`_append_cw_status_section` 接收统一投影键：`stage`、`stage_stale`、`stage_status`、`stage_status_stale`。对于 `cw.portal.select` 这类嵌套响应，renderer 应先从 `data["shop"]`、`data["slots"]` 或顶层 data 中抽取这些投影，再交给同一个 helper；不要让 helper 理解每个命令的任意嵌套业务形状。对于 `cw.shop.buy_exp`，`level/exp/team_size` 这类买经验后读取到的事实属于 `# 综合信息`，同时必须保留现有 must-keep null 语义：`team_size=null` 仍要输出。
+
 ## 命令输出变化
 
 ### `cw.slots.read`
@@ -104,16 +115,18 @@ helper 应只在对应事实存在时输出标题，避免空标题。比如没�
 10. `info 羁绊=...`
 11. `warn`、`ref`
 
+由于 `cw.slots.read` 默认总会读取综合状态，所以正常 success 输出总会包含 `# 综合信息`。即使没有羁绊摘要，仍输出 `# 角色信息`，因为角色槽位是该命令的核心正文板块。
+
 ### `cw.shop.scan|status|buy_exp`
 
 如果命令输出商店商品和综合状态，应分成：
 
 1. `# 商店信息`
 2. `item ...`
-3. `info coins=... reserve_full=...` 或买经验动作专属商店事实
+3. `info coins=... reserve_full=...`
 4. `# 综合信息`
 5. `info stage=... stale=...`（若有）
-6. `info stage_level=... stage_exp=... stage_team_size=... stage_status_stale=...`
+6. `info stage_level=... stage_exp=... stage_team_size=... stage_status_stale=...`，或 `cw.shop.buy_exp` 的 `info level=... exp=... team_size=...`
 
 如果只输出一种事实，则不强行加标题。
 
@@ -121,8 +134,8 @@ helper 应只在对应事实存在时输出标题，避免空标题。比如没�
 
 成功输出仍保持首行、截图和 read-image-first 顺序。之后按实际存在的事实输出：
 
-1. `# 攻略提示`（如有 `skill_info`）
-2. `# 综合信息`（如有 stage/status facts）
+1. `# 综合信息`（如有 stage/status facts）
+2. `# 攻略提示`（如有 `skill_info`）
 3. `# 角色信息`（如有 slots）
 4. `# 羁绊信息`（如有 trait summary）
 5. `# 商店信息`（如有 shop facts）
@@ -133,7 +146,7 @@ helper 应只在对应事实存在时输出标题，避免空标题。比如没�
 
 ### 其它多板块命令
 
-`guide.fetch.cw`、`guide.list.cw`、`cw.hand.sell_plan` 等如果正文天然包含多个事实组，也接入标题 helper。具体标题按已有中文语义命名，优先使用页面/协议里已稳定的概念，不新增不必要术语。
+首批实现范围收敛到 CW 备战链路相关多板块命令：`cw.slots.read`、`cw.shop.scan`、`cw.shop.status`、`cw.shop.buy_exp`、`cw.portal.select`。`guide.fetch.cw`、`guide.list.cw`、`cw.hand.sell_plan` 等也具备多板块潜力，但它们有已冻结中文字段和大量精确输出测试；本设计只要求后续先列清单、逐个定义标题顺序与测试后再迁移，不在首批实现中无边界改造。
 
 ## 文档与测试
 
@@ -141,22 +154,25 @@ helper 应只在对应事实存在时输出标题，避免空标题。比如没�
 
 - `AGENTS.md`：说明标题行协议、标题行顺序限制、多板块命令必须使用 helper。
 - `README.md`：更新默认输出示例，展示 `# 综合信息`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`。
-- active skills：如果它们消费 `cw.slots.read`、`cw.shop.scan` 或 `cw.portal.select` 输出，需要说明先按标题板块扫读，再读取事实行。
+- active skills：如果它们消费 `cw.slots.read`、`cw.shop.scan` 或 `cw.portal.select` 输出，需要说明先读截图，再按 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息` 扫读后续事实行；标题本身不是命令事实。
 - renderer 单测：锁定标题行合法性、板块顺序和空板块不输出。
 - CLI/RPC/daemon 单测：验证 `cw.slots.read` 额外识别当前阶段，并把实际读取的综合状态返回到输出数据路径。
 
 测试重点：
 
 - `cw.slots.read` 读到 stage/status 时输出 `# 综合信息`，并在 `# 角色信息` 和 `# 羁绊信息` 前后顺序稳定。
-- `cw.slots.read` 的角色 reader 不再负责 status OCR。
-- 综合状态 reader 复用 stage detector，并在读到当前阶段时刷新 session stage。
+- `cw.slots.read` 的角色 reader 不再负责 status OCR；测试应断言角色 reader 不 capture `CW_STATUS_LEVEL_REGION`、`CW_STATUS_EXP_REGION`、`CW_STATUS_TEAM_SIZE_REGION`。
+- 综合状态 reader 复用 stage detector，并在读到当前阶段时刷新 session stage；测试应覆盖 detector 返回 stage、返回 `None`、抛出 `STAGE_AMBIGUOUS` 的语义。
+- 定向 `cw.slots.read --slot ...` 仍读取综合状态，并在响应 data 中包含 renderer 所需的 `stage`、`stage_stale`、`stage_status`、`stage_status_stale`。
 - `cw.shop.scan/status/buy_exp` 和 `cw.portal.select` 复用同一综合/商店/角色/羁绊板块 helper。
+- `cw.portal.select` 带完整 payload 时，标题板块不得破坏 `warn/ref` 和 handoff 最后一行。
+- 代表性单一正文命令不得出现 `# ` 行，例如 `cw.stage.detect`、`cw.slots.place`、策略类命令，以及只有单类正文事实的 shop/status 变体。
 - 标题行不得插在 `shot` 与 `info read_image_first=1` 之间。
 - failure 输出不新增标题。
 
 ## 风险与缓解
 
 - 风险：标题行改变默认文本协议，可能影响依赖“每个 body 行都有 prefix”的消费者。缓解：同步 AGENTS/README/tests，并明确标题行不承载事实，消费者可跳过 `# ` 行。
-- 风险：一次改造过多 renderer 容易造成示例遗漏。缓解：先列出多板块命令清单，按 renderer family 分批测试。
-- 风险：当前阶段识别增加 `cw.slots.read` 的耗时。缓解：复用现有 stage detector，且只在综合状态 reader 被调用时执行；必要时在计划中评估是否允许定向 slots 读取跳过综合状态。
+- 风险：一次改造过多 renderer 容易造成示例遗漏。缓解：首批只改 CW 备战链路相关多板块命令；其它命令先列清单，再按 renderer family 分批测试。
+- 风险：当前阶段识别增加 `cw.slots.read` 的耗时。缓解：复用现有 stage detector，并将“定向读取仍读取综合状态”写入测试；如未来要跳过综合状态，必须新增显式参数和单独协议变更。
 - 风险：session 内部仍保留旧 `stage_status` 命名，和输出板块术语不完全一致。缓解：把旧字段视为内部缓存，不在用户文档中强调；默认输出以标题板块为准。
