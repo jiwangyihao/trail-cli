@@ -4270,6 +4270,45 @@ def _patch_cw_portal_select_auto_collect_success(monkeypatch, events: list[str],
         monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: sleeps.append(seconds))
 
 
+def test_command_service_handles_cw_slots_read_with_stage_projection(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw import slots as slots_module
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root: {})
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.slots_reader_factory",
+        lambda runtime, targets=None: lambda: slots_module.CwSlotsReadResult(
+            front=[{"name": "希儿"}],
+            back=[],
+            hand=[],
+            stage="preparation",
+            stage_status={"stale": False, "level": 3, "exp": "0/8", "team_size": "2/2"},
+        ),
+    )
+
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-slots-read",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.slots.read",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"]["stage"] == "preparation"
+    assert payload["data"]["stage_status"]["level"] == 3
+    assert payload["data"]["stage_status_stale"] is False
+
+
 def test_command_service_handles_cw_portal_select_and_auto_applies_selected_guide(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 

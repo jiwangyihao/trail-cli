@@ -646,13 +646,21 @@ def read_cw_slots(
     targets: list[str] | None = None,
     guide_config: dict[str, Any] | None = None,
 ) -> SessionModel:
-    result = reader()
+    try:
+        result = reader()
+    except TrailError as exc:
+        if exc.code == "STAGE_AMBIGUOUS":
+            stage._invalidate_cw_stage(session, code=exc.code, message=str(exc))
+            session.last_stage = None
+        raise
     if isinstance(result, CwSlotsReadResult):
         front, back, hand = result.front, result.back, result.hand
         stage_status = result.stage_status
+        detected_stage = result.stage
     else:
         front, back, hand = result
         stage_status = None
+        detected_stage = None
     cw_state = ensure_cw_state(session)
     previous = cw_state.get("slots") if isinstance(cw_state.get("slots"), dict) else {}
     parsed_targets = _parse_slot_targets(targets)
@@ -690,10 +698,17 @@ def read_cw_slots(
         if trait_summary:
             cw_state["slots"]["trait_summary"] = deepcopy(trait_summary)
     if stage_status is not None:
-        stage._replace_stage_fields(
-            session,
-            status={**stage_status, "role_count": _slot_role_count(merged_front, merged_back, merged_hand)},
-        )
+        status_with_role_count = {**stage_status, "role_count": _slot_role_count(merged_front, merged_back, merged_hand)}
+        if detected_stage is not None:
+            stage._replace_stage_fields(session, value=detected_stage, stale=False, status=status_with_role_count)
+            session.last_stage = {"scene": "cw", "value": detected_stage}
+        else:
+            stage._replace_stage_fields(session, status=status_with_role_count)
+        cw_stage = cw_state.get("stage") if isinstance(cw_state.get("stage"), dict) else {}
+        cw_state["slots"]["stage"] = detected_stage
+        cw_state["slots"]["stage_stale"] = False if detected_stage is not None else bool(cw_stage.get("stale", True))
+        cw_state["slots"]["stage_status"] = deepcopy(status_with_role_count)
+        cw_state["slots"]["stage_status_stale"] = bool(status_with_role_count.get("stale", True))
     _clear_sell_plan(cw_state)
     return session
 

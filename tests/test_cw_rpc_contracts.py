@@ -1420,3 +1420,50 @@ def test_cw_rpc_wrapper_matrix(
     assert result.exit_code == 0
     assert result.stdout.splitlines() == expected_lines
     _assert_single_call(client, method=method, payload=payload, tmp_path=tmp_path)
+
+
+def test_cw_slots_read_contract_includes_stage_projection(cli_runner, fake_daemon_client, tmp_path):
+    response_data = {
+        "front": [{"name": "希儿"}],
+        "back": [],
+        "hand": [],
+        "stale": False,
+        "stage": "preparation",
+        "stage_stale": False,
+        "stage_status": {
+            "stale": False,
+            "level": 3,
+            "exp": "0/8",
+            "team_size": "1/2",
+            "role_count": {"front": 1, "back": 0, "hand": 0, "field": 1, "total": 1},
+        },
+        "stage_status_stale": False,
+    }
+    client = fake_daemon_client(
+        {
+            "cw.slots.read": build_success_response(
+                request_id="req-cw-slots-read-stage-projection",
+                data=response_data,
+                screenshot=".trail/shots/req-cw-slots-read-stage-projection.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "slots", "read", "--session", SESSION_ID])
+
+    assert response_data["stage"] == "preparation"
+    assert response_data["stage_status"]["level"] == 3
+    assert response_data["stage_status_stale"] is False
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.slots.read front=1 back=0 hand=0 stale=0",
+        screenshot=".trail/shots/req-cw-slots-read-stage-projection.png",
+        body=[
+            "# 综合信息",
+            "info stage=preparation stale=0",
+            "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+            "# 角色信息",
+            "slot pos=front:0 name=希儿",
+        ],
+    )
+    _assert_single_call(client, method="cw.slots.read", payload={"slot": None}, tmp_path=tmp_path)

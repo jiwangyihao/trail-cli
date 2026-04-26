@@ -211,6 +211,88 @@ def test_read_cw_slots_persists_stage_status_without_overwriting_stage_value(tmp
     }
 
 
+def test_read_cw_slots_projects_stage_and_status_into_slots_payload(tmp_path):
+    slots_module = load_cw_slots_module()
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    ensure_cw_state(session)
+
+    def reader():
+        return slots_module.CwSlotsReadResult(
+            front=[{"name": "希儿"}],
+            back=[],
+            hand=[],
+            stage="preparation",
+            stage_status={"stale": False, "level": 3, "exp": "0/8", "team_size": "1/2"},
+        )
+
+    slots_module.read_cw_slots(session, reader=reader)
+
+    payload = session.scene_state["cw"]["slots"]
+    assert payload["stage"] == "preparation"
+    assert payload["stage_stale"] is False
+    assert payload["stage_status"] == {
+        "stale": False,
+        "level": 3,
+        "exp": "0/8",
+        "team_size": "1/2",
+        "role_count": {"front": 1, "back": 0, "hand": 0, "field": 1, "total": 1},
+    }
+    assert payload["stage_status_stale"] is False
+    assert session.scene_state["cw"]["stage"]["value"] == "preparation"
+    assert session.last_stage == {"scene": "cw", "value": "preparation"}
+
+
+def test_read_cw_slots_directed_read_still_projects_status_from_merged_slots(tmp_path):
+    slots_module = load_cw_slots_module()
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    ensure_cw_state(session)["slots"] = {
+        "front": [{"name": "旧希儿"}, None],
+        "back": [{"name": "佩拉"}],
+        "hand": [{"name": "停云"}],
+        "stale": False,
+    }
+
+    def reader():
+        return slots_module.CwSlotsReadResult(
+            front=[{"name": "新希儿"}, None],
+            back=[],
+            hand=[],
+            stage="preparation",
+            stage_status={"stale": False, "level": 3, "exp": "0/8", "team_size": "2/2"},
+        )
+
+    slots_module.read_cw_slots(session, reader=reader, targets=["front:0"])
+
+    assert session.scene_state["cw"]["slots"]["back"][0] == {"name": "佩拉"}
+    assert session.scene_state["cw"]["slots"]["hand"][0] == {"name": "停云"}
+    assert session.scene_state["cw"]["slots"]["stage_status"]["role_count"] == {
+        "front": 1,
+        "back": 1,
+        "hand": 1,
+        "field": 2,
+        "total": 3,
+    }
+
+
+def test_read_cw_slots_invalidates_stage_when_stage_ambiguous(tmp_path):
+    slots_module = load_cw_slots_module()
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    ensure_cw_state(session)["stage"] = {"value": "shop", "stale": False, "status": {"stale": False, "level": 3}}
+    session.last_stage = {"scene": "cw", "value": "shop"}
+
+    def reader():
+        raise TrailError("STAGE_AMBIGUOUS", "当前资源无法区分阶段: preparation, shop")
+
+    with pytest.raises(TrailError) as exc_info:
+        slots_module.read_cw_slots(session, reader=reader)
+
+    assert exc_info.value.code == "STAGE_AMBIGUOUS"
+    assert session.scene_state["cw"]["stage"]["stale"] is True
+    assert session.scene_state["cw"]["stage"]["error"]["code"] == "STAGE_AMBIGUOUS"
+    assert session.scene_state["cw"]["stage"]["status"] == {"stale": False, "level": 3}
+    assert session.last_stage is None
+
+
 def test_build_cw_slot_roles_reader_does_not_capture_status_regions(monkeypatch):
     slots_module = load_cw_slots_module()
     captures: list[dict] = []
