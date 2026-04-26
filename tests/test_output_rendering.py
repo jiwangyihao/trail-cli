@@ -746,14 +746,16 @@ def test_agents_document_cw_portal_select_auto_collect_contract() -> None:
         "`cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`",
         "`cw.portal.select` 成功进入备战页后会自动收集 slots/shop 预备事实",
         "`shot path=...` 后必须紧跟 `info read_image_first=1`",
+        "stage/status 事实固定在 `# 综合信息` 输出",
         "`info skill_info=运营思路 text=...`",
         "（如有）之后复用 `cw.slots.read` 的 `slot` 行与羁绊 `info` 摘要",
-        "复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影",
+        "`# 商店信息` 只承载商店 `item` 与 `info coins/reserve_full`",
         "`warn`、`ref` 之前输出",
         "success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`",
     )
     assert "自动收集得到的 shop `opened/stale` 不进入首行，也不作为 body 事实渲染" in agents
     assert "不要因为已有 slots/shop 文本就跳过截图" in agents
+    assert "复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影" not in agents
 
 
 def test_readme_routes_stage_invest_to_strategy() -> None:

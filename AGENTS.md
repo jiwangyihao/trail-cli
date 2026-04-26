@@ -88,9 +88,10 @@
 - `cw.portal.select` 成功进入备战页后会自动收集 slots/shop 预备事实：收集水晶、关闭初始槽位面板、读取 slots、打开商店、等待商店稳定、扫描 shop、缓存 slots+shop 并关闭商店。
 - `cw.portal.select` 带截图 success 仍必须先显示 `shot path=...`，`shot path=...` 后必须紧跟 `info read_image_first=1`；Agent 必须先读本次原始截图，不要因为已有 slots/shop 文本就跳过截图。
 - `cw.portal.select` 自动收集后的正文标题顺序固定为按事实存在输出：`# 综合信息` -> `# 攻略提示` -> `# 角色信息` -> `# 羁绊信息` -> `# 商店信息`；标题只分组，不改变事实行前缀。
+- `cw.portal.select` 的 stage/status 事实固定在 `# 综合信息` 输出，包括 `info stage=... stale=...` 与 `info stage_level/stage_exp/stage_team_size/stage_status_stale`；不要去 `# 商店信息` 下找 stage facts。
 - `cw.portal.select` 若响应 `data.slots` 非空，默认正文在 `info skill_info=运营思路 text=...`（如有）之后复用 `cw.slots.read` 的 `slot` 行与羁绊 `info` 摘要。
-- `cw.portal.select` 若响应 `data.shop` 非空，默认正文在槽位/羁绊事实之后复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影。
-- `cw.portal.select` 自动收集事实使用已有 `slot`、`item`、`info`、`warn`、`ref` 前缀，不新增正文前缀；`info skill_info`、`slot`、羁绊 `info`、商店 `item`、coins/stage `info` 必须在 `warn`、`ref` 之前输出。
+- `cw.portal.select` 若响应 `data.shop` 非空，默认正文在 `# 商店信息` 下复用商店 `item` 行与 `info coins/reserve_full`；`# 商店信息` 只承载商店 `item` 与 `info coins/reserve_full`。
+- `cw.portal.select` 自动收集事实使用已有 `slot`、`item`、`info`、`warn`、`ref` 前缀，不新增正文前缀；`# 综合信息` 下的 stage/status `info`、`info skill_info`、`slot`、羁绊 `info`、商店 `item`、coins/reserve `info` 必须在 `warn`、`ref` 之前输出。
 - `cw.portal.select` 的首行仍固定为 `ok cw.portal.select idx=... 投资环境=...`；自动收集得到的 shop `opened/stale` 不进入首行，也不作为 body 事实渲染，避免与最终已关闭商店的页面状态冲突。
 - `cw.portal.select` 命中 workflow handoff 时，success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`。
 - `cw.strategy.detect|refresh` success 首行固定为 `ok cw.strategy.<...> cards=<n>`。
