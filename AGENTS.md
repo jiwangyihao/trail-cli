@@ -81,6 +81,12 @@
 - `cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`；`待收集` 必须统一编码为 `0/1`，即使为 `0` 也不能省略。
 - `cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`；`cw.start` / `cw.portal.*` 下挂攻略摘要继续复用 `guide.list.cw` 的中文条目与 `最终阵容` 语义。
 - `cw.portal.select` 若响应 `data.skill_info` 非空，默认正文使用 `info skill_info=运营思路 text=...`；该行属于 success entity/info 行，必须在 `warn`、`ref` 之前输出，不新增正文前缀、不属于 verbose/debug、不进入 YAML allowlist。
+- `cw.portal.select` 成功进入备战页后会自动收集 slots/shop 预备事实：收集水晶、关闭初始槽位面板、读取 slots、打开商店、等待商店稳定、扫描 shop、缓存 slots+shop 并关闭商店。
+- `cw.portal.select` 带截图 success 仍必须先显示 `shot path=...`，`shot path=...` 后必须紧跟 `info read_image_first=1`；Agent 必须先读本次原始截图，不要因为已有 slots/shop 文本就跳过截图。
+- `cw.portal.select` 若响应 `data.slots` 非空，默认正文在 `info skill_info=运营思路 text=...`（如有）之后复用 `cw.slots.read` 的 `slot` 行与羁绊 `info` 摘要。
+- `cw.portal.select` 若响应 `data.shop` 非空，默认正文在槽位/羁绊事实之后复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影。
+- `cw.portal.select` 自动收集事实使用已有 `slot`、`item`、`info`、`warn`、`ref` 前缀，不新增正文前缀；`info skill_info`、`slot`、羁绊 `info`、商店 `item`、coins/stage `info` 必须在 `warn`、`ref` 之前输出。
+- `cw.portal.select` 的首行仍固定为 `ok cw.portal.select idx=... 投资环境=...`；自动收集得到的 shop `opened/stale` 不进入首行，也不作为 body 事实渲染，避免与最终已关闭商店的页面状态冲突。
 - `cw.portal.select` 命中 workflow handoff 时，success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`。
 - `cw.strategy.detect|refresh` success 首行固定为 `ok cw.strategy.<...> cards=<n>`。
 - `cw.strategy.select` success 首行固定为 `ok cw.strategy.select idx=... 投资策略=...`。
@@ -114,6 +120,7 @@
 - `trail-cw-portal` 不是 direct-user 公共入口、不是 scene entry、也不是 owner；它负责 `portal detect/refresh/restart/select` 与环境优先逻辑，若攻略未定则切到 `trail-cw-guide` 的无人值守模式。
 - `trail-cw-prep` 是当前 active internal 的普通备战阶段 skill，只能由 `cw.portal.select` success 后的 workflow handoff 或上游内部阶段切入。
 - `trail-cw-prep` 不是 public scene entry、不是 direct-user、不是 owner；`cw.portal.select` success final handoff 固定指向 `trail-cw-prep`。
+- `trail-cw-prep` 接收 `cw.portal.select` handoff 时，应先读截图并消费该响应自动收集的 slots/shop/stage facts；只有事实缺失、stale 或页面已变化时才重跑 slots/shop 扫描。
 - 只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口出现在 active 文档与测试中。
 - 当命令 success 输出 `info handoff_skill=... handoff_strength=strong ...` 时，Agent 应把它视为推荐的下一步 skill 切换信号；当前固定映射包括 `cw.enter -> trail-cw-entry` 与 `cw.portal.select -> trail-cw-prep`。
 - `AGENTS.md` 的 active 拓扑说明不得出现 archive skill 名称或 legacy 场景 skill 名称。

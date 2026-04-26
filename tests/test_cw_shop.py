@@ -547,6 +547,23 @@ def test_parse_shop_team_size_rejects_split_tokens_without_continuous_bbox():
     assert parse_shop_team_size(raw_items, default=None) is None
 
 
+def test_build_cw_shop_page_snapshot_reader_does_not_click_reset_or_open(monkeypatch):
+    shop_module = load_cw_shop_module()
+    events: list[object] = []
+    _install_fake_shop_batch_ocr(monkeypatch, shop_module, events=events)
+    runtime = _build_cw_shop_scan_runtime(shop_module)
+
+    reader = shop_module.build_cw_shop_page_snapshot_reader(runtime)
+    snapshot = reader()
+
+    assert runtime.clicks == []
+    assert events == [("batch_ocr", "cw_shop_batch_ocr", ("items", "coins"))]
+    assert snapshot["opened"] is True
+    assert snapshot["stale"] is False
+    assert "items" in snapshot
+    assert "coins" in snapshot
+
+
 def test_build_cw_shop_scan_snapshot_reader_closes_then_reopens_before_scanning(monkeypatch):
     shop_module = load_cw_shop_module()
     build_cw_shop_scan_snapshot_reader = getattr(shop_module, "build_cw_shop_scan_snapshot_reader", None)
@@ -1805,6 +1822,160 @@ def _run_cw_mutation(*, command_service, session, workspace_root: Path, request_
             payload={"session_id": session.session_id, **payload},
         )
     )
+
+
+def test_cw_portal_select_collects_prep_facts_and_closes_shop(tmp_path: Path, monkeypatch):
+    from trail.daemon import cw_service
+    from tests.conftest import complete_cw_guide_state
+
+    events: list[str] = []
+    runtime = object()
+    _registry, service, session, cw_runtime_service, _command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "guide": complete_cw_guide_state(share_code="##code##"),
+        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
+        "portal": {"cards": [{"card_idx": 2, "portal_title": "击破概念股"}], "stale": False},
+    }
+    service.save_session(session)
+
+    def fake_select(session, *, card_idx, runtime):
+        events.append("portal.select")
+        assert card_idx == 2
+        return {"card_idx": card_idx, "portal_title": "击破概念股"}
+
+    def fake_wait(session, *, runtime):
+        events.append("portal.wait")
+
+    def fake_apply(session, *, runtime, guide=None):
+        events.append("guide.apply")
+        return guide
+
+    def fake_collect(session, *, collector):
+        assert collector == "crystal-collector"
+        events.append("crystal.collect")
+        session.scene_state.setdefault("cw", {})["metrics"] = {"last_crystal_collection": "done"}
+        return session
+
+    def fake_dismiss(resolved_runtime):
+        assert resolved_runtime is runtime
+        events.append("slots.dismiss")
+
+    def fake_read_slots(session, *, reader, targets=None, guide_config=None):
+        assert targets is None
+        assert guide_config == {"roles": [], "traits": []}
+        events.append("slots.read")
+        session.scene_state.setdefault("cw", {})["slots"] = {
+            "front": [{"name": "希儿"}],
+            "back": [],
+            "hand": [],
+            "stale": False,
+        }
+        session.scene_state["cw"]["stage"] = {
+            "status": {"level": 3, "exp": "0/8", "team_size": "1/2", "stale": False}
+        }
+        return session
+
+    def fake_open_shop(session, *, opener=None):
+        assert opener == "shop-opener"
+        events.append("shop.open")
+        return session
+
+    def fake_scan_shop(session, *, scanner):
+        assert scanner == "page-reader"
+        events.append("shop.scan")
+        session.scene_state.setdefault("cw", {})["shop"] = {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "coins": 40,
+            "reserve_full": False,
+        }
+        return session
+
+    def fake_project_shop(session):
+        events.append("shop.project")
+        return {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "coins": 40,
+            "reserve_full": False,
+            "stage_status": {"level": 3, "exp": "0/8", "team_size": "1/2", "stale": False},
+            "stage_status_stale": False,
+        }
+
+    def fake_close_shop(session, *, closer=None):
+        assert closer == "shop-closer"
+        events.append("shop.close")
+        session.scene_state.setdefault("cw", {})["shop"] = {"opened": False, "stale": True}
+        return session
+
+    def fake_fetch_config(*, workspace_root=None):
+        assert workspace_root == str(tmp_path)
+        return {"roles": [], "traits": []}
+
+    monkeypatch.setattr(cw_service, "select_cw_portal", fake_select)
+    monkeypatch.setattr(cw_service, "wait_cw_portal_preparation", fake_wait)
+    monkeypatch.setattr(cw_service, "_apply_selected_guide_via_ui", fake_apply)
+    monkeypatch.setattr(cw_service, "collect_cw_crystals", fake_collect)
+    monkeypatch.setattr(cw_service, "dismiss_cw_slots_overlay", fake_dismiss, raising=False)
+    monkeypatch.setattr(cw_service, "read_cw_slots", fake_read_slots)
+    monkeypatch.setattr(cw_service, "open_cw_shop", fake_open_shop)
+    monkeypatch.setattr(cw_service, "scan_cw_shop", fake_scan_shop)
+    monkeypatch.setattr(cw_service, "project_cw_shop_snapshot", fake_project_shop)
+    monkeypatch.setattr(cw_service, "close_cw_shop", fake_close_shop)
+    monkeypatch.setattr(cw_service, "fetch_cw_guide_config", fake_fetch_config)
+    monkeypatch.setattr(
+        cw_service,
+        "crystal_collector_factory",
+        lambda resolved_runtime: events.append(f"crystal.factory({resolved_runtime is runtime})") or "crystal-collector",
+    )
+    monkeypatch.setattr(
+        cw_service,
+        "slots_reader_factory",
+        lambda runtime, **kwargs: events.append(f"slots.reader({kwargs})") or (lambda: ([], [], [])),
+    )
+    monkeypatch.setattr(
+        cw_service,
+        "shop_opener_factory",
+        lambda resolved_runtime: events.append(f"shop.opener.factory({resolved_runtime is runtime})") or "shop-opener",
+    )
+    monkeypatch.setattr(cw_service, "shop_page_snapshot_reader_factory", lambda runtime, **kwargs: "page-reader", raising=False)
+    monkeypatch.setattr(
+        cw_service,
+        "shop_closer_factory",
+        lambda resolved_runtime: events.append(f"shop.closer.factory({resolved_runtime is runtime})") or "shop-closer",
+    )
+    monkeypatch.setattr(cw_service, "sleep", lambda seconds: events.append(f"sleep({seconds})"))
+
+    result = cw_runtime_service.handle(
+        method="cw.portal.select",
+        payload={"session_id": session.session_id, "card_idx": 2},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+
+    assert events == [
+        "portal.select",
+        "portal.wait",
+        "guide.apply",
+        "crystal.factory(True)",
+        "crystal.collect",
+        "slots.dismiss",
+        "slots.reader({'dismiss_initial_overlay': False})",
+        "slots.read",
+        "shop.opener.factory(True)",
+        "shop.open",
+        "sleep(1.5)",
+        "shop.scan",
+        "shop.project",
+        "shop.closer.factory(True)",
+        "shop.close",
+    ]
+    assert result["crystals"] == {"last_crystal_collection": "done"}
+    assert result["slots"] == {"front": [{"name": "希儿"}], "back": [], "hand": [], "stale": False}
+    assert result["shop"]["items"] == [{"slot": 1, "name": "银狼", "price": 20}]
+    assert service.load_session(session.session_id).scene_state["cw"]["shop"] == {"opened": False, "stale": True}
 
 
 def _set_shop(session, shop: dict):

@@ -57,10 +57,12 @@ from trail.scenes.cw.portal import (
     wait_cw_portal_in_game,
 )
 from trail.scenes.cw.shop import (
+    SHOP_SCAN_OPEN_SETTLE_SECONDS,
     build_cw_shop_buyer,
     build_cw_shop_closer,
     build_cw_shop_exp_buyer,
     build_cw_shop_opener,
+    build_cw_shop_page_snapshot_reader,
     build_cw_shop_refresher,
     build_cw_shop_scan_snapshot_reader,
     build_cw_shop_scanner,
@@ -79,6 +81,7 @@ from trail.scenes.cw.slots import (
     build_cw_slot_swapper,
     build_cw_slots_reader,
     collect_cw_crystals,
+    dismiss_cw_slots_overlay,
     place_cw_slots,
     plan_cw_hand_sell,
     read_cw_slots,
@@ -97,6 +100,7 @@ hand_seller_factory = build_cw_hand_seller
 crystal_collector_factory = build_cw_crystal_collector
 shop_scanner_factory = build_cw_shop_scanner
 shop_scan_snapshot_reader_factory = build_cw_shop_scan_snapshot_reader
+shop_page_snapshot_reader_factory = build_cw_shop_page_snapshot_reader
 shop_buyer_factory = build_cw_shop_buyer
 shop_exp_buyer_factory = build_cw_shop_exp_buyer
 shop_opener_factory = build_cw_shop_opener
@@ -473,6 +477,7 @@ class CwService:
                 runtime=runtime(),
                 card_idx=payload["card_idx"],
                 guide=guide,
+                workspace_root=workspace_root,
             )
 
         def run_guide_apply() -> dict:
@@ -707,7 +712,14 @@ def _apply_selected_guide_via_ui(session, *, runtime, guide: dict | None = None)
     return selected_guide
 
 
-def _select_portal_and_apply_selected_guide(session, *, runtime, card_idx: int, guide: dict | None = None) -> dict:
+def _select_portal_and_apply_selected_guide(
+    session,
+    *,
+    runtime,
+    card_idx: int,
+    guide: dict | None = None,
+    workspace_root: str | None = None,
+) -> dict:
     selected_guide = guide if guide is not None else _require_selected_guide(session)
     selected = select_cw_portal(session, card_idx=card_idx, runtime=runtime)
     wait_cw_portal_preparation(session, runtime=runtime)
@@ -719,6 +731,26 @@ def _select_portal_and_apply_selected_guide(session, *, runtime, card_idx: int, 
     skill_info = _operation_guide_skill_info(selected_guide)
     if skill_info:
         selected_data["skill_info"] = skill_info
+    collect_cw_crystals(session, collector=crystal_collector_factory(runtime))
+    dismiss_cw_slots_overlay(runtime)
+    guide_config = fetch_cw_guide_config(workspace_root=workspace_root)
+    read_cw_slots(
+        session,
+        reader=slots_reader_factory(runtime, dismiss_initial_overlay=False),
+        guide_config=guide_config,
+    )
+    open_cw_shop(session, opener=shop_opener_factory(runtime))
+    sleep(SHOP_SCAN_OPEN_SETTLE_SECONDS)
+    scan_cw_shop(
+        session,
+        scanner=shop_page_snapshot_reader_factory(runtime),
+    )
+    shop_snapshot = project_cw_shop_snapshot(session)
+    slots_snapshot = deepcopy(ensure_cw_state(session).get("slots") or {})
+    close_cw_shop(session, closer=shop_closer_factory(runtime))
+    selected_data["crystals"] = deepcopy(ensure_cw_state(session).get("metrics") or {})
+    selected_data["slots"] = slots_snapshot
+    selected_data["shop"] = shop_snapshot
     return selected_data
 
 

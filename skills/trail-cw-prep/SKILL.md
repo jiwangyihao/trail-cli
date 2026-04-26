@@ -28,6 +28,8 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 - 若上一条命令输出 `shot path=...` 和 `info read_image_first=1`，必须先读取原始截图。
 - 若上一条 `cw.portal.select` success 已经同时输出阶段、槽位、商店、羁绊等普通备战首帧结构化事实，先结合截图消费这些事实；不要为了“重新确认”而立刻重复运行 `stage` / `slots` / `shop` 读命令。
 - 若上一条 `cw.portal.select` success 输出含 `info skill_info=运营思路 text=...`，必须先把它读作当前攻略的动态提醒；它不是已解析策略，必须不发明默认优先级。
+- 若上一条 `cw.portal.select` success 输出含 `slot`、`item` 或 `info stage_` 事实，说明它可能已经提供最新 slots/shop/stage 快照；必须先读截图，再用这些文本事实制定第一步备战动作。
+- 只有事实缺失、stale 或页面已变化时，才主动调用 `trail cw slots read` 或 `trail cw shop scan` 刷新；不要在接收 handoff 后立刻重复扫描。
 - 读完截图后，先判断本轮是否存在可收集晶矿奖励；这个信息不能只依赖结构化文本。
 - 不确定阶段时先用 `trail cw stage detect --session <id>` 或 `trail cw stage wait --session <id>`。
 - 如果截图和结构化文本冲突，以截图为准并重新读取相关事实。

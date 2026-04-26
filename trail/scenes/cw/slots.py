@@ -511,7 +511,17 @@ def _ensure_fieldable_target(runtime, *, target: str) -> None:
     raise TrailError("SLOTS_CANNOT_BE_FIELDED", f"target slot cannot field character: {target}")
 
 
-def build_cw_slots_reader(runtime, targets: list[str] | None = None) -> SlotsSnapshotReader:
+def dismiss_cw_slots_overlay(runtime) -> None:
+    runtime.click_point(*INFO_DISMISS_POINT)
+    sleep(INITIAL_UI_DISMISS_SETTLE_SECONDS)
+
+
+def build_cw_slots_reader(
+    runtime,
+    targets: list[str] | None = None,
+    *,
+    dismiss_initial_overlay: bool = True,
+) -> SlotsSnapshotReader:
     parsed_targets = _parse_slot_targets(targets)
 
     def reader() -> CwSlotsReadResult:
@@ -524,8 +534,8 @@ def build_cw_slots_reader(runtime, targets: list[str] | None = None) -> SlotsSna
         }
 
         captures: list[dict[str, Any]] = []
-        runtime.click_point(*INFO_DISMISS_POINT)
-        sleep(INITIAL_UI_DISMISS_SETTLE_SECONDS)
+        if dismiss_initial_overlay:
+            dismiss_cw_slots_overlay(runtime)
         batch_targets = [
             BatchOcrTarget(("stage_status", "level"), runtime.capture_image(**stage.CW_STATUS_LEVEL_REGION, normalize=False)),
             BatchOcrTarget(("stage_status", "exp"), runtime.capture_image(**stage.CW_STATUS_EXP_REGION, normalize=False)),

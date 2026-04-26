@@ -484,14 +484,23 @@ def build_cw_shop_scanner(runtime) -> ShopScanner:
     return scanner
 
 
+def build_cw_shop_page_snapshot_reader(runtime, *, read_stage_status: bool = False) -> ShopSnapshotReader:
+    def reader() -> dict[str, Any]:
+        snapshot = _read_shop_page_snapshot(runtime, read_team_size=read_stage_status)
+        return {"opened": True, "stale": False, **snapshot}
+
+    return reader
+
+
 def build_cw_shop_scan_snapshot_reader(runtime, *, read_stage_status: bool = False) -> ShopSnapshotReader:
+    page_reader = build_cw_shop_page_snapshot_reader(runtime, read_stage_status=read_stage_status)
+
     def reader() -> dict[str, Any]:
         runtime.click_point(*SHOP_SCAN_RESET_POINT)
         sleep(SHOP_SCAN_RESET_SETTLE_SECONDS)
         runtime.click_point(*SHOP_OPEN_POINT)
         sleep(SHOP_SCAN_OPEN_SETTLE_SECONDS)
-        snapshot = _read_shop_page_snapshot(runtime, read_team_size=read_stage_status)
-        return {"opened": True, "stale": False, **snapshot}
+        return page_reader()
 
     return reader
 
