@@ -38,6 +38,25 @@ def build_fake_cw_session(tmp_path):
     return session
 
 
+def _complete_guide(**overrides: object) -> dict[str, object]:
+    guide: dict[str, object] = {
+        "scene": "cw",
+        "kind": "guide",
+        "lineup_id": "guide-demo",
+        "title": "测试攻略",
+        "share_code": "##demo##",
+        "version": "4.0",
+        "operation_guide": "前期按测试运营",
+        "role_stages": [],
+        "first_fight_augments": [],
+        "second_fight_augments": [],
+        "order_basic": [],
+        "order_compose": [],
+    }
+    guide.update(overrides)
+    return guide
+
+
 def build_slot_name_layouts(slots_module, *targets: tuple[str, int]):
     compose = getattr(slots_module, "_compose_slot_name_strip_image", None)
     assert compose is not None
@@ -725,6 +744,8 @@ def test_slots_read_uses_role_stages_as_authoritative_name_candidates(tmp_path):
     assert "布洛妮娅" in authoritative
     assert "椒丘" in authoritative
     assert "不要作为候选" not in authoritative
+    session.scene_state["cw"]["slots"]["front"] = ["布洛妮娅", None, None, None]
+    session.scene_state["cw"]["slots"]["stale"] = False
 
     refreshed = read_cw_slots(
         session,
@@ -736,17 +757,37 @@ def test_slots_read_uses_role_stages_as_authoritative_name_candidates(tmp_path):
     assert refreshed.scene_state["cw"]["slots"]["back"][0] == "椒丘"
 
 
-def test_slots_read_preserves_star_metadata_when_normalizing_name(tmp_path):
+def test_slots_read_guide_summary_treats_incomplete_legacy_guide_as_not_loaded(tmp_path):
     slots_module = load_cw_slots_module()
     read_cw_slots = getattr(slots_module, "read_cw_slots", None)
     assert read_cw_slots is not None
 
     session = build_fake_cw_session(tmp_path)
     session.scene_state["cw"]["guide"] = {
-        "role_stages": [
-            {"stage": "Final", "front_roles": [{"name": "布洛妮娅"}], "back_roles": []}
-        ],
+        "artifact": "legacy-artifact",
+        "share_code": "##demo##",
+        "on_field": {"布洛妮娅": 1},
+        "off_field": {},
     }
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: (["布罗妮娅", None, None, None], [None] * 6, [None] * 9),
+        targets=["front:0"],
+    )
+
+    assert refreshed.scene_state["cw"]["slots"]["front"][0] == "布罗妮娅"
+
+
+def test_slots_read_preserves_star_metadata_when_normalizing_name(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["guide"] = _complete_guide(
+        role_stages=[{"stage": "Final", "front_roles": [{"name": "布洛妮娅"}], "back_roles": []}],
+    )
     session.scene_state["cw"]["slots"]["front"] = [{"name": "布洛妮娅", "star": 2}, None, None, None]
     session.scene_state["cw"]["slots"]["stale"] = False
 
@@ -885,6 +926,19 @@ def test_slots_read_prefers_role_stage_candidates_over_previous_fresh_slot_noise
         "role_stages": [
             {"stage": "Final", "front_roles": [], "back_roles": [{"name": "爻光"}]}
         ],
+    }
+    session.scene_state["cw"]["portal"] = {
+        "cards": [
+            {
+                "guides": [
+                    {
+                        "final_role_cards": [
+                            {"name": "爻光"},
+                        ]
+                    }
+                ]
+            }
+        ]
     }
     session.scene_state["cw"]["slots"]["hand"] = ["银狼", None, "阮·梅", None, None, None, "目交光", None, None]
     session.scene_state["cw"]["slots"]["stale"] = False

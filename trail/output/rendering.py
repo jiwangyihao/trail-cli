@@ -268,6 +268,17 @@ def _append_fact_line(lines: list[str], prefix: str, *facts: tuple[str, Any]) ->
         lines.append(f"{prefix} {rendered}")
 
 
+def _append_skill_info(lines: list[str], data: dict[str, Any]) -> None:
+    for item in _as_list(data.get("skill_info")):
+        if not isinstance(item, dict):
+            continue
+        name = _non_empty(item.get("name"))
+        text = _non_empty(item.get("text"))
+        if name is None or text is None:
+            continue
+        _append_fact_line(lines, "info", ("skill_info", name), ("text", text))
+
+
 @lru_cache(maxsize=1)
 def _load_workflow_handoffs() -> dict[str, Any]:
     try:
@@ -450,15 +461,16 @@ def _append_cw_shop_items(lines: list[str], data: dict[str, Any]) -> None:
 
 
 def _append_cw_shop_snapshot_info(lines: list[str], data: dict[str, Any]) -> None:
-    _append_fact_line(
-        lines,
-        "info",
-        ("coins", data.get("coins") if "coins" in data else None),
-        ("level", data.get("level") if "level" in data else None),
-        ("exp", data.get("exp") if "exp" in data else None),
-        ("reserve_full", bool(data.get("reserve_full")) if "reserve_full" in data else None),
-        ("team_size", data.get("team_size") if "team_size" in data else None),
-    )
+    facts: list[tuple[str, Any]] = []
+    for key in ("coins", "level", "exp"):
+        if key in data and data.get(key) is not None:
+            facts.append((key, data.get(key)))
+    if "reserve_full" in data:
+        facts.append(("reserve_full", bool(data.get("reserve_full"))))
+    if "team_size" in data:
+        facts.append(("team_size", data.get("team_size")))
+    if facts:
+        lines.append("info " + " ".join(f"{key}={_encode_value(value)}" for key, value in facts))
 
 
 def _should_render_recover(payload: dict[str, Any]) -> bool:
@@ -563,6 +575,7 @@ def _render_cw_portal_select(command: str, payload: dict[str, Any]) -> list[str]
         f"ok {command} {summary}" if summary else f"ok {command}"
     ]
     _append_success_capture_block(lines, payload)
+    _append_skill_info(lines, data)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
@@ -625,11 +638,6 @@ def _render_cw_guide_summary(command: str, payload: dict[str, Any]) -> list[str]
     lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
     _append_success_capture_block(lines, payload)
     _append_fact_line(lines, "guide", ("攻略标签", _guide_tags(data)))
-    _append_fact_line(
-        lines,
-        "info",
-        ("攻略快照ID", _non_empty(data.get("artifact")) or _non_empty(data.get("artifact_id"))),
-    )
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
@@ -772,7 +780,7 @@ def _render_cw_shop_action(command: str, payload: dict[str, Any]) -> list[str]:
     _append_success_capture_block(lines, payload)
     if items is not None:
         _append_cw_shop_items(lines, data)
-    if command == "cw.shop.scan":
+    if command in {"cw.shop.scan", "cw.shop.buy_exp"}:
         _append_cw_shop_snapshot_info(lines, data)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
@@ -1390,6 +1398,7 @@ TEXT_RENDERERS = {
     "cw.shop.open": _render_cw_shop_action,
     "cw.shop.scan": _render_cw_shop_action,
     "cw.shop.buy_slot": _render_cw_shop_action,
+    "cw.shop.buy_exp": _render_cw_shop_action,
     "cw.shop.refresh": _render_cw_shop_action,
     "cw.shop.close": _render_cw_shop_action,
     "cw.shop.status": _render_cw_shop_status,

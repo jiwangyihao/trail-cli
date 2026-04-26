@@ -6,5 +6,5 @@
 - `exposure=public` 代表它可以成为对外场景入口；internal skill 不在这里作为用户直达入口出现。
 - registry 是唯一索引来源。
 - 不要凭 archive、旧文档或历史习惯推断当前入口。
-- 部分命令 success 后会额外给出 workflow handoff 提示；当前第一批是 `cw.enter`。
-- 当 `cw.enter` success 返回 `info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered` 时，应把它视为切到对应 scene entry 的强提示，不是继续沿用旧总入口语义。
+- 部分命令 success 后会额外给出 workflow handoff 提示；`cw.enter -> trail-cw-entry` 是 scene entry handoff，`cw.portal.select -> trail-cw-prep` 是货币战争内部阶段 handoff。
+- `cw.portal.select -> trail-cw-prep` 不让 `trail-cw-prep` 成为 direct-user scene entry；它只是普通备战阶段的 active internal 跟进 skill。

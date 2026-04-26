@@ -149,6 +149,31 @@ CW_PORTAL_REFRESH_POLICY = (
 CW_PORTAL_TRIGGERS = (
     PROJECT_ROOT / "skills" / "trail-cw-portal" / "evals" / "triggers.json"
 )
+CW_PREP_SKILL = PROJECT_ROOT / "skills" / "trail-cw-prep" / "SKILL.md"
+CW_PREP_COMMAND_SURFACE = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-cw-prep"
+    / "references"
+    / "command-surface.md"
+)
+CW_PREP_STAGE_BOUNDARIES = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-cw-prep"
+    / "references"
+    / "stage-boundaries.md"
+)
+CW_PREP_DECISION_POINTS = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-cw-prep"
+    / "references"
+    / "decision-points-pending-strategy.md"
+)
+CW_PREP_TRIGGERS = (
+    PROJECT_ROOT / "skills" / "trail-cw-prep" / "evals" / "triggers.json"
+)
 
 
 def _frontmatter_markdown(path: Path) -> tuple[dict, str]:
@@ -357,14 +382,23 @@ def test_scene_entry_index_documents_cw_entry_active_public_and_handoff() -> Non
     assert "status=active" in text
     assert "exposure=public" in text
     assert "cw.enter" in text
-    assert "handoff_skill=trail-cw-entry" in text
+    assert "trail-cw-entry" in text
     assert "workflow handoff" in text
     assert "registry 是唯一索引来源。" in text
     assert "不要凭 archive、旧文档或历史习惯推断当前入口。" in text
-    assert (
-        "当 `cw.enter` success 返回 `info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered` 时，应把它视为切到对应 scene entry 的强提示，不是继续沿用旧总入口语义。"
-        in text
-    )
+    assert "cw.enter -> trail-cw-entry" in text
+    assert "scene entry handoff" in text
+
+
+def test_scene_entry_index_documents_scene_and_stage_handoffs() -> None:
+    text = SCENE_ENTRY_INDEX.read_text(encoding="utf-8")
+
+    assert "cw.enter -> trail-cw-entry" in text
+    assert "scene entry handoff" in text
+    assert "cw.portal.select -> trail-cw-prep" in text
+    assert "阶段" in text or "stage-internal" in text
+    assert "不是 direct-user" in text or "不让 `trail-cw-prep` 成为 direct-user scene entry" in text
+    assert "当前第一批是 `cw.enter`" not in text
 
 
 def test_trail_hsr_trigger_fixture_has_required_quota_and_schema() -> None:
@@ -1005,7 +1039,10 @@ def test_cw_guide_skill_has_required_sections_and_selection_entry_semantics() ->
     assert "真正进入游戏后" in text or "之后才轮到" in text
     assert "当前已选攻略摘要" in command_section
     assert "当前已应用攻略" not in command_section
-    assert "记录当前攻略" in text
+    assert "完整攻略写入" in text
+    assert "额外追踪产物" in text
+    assert "current-guide artifact" not in text
+    assert "攻略快照ID" not in text
     assert "cw.portal.select" in text
     assert "自动应用" in text
     assert command_section.index("guide.fetch.cw --select") < command_section.index("cw guide apply")
@@ -1079,7 +1116,9 @@ def test_cw_guide_reference_files_exist_with_required_content() -> None:
 
     assert "当前已选攻略" in command_surface_text
     assert "当前已应用攻略" not in command_surface_text
-    assert "只把当前攻略写入 session，不做 UI 应用" in record_section
+    assert "只把完整攻略写入 session，不做 UI 应用，也不创建额外追踪产物" in record_section
+    assert "current-guide artifact" not in command_surface_text
+    assert "攻略快照ID" not in command_surface_text
     assert "自动应用当前已选攻略" in entry_section
     assert "手动兜底" in fallback_section
     assert command_surface_text.index("guide.fetch.cw --select") < command_surface_text.index("cw guide apply")
@@ -1320,7 +1359,7 @@ def test_cw_portal_skill_has_required_sections_and_portal_action_contract() -> N
     assert "cw start" in text
     assert "投资环境页" in text
     assert "trail start" not in text
-    assert 5 <= len(action_items) <= 8
+    assert 5 <= len(action_items) <= 9
     assert 3 <= len(handoff_items) <= 5
     assert _lines_with_tokens(text, "cw start", "portal refresh", "投资环境页")
     assert _lines_with_tokens(text, "选哪套攻略", "选哪个环境")
@@ -1389,6 +1428,24 @@ def test_cw_portal_skill_has_required_sections_and_portal_action_contract() -> N
     )
     assert _lines_with_tokens(text, "版本过旧", "权衡因素")
     assert all(command not in text for command in ("guide list cw", "guide fetch cw", "cw guide current"))
+
+
+def test_active_cw_skills_document_prep_handoff_without_direct_user_prep() -> None:
+    portal_text = CW_PORTAL_SKILL.read_text(encoding="utf-8")
+    guide_text = CW_GUIDE_SKILL.read_text(encoding="utf-8")
+    entry_text = CW_ENTRY_SKILL.read_text(encoding="utf-8")
+
+    assert "trail-cw-prep" in portal_text
+    assert "cw.portal.select" in portal_text or "portal select" in portal_text
+    assert "handoff_skill=trail-cw-prep" in portal_text
+    assert "guide.fetch.cw --select" in guide_text
+    assert "完整攻略" in guide_text and "session" in guide_text
+    assert "额外追踪产物" in guide_text
+    assert "current-guide artifact" not in guide_text
+    assert "攻略快照ID" not in guide_text
+    prep_lines = [line for line in entry_text.splitlines() if "trail-cw-prep" in line]
+    assert prep_lines
+    assert all("direct-user" not in line and "公共入口" not in line for line in prep_lines)
 
 
 def test_cw_portal_reference_files_exist_with_required_content() -> None:
@@ -1582,6 +1639,123 @@ def test_cw_portal_trigger_fixture_covers_representative_prompts() -> None:
         and "待收集=1" in item["prompt"]
         for item in competition_prompts
     )
+
+
+def test_cw_prep_skill_has_required_sections_and_no_strategy_defaults() -> None:
+    assert CW_PREP_SKILL.exists(), f"missing skill file: {CW_PREP_SKILL}"
+    frontmatter, text = _frontmatter_markdown(CW_PREP_SKILL)
+
+    assert frontmatter["name"] == "trail-cw-prep"
+    assert "普通备战" in frontmatter["description"]
+    assert "direct-user" not in frontmatter["description"]
+    for section in (
+        "## Role",
+        "## When To Use",
+        "## Stage Boundaries",
+        "## Required First Actions",
+        "## Command Surface",
+        "## Autonomy Boundary",
+        "## Decision Points Pending Strategy",
+        "## Stop Conditions",
+        "## Reference Map",
+    ):
+        assert section in text
+    assert "不是 scene entry" in text
+    assert "不是 direct-user 公共入口" in text
+    assert "不得" in text and "具体经营策略" in text
+    assert "skill_info" in text
+    assert "运营思路" in text
+    assert "动态提醒" in text
+    assert "不发明默认优先级" in text
+    assert "不得直接或间接调用 archive skill" in text
+    assert "trail-cw-shop" not in text
+    assert "trail-cw-slots" not in text
+    assert "trail-cw-replenish" not in text
+
+
+def test_cw_prep_reference_files_exist_with_required_content() -> None:
+    command_surface = CW_PREP_COMMAND_SURFACE.read_text(encoding="utf-8")
+    stage_boundaries = CW_PREP_STAGE_BOUNDARIES.read_text(encoding="utf-8")
+    decision_points = CW_PREP_DECISION_POINTS.read_text(encoding="utf-8")
+
+    for command in (
+        "trail cw stage detect",
+        "trail cw shop scan",
+        "trail cw slots read",
+        "trail cw crystals collect",
+        "trail cw shop buy-exp",
+        "trail cw shop buy-slot",
+        "trail cw battle run",
+    ):
+        assert command in command_surface
+    assert "trail cw shop buy-slot --session <id> --slot <n> --expect <name>" in command_surface
+    for fragment in (
+        "preparation",
+        "shop",
+        "replenish",
+        "invest",
+        "encounter",
+        "fortune",
+        "event",
+        "boss_preview",
+        "settle",
+        "game_over",
+        "unknown",
+    ):
+        assert fragment in stage_boundaries
+    for forbidden in ("优先买", "必须刷新", "默认卖", "直接出战"):
+        assert forbidden not in command_surface
+        assert forbidden not in decision_points
+    for pending in ("哪些角色值得买", "如何决定卖牌", "什么时候买经验", "是否刷新商店", "何时结束备战"):
+        assert pending in decision_points
+
+
+def test_cw_prep_trigger_fixture_has_required_boundary_cases() -> None:
+    assert CW_PREP_TRIGGERS.exists(), f"missing trigger fixture: {CW_PREP_TRIGGERS}"
+    data = json.loads(CW_PREP_TRIGGERS.read_text(encoding="utf-8"))
+    counts = Counter(item["sample_type"] for item in data)
+
+    assert counts["should-trigger"] >= 4
+    assert counts["should-not-trigger"] >= 10
+    assert counts["competition"] >= 6
+    for item in data:
+        assert {"prompt", "sample_type", "expected_winner"} <= item.keys()
+        assert item["sample_type"] in {
+            "should-trigger",
+            "should-not-trigger",
+            "competition",
+        }
+        if item["sample_type"] == "should-trigger":
+            assert item["expected_winner"] == "trail-cw-prep"
+        elif item["sample_type"] == "should-not-trigger":
+            assert item["expected_winner"] == "none"
+        else:
+            assert "candidates" in item
+            if item["expected_winner"] != "none":
+                assert item["expected_winner"] in item["candidates"]
+            else:
+                assert "trail-cw-prep" in item["candidates"]
+
+    prompts = "\n".join(item["prompt"] for item in data)
+    for fragment in (
+        "普通备战",
+        "普通商店",
+        "投资环境页",
+        "攻略选择页",
+        "补给事件",
+        "遭遇事件",
+        "命运卜者",
+        "普通投资事件",
+        "投资策略页",
+        "特殊事件",
+        "BOSS 前",
+        "结算",
+        "game over",
+        "unknown",
+        "tainted",
+        "request-status",
+    ):
+        assert fragment in prompts
 
 
 def test_trail_hsr_advanced_frontmatter_stays_internal_recovery_only() -> None:

@@ -9,7 +9,7 @@ SKILLS_ROOT = PROJECT_ROOT / "skills"
 CORE_ACTIVE_SKILL_DIRS = {"trail-hsr", "registry", "shared"}
 ACTIVE_PUBLIC_SCENE_ENTRY_SKILLS = {"trail-cw-entry"}
 ACTIVE_PUBLIC_HELPER_SKILL_DIRS = {"trail-cw-guide"}
-ACTIVE_INTERNAL_SKILL_DIRS = {"trail-hsr-advanced", "trail-cw-portal"}
+ACTIVE_INTERNAL_SKILL_DIRS = {"trail-hsr-advanced", "trail-cw-portal", "trail-cw-prep"}
 ARCHIVE_ROOT = (
     PROJECT_ROOT
     / "docs"
@@ -91,6 +91,18 @@ def test_registry_keeps_cw_portal_as_active_internal_skill() -> None:
     assert {"root_entry", "scene_entry"} <= set(internal_skills["trail-hsr-advanced"]["caller_roles"])
     assert "scene_entry" in internal_skills["trail-cw-portal"]["caller_roles"]
     assert all(entry["entry_skill"] != "trail-cw-portal" for entry in data.get("entries", []))
+
+
+def test_registry_keeps_cw_prep_as_active_internal_skill() -> None:
+    data = _load_registry()
+    internal_skills = _active_internal_skills(data)
+
+    assert "trail-cw-prep" in internal_skills
+    assert internal_skills["trail-cw-prep"]["status"] == "active"
+    assert internal_skills["trail-cw-prep"]["exposure"] == "internal"
+    assert set(internal_skills["trail-cw-prep"]["caller_roles"]) == {"scene_entry", "internal_skill"}
+    assert "root_entry" not in internal_skills["trail-cw-prep"]["caller_roles"]
+    assert all(entry["entry_skill"] != "trail-cw-prep" for entry in data.get("entries", []))
 
 
 def test_active_skill_directories_match_current_topology_without_legacy_cw_skills() -> None:

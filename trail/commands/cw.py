@@ -35,7 +35,7 @@ CW_STRATEGY_HELP = (
 )
 CW_STAGE_HELP = "仅用于货币战争内部阶段的快速检测或等待；不适用于登录页、大世界等非 CW 场景。"
 CW_SLOTS_HELP = "读取编队槽位并执行换位或上场。"
-CW_SHOP_HELP = "读取商店、购买槽位并刷新或关闭。"
+CW_SHOP_HELP = "读取商店、购买槽位/经验并刷新或关闭。"
 CW_CRYSTALS_HELP = "收取当前局内结晶产出。"
 CW_HAND_HELP = "出售手牌或生成出售候选。"
 CW_REPLENISH_HELP = "读取或选择局内补给事件。"
@@ -310,6 +310,11 @@ def cw_shop_buy_slot(
     expect: str = typer.Option(..., "--expect"),
 ) -> None:
     _print_cw("cw.shop.buy_slot", session_id=session, payload={"slot": slot, "expect": expect})
+
+
+@shop_app.command("buy-exp")
+def cw_shop_buy_exp(session: str = typer.Option(..., "--session")) -> None:
+    _print_cw("cw.shop.buy_exp", session_id=session)
 
 
 @shop_app.command("refresh")

@@ -80,13 +80,16 @@
 - `guide.list.cw` 分组视图固定使用 `guide 投资环境=... count=... more=...`；只有分组行允许携带 `next=...`，顶层 grouped 首行不带 `next`。
 - `cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`；`待收集` 必须统一编码为 `0/1`，即使为 `0` 也不能省略。
 - `cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`；`cw.start` / `cw.portal.*` 下挂攻略摘要继续复用 `guide.list.cw` 的中文条目与 `最终阵容` 语义。
+- `cw.portal.select` 若响应 `data.skill_info` 非空，默认正文使用 `info skill_info=运营思路 text=...`；该行属于 success entity/info 行，必须在 `warn`、`ref` 之前输出，不新增正文前缀、不属于 verbose/debug、不进入 YAML allowlist。
+- `cw.portal.select` 命中 workflow handoff 时，success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`。
 - `cw.strategy.detect|refresh` success 首行固定为 `ok cw.strategy.<...> cards=<n>`。
 - `cw.strategy.select` success 首行固定为 `ok cw.strategy.select idx=... 投资策略=...`。
 - `cw.strategy.detect|refresh` 的 cards family 正文字段固定使用 `投资策略/攻略推荐/刷新次数`；说明继续使用 `opt idx=... 说明=...`。
 - `cw.strategy.detect|refresh` 必须输出 `info 已加载攻略=0|1`，且固定在所有 `opt` 行之后。
-- `cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id。
-- `cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径；`current/apply` 只看当前已选攻略摘要，完整攻略仍由 `guide.fetch.cw` 提供。
-- `guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。
+- `cw.shop.buy_exp` 属于 shop action renderer family；canonical command 是 `cw.shop.buy_exp`，success 首行固定为 `ok cw.shop.buy_exp opened=1 stale=0 count=<n>`，正文先输出 `item idx=... slot=... name=... cost=...`，再输出 snapshot facts `coins/level/exp/reserve_full/team_size`。
+- `cw.shop.buy_exp` 的 `team_size=null` 是 must-keep null fact；`cw.shop.buy_exp` 不在 YAML allowlist，`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`。
+- `cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，只看当前已选攻略摘要，不输出额外追踪产物；完整攻略由 `guide.fetch.cw --select` 写入 session。
+- `guide.fetch.cw --select` 只负责把完整攻略写入 session，不创建当前攻略快照或额外追踪产物，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。
 - `guide.config.cw` 使用 `赛季/子赛季/大版本/搜牌档位/羁绊/角色/角色标签/投资环境`；这五个统计项即使为 `0` 也必须保留。
 - `guide.config.cw --format yaml` 仍然先输出中文摘要，再追加原英文 key 的 YAML shape，不得回退成纯英文首屏。
 - `cw.hand.sell_plan` success 首行固定为 `ok cw.hand.sell_plan count=... reference_only=1 candidates=... todos=...`；该命令只提供 Agent 参考信息，不是权威出售计划。
@@ -101,8 +104,10 @@
 - `trail-cw-guide` 不是 scene entry、不是默认 owner、也不是整局 owner；真正进入开局流程仍要回到 `trail-cw-entry`。
 - `trail-cw-portal` 是当前 active internal 的投资环境页 skill，主要在 `trail cw start` 或 `trail cw portal refresh` 成功停留在投资环境页后由 scene entry 内部切入。
 - `trail-cw-portal` 不是 direct-user 公共入口、不是 scene entry、也不是 owner；它负责 `portal detect/refresh/restart/select` 与环境优先逻辑，若攻略未定则切到 `trail-cw-guide` 的无人值守模式。
+- `trail-cw-prep` 是当前 active internal 的普通备战阶段 skill，只能由 `cw.portal.select` success 后的 workflow handoff 或上游内部阶段切入。
+- `trail-cw-prep` 不是 public scene entry、不是 direct-user、不是 owner；`cw.portal.select` success final handoff 固定指向 `trail-cw-prep`。
 - 只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口出现在 active 文档与测试中。
-- 当命令 success 输出 `info handoff_skill=... handoff_strength=strong ...` 时，Agent 应把它视为推荐的下一步 skill 切换信号；当前第一批是 `cw.enter -> info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered`。
+- 当命令 success 输出 `info handoff_skill=... handoff_strength=strong ...` 时，Agent 应把它视为推荐的下一步 skill 切换信号；当前固定映射包括 `cw.enter -> trail-cw-entry` 与 `cw.portal.select -> trail-cw-prep`。
 - `AGENTS.md` 的 active 拓扑说明不得出现 archive skill 名称或 legacy 场景 skill 名称。
 - 任何 active skill 都不得直接或间接调用 archive skill。
 - 仍然禁止 legacy 货币战争 archive skill 回流为 active owner、默认 owner 或推荐入口。

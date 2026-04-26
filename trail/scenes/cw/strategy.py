@@ -8,7 +8,7 @@ from typing import Any
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.entry import _detect_current_enter_page
-from trail.scenes.cw.guide import SHARE_CODE_PATTERN
+from trail.scenes.cw.guide import SHARE_CODE_PATTERN, complete_cw_guide_or_none
 from trail.scenes.cw.models import ensure_cw_state
 
 STRATEGY_SCREEN_WIDTH = 1920
@@ -73,7 +73,7 @@ def detect_cw_strategy(session, *, runtime, strategy_list: object) -> dict[str, 
     _require_strategy_page(runtime, session=session)
 
     cw_state = ensure_cw_state(session)
-    cards = summarize_strategy_cards(runtime.ocr(), strategy_list, guide_state=cw_state.get("guide"))
+    cards = summarize_strategy_cards(runtime.ocr(), strategy_list, guide_state=complete_cw_guide_or_none(cw_state))
     snapshot = {
         "cards": cards,
         "stale": False,

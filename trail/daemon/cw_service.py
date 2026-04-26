@@ -38,10 +38,11 @@ from trail.scenes.cw.events import (
     start_cw_battle,
 )
 from trail.scenes.cw.guide import (
-    SHARE_CODE_PATTERN,
     apply_cw_guide_via_ui,
+    complete_cw_guide_or_none,
     fetch_cw_guide_list,
     invalidate_cw_guide_runtime_state,
+    require_complete_cw_guide,
 )
 from trail.scenes.cw.guide import fetch_cw_guide_config
 from trail.scenes.cw.models import ensure_cw_state
@@ -58,10 +59,12 @@ from trail.scenes.cw.portal import (
 from trail.scenes.cw.shop import (
     build_cw_shop_buyer,
     build_cw_shop_closer,
+    build_cw_shop_exp_buyer,
     build_cw_shop_opener,
     build_cw_shop_refresher,
     build_cw_shop_scan_snapshot_reader,
     build_cw_shop_scanner,
+    buy_cw_shop_exp,
     buy_cw_shop_slot,
     close_cw_shop,
     open_cw_shop,
@@ -94,6 +97,7 @@ crystal_collector_factory = build_cw_crystal_collector
 shop_scanner_factory = build_cw_shop_scanner
 shop_scan_snapshot_reader_factory = build_cw_shop_scan_snapshot_reader
 shop_buyer_factory = build_cw_shop_buyer
+shop_exp_buyer_factory = build_cw_shop_exp_buyer
 shop_opener_factory = build_cw_shop_opener
 shop_refresher_factory = build_cw_shop_refresher
 shop_closer_factory = build_cw_shop_closer
@@ -548,6 +552,11 @@ class CwService:
                 buyer=shop_buyer_factory(runtime()),
                 scanner=shop_scanner_factory(runtime()),
             ).scene_state["cw"]["shop"],
+            "cw.shop.buy_exp": lambda: buy_cw_shop_exp(
+                session,
+                buyer=shop_exp_buyer_factory(runtime()),
+                scanner=shop_scan_snapshot_reader_factory(runtime()),
+            ).scene_state["cw"]["shop"],
             "cw.shop.refresh": lambda: refresh_cw_shop(
                 session,
                 refresher=shop_refresher_factory(runtime()),
@@ -640,16 +649,16 @@ def _current_guide(session, *, artifact_store: ArtifactStore):
 
 def _require_selected_guide(session) -> dict:
     cw_state = session.scene_state.get("cw")
-    guide_state = cw_state.get("guide") if isinstance(cw_state, dict) else None
-    if not isinstance(guide_state, dict):
-        raise TrailError(
-            "CW_GUIDE_SELECTION_REQUIRED",
-            "cw current guide is empty; run guide.fetch.cw --select first",
-        )
-    share_code = guide_state.get("share_code")
-    if not isinstance(share_code, str) or SHARE_CODE_PATTERN.fullmatch(share_code) is None:
-        raise TrailError("CW_GUIDE_STATE_INVALID", "current cw guide share_code invalid")
-    return guide_state
+    return require_complete_cw_guide(cw_state if isinstance(cw_state, dict) else {})
+
+
+def _operation_guide_skill_info(guide: dict | None) -> list[dict[str, str]]:
+    if not isinstance(guide, dict):
+        return []
+    operation_guide = str(guide.get("operation_guide") or "").strip()
+    if not operation_guide:
+        return []
+    return [{"name": "运营思路", "text": operation_guide}]
 
 
 def _shop_status(session, *, artifact_store: ArtifactStore) -> dict:
@@ -658,14 +667,13 @@ def _shop_status(session, *, artifact_store: ArtifactStore) -> dict:
     if not isinstance(cw_state, dict):
         return {"stale": True}
     payload = shop_cw_status(session)
-    guide_state = cw_state.get("guide")
-    if not isinstance(guide_state, dict):
+    if complete_cw_guide_or_none(cw_state) is None:
         payload.pop("guide_summary", None)
     return payload
 
 
 def _validate_cw_guide_apply_payload(payload: dict) -> None:
-    if any(key in payload for key in ("lineup_id", "guide")):
+    if any(key in payload for key in ("lineup_id", "guide", "artifact", "artifact_id")):
         raise TrailError(
             "CW_GUIDE_APPLY_ARGS_NOT_SUPPORTED",
             "cw guide.apply no longer accepts lineup_id/guide; use guide.fetch.cw --select",
@@ -687,7 +695,11 @@ def _select_portal_and_apply_selected_guide(session, *, runtime, card_idx: int, 
         _apply_selected_guide_via_ui(session, runtime=runtime, guide=selected_guide)
     except Exception as error:
         raise CwSideEffectAppliedError("cw.portal.select guide apply side effect already ran") from error
-    return selected
+    selected_data = dict(selected)
+    skill_info = _operation_guide_skill_info(selected_guide)
+    if skill_info:
+        selected_data["skill_info"] = skill_info
+    return selected_data
 
 
 def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None) -> dict:

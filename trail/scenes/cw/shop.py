@@ -15,6 +15,7 @@ from PIL import Image, ImageEnhance
 
 from trail.core.errors import TrailError
 from trail.runtime.ocr_config import OcrRequestConfig
+from trail.scenes.cw.guide import complete_cw_guide_or_none
 from trail.scenes.cw.models import ensure_cw_state
 from trail.session.models import SessionModel
 
@@ -53,6 +54,7 @@ SHOP_SLOT_POINTS = {
     4: _point(0.68, 0.18),
     5: _point(0.80, 0.18),
 }
+SHOP_EXP_BUY_POINT = _pixel_point(320, 992)
 SHOP_SCAN_REGION = _region(0.19, 0.26, 0.88, 0.31)
 SHOP_TEAM_SIZE_REGION = _pixel_region(835, 188, 1095, 281)
 SHOP_COINS_REGION = _pixel_region(1615, 902, 1698, 956)
@@ -67,10 +69,12 @@ ShopScanner = Callable[[], dict[str, Any]]
 ShopSnapshotReader = Callable[[], dict[str, Any]]
 ShopSnapshotSource = ShopScanner | ShopSnapshotReader
 ShopBuyer = Callable[..., object]
+ShopExpBuyer = Callable[[], object]
 ShopAction = Callable[[], object]
 
 SHOP_SUMMARY_CONSTRAINT_KEYS = ("min_coins", "min_level", "mid_level")
 SHOP_DEBUG_CAPTURE_ENV = "TRAIL_DEBUG_CW_SHOP_CAPTURE"
+_MISSING = object()
 if TYPE_CHECKING:
     from trail.runtime.operator import RuntimeOperator
 
@@ -418,8 +422,7 @@ def _parse_shop_team_size(items: list[Any], *, default: str | None) -> str | Non
 
 
 def _guide_state(cw_state: dict) -> dict | None:
-    guide = cw_state.get("guide")
-    return guide if isinstance(guide, dict) else None
+    return complete_cw_guide_or_none(cw_state)
 
 
 def _stable_constraints_summary(cw_state: dict) -> dict[str, Any]:
@@ -433,6 +436,16 @@ def _guide_summary(cw_state: dict) -> dict[str, Any] | None:
     if _guide_state(cw_state) is None:
         return None
     return {"constraints": _stable_constraints_summary(cw_state)}
+
+
+def _sync_shop_guide_summary(cw_state: dict, shop_state: dict[str, Any], *, include_when_absent: bool) -> dict[str, Any]:
+    guide_summary = _guide_summary(cw_state)
+    if guide_summary is None:
+        shop_state.pop("guide_summary", None)
+        return shop_state
+    if include_when_absent or "guide_summary" in shop_state:
+        shop_state["guide_summary"] = guide_summary
+    return shop_state
 
 
 def _shop_state(cw_state: dict) -> dict[str, Any]:
@@ -455,9 +468,9 @@ def _build_shop_snapshot(
     level: int | None,
     exp: str | None,
     reserve_full: bool,
-    team_size: str | None,
+    team_size: Any = _MISSING,
 ) -> dict[str, Any]:
-    preserved_team_size = _shop_state(cw_state).get("team_size") if team_size is None else team_size
+    preserved_team_size = _shop_state(cw_state).get("team_size") if team_size is _MISSING else team_size
     snapshot = {
         **_preserved_shop_flags(cw_state),
         "items": deepcopy(items),
@@ -468,10 +481,7 @@ def _build_shop_snapshot(
         "team_size": preserved_team_size,
         "stale": False,
     }
-    guide_summary = _guide_summary(cw_state)
-    if guide_summary is not None:
-        snapshot["guide_summary"] = guide_summary
-    return snapshot
+    return _sync_shop_guide_summary(cw_state, snapshot, include_when_absent=True)
 
 
 def _scan_shop_snapshot(cw_state: dict, *, scanner: ShopSnapshotSource) -> dict[str, Any]:
@@ -484,7 +494,7 @@ def _scan_shop_snapshot(cw_state: dict, *, scanner: ShopSnapshotSource) -> dict[
             level=scanned.get("level"),
             exp=scanned.get("exp"),
             reserve_full=bool(scanned.get("reserve_full", False)),
-            team_size=scanned.get("team_size"),
+            team_size=scanned["team_size"] if "team_size" in scanned else _MISSING,
         )
         if "opened" in scanned:
             snapshot["opened"] = bool(scanned["opened"])
@@ -624,6 +634,14 @@ def build_cw_shop_buyer(runtime) -> ShopBuyer:
     return buyer
 
 
+def build_cw_shop_exp_buyer(runtime: "RuntimeOperator") -> ShopExpBuyer:
+    def buyer() -> None:
+        runtime.click_point(*SHOP_EXP_BUY_POINT)
+        sleep(SHOP_BUY_CONFIRM_RETRY_SECONDS)
+
+    return buyer
+
+
 def build_cw_shop_refresher(runtime) -> ShopAction:
     return lambda: runtime.press_key("d")
 
@@ -636,7 +654,11 @@ def open_cw_shop(session: SessionModel, *, opener: ShopAction | None = None) -> 
     if opener is not None:
         opener()
     cw_state = ensure_cw_state(session)
-    cw_state["shop"] = {**cw_state.get("shop", {}), "opened": True, "stale": True}
+    cw_state["shop"] = _sync_shop_guide_summary(
+        cw_state,
+        {**cw_state.get("shop", {}), "opened": True, "stale": True},
+        include_when_absent=False,
+    )
     return session
 
 
@@ -652,10 +674,16 @@ def buy_cw_shop_slot(session: SessionModel, *, slot: int, expect: str, buyer: Sh
     _require_fresh_shop_item(cw_state, slot=slot, expect=expect)
     buyer(slot=slot, expect=expect)
     updated_shop = _scan_until_purchase_confirmed(cw_state, before_items=before_items, slot=slot, expect=expect, scanner=scanner)
-    guide_summary = _guide_summary(cw_state)
-    if guide_summary is not None:
-        updated_shop["guide_summary"] = guide_summary
-    cw_state["shop"] = updated_shop
+    cw_state["shop"] = _sync_shop_guide_summary(cw_state, updated_shop, include_when_absent=True)
+    cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
+    cw_state["sell_plan"] = {}
+    return session
+
+
+def buy_cw_shop_exp(session: SessionModel, *, buyer: ShopExpBuyer, scanner: ShopSnapshotSource) -> SessionModel:
+    buyer()
+    cw_state = ensure_cw_state(session)
+    cw_state["shop"] = _scan_shop_snapshot(cw_state, scanner=scanner)
     cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
     cw_state["sell_plan"] = {}
     return session
@@ -665,7 +693,11 @@ def refresh_cw_shop(session: SessionModel, *, refresher: ShopAction | None = Non
     if refresher is not None:
         refresher()
     cw_state = ensure_cw_state(session)
-    cw_state["shop"] = {**cw_state.get("shop", {}), "stale": True}
+    cw_state["shop"] = _sync_shop_guide_summary(
+        cw_state,
+        {**cw_state.get("shop", {}), "stale": True},
+        include_when_absent=False,
+    )
     return session
 
 
@@ -673,7 +705,11 @@ def close_cw_shop(session: SessionModel, *, closer: ShopAction | None = None) ->
     if closer is not None:
         closer()
     cw_state = ensure_cw_state(session)
-    cw_state["shop"] = {**cw_state.get("shop", {}), "opened": False, "stale": True}
+    cw_state["shop"] = _sync_shop_guide_summary(
+        cw_state,
+        {**cw_state.get("shop", {}), "opened": False, "stale": True},
+        include_when_absent=False,
+    )
     return session
 
 
@@ -682,8 +718,4 @@ def shop_cw_status(session: SessionModel) -> dict:
     status = deepcopy(cw_state.get("shop", {"stale": True}))
     if not isinstance(status, dict):
         status = {"stale": True}
-    status.pop("guide_summary", None)
-    guide_summary = _guide_summary(cw_state)
-    if guide_summary is not None:
-        status["guide_summary"] = guide_summary
-    return status
+    return _sync_shop_guide_summary(cw_state, status, include_when_absent=True)

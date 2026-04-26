@@ -42,7 +42,7 @@ LEGACY_DOC_PATTERNS = (
     r"skills/trail-cw-replenish\b",
     r"skills/trail-cw-shop\b",
     r"skills/trail-cw-slots\b",
-    r"trail-cw(?!-(entry|guide|portal)\b)\b",
+    r"trail-cw(?!(?:-(?:entry|guide|portal|prep)(?![-\w])))\b",
     r"trail-cw-battle-advanced\b",
     r"trail-cw-events\b",
     r"trail-cw-replenish\b",
@@ -52,6 +52,8 @@ LEGACY_DOC_PATTERNS = (
 SUPERSEDE_EXEMPT_DOCS = {
     "2026-04-21-trail-skill-system-redesign.md",
     "2026-04-21-trail-skill-system-redesign-design.md",
+    "2026-04-26-cw-prep-skill-infrastructure.md",
+    "2026-04-26-cw-prep-skill-infrastructure-design.md",
 }
 ROUTING_REVIEW_HEADER = "| Prompt | 旧 skill 集合 winner | 新 skill 集合 winner | 预期 winner | 备注 |"
 ROUTING_REVIEW_PROMPTS = [
@@ -73,13 +75,14 @@ ROUTING_REVIEW_METHOD_LINES = (
 )
 LEGACY_CW_SKILL_PATH_PATTERNS = (
     r"skills/trail-cw/SKILL\.md\b",
+    r"skills/trail-cw(?!(?:-(?:entry|guide|portal|prep)(?:/|$)))[^/]*(?:/|\b)",
     r"skills/trail-cw-battle-advanced(?:/|\b)",
     r"skills/trail-cw-events(?:/|\b)",
     r"skills/trail-cw-replenish(?:/|\b)",
     r"skills/trail-cw-shop(?:/|\b)",
     r"skills/trail-cw-slots(?:/|\b)",
 )
-LEGACY_ACTIVE_CW_PATTERN = r"trail-cw(?!-(entry|guide|portal)\b)\b"
+LEGACY_ACTIVE_CW_PATTERN = r"trail-cw(?!(?:-(?:entry|guide|portal|prep)(?![-\w])))\b"
 
 
 def _lines_with_token(text: str, token: str) -> list[str]:
@@ -126,8 +129,11 @@ def _assert_cw_portal_mentions_are_scoped(text: str) -> None:
     )
 
 
-def _assert_only_cw_enter_handoff_doc_smoke(text: str) -> None:
-    assert "handoff_skill=trail-cw-entry" in text
+def _assert_expected_workflow_handoff_doc_smoke(text: str) -> None:
+    assert "cw.enter -> trail-cw-entry" in text
+    assert "cw.portal.select -> trail-cw-prep" in text
+    assert "handoff_skill=trail-cw-prep" in text
+    assert "handoff_reason=preparation_stage_entered" in text
     assert "handoff_skill=trail-cw-guide" not in text
     assert "handoff_skill=trail-cw-portal" not in text
 
@@ -410,28 +416,23 @@ def test_workflow_handoff_registry_file_exists() -> None:
     assert WORKFLOW_HANDOFFS.is_file()
 
 
-def test_workflow_handoff_registry_has_only_cw_enter_mapping() -> None:
+def test_workflow_handoff_registry_has_expected_scene_and_stage_mappings() -> None:
     registry = yaml.safe_load(WORKFLOW_HANDOFFS.read_text(encoding="utf-8"))
 
-    assert registry == {
-        "commands": {
-            "cw.enter": {
-                "default": {
-                    "handoff_skill": "trail-cw-entry",
-                    "handoff_strength": "strong",
-                    "handoff_reason": "scene_entered",
-                }
-            }
-        }
-    }
     assert set(registry) == {"commands"}
-    assert set(registry["commands"]) == {"cw.enter"}
+    assert set(registry["commands"]) == {"cw.enter", "cw.portal.select"}
     assert registry["commands"]["cw.enter"]["default"] == {
         "handoff_skill": "trail-cw-entry",
         "handoff_strength": "strong",
         "handoff_reason": "scene_entered",
     }
+    assert registry["commands"]["cw.portal.select"]["default"] == {
+        "handoff_skill": "trail-cw-prep",
+        "handoff_strength": "strong",
+        "handoff_reason": "preparation_stage_entered",
+    }
     assert "statuses" not in registry["commands"]["cw.enter"]
+    assert "statuses" not in registry["commands"]["cw.portal.select"]
 
 
 def test_all_non_archive_legacy_docs_have_fixed_supersede_banner() -> None:
@@ -477,7 +478,7 @@ def test_new_skill_topology_is_documented_in_readme() -> None:
     _assert_cw_guide_mentions_are_scoped(text)
     _assert_cw_portal_mentions_are_scoped(text)
     assert "trail-hsr-advanced" in text and "内部恢复层" in text
-    _assert_only_cw_enter_handoff_doc_smoke(text)
+    _assert_expected_workflow_handoff_doc_smoke(text)
     _assert_no_legacy_cw_skill_mentions(text)
 
 
@@ -493,27 +494,30 @@ def test_new_skill_topology_is_documented_in_agents() -> None:
     assert "在 `warn`、`ref` 之后追加一行尾行强提示" in text
     assert "该行必须是 success 输出最后一行" in text
     assert "任何 active skill 都不得直接或间接调用 archive skill" in text
-    _assert_only_cw_enter_handoff_doc_smoke(text)
+    _assert_expected_workflow_handoff_doc_smoke(text)
     _assert_no_legacy_cw_skill_mentions(text)
     assert "当前推荐入口" not in text
 
 
-def test_active_skill_guidance_only_mentions_hsr_pair() -> None:
+def test_active_skill_guidance_only_mentions_current_active_cw_topology() -> None:
     text = OUTPUT_RENDERING_TEST.read_text(encoding="utf-8")
 
     assert 'PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md"' in text
     assert 'PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md"' in text
-    assert not re.search(r'skills"\s*/\s*"trail-cw(?!-entry)[^\"]*"', text)
-    assert not re.search(r"trail-cw(?!-entry)", text)
+    assert not re.search(r'skills"\s*/\s*"trail-cw(?!(?:-(?:entry|guide|portal|prep)(?![-\w])))[^\"]*"', text)
+    assert not re.search(r"trail-cw(?!(?:-(?:entry|guide|portal|prep)(?![-\w])))\b", text)
 
 
 def test_legacy_doc_patterns_do_not_misclassify_active_cw_topology_names() -> None:
-    active_names = ["trail-cw-entry", "trail-cw-guide", "trail-cw-portal"]
+    active_names = ["trail-cw-entry", "trail-cw-guide", "trail-cw-portal", "trail-cw-prep"]
+    invalid_names = ["trail-cw-prep-extra", "trail-cw-guide-old"]
 
     for pattern in LEGACY_DOC_PATTERNS:
         regex = re.compile(pattern)
         for name in active_names:
             assert regex.search(name) is None, (pattern, name)
+    for name in invalid_names:
+        assert any(re.search(pattern, name) for pattern in LEGACY_DOC_PATTERNS), name
 
 
 def test_legacy_path_patterns_do_not_misclassify_active_cw_skill_paths() -> None:
@@ -521,6 +525,8 @@ def test_legacy_path_patterns_do_not_misclassify_active_cw_skill_paths() -> None
         "skills/trail-cw-entry/SKILL.md",
         "skills/trail-cw-guide/references/command-surface.md",
         "skills/trail-cw-portal/evals/triggers.json",
+        "skills/trail-cw-prep/SKILL.md",
+        "skills/trail-cw-prep/evals/triggers.json",
     ]
     legacy_paths = [
         "skills/trail-cw/SKILL.md",
@@ -529,6 +535,8 @@ def test_legacy_path_patterns_do_not_misclassify_active_cw_skill_paths() -> None
         "skills/trail-cw-replenish/SKILL.md",
         "skills/trail-cw-shop/SKILL.md",
         "skills/trail-cw-slots/SKILL.md",
+        "skills/trail-cw-prep-extra/SKILL.md",
+        "skills/trail-cw-guide-old/SKILL.md",
     ]
 
     for path in active_paths:

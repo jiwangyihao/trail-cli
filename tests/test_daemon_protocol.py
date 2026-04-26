@@ -114,6 +114,30 @@ class ScopedDebugProtocolRuntime(ProtocolRuntime):
             )
 
 
+def _complete_cw_guide_fixture(*, lineup_id: str = "selected-lineup", operation_guide: str = "前期按测试运营") -> dict[str, object]:
+    return {
+        "scene": "cw",
+        "kind": "guide",
+        "lineup_id": lineup_id,
+        "title": "测试攻略",
+        "share_code": "##demo##",
+        "version": "4.0",
+        "operation_guide": operation_guide,
+        "role_stages": [{"stage": "Opening", "front_roles": [{"name": "银狼"}], "back_roles": [], "traits": []}],
+        "first_fight_augments": [{"name": "快攻"}],
+        "second_fight_augments": [{"name": "回蓝"}],
+        "order_basic": [{"name": "钻头"}],
+        "order_compose": [{"name": "风暴"}],
+        "min_coins": 40,
+        "min_level": 7,
+        "mid_level": 9,
+    }
+
+
+def _complete_cw_constraints_fixture() -> dict[str, object]:
+    return {"min_coins": 40, "min_level": 7, "mid_level": 9, "priority": {}, "positioning": {}}
+
+
 class ProtocolRuntimeService:
     def __init__(self, runtime, *, launch_result: dict | None = None):
         self._runtime = runtime
@@ -591,6 +615,63 @@ def test_command_service_routes_guide_fetch_select_through_run_mutation(tmp_path
     }
 
 
+def test_command_service_guide_fetch_select_stores_complete_guide_no_artifact(tmp_path: Path, monkeypatch):
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
+
+    monkeypatch.setattr(
+        "trail.scenes.cw.guide.fetch_cw_guide",
+        lambda *args, **kwargs: {
+            "scene": "cw",
+            "kind": "guide",
+            "lineup_id": "g1",
+            "title": "测试攻略",
+            "share_code": "##code##",
+            "version": "4.0",
+            "operation_guide": "前期 按测试运营",
+            "on_field": {"灵砂": 1},
+            "off_field": {"星期日": 1},
+            "role_stages": [{"stage": "Opening", "front_roles": [{"name": "灵砂"}], "back_roles": [], "traits": []}],
+            "first_fight_augments": [{"name": "击破概念股"}],
+            "second_fight_augments": [{"name": "折射棱镜"}],
+            "order_basic": [{"name": "钻头"}],
+            "order_compose": [{"name": "风暴"}],
+            "min_coins": 40,
+            "min_level": 6,
+            "mid_level": 9,
+        },
+    )
+    monkeypatch.setattr(
+        "trail.daemon.command_service.ArtifactStore.create",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("select path must not create artifact")),
+    )
+    request = DaemonRequest(
+        request_id="req-guide-fetch-select-no-artifact",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="guide.fetch.cw",
+        payload={"url": "g1", "select": True},
+    )
+
+    payload = command_service.handle(request)
+    persisted = service.load_session(session.session_id)
+
+    assert payload["ok"] is True
+    assert payload["data"]["operation_guide"] == "前期 按测试运营"
+    assert "artifact_id" not in payload["data"]
+    assert persisted.scene_state["cw"]["guide"]["operation_guide"] == "前期 按测试运营"
+    assert "remaining_purchases" not in persisted.scene_state["cw"]["guide"]
+    assert "on_field" not in persisted.scene_state["cw"]["guide"]
+    assert "off_field" not in persisted.scene_state["cw"]["guide"]
+    assert persisted.scene_state["cw"]["constraints"]["min_level"] == 6
+    assert "artifact" not in persisted.scene_state["cw"]["guide"]
+    assert "artifact_id" not in persisted.scene_state["cw"]["guide"]
+
+
 def test_server_handle_payload_rejects_guide_fetch_select_missing_top_level_session_id(tmp_path: Path, monkeypatch):
     daemon_home = tmp_path / "daemon-home"
     write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
@@ -869,13 +950,15 @@ def test_command_service_tracks_cw_portal_select_request_status_with_top_level_s
     loaded_a = service.load_session(session_a.session_id)
     loaded_a.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
-        "guide": {"artifact": "selected-artifact-a", "lineup_id": "selected-lineup-a", "share_code": "##demo##"},
+        "guide": _complete_cw_guide_fixture(lineup_id="selected-lineup-a"),
+        "constraints": _complete_cw_constraints_fixture(),
         "portal": {"cards": [{"card_idx": 1, "portal_title": "A"}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
     }
     loaded_b = service.load_session(session_b.session_id)
     loaded_b.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
-        "guide": {"artifact": "selected-artifact-b", "lineup_id": "selected-lineup-b", "share_code": "##demo##"},
+        "guide": _complete_cw_guide_fixture(lineup_id="selected-lineup-b"),
+        "constraints": _complete_cw_constraints_fixture(),
         "portal": {"cards": [{"card_idx": 1, "portal_title": "B"}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
     }
     service.save_session(loaded_a)
@@ -913,6 +996,71 @@ def test_command_service_tracks_cw_portal_select_request_status_with_top_level_s
     assert response["ok"] is True
     assert response["data"]["portal_title"] == "A"
     assert status["session_id"] == session_a.session_id
+
+
+def _run_cw_portal_select_with_operation_guide(tmp_path: Path, monkeypatch, *, operation_guide: str) -> dict:
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional
+            return tmp_path / ".trail" / "shots" / f"{request_id or 'req-cw-portal-select'}.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": _complete_cw_guide_fixture(operation_guide=operation_guide),
+        "constraints": _complete_cw_constraints_fixture(),
+        "portal": {"cards": [{"card_idx": 1, "portal_title": "A"}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": "A"},
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
+    monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+
+    return command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-portal-select-skill-info",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.portal.select",
+            payload={"session_id": session.session_id, "card_idx": 1},
+        )
+    )
+
+
+def test_command_service_cw_portal_select_adds_operation_guide_skill_info(tmp_path: Path, monkeypatch):
+    response = _run_cw_portal_select_with_operation_guide(tmp_path, monkeypatch, operation_guide="前期 先读图")
+
+    assert response["ok"] is True
+    assert response["data"]["skill_info"] == [{"name": "运营思路", "text": "前期 先读图"}]
+
+
+def test_command_service_cw_portal_select_omits_blank_operation_guide_skill_info(tmp_path: Path, monkeypatch):
+    response = _run_cw_portal_select_with_operation_guide(tmp_path, monkeypatch, operation_guide="")
+
+    assert response["ok"] is True
+    assert "skill_info" not in response["data"]
 
 
 def test_command_service_start_run_returns_status_and_window_facts(tmp_path: Path):
@@ -2705,7 +2853,8 @@ def test_cw_mutation_unknown_result_without_verbose_does_not_initialize_runtime_
     session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     loaded = session_service.load_session(session.session_id)
     loaded.scene_state["cw"] = {
-        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        "guide": _complete_cw_guide_fixture(),
+        "constraints": _complete_cw_constraints_fixture(),
     }
     session_service.save_session(loaded)
     runtime_calls: list[dict[str, object]] = []
@@ -4072,7 +4221,8 @@ def test_command_service_handles_cw_portal_select_and_auto_applies_selected_guid
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
-        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        "guide": _complete_cw_guide_fixture(),
+        "constraints": _complete_cw_constraints_fixture(),
         "portal": {"cards": [{"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
     }
     service.save_session(session)
@@ -4107,7 +4257,13 @@ def test_command_service_handles_cw_portal_select_and_auto_applies_selected_guid
     payload = command_service.handle(request)
 
     assert payload["ok"] is True
-    assert payload["data"] == {"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}
+    assert payload["data"] == {
+        "card_idx": 2,
+        "portal_title": "Beta",
+        "portal_description": "Desc",
+        "score": 0.88,
+        "skill_info": [{"name": "运营思路", "text": "前期按测试运营"}],
+    }
     assert payload["screenshot"] == ".trail/shots/req-cw-portal-select.png"
     assert applied_share_codes == ["##demo##"]
     assert service.load_session(session.session_id).scene_state["cw"]["portal"]["stale"] is True
@@ -4139,7 +4295,8 @@ def test_command_service_handles_cw_portal_select_waits_extra_before_capture(tmp
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
-        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        "guide": _complete_cw_guide_fixture(),
+        "constraints": _complete_cw_constraints_fixture(),
         "portal": {"cards": [{"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
     }
     service.save_session(session)
@@ -4191,7 +4348,8 @@ def test_command_service_marks_cw_portal_select_post_click_apply_failure_as_reco
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     loaded = service.load_session(session.session_id)
     loaded.scene_state["cw"] = {
-        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        "guide": _complete_cw_guide_fixture(),
+        "constraints": _complete_cw_constraints_fixture(),
         "portal": {"cards": [{"card_idx": 1, "portal_title": "商店"}], "mode": "new", "difficulty": "normal", "battle_mode": "standard", "stale": False},
     }
     service.save_session(loaded)
@@ -4275,7 +4433,8 @@ def test_command_service_keeps_cw_portal_select_side_effect_failure_verbose_trac
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     loaded = service.load_session(session.session_id)
     loaded.scene_state["cw"] = {
-        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        "guide": _complete_cw_guide_fixture(),
+        "constraints": _complete_cw_constraints_fixture(),
         "portal": {"cards": [{"card_idx": 1, "portal_title": "商店"}], "mode": "new", "difficulty": "normal", "battle_mode": "standard", "stale": False},
     }
     service.save_session(loaded)
@@ -4887,6 +5046,151 @@ def test_command_service_routes_cw_shop_buy_slot_through_mutation_journal(tmp_pa
     assert payload["ok"] is True
     assert registry.for_workspace(str(tmp_path)).request_status("req-cw-shop-buy-slot")["final_state"] == "completed"
     assert registry.for_workspace(str(tmp_path)).load_session(session.session_id).scene_state["cw"]["shop"]["slot"] == 2
+
+
+def test_command_service_handles_cw_shop_buy_exp_through_mutation_journal(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del x, y, kwargs
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-shop-buy-exp.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    buyer_calls = []
+    scanner_calls = []
+
+    def fake_buyer_factory(factory_runtime):
+        assert getattr(factory_runtime, "_runtime", factory_runtime) is runtime
+        return lambda: buyer_calls.append("clicked")
+
+    def fake_scanner_factory(factory_runtime):
+        assert getattr(factory_runtime, "_runtime", factory_runtime) is runtime
+
+        def scanner():
+            scanner_calls.append("scanned")
+            return {
+                "opened": True,
+                "stale": False,
+                "items": [],
+                "coins": 36,
+                "level": 4,
+                "exp": "0/8",
+                "reserve_full": False,
+                "team_size": "4/4",
+            }
+
+        return scanner
+
+    def fake_buy_exp(session, *, buyer, scanner):
+        buyer()
+        session.scene_state.setdefault("cw", {})["shop"] = scanner()
+        return session
+
+    monkeypatch.setattr("trail.daemon.cw_service.shop_exp_buyer_factory", fake_buyer_factory)
+    monkeypatch.setattr("trail.daemon.cw_service.shop_scan_snapshot_reader_factory", fake_scanner_factory)
+    monkeypatch.setattr("trail.daemon.cw_service.buy_cw_shop_exp", fake_buy_exp)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-shop-buy-exp",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.shop.buy_exp",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"]["coins"] == 36
+    assert payload["screenshot"] == ".trail/shots/req-cw-shop-buy-exp.png"
+    assert buyer_calls == ["clicked"]
+    assert scanner_calls == ["scanned"]
+    assert runtime.capture_requests == [(False, "req-cw-shop-buy-exp")]
+    assert service.load_session(session.session_id).scene_state["cw"]["shop"]["level"] == 4
+    assert service.request_status("req-cw-shop-buy-exp")["final_state"] == "completed"
+
+
+def test_command_service_marks_cw_shop_buy_exp_post_click_failure_recoverable(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw.shop import SHOP_EXP_BUY_POINT
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return tmp_path / ".trail" / "shots" / "req-cw-shop-buy-exp-fail.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+
+    def fake_buyer_factory(factory_runtime):
+        assert getattr(factory_runtime, "_runtime", factory_runtime) is runtime
+        return lambda: factory_runtime.click_point(*SHOP_EXP_BUY_POINT)
+
+    def fake_buy_exp(session, *, buyer, scanner):
+        del session, scanner
+        buyer()
+        raise TrailError("CW_SHOP_SCAN_FAILED", "shop scan failed after buying exp")
+
+    monkeypatch.setattr("trail.daemon.cw_service.shop_exp_buyer_factory", fake_buyer_factory)
+    monkeypatch.setattr("trail.daemon.cw_service.buy_cw_shop_exp", fake_buy_exp)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-shop-buy-exp-fail",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.shop.buy_exp",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "DAEMON_UNAVAILABLE"
+    assert runtime.clicks == [SHOP_EXP_BUY_POINT]
+    assert service.request_status("req-cw-shop-buy-exp-fail")["final_state"] == "applied_but_not_persisted"
 
 
 def test_server_main_injects_session_service_registry(monkeypatch):

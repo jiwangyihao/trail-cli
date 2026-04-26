@@ -22,3 +22,9 @@ internal_skills:
     exposure: internal
     caller_roles:
       - scene_entry
+  - name: trail-cw-prep
+    status: active
+    exposure: internal
+    caller_roles:
+      - scene_entry
+      - internal_skill
