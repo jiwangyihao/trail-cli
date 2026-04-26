@@ -17,11 +17,18 @@ from trail.session.models import SessionModel
 
 
 @dataclass(frozen=True)
+class CwStatusReadResult:
+    stage: str | None
+    stage_status: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class CwSlotsReadResult:
     front: list[Any]
     back: list[Any]
     hand: list[Any]
     stage_status: dict[str, Any] | None = None
+    stage: str | None = None
 
 
 SlotsSnapshotReader = Callable[[], CwSlotsReadResult | tuple[list[Any], list[Any], list[Any]]]
@@ -522,10 +529,49 @@ def build_cw_slots_reader(
     *,
     dismiss_initial_overlay: bool = True,
 ) -> SlotsSnapshotReader:
-    parsed_targets = _parse_slot_targets(targets)
+    status_reader = build_cw_status_reader(runtime)
+    roles_reader = build_cw_slot_roles_reader(runtime, targets=targets)
 
     def reader() -> CwSlotsReadResult:
         _collapse_expanded_hand_card(runtime)
+        if dismiss_initial_overlay:
+            dismiss_cw_slots_overlay(runtime)
+        status_result = status_reader()
+        front, back, hand = roles_reader()
+        return CwSlotsReadResult(
+            front=front,
+            back=back,
+            hand=hand,
+            stage_status=status_result.stage_status,
+            stage=status_result.stage,
+        )
+
+    return reader
+
+
+def build_cw_status_reader(runtime) -> Callable[[], CwStatusReadResult]:
+    stage_detector = stage.build_cw_stage_detector(runtime)
+
+    def reader() -> CwStatusReadResult:
+        detected_stage = stage_detector()
+        batch_targets = [
+            BatchOcrTarget(("stage_status", "level"), runtime.capture_image(**stage.CW_STATUS_LEVEL_REGION, normalize=False)),
+            BatchOcrTarget(("stage_status", "exp"), runtime.capture_image(**stage.CW_STATUS_EXP_REGION, normalize=False)),
+            BatchOcrTarget(("stage_status", "team_size"), runtime.capture_image(**stage.CW_STATUS_TEAM_SIZE_REGION, normalize=False)),
+        ]
+        batch_result = run_batch_ocr(runtime, batch_targets, trace_prefix="cw_slots_status_batch_ocr")
+        return CwStatusReadResult(
+            stage=detected_stage,
+            stage_status=stage.parse_cw_stage_status(batch_result.by_key),
+        )
+
+    return reader
+
+
+def build_cw_slot_roles_reader(runtime, targets: list[str] | None = None) -> Callable[[], tuple[list[Any], list[Any], list[Any]]]:
+    parsed_targets = _parse_slot_targets(targets)
+
+    def reader() -> tuple[list[Any], list[Any], list[Any]]:
         front, back, hand = _empty_slots_snapshot()
         targets_by_area = parsed_targets or {
             "front": set(range(len(FRONT_SLOT_POINTS))),
@@ -534,13 +580,7 @@ def build_cw_slots_reader(
         }
 
         captures: list[dict[str, Any]] = []
-        if dismiss_initial_overlay:
-            dismiss_cw_slots_overlay(runtime)
-        batch_targets = [
-            BatchOcrTarget(("stage_status", "level"), runtime.capture_image(**stage.CW_STATUS_LEVEL_REGION, normalize=False)),
-            BatchOcrTarget(("stage_status", "exp"), runtime.capture_image(**stage.CW_STATUS_EXP_REGION, normalize=False)),
-            BatchOcrTarget(("stage_status", "team_size"), runtime.capture_image(**stage.CW_STATUS_TEAM_SIZE_REGION, normalize=False)),
-        ]
+        batch_targets = []
         for area in ("front", "back", "hand"):
             points = SLOT_POINTS_BY_AREA[area]
             for index in sorted(targets_by_area[area]):
@@ -566,12 +606,7 @@ def build_cw_slots_reader(
                 back[index] = slot_value
             else:
                 hand[index] = slot_value
-        return CwSlotsReadResult(
-            front=front,
-            back=back,
-            hand=hand,
-            stage_status=stage.parse_cw_stage_status(batch_result.by_key),
-        )
+        return front, back, hand
 
     return reader
 
