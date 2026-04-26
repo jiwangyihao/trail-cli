@@ -1181,6 +1181,17 @@ def test_render_output_sections_shop_status_only_when_multiple_fact_groups():
     assert not any(line.startswith("# ") for line in lines)
 
 
+def test_cw_shop_section_helper_emits_section_heading_by_default():
+    lines: list[str] = []
+
+    rendering_module._append_cw_shop_section(lines, {"items": [{"slot": 1, "name": "银狼", "price": 20}]})
+
+    assert lines == [
+        "# 商店信息",
+        "item idx=1 slot=1 name=银狼 cost=20",
+    ]
+
+
 def test_render_output_sections_shop_status_when_stage_projection_exists():
     payload = {
         "ok": True,
@@ -1207,6 +1218,30 @@ def test_render_output_sections_shop_status_when_stage_projection_exists():
     ]
 
 
+def test_render_output_shop_status_only_fresh_stage_has_no_section_heading():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [],
+            "stage_status": {"stale": False, "level": 3, "exp": "0/8", "team_size": "2/2"},
+            "stage_status_stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.shop.status", payload).splitlines()
+
+    assert lines == [
+        "ok cw.shop.status count=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=2/2 stage_status_stale=0",
+    ]
+    assert not any(line.startswith("# ") for line in lines)
+
+
 def test_render_output_shop_status_only_stage_stale_has_no_section_heading():
     payload = {
         "ok": True,
@@ -1222,6 +1257,23 @@ def test_render_output_shop_status_only_stage_stale_has_no_section_heading():
         "ok cw.shop.status count=0",
         "info stage_status_stale=1",
     ]
+
+
+def test_render_output_shop_status_empty_has_no_section_heading():
+    payload = {
+        "ok": True,
+        "data": {"items": []},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.shop.status", payload).splitlines()
+
+    assert lines == ["ok cw.shop.status count=0"]
+    assert not any(line.startswith("# ") for line in lines)
 
 
 def test_render_output_sections_shop_buy_exp_and_preserves_null_team_size():

@@ -1116,6 +1116,23 @@ def test_cw_shop_status_renders_missing_stage_status_as_stale(cli_runner, fake_d
     _assert_single_call(client, method="cw.shop.status", payload={}, tmp_path=tmp_path)
 
 
+def test_cw_shop_status_renders_empty_status_without_sections(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.shop.status": build_success_response(
+                request_id="req-cw-shop-status-empty",
+                data={"items": []},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "shop", "status", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok cw.shop.status count=0"]
+    _assert_single_call(client, method="cw.shop.status", payload={}, tmp_path=tmp_path)
+
+
 def test_cw_event_handle_renders_event_result(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {

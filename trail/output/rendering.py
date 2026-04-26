@@ -521,13 +521,18 @@ def _append_cw_shop_fact_lines(lines: list[str], data: dict[str, Any]) -> None:
     )
 
 
-def _append_cw_shop_section(lines: list[str], data: dict[str, Any], *, force_section: bool = False) -> None:
+def _append_cw_shop_lines(lines: list[str], data: dict[str, Any]) -> None:
     if not _has_cw_shop_facts(data):
         return
-    if force_section:
-        _append_section(lines, "商店信息")
     _append_cw_shop_items(lines, data)
     _append_cw_shop_fact_lines(lines, data)
+
+
+def _append_cw_shop_section(lines: list[str], data: dict[str, Any]) -> None:
+    if not _has_cw_shop_facts(data):
+        return
+    _append_section(lines, "商店信息")
+    _append_cw_shop_lines(lines, data)
 
 
 def _has_cw_status_projection(data: dict[str, Any]) -> bool:
@@ -927,10 +932,10 @@ def _render_cw_shop_status(command: str, payload: dict[str, Any]) -> list[str]:
     has_shop_facts = _has_cw_shop_facts(data)
     has_status_projection = _has_cw_status_projection(data)
     if has_shop_facts and has_status_projection:
-        _append_cw_shop_section(lines, data, force_section=True)
+        _append_cw_shop_section(lines, data)
         _append_cw_status_section(lines, data)
     else:
-        _append_cw_shop_section(lines, data)
+        _append_cw_shop_lines(lines, data)
         _append_cw_status_lines(lines, data)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
@@ -954,20 +959,20 @@ def _render_cw_shop_action(command: str, payload: dict[str, Any]) -> list[str]:
         has_shop_facts = _has_cw_shop_facts(data)
         has_status_projection = _has_cw_status_projection(data)
         if has_shop_facts and has_status_projection:
-            _append_cw_shop_section(lines, data, force_section=True)
+            _append_cw_shop_section(lines, data)
             _append_cw_status_section(lines, data)
         else:
-            _append_cw_shop_section(lines, data)
+            _append_cw_shop_lines(lines, data)
             _append_cw_status_lines(lines, data)
     elif command == "cw.shop.buy_exp":
         has_shop_facts = _has_cw_shop_facts(data)
         has_status_facts = _has_cw_shop_buy_exp_status(data)
         if has_shop_facts and has_status_facts:
-            _append_cw_shop_section(lines, data, force_section=True)
+            _append_cw_shop_section(lines, data)
             _append_section(lines, "综合信息")
             _append_cw_shop_buy_exp_status_lines(lines, data)
         else:
-            _append_cw_shop_section(lines, data)
+            _append_cw_shop_lines(lines, data)
             _append_cw_shop_buy_exp_status_lines(lines, data)
     elif items is not None:
         _append_cw_shop_items(lines, data)
