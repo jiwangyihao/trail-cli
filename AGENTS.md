@@ -10,6 +10,7 @@
 
 - 默认模式一律使用内部 canonical command 名，必须是点号形式，例如 `cw.shop.buy_slot`、`daemon.request_status`、`screen.shot`；不要写成 `cw.shop.buy-slot`、`daemon request-status`。
 - 默认正文前缀只允许使用 `request`、`shot`、`item`、`guide`、`text`、`slot`、`opt`、`why`、`warn`、`ref`、`recover`、`info`；`debug` 仅用于 `--verbose` 追加层。
+- 默认正文可以出现 `# 标题` 行作为板块标题；标题行不是正文前缀，不进入 allowed prefix 列表，也不得被 Agent 当作 action/prefix 消费。
 - 如果某个命令需要新增正文前缀，先更新 `trail/output/rendering.py` 的 renderer、README 示例和对应测试，再写文档。
 
 ## 默认模式必出事实
@@ -18,6 +19,8 @@
 - 只要当前命令产出截图，就必须输出 `shot path=...`。
 - 带截图的 success 结果在 `shot path=...` 之后必须紧跟 `info read_image_first=1`，提示 Agent 先读本次原始截图，再消费后续压缩文本。
 - envelope 顶层若带 `screenshot`，同步生成 `image_guidance.read_image_first=1`；该元数据只存在于 envelope 顶层，不下沉到命令 `data`。
+- 标题行不承载 must-keep 事实，不输出 `key=value`；所有业务事实仍必须落在既有 allowed prefixes 的实体行中。
+- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；新增标题必须同步更新 renderer、README、skills 与测试。
 - 失败结果只要带 `request_id`，就必须输出 `request id=<id>` 供恢复或排障使用。
 - 只有结果未知或当前失败显式可恢复时，才输出 `recover action=daemon.request_status request=<id>`。
 - 会影响下一步决策的 `0`、`false`、`count`、`more`、`tainted` 不能因为“看起来为空”而省略。
@@ -25,7 +28,8 @@
 
 ## 正文顺序约束
 
-- success 路径必须先输出首行，再按需要输出 `shot`；若当前结果带截图，再紧跟 `info read_image_first=1`；然后才是 `item`、`guide`、`text`、`slot`、`opt`、其余 `info` 这类实体行，最后才是 `warn`、`ref`。
+- success 路径必须先输出首行，再按需要输出 `shot`；若当前结果带截图，再紧跟 `info read_image_first=1`；然后才是 `# 标题` 行（如有）与 `item`、`guide`、`text`、`slot`、`opt`、其余 `info` 这类实体行，最后才是 `warn`、`ref`。
+- 标题行不得插入 `shot path=...` 与 `info read_image_first=1` 之间；failure 输出不加标题；handoff 之后不得追加标题。
 - 若命令命中已配置 workflow handoff，success 路径允许在 `warn`、`ref` 之后追加一行尾行强提示 `info handoff_skill=... handoff_strength=... handoff_reason=...`，且该行必须是 success 输出最后一行。
 - failure 路径正文顺序固定为：`request` -> `shot` -> `why` -> `warn` -> `ref` -> `recover`；`debug` 只能在 `--verbose` 时追加在最后。
 - 不要为了单个命令“更自然”而重排 failure 行顺序；恢复链路必须稳定可扫读。
@@ -83,6 +87,7 @@
 - `cw.portal.select` 若响应 `data.skill_info` 非空，默认正文使用 `info skill_info=运营思路 text=...`；该行属于 success entity/info 行，必须在 `warn`、`ref` 之前输出，不新增正文前缀、不属于 verbose/debug、不进入 YAML allowlist。
 - `cw.portal.select` 成功进入备战页后会自动收集 slots/shop 预备事实：收集水晶、关闭初始槽位面板、读取 slots、打开商店、等待商店稳定、扫描 shop、缓存 slots+shop 并关闭商店。
 - `cw.portal.select` 带截图 success 仍必须先显示 `shot path=...`，`shot path=...` 后必须紧跟 `info read_image_first=1`；Agent 必须先读本次原始截图，不要因为已有 slots/shop 文本就跳过截图。
+- `cw.portal.select` 自动收集后的正文标题顺序固定为按事实存在输出：`# 综合信息` -> `# 攻略提示` -> `# 角色信息` -> `# 羁绊信息` -> `# 商店信息`；标题只分组，不改变事实行前缀。
 - `cw.portal.select` 若响应 `data.slots` 非空，默认正文在 `info skill_info=运营思路 text=...`（如有）之后复用 `cw.slots.read` 的 `slot` 行与羁绊 `info` 摘要。
 - `cw.portal.select` 若响应 `data.shop` 非空，默认正文在槽位/羁绊事实之后复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影。
 - `cw.portal.select` 自动收集事实使用已有 `slot`、`item`、`info`、`warn`、`ref` 前缀，不新增正文前缀；`info skill_info`、`slot`、羁绊 `info`、商店 `item`、coins/stage `info` 必须在 `warn`、`ref` 之前输出。
@@ -92,7 +97,7 @@
 - `cw.strategy.select` success 首行固定为 `ok cw.strategy.select idx=... 投资策略=...`。
 - `cw.strategy.detect|refresh` 的 cards family 正文字段固定使用 `投资策略/攻略推荐/刷新次数`；说明继续使用 `opt idx=... 说明=...`。
 - `cw.strategy.detect|refresh` 必须输出 `info 已加载攻略=0|1`，且固定在所有 `opt` 行之后。
-- `cw.shop.buy_exp` 属于 shop action renderer family；canonical command 是 `cw.shop.buy_exp`，success 首行固定为 `ok cw.shop.buy_exp opened=1 stale=0 count=<n>`，正文先输出 `item idx=... slot=... name=... cost=...`，再输出 snapshot facts `coins/level/exp/reserve_full/team_size`。
+- `cw.shop.buy_exp` 属于 shop action renderer family；canonical command 是 `cw.shop.buy_exp`，success 首行固定为 `ok cw.shop.buy_exp opened=1 stale=0 count=<n>`，正文使用 `# 商店信息` 输出 `item` 与 `coins/reserve_full`，再用 `# 综合信息` 输出 `level/exp/team_size`。
 - `cw.shop.buy_exp` 的 `team_size=null` 是 must-keep null fact；`cw.shop.buy_exp` 不在 YAML allowlist，`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`。
 - `cw.battle.run` 属于检测/状态摘要 renderer 家族；success 首行固定使用 `ok cw.battle.run status=... result=... stage=... stale=... in_battle=...` 的顺序，缺失语义值按默认省略规则处理。
 - `cw.battle.run` 的 `status=in_progress` success 必须输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，提示 Agent 先看截图并在仍处于 battle flow 时重跑 `cw.battle.run`。
@@ -101,6 +106,7 @@
 - `cw.shop.scan|status` 的 stage 投影固定使用 `stage_level/stage_exp/stage_team_size/stage_status_stale`，属于既有 `info` 行，不新增正文前缀。
 - `cw.shop.scan|status` 必须保留 `stage_status_stale=0|1`；只有 `stage_status_stale=0` 时才允许输出 `stage_level/stage_exp/stage_team_size`，stale 或缺失时不得把旧值渲染成有效事实。
 - `cw.slots.read` 会刷新 `cw_state.stage.status`；`cw.shop.scan` 只扫描商店页商品/金币切片，并只投影 session 中已有的 `cw_state.stage.status`，不得重新 OCR 全局状态。
+- `cw.slots.read` 多板块输出按 `# 综合信息`、`# 角色信息`、`# 羁绊信息` 组织；`cw.shop.scan|status` 多板块输出按 `# 商店信息`、`# 综合信息` 组织，单一事实组不强制加标题。
 - `cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id。
 - `cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径；`current/apply` 只看当前已选攻略摘要，完整攻略仍由 `guide.fetch.cw` 提供。
 - `guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。

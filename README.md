@@ -79,7 +79,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
   - `trail cw portal restart --session <id>`
 - 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入当前 session；这一步不执行 UI 应用，也不创建当前攻略快照或额外追踪产物
 - 回到开局链路后，`trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略
-- `cw.portal.select` 成功进入普通备战后会自动收集水晶、slots/shop 预备事实并关闭商店；输出仍要求先读截图，再消费 `slot`、羁绊 `info`、商店 `item`、coins/stage `info`，最后按 handoff 切到 internal 的 `trail-cw-prep`
+- `cw.portal.select` 成功进入普通备战后会自动收集水晶、slots/shop/stage 预备事实并关闭商店；输出仍要求先读截图，再按 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息` 下的事实行消费，最后按 handoff 切到 internal 的 `trail-cw-prep`
 - `trail cw guide apply --session <id>` 只作为手动兜底；如需回顾当前已选攻略：`trail cw guide current --session <id>`
 - `trail cw guide` 只负责当前对局已选攻略的 current/apply；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
 - `stage=invest` 时，不要默认走 `trail cw invest.*`
@@ -177,6 +177,8 @@ DirectML 安装与环境 profile 说明：
 - 默认模式是常规消费层；`--format yaml` 是结构化兜底，`--verbose` 是开发/排障层，不应作为终端 Agent 的常规依赖
 - 默认模式绝不输出 YAML；只有显式指定 `--format yaml` 且命令进入 allowlist 时，才会在首行摘要后追加结构化块
 - 常见正文前缀包括 `shot`、`item`、`guide`、`text`、`info`、`why`、`warn`、`ref`、`request`、`recover`；`debug` 仅在 `--verbose` 下追加
+- 默认正文允许出现 `# 标题` 行作为板块标题；`# 标题` 行不是正文前缀，也不承载事实，Agent 可跳过标题后消费其下方事实行
+- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；业务事实仍必须使用既有 prefix 的 `key=value` 行
 - `shot path=...` 表示当前命令结果对应的截图路径；带截图的 success 结果会先输出 `shot path=...`，再输出 `info read_image_first=1`，然后才是实体行
 - `info read_image_first=1` 只出现在带截图的 success 文本路径，表示 Agent 必须先阅读本次命令返回的原始截图，再参考后续压缩文本
 - 已配置 workflow handoff 的 success 结果会在正常 success 内容、`warn`、`ref` 之后，额外追加一行尾行强提示：`info handoff_skill=... handoff_strength=... handoff_reason=...`；它始终是 success 输出最后一行
@@ -237,17 +239,23 @@ guide idx=1 gid=1 最终阵容=希儿/carry:1/star:5/rarity:3
 ok cw.portal.select idx=1 投资环境=击破概念股
 shot path=.trail/shots/req-portal-select.png
 info read_image_first=1
+# 综合信息
+info stage=preparation stale=0
+info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0
+# 攻略提示
 info skill_info=运营思路 text=前期：先收集事实，再按后续策略处理
+# 角色信息
 slot pos=front:0 name=希儿 star=1 traits=巡猎
+# 羁绊信息
 info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50
+# 商店信息
 item idx=1 slot=1 name=银狼 cost=20
 info coins=40 reserve_full=0
-info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0
 info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered
 ```
 
 - `cw.portal.select` 应用攻略后会自动收集水晶、读取槽位、扫描商店并关闭商店；最终截图停留在无浮层普通备战页。
-- 即使 `cw.portal.select` 已输出 slots/shop 文本事实，Agent 仍必须先读 `shot path=...` 对应原始截图，再消费后续压缩文本。
+- 即使 `cw.portal.select` 已输出 slots/shop/stage 文本事实，Agent 仍必须先读 `shot path=...` 对应原始截图，再跳过 `# ` 板块标题并消费后续压缩事实。
 
 - `cw.strategy.detect|refresh` 的 `info 已加载攻略=0|1` 固定在所有 `opt` 行之后
 
@@ -297,6 +305,20 @@ ok guide.config.cw 赛季=12 子赛季=3 大版本=3.2
 info 搜牌档位=3 羁绊=42 角色=80 角色标签=11 投资环境=6
 ```
 
+```text
+ok cw.slots.read front=1 back=0 hand=1 stale=0
+shot path=.trail/shots/req-slots.png
+info read_image_first=1
+# 综合信息
+info stage=preparation stale=0
+info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0
+# 角色信息
+slot pos=front:0 name=希儿 star=1 traits=巡猎
+slot pos=hand:0 name=停云
+# 羁绊信息
+info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50
+```
+
 - `guide.fetch.cw` 看完整攻略
 - `guide.list.cw` 看筛选摘要
 - `cw.guide.current|apply` 看当前已选攻略摘要
@@ -315,9 +337,11 @@ text value=开始挑战 box=410,502,120,36 center=470,520
 ok cw.shop.scan opened=1 stale=0 count=2
 shot path=.trail/shots/req-shop.png
 info read_image_first=1
+# 商店信息
 item idx=1 slot=1 name=希儿 cost=2
 item idx=2 slot=2 name=停云 cost=1
 info coins=40 reserve_full=0
+# 综合信息
 info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0
 ```
 
@@ -331,8 +355,11 @@ info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0
 ok cw.shop.buy_exp opened=1 stale=0 count=1
 shot path=.trail/shots/req-buy-exp.png
 info read_image_first=1
+# 商店信息
 item idx=1 slot=1 name=灵砂 cost=3
-info coins=36 level=4 exp=0/8 reserve_full=0 team_size=4/4
+info coins=36 reserve_full=0
+# 综合信息
+info level=4 exp=0/8 team_size=4/4
 ```
 
 ```text

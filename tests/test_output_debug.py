@@ -372,6 +372,10 @@ def test_project_agents_declares_renderer_contracts() -> None:
     )
     assert "trail.output.debug.collect_debug_events" in agents
     assert "trail.output.debug.render_debug_lines" in agents
+    assert "`# 标题` 行" in agents
+    assert "标题行不承载 must-keep 事实" in agents
+    assert "标题行不得插入 `shot path=...` 与 `info read_image_first=1` 之间" in agents
+    assert "首批固定标题" in agents
     assert "当前 YAML allowlist 是 `daemon.status`、`state.dump`、`guide.fetch.cw`、`guide.config.cw`。" in agents
     assert "guide.list.cw 的默认文本改用 攻略ID/攻略标题/版本/主C/攻略标签/最终阵容" in agents
     assert "cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`" in agents

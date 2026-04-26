@@ -272,6 +272,9 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert "- `info read_image_first=1` 只出现在带截图的 success 文本路径，表示 Agent 必须先阅读本次命令返回的原始截图，再参考后续压缩文本" in readme
+    assert "- 默认正文允许出现 `# 标题` 行作为板块标题" in readme
+    assert "`# 标题` 行不是正文前缀，也不承载事实" in readme
+    assert "`# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`" in readme
     assert "只要当前命令有截图，就会先输出 `shot path=...`，再输出 `info read_image_first=1`" not in readme
     assert "- 默认失败路径只要当前结果携带 `request_id`，就会保留 `request id=<id>`，用于恢复与排障" in readme
     assert (
@@ -305,10 +308,23 @@ def test_readme_mentions_text_output_protocol() -> None:
     )
     _assert_text_contains_in_order(
         readme,
+        "ok cw.slots.read front=1 back=0 hand=1 stale=0",
+        "shot path=.trail/shots/req-slots.png\ninfo read_image_first=1",
+        "# 综合信息",
+        "info stage=preparation stale=0",
+        "# 角色信息",
+        "slot pos=front:0 name=希儿 star=1 traits=巡猎",
+        "# 羁绊信息",
+        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+    )
+    _assert_text_contains_in_order(
+        readme,
         "ok cw.shop.scan opened=1 stale=0 count=2",
         "shot path=.trail/shots/req-shop.png\ninfo read_image_first=1",
+        "# 商店信息",
         "item idx=1 slot=1 name=希儿 cost=2",
         "info coins=40 reserve_full=0",
+        "# 综合信息",
         "info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0",
     )
     assert "```text\nok cw.shop.status count=2\nshot path=.trail/shots/req-shop.png\n" not in readme
@@ -321,8 +337,11 @@ def test_readme_mentions_text_output_protocol() -> None:
         readme,
         "ok cw.shop.buy_exp opened=1 stale=0 count=1",
         "shot path=.trail/shots/req-buy-exp.png\ninfo read_image_first=1",
+        "# 商店信息",
         "item idx=1 slot=1 name=灵砂 cost=3",
-        "info coins=36 level=4 exp=0/8 reserve_full=0 team_size=4/4",
+        "info coins=36 reserve_full=0",
+        "# 综合信息",
+        "info level=4 exp=0/8 team_size=4/4",
     )
     assert "商店快照里的 `coins` / `level` / `exp` / `reserve_full` / `team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" not in readme
     assert "`guide.fetch.cw` 现在也进入 YAML allowlist" in readme
@@ -346,9 +365,10 @@ def test_agents_document_screenshot_first_protocol_facts() -> None:
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
     assert (
-        "success 路径必须先输出首行，再按需要输出 `shot`；若当前结果带截图，再紧跟 `info read_image_first=1`；然后才是 `item`、`guide`、`text`、`slot`、`opt`、其余 `info` 这类实体行"
+        "success 路径必须先输出首行，再按需要输出 `shot`；若当前结果带截图，再紧跟 `info read_image_first=1`；然后才是 `# 标题` 行（如有）与 `item`、`guide`、`text`、`slot`、`opt`、其余 `info` 这类实体行"
         in agents
     )
+    assert "标题行不得插入 `shot path=...` 与 `info read_image_first=1` 之间" in agents
     assert (
         "若命令命中已配置 workflow handoff，success 路径允许在 `warn`、`ref` 之后追加一行尾行强提示 `info handoff_skill=... handoff_strength=... handoff_reason=...`，且该行必须是 success 输出最后一行。"
         in agents
@@ -653,7 +673,7 @@ def test_readme_documents_selected_guide_and_portal_auto_apply_flow() -> None:
         cw_flow_section,
         "- 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入当前 session；这一步不执行 UI 应用，也不创建当前攻略快照或额外追踪产物",
         "- 回到开局链路后，`trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略",
-        "- `cw.portal.select` 成功进入普通备战后会自动收集水晶、slots/shop 预备事实并关闭商店；输出仍要求先读截图，再消费 `slot`、羁绊 `info`、商店 `item`、coins/stage `info`，最后按 handoff 切到 internal 的 `trail-cw-prep`",
+        "- `cw.portal.select` 成功进入普通备战后会自动收集水晶、slots/shop/stage 预备事实并关闭商店；输出仍要求先读截图，再按 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息` 下的事实行消费，最后按 handoff 切到 internal 的 `trail-cw-prep`",
         "- `trail cw guide apply --session <id>` 只作为手动兜底；如需回顾当前已选攻略：`trail cw guide current --session <id>`",
     )
     _assert_text_contains_in_order(
@@ -692,12 +712,18 @@ def test_readme_locks_cw_portal_select_success_screenshot_order() -> None:
         "ok cw.portal.select idx=1 投资环境=击破概念股",
         "shot path=.trail/shots/req-portal-select.png",
         "info read_image_first=1",
+        "# 综合信息",
+        "info stage=preparation stale=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        "# 攻略提示",
         "info skill_info=运营思路 text=前期：先收集事实，再按后续策略处理",
+        "# 角色信息",
         "slot pos=front:0 name=希儿 star=1 traits=巡猎",
+        "# 羁绊信息",
         'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+        "# 商店信息",
         "item idx=1 slot=1 name=银狼 cost=20",
         "info coins=40 reserve_full=0",
-        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
         "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
     )
     assert portal_lines[1:3] == [
@@ -707,9 +733,9 @@ def test_readme_locks_cw_portal_select_success_screenshot_order() -> None:
     assert portal_lines[-1] == "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered"
     assert "`cw.portal.select` 应用攻略后会自动收集水晶、读取槽位、扫描商店并关闭商店" in readme
     assert "最终截图停留在无浮层普通备战页" in readme
-    assert "即使 `cw.portal.select` 已输出 slots/shop 文本事实，Agent 仍必须先读 `shot path=...` 对应原始截图" in readme
+    assert "即使 `cw.portal.select` 已输出 slots/shop/stage 文本事实，Agent 仍必须先读 `shot path=...` 对应原始截图" in readme
     assert " opened=" not in portal_example
-    assert " stale=" not in portal_example
+    assert all(" stale=" not in line for line in portal_example.splitlines() if not line.startswith("info stage="))
 
 
 def test_agents_document_cw_portal_select_auto_collect_contract() -> None:

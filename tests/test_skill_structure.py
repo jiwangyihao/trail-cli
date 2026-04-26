@@ -1454,6 +1454,7 @@ def test_active_cw_skills_document_portal_select_auto_collect_prep_facts() -> No
     portal_text = CW_PORTAL_SKILL.read_text(encoding="utf-8")
     prep_text = CW_PREP_SKILL.read_text(encoding="utf-8")
     scene_index_text = SCENE_ENTRY_INDEX.read_text(encoding="utf-8")
+    section_titles = ("# 综合信息", "# 攻略提示", "# 角色信息", "# 羁绊信息", "# 商店信息")
 
     assert "不是整局 owner" in entry_text
     assert "自动收集初始备战 slots/shop 信息" in entry_text
@@ -1481,6 +1482,21 @@ def test_active_cw_skills_document_portal_select_auto_collect_prep_facts() -> No
 
     assert "自动收集 slots/shop 初始快照" in scene_index_text
     assert "不会改变 `trail-cw-prep` 的 internal 身份" in scene_index_text
+    assert "cw.portal.select -> trail-cw-prep" in scene_index_text
+    assert "`# ` headings 只是默认文本分组" in scene_index_text
+    assert "不参与路由/事实判断" in scene_index_text
+
+    for skill_text in (entry_text, portal_text, prep_text):
+        assert "先读截图" in skill_text
+        assert "`# ` 行只是板块标题" in skill_text
+        assert "不是事实行" in skill_text
+        assert "不要当作 action/prefix" in skill_text
+        assert "读完截图后，再消费这些标题下的事实" in skill_text
+        for title in section_titles:
+            assert title in skill_text
+
+    assert "接收 `cw.portal.select` handoff 时，优先复用该响应中标题下 facts" in prep_text
+    assert "只有缺失、stale 或页面变化才重扫" in prep_text
 
 
 def test_cw_portal_reference_files_exist_with_required_content() -> None:
