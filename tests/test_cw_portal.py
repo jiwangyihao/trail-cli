@@ -161,6 +161,33 @@ def _portal_cards() -> list[dict[str, object]]:
     ]
 
 
+def _complete_selected_guide(*, operation_guide: str = "前期 先读图") -> dict[str, object]:
+    return {
+        "scene": "cw",
+        "kind": "guide",
+        "lineup_id": "selected-lineup",
+        "title": "测试攻略",
+        "share_code": "##demo##",
+        "version": "4.0",
+        "operation_guide": operation_guide,
+        "remaining_purchases": {"银狼": 1},
+        "on_field": {"银狼": 1},
+        "off_field": {},
+        "role_stages": [{"stage": "Opening", "front_roles": [{"name": "银狼"}], "back_roles": [], "traits": []}],
+        "first_fight_augments": [{"name": "击破概念股"}],
+        "second_fight_augments": [{"name": "折射棱镜"}],
+        "order_basic": [{"name": "钻头"}],
+        "order_compose": [{"name": "风暴"}],
+        "min_coins": 40,
+        "min_level": 6,
+        "mid_level": 9,
+    }
+
+
+def _complete_selected_constraints() -> dict[str, object]:
+    return {"min_coins": 40, "min_level": 6, "mid_level": 9, "priority": {}, "positioning": {}}
+
+
 def _run_cw_portal_mutation(*, command_service, session, workspace_root: Path, request_id: str, method: str, payload: dict):
     return command_service.handle(
         DaemonRequest(
@@ -596,7 +623,7 @@ def test_select_cw_portal_marks_snapshot_stale_after_confirm(tmp_path: Path, mon
     }
 
 
-def test_cw_portal_select_requires_selected_guide_before_click(tmp_path: Path):
+def test_cw_portal_select_guide_preflight_rejects_missing_guide_before_click(tmp_path: Path):
     runtime = PortalRuntime()
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
@@ -623,7 +650,7 @@ def test_cw_portal_select_requires_selected_guide_before_click(tmp_path: Path):
         status = service.request_status("req-cw-portal-select-no-guide")
 
         assert envelope["ok"] is False
-        assert envelope["error"]["code"] == "CW_GUIDE_SELECTION_REQUIRED"
+        assert envelope["error"]["code"] == "CW_GUIDE_STATE_INVALID"
         assert "guide.fetch.cw --select" in envelope["error"]["message"]
         assert called == []
         assert runtime.clicks == []
@@ -635,14 +662,15 @@ def test_cw_portal_select_requires_selected_guide_before_click(tmp_path: Path):
 @pytest.mark.parametrize(
     "guide_state",
     [
-        {"artifact": "selected-artifact", "lineup_id": "selected-lineup"},
-        {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": ""},
+        {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        {"lineup_id": "selected-lineup", "share_code": "##demo##"},
+        {"lineup_id": "selected-lineup", "title": "缺少攻略码", "operation_guide": "前期 读图"},
         {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "demo"},
         {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "###"},
     ],
-    ids=["missing-share-code", "empty-share-code", "plain-text-share-code", "broken-marker-share-code"],
+    ids=["legacy-artifact-only", "incomplete-no-operation-guide", "incomplete-no-share-code", "plain-text-share-code", "broken-marker-share-code"],
 )
-def test_cw_portal_select_rejects_invalid_selected_guide_before_click(
+def test_cw_portal_select_guide_preflight_rejects_incomplete_guide_before_click(
     tmp_path: Path,
     guide_state: dict[str, object],
 ):
@@ -674,6 +702,7 @@ def test_cw_portal_select_rejects_invalid_selected_guide_before_click(
 
         assert envelope["ok"] is False
         assert envelope["error"]["code"] == "CW_GUIDE_STATE_INVALID"
+        assert "guide.fetch.cw --select" in envelope["error"]["message"]
         assert called == []
         assert runtime.clicks == []
         assert status["final_state"] == "failed_before_side_effect"
@@ -686,7 +715,8 @@ def test_cw_portal_select_auto_applies_selected_guide_and_invalidates_runtime_st
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
-        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        "guide": _complete_selected_guide(),
+        "constraints": _complete_selected_constraints(),
         "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
         "slots": {"stale": False, "hand": ["银狼"]},
         "sell_plan": {"candidates": [0]},
@@ -723,7 +753,8 @@ def test_cw_portal_select_auto_applies_selected_guide_and_invalidates_runtime_st
     persisted = service.load_session(session.session_id)
 
     assert envelope["ok"] is True
-    assert envelope["data"] == _portal_cards()[1]
+    assert {key: envelope["data"][key] for key in _portal_cards()[1]} == _portal_cards()[1]
+    assert envelope["data"]["skill_info"] == [{"name": "运营思路", "text": "前期 先读图"}]
     assert selected_card_idxs == [2]
     assert applied_share_codes == ["##demo##"]
     assert runtime.clicks == []
@@ -740,7 +771,8 @@ def test_cw_portal_select_waits_for_preparation_before_auto_apply(tmp_path: Path
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
-        "guide": {"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "##demo##"},
+        "guide": _complete_selected_guide(),
+        "constraints": _complete_selected_constraints(),
         "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
     }
     service.save_session(session)
@@ -771,6 +803,100 @@ def test_cw_portal_select_waits_for_preparation_before_auto_apply(tmp_path: Path
 
     assert envelope["ok"] is True
     assert events == ["select", "wait", "apply"]
+
+
+def test_cw_portal_select_adds_operation_guide_skill_info(tmp_path: Path, monkeypatch):
+    runtime = PortalRuntime()
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": _complete_selected_guide(operation_guide="前期 先读图"),
+        "constraints": _complete_selected_constraints(),
+        "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: dict(_portal_cards()[card_idx - 1]),
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
+    monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+
+    envelope = _run_cw_portal_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-portal-select-skill-info",
+        method="cw.portal.select",
+        payload={"card_idx": 2},
+    )
+
+    assert envelope["ok"] is True
+    assert envelope["data"]["skill_info"] == [{"name": "运营思路", "text": "前期 先读图"}]
+
+
+def test_cw_portal_select_skill_info_does_not_call_state_mutating_ensure(tmp_path: Path, monkeypatch):
+    runtime = PortalRuntime()
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": _complete_selected_guide(operation_guide="前期 先读图"),
+        "constraints": _complete_selected_constraints(),
+        "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: dict(_portal_cards()[card_idx - 1]),
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
+    monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.ensure_cw_state",
+        lambda session: (_ for _ in ()).throw(AssertionError("skill_info read must not ensure cw state")),
+    )
+
+    envelope = _run_cw_portal_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-portal-select-skill-info-side-effect-free",
+        method="cw.portal.select",
+        payload={"card_idx": 2},
+    )
+
+    assert envelope["ok"] is True
+    assert envelope["data"]["skill_info"] == [{"name": "运营思路", "text": "前期 先读图"}]
+
+
+def test_cw_portal_select_omits_skill_info_when_operation_guide_blank(tmp_path: Path, monkeypatch):
+    runtime = PortalRuntime()
+    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": _complete_selected_guide(operation_guide="   "),
+        "constraints": _complete_selected_constraints(),
+        "portal": {"cards": _portal_cards(), "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: dict(_portal_cards()[card_idx - 1]),
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
+    monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+
+    envelope = _run_cw_portal_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-cw-portal-select-no-skill-info",
+        method="cw.portal.select",
+        payload={"card_idx": 2},
+    )
+
+    assert envelope["ok"] is True
+    assert "skill_info" not in envelope["data"]
 
 
 def test_refresh_cw_portal_rejects_non_invest_page(tmp_path: Path, monkeypatch):

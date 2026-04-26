@@ -32,9 +32,25 @@ def fake_guide() -> dict:
         "artifact_id": "guide-demo",
         "scene": "cw",
         "kind": "guide",
+        "lineup_id": "guide-demo",
+        "title": "测试攻略",
         "share_code": "##demo##",
+        "version": "4.0",
+        "operation_guide": "前期按测试运营",
         "on_field": {"希儿": 9},
         "off_field": {"佩拉": 3},
+        "role_stages": [
+            {
+                "stage": "Opening",
+                "front_roles": [{"name": "希儿"}],
+                "back_roles": [{"name": "佩拉"}],
+                "traits": ["2量子"],
+            }
+        ],
+        "first_fight_augments": [{"name": "快攻"}],
+        "second_fight_augments": [{"name": "回蓝"}],
+        "order_basic": [{"name": "钻头"}],
+        "order_compose": [{"name": "风暴"}],
         "min_coins": 40,
         "min_level": 7,
         "mid_level": 9,
@@ -331,8 +347,11 @@ def test_apply_guide_populates_cw_scene_state(tmp_path):
     assert "guide" in cw_state
     assert "constraints" in cw_state
     assert "slots" in cw_state
-    assert cw_state["guide"]["artifact"] == "guide-demo"
+    assert "artifact" not in cw_state["guide"]
+    assert "artifact_id" not in cw_state["guide"]
     assert cw_state["guide"]["share_code"] == "##demo##"
+    assert cw_state["guide"]["operation_guide"] == "前期按测试运营"
+    assert cw_state["guide"]["first_fight_augments"] == [{"name": "快攻"}]
     assert cw_state["guide"]["on_field"] == {"希儿": 9}
     assert cw_state["guide"]["off_field"] == {"佩拉": 3}
     assert cw_state["guide"]["remaining_purchases"] == {"希儿": 9, "佩拉": 3}
@@ -361,26 +380,35 @@ def test_apply_guide_preserves_source_metadata_for_later_scene_steps(tmp_path):
     )
 
     assert refreshed.scene_state["cw"]["guide"] == {
-        "artifact": "guide-demo",
+        "scene": "cw",
+        "kind": "guide",
         "lineup_id": "70472857",
         "share_code": "##demo##",
         "source_url": fake_lineup_url("70472857"),
         "title": "货币战争攻略码",
         "author": "测试作者",
         "uploader": "测试作者",
-        "labels": [],
-        "support_hard": False,
-        "has_change_equip": False,
-        "has_expert": False,
-        "version": None,
+        "version": "4.0",
+        "operation_guide": "前期按测试运营",
+        "min_coins": 40,
+        "min_level": 7,
+        "mid_level": 9,
+        "priority": {},
+        "positioning": {},
         "on_field": {"希儿": 9},
         "off_field": {"佩拉": 3},
-        "role_stages": [],
-        "first_fight_augments": [],
-        "second_fight_augments": [],
-        "portals": [],
-        "order_basic": [],
-        "order_compose": [],
+        "role_stages": [
+            {
+                "stage": "Opening",
+                "front_roles": [{"name": "希儿"}],
+                "back_roles": [{"name": "佩拉"}],
+                "traits": ["2量子"],
+            }
+        ],
+        "first_fight_augments": [{"name": "快攻"}],
+        "second_fight_augments": [{"name": "回蓝"}],
+        "order_basic": [{"name": "钻头"}],
+        "order_compose": [{"name": "风暴"}],
         "remaining_purchases": {"希儿": 9, "佩拉": 3},
     }
 
@@ -434,7 +462,9 @@ def test_select_cw_guide_updates_guide_without_resetting_runtime_state(tmp_path:
     )
 
     cw_state = ensure_cw_state(session)
-    assert cw_state["guide"]["artifact"] == "art-selected"
+    assert cw_state["guide"]["lineup_id"] == "abc"
+    assert "artifact" not in cw_state["guide"]
+    assert "artifact_id" not in cw_state["guide"]
     assert cw_state["constraints"] == {
         "min_coins": 40,
         "min_level": 7,
@@ -447,6 +477,61 @@ def test_select_cw_guide_updates_guide_without_resetting_runtime_state(tmp_path:
     assert cw_state["slots"] == {"stale": False, "hand": ["银狼"]}
     assert cw_state["sell_plan"] == {"candidates": [0]}
     assert cw_state["stage"] == {"stale": False, "name": "shop"}
+
+
+def test_select_cw_guide_persists_complete_payload_and_operation_guide(tmp_path: Path) -> None:
+    guide_module = load_cw_guide_module()
+    select_cw_guide = getattr(guide_module, "select_cw_guide", None)
+    normalize_cw_guide_payload = getattr(guide_module, "normalize_cw_guide_payload", None)
+    assert select_cw_guide is not None
+    assert normalize_cw_guide_payload is not None
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    guide = normalize_cw_guide_payload(
+        {
+            "scene": "cw",
+            "kind": "guide",
+            "lineup_id": "g1",
+            "title": "测试攻略",
+            "share_code": "##code##",
+            "version": "4.0",
+            "min_coins": 40,
+            "min_level": 6,
+            "mid_level": 9,
+            "operation_guide": "前期按测试运营",
+            "on_field": {"灵砂": 1},
+            "off_field": {"星期日": 1},
+            "role_stages": [
+                {
+                    "stage": "Opening",
+                    "front_roles": [{"name": "灵砂"}],
+                    "back_roles": [{"name": "星期日"}],
+                    "traits": ["2丰饶"],
+                }
+            ],
+            "first_fight_augments": [{"name": "击破概念股"}],
+            "second_fight_augments": [{"name": "折射棱镜"}],
+            "order_basic": [{"name": "钻头"}],
+            "order_compose": [{"name": "风暴"}],
+        }
+    )
+
+    select_cw_guide(session, guide_data=guide)
+    cw_state = session.scene_state["cw"]
+
+    assert cw_state["guide"]["operation_guide"] == "前期按测试运营"
+    assert cw_state["guide"]["remaining_purchases"] == {"灵砂": 1, "星期日": 1}
+    assert cw_state["guide"]["first_fight_augments"] == [{"name": "击破概念股"}]
+    assert cw_state["guide"]["second_fight_augments"] == [{"name": "折射棱镜"}]
+    assert cw_state["guide"]["order_basic"] == [{"name": "钻头"}]
+    assert cw_state["guide"]["order_compose"] == [{"name": "风暴"}]
+    assert cw_state["guide"]["role_stages"][0]["stage"] == "Opening"
+    assert cw_state["guide"]["role_stages"][0]["traits"] == ["2丰饶"]
+    assert cw_state["constraints"]["min_coins"] == 40
+    assert cw_state["constraints"]["min_level"] == 6
+    assert cw_state["constraints"]["mid_level"] == 9
+    assert "artifact" not in cw_state["guide"]
+    assert "artifact_id" not in cw_state["guide"]
 
 
 def test_invalidate_cw_guide_runtime_state_resets_runtime_dependent_slices_only(tmp_path: Path):
@@ -1471,17 +1556,45 @@ def _run_cw_mutation(*, command_service, session, workspace_root: Path, request_
     )
 
 
+def _complete_selected_guide(**overrides: object) -> dict[str, object]:
+    guide: dict[str, object] = {
+        "scene": "cw",
+        "kind": "guide",
+        "lineup_id": "selected-lineup",
+        "title": "7群攻2银河学者",
+        "share_code": "##demo##",
+        "version": "4.0",
+        "operation_guide": "前期按测试运营",
+        "remaining_purchases": {"希儿": 1, "佩拉": 1},
+        "on_field": {"希儿": 1},
+        "off_field": {"佩拉": 1},
+        "role_stages": [
+            {
+                "stage": "Opening",
+                "front_roles": [{"name": "希儿"}],
+                "back_roles": [{"name": "佩拉"}],
+                "traits": [],
+            }
+        ],
+        "first_fight_augments": [{"name": "快攻"}],
+        "second_fight_augments": [{"name": "回蓝"}],
+        "order_basic": [{"name": "钻头"}],
+        "order_compose": [{"name": "风暴"}],
+    }
+    guide.update(overrides)
+    return guide
+
+
+def _complete_selected_constraints() -> dict[str, object]:
+    return {"min_coins": 40, "min_level": 7, "mid_level": 9, "priority": {}, "positioning": {}}
+
+
 def test_cw_guide_apply_mutation_uses_selected_guide_and_invalidates_runtime_state(tmp_path: Path, monkeypatch):
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
     loaded = service.load_session(session.session_id)
     loaded.scene_state["cw"] = {
-        "guide": {
-            "artifact": "selected-artifact",
-            "lineup_id": "selected-lineup",
-            "share_code": "##demo##",
-            "title": "7群攻2银河学者",
-        },
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9, "priority": {}, "positioning": {}},
+        "guide": _complete_selected_guide(),
+        "constraints": _complete_selected_constraints(),
         "slots": {"stale": False, "hand": ["银狼"]},
         "sell_plan": {"candidates": [0]},
         "shop": {"opened": True, "stale": False, "items": [{"name": "希儿"}]},
@@ -1509,7 +1622,8 @@ def test_cw_guide_apply_mutation_uses_selected_guide_and_invalidates_runtime_sta
     assert applied_share_codes == ["##demo##"]
     assert status["final_state"] == "completed"
     assert envelope["data"]["lineup_id"] == "selected-lineup"
-    assert persisted.scene_state["cw"]["guide"]["artifact"] == "selected-artifact"
+    assert "artifact" not in persisted.scene_state["cw"]["guide"]
+    assert "artifact_id" not in persisted.scene_state["cw"]["guide"]
     assert persisted.scene_state["cw"]["sell_plan"] == {}
     assert persisted.scene_state["cw"]["slots"]["stale"] is True
     assert persisted.scene_state["cw"]["shop"]["stale"] is True
@@ -1525,9 +1639,10 @@ def test_cw_guide_apply_service_requires_selected_guide_in_session(tmp_path: Pat
             payload={"session_id": session.session_id},
             workspace_root=str(tmp_path),
             session_service=service,
-        )
+    )
 
-    assert exc_info.value.code == "CW_GUIDE_SELECTION_REQUIRED"
+    assert exc_info.value.code == "CW_GUIDE_STATE_INVALID"
+    assert "guide.fetch.cw --select" in str(exc_info.value)
     assert "guide.fetch.cw --select" in str(exc_info.value)
 
 
@@ -1561,7 +1676,7 @@ def test_cw_guide_apply_service_rejects_invalid_selected_guide_share_code(tmp_pa
 @pytest.mark.parametrize(
     ("guide_state", "expected_code"),
     [
-        (None, "CW_GUIDE_SELECTION_REQUIRED"),
+        (None, "CW_GUIDE_STATE_INVALID"),
         ({"artifact": "selected-artifact", "lineup_id": "selected-lineup", "share_code": "demo"}, "CW_GUIDE_STATE_INVALID"),
     ],
     ids=["missing-selected-guide", "invalid-selected-guide"],
@@ -1617,13 +1732,8 @@ def test_cw_guide_apply_keeps_pre_side_effect_failure_as_normal_failure(tmp_path
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
     loaded = service.load_session(session.session_id)
     loaded.scene_state["cw"] = {
-        "guide": {
-            "artifact": "selected-artifact",
-            "lineup_id": "selected-lineup",
-            "share_code": "##demo##",
-            "title": "7群攻2银河学者",
-        },
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9, "priority": {}, "positioning": {}},
+        "guide": _complete_selected_guide(),
+        "constraints": _complete_selected_constraints(),
         "slots": {"stale": False, "hand": ["银狼"]},
         "sell_plan": {"candidates": [0]},
         "shop": {"opened": True, "stale": False, "items": [{"name": "希儿"}]},
@@ -1656,7 +1766,7 @@ def test_cw_guide_apply_keeps_pre_side_effect_failure_as_normal_failure(tmp_path
     assert persisted.scene_state["cw"]["shop"]["stale"] is False
 
 
-@pytest.mark.parametrize("legacy_field", ["lineup_id", "guide"])
+@pytest.mark.parametrize("legacy_field", ["lineup_id", "guide", "artifact", "artifact_id"])
 def test_cw_guide_apply_direct_rpc_rejects_legacy_payload(tmp_path: Path, monkeypatch, legacy_field: str):
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
     applied_share_codes: list[str] = []
@@ -1692,13 +1802,8 @@ def test_cw_guide_apply_marks_applied_but_not_persisted_when_save_fails_after_ui
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
     loaded = service.load_session(session.session_id)
     loaded.scene_state["cw"] = {
-        "guide": {
-            "artifact": "selected-artifact",
-            "lineup_id": "selected-lineup",
-            "share_code": "##demo##",
-            "title": "7群攻2银河学者",
-        },
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9, "priority": {}, "positioning": {}},
+        "guide": _complete_selected_guide(),
+        "constraints": _complete_selected_constraints(),
         "slots": {"stale": False, "hand": ["银狼"]},
         "sell_plan": {"candidates": [0]},
         "shop": {"opened": True, "stale": False, "items": [{"name": "希儿"}]},
@@ -1752,13 +1857,8 @@ def test_cw_guide_apply_marks_persisted_but_response_unknown_when_response_build
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
     loaded = service.load_session(session.session_id)
     loaded.scene_state["cw"] = {
-        "guide": {
-            "artifact": "selected-artifact",
-            "lineup_id": "selected-lineup",
-            "share_code": "##demo##",
-            "title": "7群攻2银河学者",
-        },
-        "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9, "priority": {}, "positioning": {}},
+        "guide": _complete_selected_guide(),
+        "constraints": _complete_selected_constraints(),
         "slots": {"stale": False, "hand": ["银狼"]},
         "sell_plan": {"candidates": [0]},
         "shop": {"opened": True, "stale": False, "items": [{"name": "希儿"}]},
@@ -1803,12 +1903,8 @@ def test_cw_guide_apply_marks_persisted_but_response_unknown_when_response_build
 def test_cw_guide_current_service_reads_applied_guide_from_session(tmp_path: Path):
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
     loaded = service.load_session(session.session_id)
-    loaded.scene_state.setdefault("cw", {})["guide"] = {
-        "artifact": "artifact-demo",
-        "lineup_id": "69c9014f24546dfbd2b26227",
-        "share_code": "##demo##",
-        "title": "7群攻2银河学者",
-    }
+    loaded.scene_state.setdefault("cw", {})["guide"] = _complete_selected_guide(lineup_id="69c9014f24546dfbd2b26227")
+    loaded.scene_state["cw"]["constraints"] = _complete_selected_constraints()
     service.save_session(loaded)
 
     payload = cw_service.handle(
@@ -1818,12 +1914,11 @@ def test_cw_guide_current_service_reads_applied_guide_from_session(tmp_path: Pat
         session_service=service,
     )
 
-    assert payload == {
-        "artifact": "artifact-demo",
-        "lineup_id": "69c9014f24546dfbd2b26227",
-        "share_code": "##demo##",
-        "title": "7群攻2银河学者",
-    }
+    assert payload["lineup_id"] == "69c9014f24546dfbd2b26227"
+    assert payload["share_code"] == "##demo##"
+    assert payload["operation_guide"] == "前期按测试运营"
+    assert "artifact" not in payload
+    assert "artifact_id" not in payload
 
 
 def test_cw_guide_current_service_requires_selected_guide_in_session(tmp_path: Path):
@@ -1837,7 +1932,7 @@ def test_cw_guide_current_service_requires_selected_guide_in_session(tmp_path: P
             session_service=service,
         )
 
-    assert exc_info.value.code == "CW_GUIDE_SELECTION_REQUIRED"
+    assert exc_info.value.code == "CW_GUIDE_STATE_INVALID"
     assert "guide.fetch.cw --select" in str(exc_info.value)
 
 
@@ -1855,7 +1950,7 @@ def test_cw_guide_current_service_handles_non_mapping_cw_state_with_stable_error
             session_service=service,
         )
 
-    assert exc_info.value.code == "CW_GUIDE_SELECTION_REQUIRED"
+    assert exc_info.value.code == "CW_GUIDE_STATE_INVALID"
     assert "guide.fetch.cw --select" in str(exc_info.value)
 
 
@@ -1900,6 +1995,7 @@ def test_cw_guide_current_service_rejects_invalid_selected_guide_share_code_with
     persisted = service.load_session(session.session_id)
     assert artifact.artifact_id
     assert exc_info.value.code == "CW_GUIDE_STATE_INVALID"
+    assert "guide.fetch.cw --select" in str(exc_info.value)
     assert persisted.scene_state["cw"]["guide"] == guide_state
 
 
@@ -1929,7 +2025,7 @@ def test_cw_guide_current_service_does_not_recover_guide_from_latest_fetch_artif
     )
 
     assert artifact.artifact_id
-    assert exc_info.value.code == "CW_GUIDE_SELECTION_REQUIRED"
+    assert exc_info.value.code == "CW_GUIDE_STATE_INVALID"
     assert not isinstance(persisted.scene_state.get("cw"), dict) or persisted.scene_state["cw"].get("guide") is None
 
 
@@ -2123,7 +2219,7 @@ def test_cw_guide_current_service_does_not_recover_from_any_artifact_origin(tmp_
         )
 
     assert older_fetch.artifact_id != latest_fetch.artifact_id
-    assert exc_info.value.code == "CW_GUIDE_SELECTION_REQUIRED"
+    assert exc_info.value.code == "CW_GUIDE_STATE_INVALID"
     assert not isinstance(persisted.scene_state.get("cw"), dict) or persisted.scene_state["cw"].get("guide") is None
 
 
@@ -2171,7 +2267,7 @@ def test_cw_guide_current_service_does_not_recover_remaining_purchases_from_shop
         )
 
     assert artifact.artifact_id
-    assert exc_info.value.code == "CW_GUIDE_SELECTION_REQUIRED"
+    assert exc_info.value.code == "CW_GUIDE_STATE_INVALID"
     assert persisted.scene_state["cw"]["guide"] is None
     assert persisted.scene_state["cw"]["shop"]["guide_summary"] == {
         "remaining_purchases": {"希儿": 4, "佩拉": 1},

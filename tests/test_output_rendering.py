@@ -311,7 +311,18 @@ def test_readme_mentions_text_output_protocol() -> None:
         "info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7",
     )
     assert "```text\nok cw.shop.status count=2\nshot path=.trail/shots/req-shop.png\n" not in readme
-    assert "商店快照里的 `coins` / `level` / `exp` / `reserve_full` / `team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" in readme
+    assert (
+        "商店快照里的 `coins` / `level` / `exp` / `reserve_full` / `team_size` 会在 `trail cw shop scan`、`trail cw shop status` 与 `trail cw shop buy-exp` 暴露或可暴露"
+        in readme
+    )
+    assert "`team_size=null` 是 must-keep null fact" in readme
+    _assert_text_contains_in_order(
+        readme,
+        "ok cw.shop.buy_exp opened=1 stale=0 count=1",
+        "shot path=.trail/shots/req-buy-exp.png\ninfo read_image_first=1",
+        "item idx=1 slot=1 name=灵砂 cost=3",
+        "info coins=36 level=4 exp=0/8 reserve_full=0 team_size=4/4",
+    )
     assert "`guide.fetch.cw` 现在也进入 YAML allowlist" in readme
     assert "`羁绊列表`：按当前攻略各阶段阵容里出现过的羁绊去重汇总，并尽量保留层数" in readme
     assert "`优选装备` / `次选装备`：按角色展开的推荐装备列表" in readme
@@ -574,13 +585,14 @@ def test_readme_documents_selected_guide_and_portal_auto_apply_flow() -> None:
 
     _assert_text_contains_in_order(
         cw_flow_section,
-        "- 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前已选攻略；这一步只写 session，不执行 UI 应用",
+        "- 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入当前 session；这一步不执行 UI 应用，也不创建当前攻略快照或额外追踪产物",
         "- 回到开局链路后，`trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略",
+        "- `cw.portal.select` 成功进入普通备战后会 handoff 到 internal 的 `trail-cw-prep`，由它先读截图和收集普通备战事实",
         "- `trail cw guide apply --session <id>` 只作为手动兜底；如需回顾当前已选攻略：`trail cw guide current --session <id>`",
     )
     _assert_text_contains_in_order(
         guide_section,
-        "- `trail guide fetch cw` 默认是完整攻略预览，不会建立当前已选攻略；确认后用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前攻略",
+        "- `trail guide fetch cw` 默认是完整攻略预览，不会建立当前已选攻略；确认后用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入 session，不创建当前攻略快照或额外追踪产物",
         "- `trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略；`trail cw guide apply` 只作为手动兜底",
         "- `trail guide fetch cw` 负责看完整攻略；`trail cw guide current|apply` 负责回顾当前已选攻略；两者不要混用",
     )
@@ -589,9 +601,13 @@ def test_readme_documents_selected_guide_and_portal_auto_apply_flow() -> None:
         in guide_section
     )
     assert (
-        "- 货币战争里，先用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前已选攻略；回到开局链路后由 `trail cw portal select` 成功时自动应用，`trail cw guide apply` 只作为手动兜底"
+        "- 货币战争里，先用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入 session；回到开局链路后由 `trail cw portal select` 成功时自动应用，`trail cw guide apply` 只作为手动兜底"
         in skill_boundary_section
     )
+    assert "info 攻略快照ID" not in readme
+    assert "攻略快照ID" not in readme
+    assert "current-guide artifact" not in readme
+    assert "artifact id / 恢复追踪 id" not in readme
     assert "当前已应用攻略摘要" not in readme
     assert "在进入游戏并完成投资环境选择后，再执行：`trail cw guide apply --session <id> --lineup-id <lineup_id>`" not in readme
 
@@ -600,7 +616,7 @@ def test_readme_locks_cw_portal_select_success_screenshot_order() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
     assert (
-        "```text\nok cw.portal.select idx=2 投资环境=\"购物区\"\nshot path=.trail/shots/req-portal-select.png\ninfo read_image_first=1\n```"
+        "```text\nok cw.portal.select idx=1 投资环境=击破概念股\nshot path=.trail/shots/req-portal-select.png\ninfo read_image_first=1\ninfo skill_info=运营思路 text=\"前期：先收集事实，再按后续策略处理\"\ninfo handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered\n```"
         in readme
     )
 
@@ -2789,6 +2805,63 @@ def test_render_output_renders_cw_portal_select_summary_text():
         'ok cw.portal.select idx=2 投资环境="Beta Portal"',
         "shot path=.trail/shots/req-portal-select.png",
         "info read_image_first=1",
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+
+
+def test_portal_select_renders_skill_info_before_warn_ref_and_handoff_last(capsys) -> None:
+    print_output(
+        "cw.portal.select",
+        {
+            "ok": True,
+            "screenshot": ".trail/shots/portal.png",
+            "data": {
+                "card_idx": 1,
+                "portal_title": "击破概念股",
+                "skill_info": [{"name": "运营思路", "text": "前期 先读图"}],
+            },
+            "warnings": [{"code": "W", "message": "warn text"}],
+            "references": [{"path": "p", "similarity": 0.9}],
+        },
+    )
+    lines = capsys.readouterr().out.strip().splitlines()
+
+    assert lines[0] == "ok cw.portal.select idx=1 投资环境=击破概念股"
+    assert lines[1] == "shot path=.trail/shots/portal.png"
+    assert lines[2] == "info read_image_first=1"
+    assert lines.index('info skill_info=运营思路 text="前期 先读图"') < next(
+        index for index, line in enumerate(lines) if line.startswith("warn ")
+    )
+    assert lines[-1] == "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered"
+
+
+def test_portal_select_skips_malformed_skill_info_items(capsys) -> None:
+    print_output(
+        "cw.portal.select",
+        {
+            "ok": True,
+            "data": {
+                "card_idx": 1,
+                "portal_title": "击破概念股",
+                "skill_info": [
+                    "bad-item",
+                    {"text": "缺少名称"},
+                    {"name": "缺少文本"},
+                    {"name": "", "text": "空名称"},
+                    {"name": "空文本", "text": ""},
+                    {"name": 123, "text": 456},
+                    {"name": "运营思路", "text": "前期 先读图"},
+                ],
+            },
+            "warnings": [],
+            "references": [],
+        },
+    )
+    lines = capsys.readouterr().out.strip().splitlines()
+
+    assert [line for line in lines if line.startswith("info skill_info=")] == [
+        "info skill_info=123 text=456",
+        'info skill_info=运营思路 text="前期 先读图"',
     ]
 
 
@@ -2802,7 +2875,6 @@ def test_render_output_renders_cw_guide_current_summary_text():
             "version": "3.2",
             "labels": ["7级搜牌"],
             "support_hard": True,
-            "artifact": "art-1",
         },
         "screenshot": None,
         "timing": {},
@@ -2815,8 +2887,34 @@ def test_render_output_renders_cw_guide_current_summary_text():
     assert render_output("cw.guide.current", payload).splitlines() == [
         "ok cw.guide.current 攻略ID=abc 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2",
         "guide 攻略标签=#7级搜牌|#适用超频博弈",
-        "info 攻略快照ID=art-1",
     ]
+    assert "攻略快照ID" not in render_output("cw.guide.current", payload)
+
+
+def test_cw_guide_current_no_longer_outputs_artifact_snapshot_id():
+    payload = {
+        "ok": True,
+        "data": {
+            "lineup_id": "g1",
+            "title": "测试攻略",
+            "share_code": "##code##",
+            "version": "4.0",
+            "labels": [],
+            "artifact": "legacy-artifact",
+            "artifact_id": "legacy-artifact-id",
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    out = render_output("cw.guide.current", payload)
+
+    assert "ok cw.guide.current 攻略ID=g1 攻略标题=测试攻略 攻略码=##code## 版本=4.0" in out
+    assert "攻略快照ID" not in out
+    assert "legacy-artifact" not in out
 
 
 def test_render_output_renders_cw_guide_sparse_summaries_and_omits_empty_fields():
@@ -3213,6 +3311,33 @@ def test_render_output_renders_cw_shop_scan_snapshot_info_text():
     ]
 
 
+def test_cw_shop_buy_exp_outputs_snapshot_facts(capsys) -> None:
+    print_output(
+        "cw.shop.buy_exp",
+        {
+            "ok": True,
+            "screenshot": ".trail/shots/buy-exp.png",
+            "data": {
+                "opened": True,
+                "stale": False,
+                "items": [{"slot": 1, "name": "灵砂", "price": 3}],
+                "coins": 36,
+                "level": 4,
+                "exp": "0/8",
+                "reserve_full": False,
+                "team_size": None,
+            },
+        },
+    )
+    lines = capsys.readouterr().out.strip().splitlines()
+
+    assert lines[0] == "ok cw.shop.buy_exp opened=1 stale=0 count=1"
+    assert lines[1] == "shot path=.trail/shots/buy-exp.png"
+    assert lines[2] == "info read_image_first=1"
+    assert "item idx=1 slot=1 name=灵砂 cost=3" in lines
+    assert "info coins=36 level=4 exp=0/8 reserve_full=0 team_size=null" in lines
+
+
 def test_render_output_renders_cw_shop_scan_with_empty_slot_placeholder():
     payload = {
         "ok": True,
@@ -3414,6 +3539,34 @@ def test_render_output_rejects_yaml_for_cw_hand_sell():
         "fail cw.hand.sell code=OUTPUT_FORMAT_NOT_SUPPORTED",
         "shot path=.trail/shots/req-cw-hand-sell.png",
         'why msg="yaml not supported for cw.hand.sell"',
+    ]
+
+
+def test_render_output_rejects_yaml_for_cw_shop_buy_exp():
+    payload = {
+        "ok": True,
+        "data": {
+            "opened": True,
+            "stale": False,
+            "items": [],
+            "coins": 36,
+            "level": 4,
+            "exp": "0/8",
+            "reserve_full": False,
+            "team_size": None,
+        },
+        "screenshot": ".trail/shots/req-cw-shop-buy-exp.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.buy_exp", payload, output_format="yaml").splitlines() == [
+        "fail cw.shop.buy_exp code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        "shot path=.trail/shots/req-cw-shop-buy-exp.png",
+        'why msg="yaml not supported for cw.shop.buy_exp"',
     ]
 
 
@@ -4220,6 +4373,27 @@ def test_render_output_preserves_cw_shop_scan_result_unknown_recovery_contract()
         "shot path=.trail/shots/req-shop-scan-unknown.png",
         'why msg="mutation result unknown"',
         "recover action=daemon.request_status request=req-shop-scan-unknown",
+    ]
+
+
+def test_render_output_preserves_cw_shop_buy_exp_result_unknown_recovery_contract():
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": ".trail/shots/req-cw-shop-buy-exp-unknown.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"request_id": "req-cw-shop-buy-exp-unknown", "last_known_stage": "side_effect_applied", "detail": "flush failed"},
+        "error": {"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"},
+    }
+
+    assert render_output("cw.shop.buy_exp", payload).splitlines() == [
+        "fail cw.shop.buy_exp code=DAEMON_UNAVAILABLE tainted=1",
+        "request id=req-cw-shop-buy-exp-unknown",
+        "shot path=.trail/shots/req-cw-shop-buy-exp-unknown.png",
+        'why msg="mutation result unknown"',
+        "recover action=daemon.request_status request=req-cw-shop-buy-exp-unknown",
     ]
 
 

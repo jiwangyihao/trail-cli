@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from difflib import SequenceMatcher
 import json
 import math
@@ -35,6 +36,7 @@ PURCHASE_COUNT_BY_STAR = {
     2: 3,
     3: 9,
 }
+CW_GUIDE_STATE_INVALID_MESSAGE = "当前攻略不完整，请重新执行 guide.fetch.cw --select"
 LOOKUP_WHITESPACE_PATTERN = re.compile(r"\s+")
 CW_GUIDE_UPSTREAM_PAGE_SIZE = 10
 CW_GUIDE_PORTAL_MAX_PAGES = 30
@@ -1573,31 +1575,16 @@ def apply_cw_guide(session: SessionModel, guide_data: dict, *, reset_dependent_s
     on_field = dict(guide_payload.get("on_field", {}))
     off_field = dict(guide_payload.get("off_field", {}))
     cw_state["guide"] = {
-        "artifact": guide_payload.get("artifact_id"),
-        "lineup_id": guide_payload.get("lineup_id"),
-        "share_code": guide_payload["share_code"],
-        "source_url": guide_payload.get("source_url"),
-        "title": guide_payload.get("title"),
-        "author": guide_payload.get("author"),
-        "uploader": guide_payload.get("uploader"),
-        "labels": guide_payload.get("labels", []),
-        "support_hard": bool(guide_payload.get("support_hard")),
-        "has_change_equip": bool(guide_payload.get("has_change_equip")),
-        "has_expert": bool(guide_payload.get("has_expert")),
-        "version": guide_payload.get("version"),
+        **deepcopy(guide_payload),
         "on_field": on_field,
         "off_field": off_field,
-        "role_stages": guide_payload.get("role_stages", []),
-        "first_fight_augments": guide_payload.get("first_fight_augments", []),
-        "second_fight_augments": guide_payload.get("second_fight_augments", []),
-        "portals": guide_payload.get("portals", []),
-        "order_basic": guide_payload.get("order_basic", []),
-        "order_compose": guide_payload.get("order_compose", []),
         "remaining_purchases": {
             **on_field,
             **off_field,
         },
     }
+    cw_state["guide"].pop("artifact", None)
+    cw_state["guide"].pop("artifact_id", None)
     cw_state["constraints"] = {
         "min_coins": guide_payload.get("min_coins", 40),
         "min_level": guide_payload.get("min_level", 7),
@@ -1612,6 +1599,47 @@ def apply_cw_guide(session: SessionModel, guide_data: dict, *, reset_dependent_s
 
 def select_cw_guide(session: SessionModel, *, guide_data: dict) -> SessionModel:
     return apply_cw_guide(session, guide_data=guide_data, reset_dependent_state=False)
+
+
+def require_complete_cw_guide(cw_state: dict) -> dict:
+    if not isinstance(cw_state, dict):
+        raise TrailError("CW_GUIDE_STATE_INVALID", CW_GUIDE_STATE_INVALID_MESSAGE)
+    guide = cw_state.get("guide")
+    if not isinstance(guide, dict):
+        raise TrailError("CW_GUIDE_STATE_INVALID", CW_GUIDE_STATE_INVALID_MESSAGE)
+    for key in ("lineup_id", "title", "share_code"):
+        value = guide.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise TrailError("CW_GUIDE_STATE_INVALID", CW_GUIDE_STATE_INVALID_MESSAGE)
+    if SHARE_CODE_PATTERN.fullmatch(guide["share_code"]) is None:
+        raise TrailError("CW_GUIDE_STATE_INVALID", "当前攻略码无效，请重新执行 guide.fetch.cw --select")
+    if "version" not in guide or not isinstance(guide.get("version"), str):
+        raise TrailError("CW_GUIDE_STATE_INVALID", CW_GUIDE_STATE_INVALID_MESSAGE)
+    if not isinstance(guide.get("remaining_purchases"), dict):
+        raise TrailError("CW_GUIDE_STATE_INVALID", CW_GUIDE_STATE_INVALID_MESSAGE)
+    if "operation_guide" not in guide or not isinstance(guide.get("operation_guide"), str):
+        raise TrailError("CW_GUIDE_STATE_INVALID", CW_GUIDE_STATE_INVALID_MESSAGE)
+    for mapping_key in ("on_field", "off_field"):
+        if not isinstance(guide.get(mapping_key), dict):
+            raise TrailError("CW_GUIDE_STATE_INVALID", CW_GUIDE_STATE_INVALID_MESSAGE)
+    for list_key in ("role_stages", "first_fight_augments", "second_fight_augments", "order_basic", "order_compose"):
+        if not isinstance(guide.get(list_key), list):
+            raise TrailError("CW_GUIDE_STATE_INVALID", CW_GUIDE_STATE_INVALID_MESSAGE)
+    constraints = cw_state.get("constraints")
+    if not isinstance(constraints, dict) or any(key not in constraints for key in ("min_coins", "min_level", "mid_level")):
+        raise TrailError("CW_GUIDE_STATE_INVALID", "当前攻略约束不完整，请重新执行 guide.fetch.cw --select")
+    if "artifact" in guide or "artifact_id" in guide:
+        raise TrailError("CW_GUIDE_STATE_INVALID", "当前攻略来自旧 artifact 状态，请重新执行 guide.fetch.cw --select")
+    return guide
+
+
+def complete_cw_guide_or_none(cw_state: dict) -> dict | None:
+    try:
+        return require_complete_cw_guide(cw_state)
+    except TrailError as error:
+        if error.code == "CW_GUIDE_STATE_INVALID":
+            return None
+        raise
 
 
 def invalidate_cw_guide_runtime_state(session: SessionModel) -> SessionModel:

@@ -33,6 +33,7 @@ CW_MUTATING_METHODS = {
     "cw.shop.open",
     "cw.shop.scan",
     "cw.shop.buy_slot",
+    "cw.shop.buy_exp",
     "cw.shop.refresh",
     "cw.shop.close",
     "cw.crystals.collect",
@@ -580,11 +581,14 @@ class CommandService:
             raise TrailError("GUIDE_INPUT_INVALID", "guide.fetch.cw session_id requires select")
         return None
 
-    def _fetch_cw_guide_with_artifact(self, request):
+    def _fetch_cw_guide_payload(self, request):
         self._guide_scene(request.method, "guide.fetch.")
         from trail.scenes.cw import guide as cw_guide
 
-        guide_payload = to_jsonable(cw_guide.fetch_cw_guide(request.payload["url"], fetcher=cw_guide.fetch_cw_guide_payload))
+        return to_jsonable(cw_guide.fetch_cw_guide(request.payload["url"], fetcher=cw_guide.fetch_cw_guide_payload))
+
+    def _fetch_cw_guide_with_artifact(self, request):
+        guide_payload = self._fetch_cw_guide_payload(request)
         artifact = ArtifactStore(Path(request.workspace_root) / ".trail" / "artifacts").create(
             scene="cw",
             kind="guide",
@@ -606,25 +610,10 @@ class CommandService:
         from trail.scenes.cw.guide import select_cw_guide
 
         session = service.load_session(request.session_id)
-        _artifact = None
-        try:
-            _guide_payload, _artifact = self._fetch_cw_guide_with_artifact(request)
-            select_cw_guide(
-                session,
-                guide_data={
-                    **_guide_payload,
-                    "artifact_id": _artifact.artifact_id,
-                },
-            )
-            service.save_session(session)
-            return _guide_payload
-        except Exception:
-            if _artifact is not None:
-                try:
-                    _artifact.path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-            raise
+        guide_payload = self._fetch_cw_guide_payload(request)
+        select_cw_guide(session, guide_data=guide_payload)
+        service.save_session(session)
+        return guide_payload
 
     def _handle_guide_config(self, request):
         self._guide_scene(request.method, "guide.config.")

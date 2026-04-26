@@ -466,6 +466,42 @@ def test_detect_cw_strategy_keeps_guide_loaded_zero_when_session_guide_missing_e
     assert [card["guide_loaded"] for card in snapshot["cards"]] == [0, 0, 0]
 
 
+def test_detect_cw_strategy_guide_summary_treats_incomplete_session_guide_as_not_loaded(tmp_path: Path, monkeypatch):
+    strategy_module = load_cw_strategy_module()
+    session = build_session(tmp_path)
+    session.scene_state["cw"] = {
+        "guide": {
+            "share_code": "##demo##",
+            "artifact": "legacy-artifact",
+            "first_fight_augments": ["快攻"],
+            "second_fight_augments": ["回蓝"],
+        }
+    }
+    runtime = StrategyRuntime(ocr_results=[[make_rapidocr_piece("快攻", left=120, top=140)]])
+    monkeypatch.setattr(
+        strategy_module,
+        "_detect_strategy_page_state",
+        lambda runtime, session=None: {"page": "in_game", "stage": "invest", "title": "请选择投资策略"},
+    )
+
+    snapshot = strategy_module.detect_cw_strategy(
+        session,
+        runtime=runtime,
+        strategy_list=[{"name": "快攻", "description": "d1"}],
+    )
+
+    assert snapshot["cards"] == [
+        {
+            "card_idx": 1,
+            "strategy_title": "快攻",
+            "strategy_description": "d1",
+            "refresh_count": 0,
+            "guide_match": "否",
+            "guide_loaded": 0,
+        }
+    ]
+
+
 def test_detect_cw_strategy_reads_heading_from_runtime_ocr_when_entry_state_has_no_title(tmp_path: Path, monkeypatch):
     strategy_module = load_cw_strategy_module()
     session = build_session(tmp_path)

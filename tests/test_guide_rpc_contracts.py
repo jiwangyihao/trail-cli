@@ -202,6 +202,7 @@ def test_guide_fetch_select_routes_session_at_top_level_and_keeps_yaml_shape(
     assert "lineup_id: abc" in yaml_result.stdout
     assert "selected:" not in yaml_result.stdout
     assert "session_id:" not in yaml_result.stdout
+    assert "artifact_id" not in text_result.stdout
     assert "artifact_id:" not in yaml_result.stdout
     assert client.calls == [
         {
@@ -1287,15 +1288,23 @@ def test_command_service_handles_guide_fetch_cw_select_and_persists_session(tmp_
     def fake_fetch_payload(url: str):
         calls.append(("fetch_payload", url))
         return {
+            "scene": "cw",
+            "kind": "guide",
             "lineup_id": url,
             "share_code": "##demo##",
             "title": "Alpha攻略",
             "version": "3.2",
+            "operation_guide": "前期 按测试运营",
             "min_coins": 40,
             "min_level": 7,
             "mid_level": 8,
             "on_field": {"front_a": 1},
             "off_field": {"back_b": 2},
+            "role_stages": [{"stage": "Opening", "front_roles": [{"name": "front_a"}], "back_roles": [], "traits": []}],
+            "first_fight_augments": [{"name": "快攻"}],
+            "second_fight_augments": [{"name": "回蓝"}],
+            "order_basic": [{"name": "钻头"}],
+            "order_compose": [{"name": "风暴"}],
         }
 
     def fake_fetch_guide(url: str, *, fetcher):
@@ -1325,15 +1334,23 @@ def test_command_service_handles_guide_fetch_cw_select_and_persists_session(tmp_
         "request_id": "req-guide.fetch.cw",
         "ok": True,
         "data": {
+            "scene": "cw",
+            "kind": "guide",
             "lineup_id": "abc",
             "share_code": "##demo##",
             "title": "Alpha攻略",
             "version": "3.2",
+            "operation_guide": "前期 按测试运营",
             "min_coins": 40,
             "min_level": 7,
             "mid_level": 8,
             "on_field": {"front_a": 1},
             "off_field": {"back_b": 2},
+            "role_stages": [{"stage": "Opening", "front_roles": [{"name": "front_a"}], "back_roles": [], "traits": []}],
+            "first_fight_augments": [{"name": "快攻"}],
+            "second_fight_augments": [{"name": "回蓝"}],
+            "order_basic": [{"name": "钻头"}],
+            "order_compose": [{"name": "风暴"}],
         },
         "screenshot": None,
         "timing": {},
@@ -1343,30 +1360,31 @@ def test_command_service_handles_guide_fetch_cw_select_and_persists_session(tmp_
         "error": None,
     }
     assert calls == [("fetch_guide", "abc"), ("fetch_payload", "abc")]
-    assert len(artifacts) == 1
+    assert artifacts == []
     assert loaded.scene_state["cw"]["guide"] == {
-        "artifact": artifacts[0].stem,
+        "scene": "cw",
+        "kind": "guide",
         "lineup_id": "abc",
         "share_code": "##demo##",
-        "source_url": None,
         "title": "Alpha攻略",
-        "author": None,
-        "uploader": None,
-        "labels": [],
-        "support_hard": False,
-        "has_change_equip": False,
-        "has_expert": False,
         "version": "3.2",
+        "operation_guide": "前期 按测试运营",
         "on_field": {"front_a": 1},
         "off_field": {"back_b": 2},
-        "role_stages": [],
-        "first_fight_augments": [],
-        "second_fight_augments": [],
-        "portals": [],
-        "order_basic": [],
-        "order_compose": [],
+        "priority": {},
+        "positioning": {},
+        "min_coins": 40,
+        "min_level": 7,
+        "mid_level": 8,
+        "role_stages": [{"stage": "Opening", "front_roles": [{"name": "front_a"}], "back_roles": [], "traits": []}],
+        "first_fight_augments": [{"name": "快攻"}],
+        "second_fight_augments": [{"name": "回蓝"}],
+        "order_basic": [{"name": "钻头"}],
+        "order_compose": [{"name": "风暴"}],
         "remaining_purchases": {"front_a": 1, "back_b": 2},
     }
+    assert "artifact" not in loaded.scene_state["cw"]["guide"]
+    assert "artifact_id" not in loaded.scene_state["cw"]["guide"]
     assert loaded.scene_state["cw"]["constraints"] == {
         "min_coins": 40,
         "min_level": 7,
@@ -1377,21 +1395,29 @@ def test_command_service_handles_guide_fetch_cw_select_and_persists_session(tmp_
     assert session_service.request_status("req-guide.fetch.cw")["final_state"] == "completed"
 
 
-def test_command_service_guide_fetch_select_cleans_artifact_when_save_session_fails(tmp_path: Path, monkeypatch):
+def test_command_service_guide_fetch_select_does_not_create_artifact_when_save_session_fails(tmp_path: Path, monkeypatch):
     from trail.daemon.command_service import CommandService
     from trail.daemon.session_service import SessionServiceRegistry
 
     def fake_fetch_payload(url: str):
         return {
+            "scene": "cw",
+            "kind": "guide",
             "lineup_id": url,
             "share_code": "##demo##",
             "title": "Alpha攻略",
             "version": "3.2",
+            "operation_guide": "前期 按测试运营",
             "min_coins": 40,
             "min_level": 7,
             "mid_level": 8,
             "on_field": {"front_a": 1},
             "off_field": {"back_b": 2},
+            "role_stages": [{"stage": "Opening", "front_roles": [{"name": "front_a"}], "back_roles": [], "traits": []}],
+            "first_fight_augments": [{"name": "快攻"}],
+            "second_fight_augments": [{"name": "回蓝"}],
+            "order_basic": [{"name": "钻头"}],
+            "order_compose": [{"name": "风暴"}],
         }
 
     monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide_payload", fake_fetch_payload)
@@ -1400,6 +1426,10 @@ def test_command_service_guide_fetch_select_cleans_artifact_when_save_session_fa
     registry = SessionServiceRegistry()
     session_service = registry.for_workspace(str(tmp_path))
     session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    monkeypatch.setattr(
+        "trail.daemon.command_service.ArtifactStore.create",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("select path must not create artifact")),
+    )
     monkeypatch.setattr(session_service, "save_session", lambda model: (_ for _ in ()).throw(OSError("save failed")))
     service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
 

@@ -11,6 +11,7 @@ from PIL import Image
 
 from trail.core.errors import TrailError
 from trail.runtime.ocr_config import OcrRequestConfig
+from trail.scenes.cw.guide import complete_cw_guide_or_none
 from trail.scenes.cw.models import ensure_cw_state
 from trail.runtime.resources import resolve_scene_asset
 from trail.session.models import SessionModel
@@ -395,7 +396,7 @@ def _dedupe_slot_name_candidates(candidates: list[str]) -> list[str]:
 
 def _session_slot_name_candidates(cw_state: dict[str, Any]) -> tuple[list[str], list[str]]:
     authoritative_candidates: list[str] = []
-    guide = cw_state.get("guide") if isinstance(cw_state.get("guide"), dict) else {}
+    guide = complete_cw_guide_or_none(cw_state) or {}
     for group in (guide.get("on_field", {}), guide.get("off_field", {})):
         if isinstance(group, dict):
             for name in group:

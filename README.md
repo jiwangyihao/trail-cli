@@ -18,7 +18,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 观察当前画面：`trail ocr read`
 - 执行明确动作：`trail input click ...`、`trail input drag ...`、`trail input key ...`
 - 需要进入具体场景 skill 时，先由 `trail-hsr` 接管，再按 registry 交给当前已上线的 scene entry
-- 部分已配置命令在 success 后会直接输出 handoff `info`，提示 Agent 切到对应 scene entry；当前第一批是 `trail cw enter`
+- 部分已配置命令在 success 后会直接输出 handoff `info`，提示 Agent 切到对应 scene entry 或内部阶段 skill；当前包括 `cw.enter -> trail-cw-entry` 与 `cw.portal.select -> trail-cw-prep`
 
 ## Skill 拓扑
 
@@ -29,6 +29,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `trail-cw-guide` 不是 scene entry、不是默认 owner、也不是整局 owner；真正进入开局流程仍要回到 `trail-cw-entry`。
 - `trail-cw-portal` 是 internal portal-page skill；主要在 `trail cw start` 或 `trail cw portal refresh` 成功停留在投资环境页后切入，不是 direct-user 公共入口、不是 scene entry、也不是 owner。
 - `trail-cw-portal` 在投资环境页负责 `portal detect/refresh/restart/select` 与环境优先逻辑；如果攻略还没定，就切到 `trail-cw-guide` 的无人值守模式按当前环境定攻略，再回到当前投资环境页流程。
+- `trail-cw-prep` 是 internal 普通备战阶段 skill；只在 `cw.portal.select` 成功后的 post-portal handoff 中切入，不是 public scene entry、不是 direct-user、不是 owner。
 - `trail-hsr-advanced` 是内部恢复层，用于启动失败、窗口接管异常、daemon / session 恢复等底层问题。
 - `trail-hsr-advanced` 不作为用户入口；只有 `trail-hsr` 或当前 active 的 scene entry 需要恢复链路时才会内部升级到它。
 - 旧货币战争 archive skill 已归档，不再作为 active owner 或推荐入口。
@@ -53,6 +54,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 先通过 `trail start` 或 `trail session create` 拿到可用 `session`
 - `trail cw enter --session <id>` 只负责把页面带到货币战争首页
 - `trail cw enter --session <id>` success 尾行会返回 `info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered`，表示下一步应优先切到 `trail-cw-entry`
+- `trail cw portal select --session <id> --card-idx <n>` success 尾行会返回 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`，表示进入普通备战阶段后应切到 `trail-cw-prep`
 - 当用户明确要先选攻略，或 `trail-cw-entry` 走到“攻略优先 / 先定攻略”时，应切到 `trail-cw-guide`；真正进入开局流程仍要回到 `trail-cw-entry`
 - 到首页后先确认本局偏好：
   - `攻略优先` / `环境优先`
@@ -75,8 +77,9 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
   - `trail cw portal detect --session <id>`
   - `trail cw portal refresh --session <id>`
   - `trail cw portal restart --session <id>`
-- 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前已选攻略；这一步只写 session，不执行 UI 应用
+- 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入当前 session；这一步不执行 UI 应用，也不创建当前攻略快照或额外追踪产物
 - 回到开局链路后，`trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略
+- `cw.portal.select` 成功进入普通备战后会 handoff 到 internal 的 `trail-cw-prep`，由它先读截图和收集普通备战事实
 - `trail cw guide apply --session <id>` 只作为手动兜底；如需回顾当前已选攻略：`trail cw guide current --session <id>`
 - `trail cw guide` 只负责当前对局已选攻略的 current/apply；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
 - `stage=invest` 时，不要默认走 `trail cw invest.*`
@@ -228,9 +231,11 @@ guide idx=1 gid=1 最终阵容=希儿/carry:1/star:5/rarity:3
 ```
 
 ```text
-ok cw.portal.select idx=2 投资环境="购物区"
+ok cw.portal.select idx=1 投资环境=击破概念股
 shot path=.trail/shots/req-portal-select.png
 info read_image_first=1
+info skill_info=运营思路 text="前期：先收集事实，再按后续策略处理"
+info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered
 ```
 
 - `cw.strategy.detect|refresh` 的 `info 已加载攻略=0|1` 固定在所有 `opt` 行之后
@@ -266,7 +271,6 @@ info read_image_first=1
 ```text
 ok cw.guide.current 攻略ID=abc 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2
 guide 攻略标签=#7级搜牌|#适用超频博弈
-info 攻略快照ID=art-1
 ```
 
 ```text
@@ -297,8 +301,16 @@ item idx=2 slot=2 name=停云 cost=1
 info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7
 ```
 
-- 商店快照里的 `coins` / `level` / `exp` / `reserve_full` / `team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露；`open` / `refresh` / `close` 不重复输出旧快照事实
-- `trail cw shop scan` 是当前画面读命令，所以会带 `shot path=...` 与 `info read_image_first=1`；`trail cw shop status` 仍是 session / artifact 汇总读，不默认带图
+- 商店快照里的 `coins` / `level` / `exp` / `reserve_full` / `team_size` 会在 `trail cw shop scan`、`trail cw shop status` 与 `trail cw shop buy-exp` 暴露或可暴露；`open` / `refresh` / `close` 不重复输出旧快照事实
+- `trail cw shop scan` 是当前画面读命令，所以会带 `shot path=...` 与 `info read_image_first=1`；`trail cw shop status` 仍是 session 汇总读，不默认带图；`trail cw shop buy-exp` 是 shop action renderer family，会输出买经验后的 fresh snapshot facts，且 `team_size=null` 是 must-keep null fact
+
+```text
+ok cw.shop.buy_exp opened=1 stale=0 count=1
+shot path=.trail/shots/req-buy-exp.png
+info read_image_first=1
+item idx=1 slot=1 name=灵砂 cost=3
+info coins=36 level=4 exp=0/8 reserve_full=0 team_size=4/4
+```
 
 ```text
 fail input.click code=INPUT_BACKEND_MISSING tainted=1
@@ -312,8 +324,7 @@ recover action=daemon.request_status request=req-42
 - `trail guide fetch cw` 默认文本会直接返回攻略标题、攻略标签、投资环境、投资策略、装备优先度与阶段阵容等完整关键信息，方便在 apply 前确认是否就是目标攻略
 - `trail guide list cw` 默认文本只保留选攻略最关键的摘要：`攻略ID/攻略标题/版本/主C/攻略标签/点赞/收藏`，并在第二行补 `最终阵容=`
 - `trail cw guide current|apply` 只返回当前已选攻略摘要：首行看 `攻略ID/攻略标题/攻略码/版本`，正文按需补 `guide 攻略标签=...`
-- `攻略快照ID`：只出现在 `trail cw guide current|apply` 的 `info 攻略快照ID=...`，它是 artifact id / 恢复追踪 id，不是 `shot path=...` 截图路径
-- `trail guide fetch cw` 默认是完整攻略预览，不会建立当前已选攻略；确认后用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前攻略
+- `trail guide fetch cw` 默认是完整攻略预览，不会建立当前已选攻略；确认后用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入 session，不创建当前攻略快照或额外追踪产物
 - `trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略；`trail cw guide apply` 只作为手动兜底
 - `trail guide fetch cw` 负责看完整攻略；`trail cw guide current|apply` 负责回顾当前已选攻略；两者不要混用
 - `攻略标签`：除了原始标签外，还会把布尔类攻略特征折叠成 `#标签`，例如 `#适用超频博弈`、`#星徽攻略`、`#专家顾问`；值为 false 时省略
@@ -332,7 +343,7 @@ recover action=daemon.request_status request=req-42
 - CLI 负责显式动作命令、固定 UI 流程命令与确定性防御动作
 - skill 负责整局编排、阶段切换、策略判断与失败恢复
 - 本项目不追求“内建识别穷尽所有状态”，而是优先把真实动作链和最小可靠检测做出来，把复杂画面判断留给 agent 的多模态能力
-- 货币战争里，先用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 记录当前已选攻略；回到开局链路后由 `trail cw portal select` 成功时自动应用，`trail cw guide apply` 只作为手动兜底
+- 货币战争里，先用 `trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入 session；回到开局链路后由 `trail cw portal select` 成功时自动应用，`trail cw guide apply` 只作为手动兜底
 - `trail-hsr` 是对外总入口，负责 `trail start`、`trail ocr read`、`trail input ...` 的 simple-first 起手、总入口接管与 scene 路由判断
 - `trail-<scene>-entry` 是对外场景入口；只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口
 - `trail cw enter` 只负责把页面带到货币战争首页；真正进入投资环境页要用 `trail cw start`

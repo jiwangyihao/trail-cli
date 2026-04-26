@@ -136,11 +136,39 @@ def fake_daemon_client(tmp_path, monkeypatch):
     return install
 
 
+def complete_cw_guide_state(*, purchases: dict | None = None, share_code: str = "##demo##") -> dict:
+    remaining = dict(purchases or {})
+    return {
+        "scene": "cw",
+        "kind": "guide",
+        "lineup_id": "guide-demo",
+        "title": "测试攻略",
+        "share_code": share_code,
+        "version": "4.0",
+        "operation_guide": "前期按测试运营",
+        "remaining_purchases": remaining,
+        "on_field": {"希儿": 9},
+        "off_field": {"佩拉": 3},
+        "role_stages": [
+            {
+                "stage": "Opening",
+                "front_roles": [{"name": "希儿"}],
+                "back_roles": [{"name": "佩拉"}],
+                "traits": [],
+            }
+        ],
+        "first_fight_augments": [{"name": "快攻"}],
+        "second_fight_augments": [{"name": "回蓝"}],
+        "order_basic": [{"name": "钻头"}],
+        "order_compose": [{"name": "风暴"}],
+    }
+
+
 def build_fake_cw_session(tmp_path, purchases: dict | None = None):
     store = SessionStore(tmp_path)
     session = store.create(window_binding={"title": "崩坏：星穹铁道", "hwnd": 123})
     session.scene_state["cw"] = {
-        "guide": {"remaining_purchases": purchases or {}},
+        "guide": complete_cw_guide_state(purchases=purchases),
         "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7},
         "slots": {"stale": True, "hand": []},
         "shop": {"stale": True},

@@ -10,11 +10,11 @@
 ## 内容确认
 
 - `guide fetch cw` 负责读取完整攻略内容，用来核对标签、阵容、运营思路、投资环境和版本。
-- 如果只是要决定“选哪套攻略”，先看到这里；一旦确认候选，再用 `guide.fetch.cw --select` 记录当前攻略。
+- 如果只是要决定“选哪套攻略”，先看到这里；一旦确认候选，再用 `guide.fetch.cw --select` 将完整攻略写入 session。
 
 ## 记录当前攻略
 
-- `guide.fetch.cw --select` 只把当前攻略写入 session，不做 UI 应用。
+- `guide.fetch.cw --select` 只把完整攻略写入 session，不做 UI 应用，也不创建额外追踪产物。
 - 它是把“攻略预览”切成“当前已选攻略”的关键一步，应该发生在回到 `trail-cw-entry` 之前。
 
 ## 真正进入游戏后

@@ -274,6 +274,12 @@ def test_cw_portal_select_renders_selected_card_summary(cli_runner, fake_daemon_
     assert result.stdout.splitlines() == _expected_lines(
         'ok cw.portal.select idx=2 投资环境="Beta Portal"',
         screenshot=".trail/shots/req-cw-portal-select.png",
+        body=[
+            "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+        ],
+    )
+    assert result.stdout.rstrip().endswith(
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered"
     )
     _assert_single_call(client, method="cw.portal.select", payload={"card_idx": 2}, tmp_path=tmp_path)
 
@@ -532,6 +538,40 @@ def test_cw_shop_buy_slot_renders_purchase_summary_and_shot(cli_runner, fake_dae
     _assert_single_call(client, method="cw.shop.buy_slot", payload={"slot": 2, "expect": "希儿"}, tmp_path=tmp_path)
 
 
+def test_cw_shop_buy_exp_maps_to_canonical_command(cli_runner, fake_daemon_client, tmp_path) -> None:
+    client = fake_daemon_client(
+        {
+            "cw.shop.buy_exp": build_success_response(
+                request_id="req-cw-shop-buy-exp",
+                data={
+                    "opened": True,
+                    "stale": False,
+                    "items": [{"slot": 1, "name": "灵砂", "price": 3}],
+                    "coins": 36,
+                    "level": 4,
+                    "exp": "0/8",
+                    "reserve_full": False,
+                    "team_size": "4/4",
+                },
+                screenshot=".trail/shots/req-cw-shop-buy-exp.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "shop", "buy-exp", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.shop.buy_exp opened=1 stale=0 count=1",
+        screenshot=".trail/shots/req-cw-shop-buy-exp.png",
+        body=[
+            "item idx=1 slot=1 name=灵砂 cost=3",
+            "info coins=36 level=4 exp=0/8 reserve_full=0 team_size=4/4",
+        ],
+    )
+    _assert_single_call(client, method="cw.shop.buy_exp", payload={}, tmp_path=tmp_path)
+
+
 def test_cw_shop_scan_renders_unknown_result_failure_contract(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
@@ -578,7 +618,6 @@ def test_cw_guide_current_renders_guide_summary(cli_runner, fake_daemon_client, 
                     "version": "3.2",
                     "labels": ["7级搜牌"],
                     "support_hard": True,
-                    "artifact_id": "art-1",
                 },
             )
         }
@@ -590,8 +629,9 @@ def test_cw_guide_current_renders_guide_summary(cli_runner, fake_daemon_client, 
     assert result.stdout.splitlines() == [
         "ok cw.guide.current 攻略ID=abc 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2",
         "guide 攻略标签=#7级搜牌|#适用超频博弈",
-        "info 攻略快照ID=art-1",
     ]
+    assert "artifact" not in result.stdout
+    assert "攻略快照ID" not in result.stdout
     _assert_single_call(client, method="cw.guide.current", payload={}, tmp_path=tmp_path)
 
 
@@ -624,7 +664,6 @@ def test_cw_guide_apply_renders_guide_summary(cli_runner, fake_daemon_client, tm
                     "version": "3.2",
                     "labels": ["7级搜牌"],
                     "support_hard": True,
-                    "artifact_id": "art-1",
                 },
                 screenshot=".trail/shots/req-cw-guide-apply.png",
             )
@@ -637,8 +676,10 @@ def test_cw_guide_apply_renders_guide_summary(cli_runner, fake_daemon_client, tm
     assert result.stdout.splitlines() == _expected_lines(
         "ok cw.guide.apply 攻略ID=abc 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2",
         screenshot=".trail/shots/req-cw-guide-apply.png",
-        body=["guide 攻略标签=#7级搜牌|#适用超频博弈", "info 攻略快照ID=art-1"],
+        body=["guide 攻略标签=#7级搜牌|#适用超频博弈"],
     )
+    assert "artifact" not in result.stdout
+    assert "攻略快照ID" not in result.stdout
     _assert_single_call(client, method="cw.guide.apply", payload={}, tmp_path=tmp_path)
 
 

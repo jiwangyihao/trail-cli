@@ -11,7 +11,7 @@
 ## 确认后的一般下一步
 
 - 先用 `guide list cw` 缩小候选范围，再用 `guide fetch cw` 读取完整攻略内容。
-- 如果这是 `direct-user` / 开局前链路，一旦确认候选，就执行 `guide.fetch.cw --select --session <id>` 记录当前攻略，再把流程交回 `trail-cw-entry`。
+- 如果这是 `direct-user` / 开局前链路，一旦确认候选，就执行 `guide.fetch.cw --select --session <id>` 将完整攻略写入 session，再把流程交回 `trail-cw-entry`。
 - 如果这是从 `trail-cw-entry` handoff 过来的，且上游已经确认了目标、羁绊/成就或环境偏好，就默认继承这些结论，只追问缺失项。
 - 如果这是从投资环境页内部切入的无人值守模式，就不再继续追问，而是按当前投资环境、`待收集=1`、热门度、版本自动选。
 - 返回开局链路后，`cw.portal.select` 成功时会自动应用当前已选攻略。

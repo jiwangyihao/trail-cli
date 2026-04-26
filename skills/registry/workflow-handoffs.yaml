@@ -4,3 +4,8 @@ commands:
       handoff_skill: trail-cw-entry
       handoff_strength: strong
       handoff_reason: scene_entered
+  cw.portal.select:
+    default:
+      handoff_skill: trail-cw-prep
+      handoff_strength: strong
+      handoff_reason: preparation_stage_entered
