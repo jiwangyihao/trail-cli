@@ -115,6 +115,26 @@ def _cw_input_invalid_response(message: str) -> dict:
     )
 
 
+def _parse_agent_slot_ref(value: str) -> str:
+    area, separator, raw_index = value.partition(":")
+    if separator != ":" or area not in {"front", "back", "hand"} or not raw_index.isdecimal():
+        raise TrailError("CW_OPTION_INVALID", "invalid slot position")
+    index = int(raw_index)
+    if index <= 0:
+        raise TrailError("CW_OPTION_INVALID", "slot position must be 1-based")
+    return f"{area}:{index - 1}"
+
+
+def _parse_agent_hand_slot(value: str) -> int:
+    text = str(value).strip()
+    if not text.isdecimal():
+        raise TrailError("CW_OPTION_INVALID", "hand slot must be a positive integer")
+    index = int(text)
+    if index <= 0:
+        raise TrailError("CW_OPTION_INVALID", "hand slot must be 1-based")
+    return index - 1
+
+
 def _parse_place_actions(values: list[str] | None) -> list[dict[str, str]]:
     raw_values = list(values or [])
     if not raw_values:
@@ -124,8 +144,8 @@ def _parse_place_actions(values: list[str] | None) -> list[dict[str, str]]:
     for raw in raw_values:
         parts = [part.strip() for part in raw.split(",")]
         if len(parts) != 2 or not parts[0] or not parts[1]:
-            raise TrailError("CW_OPTION_INVALID", f"cw slots place action invalid: {raw}")
-        actions.append({"source": parts[0], "target": parts[1]})
+            raise TrailError("CW_OPTION_INVALID", "cw slots place action invalid")
+        actions.append({"source": _parse_agent_slot_ref(parts[0]), "target": _parse_agent_slot_ref(parts[1])})
     return actions
 
 
@@ -246,7 +266,12 @@ def cw_slots_read(
         help="定向确认名字不确定槽位；不传 --slot 时仍保留全量读取。",
     ),
 ) -> None:
-    _print_cw("cw.slots.read", session_id=session, payload={"slot": list(slot or []) or None})
+    try:
+        slots = [_parse_agent_slot_ref(value) for value in list(slot or [])]
+    except TrailError as error:
+        print_output("cw.slots.read", _cw_input_invalid_response(str(error)))
+        return
+    _print_cw("cw.slots.read", session_id=session, payload={"slot": slots or None})
 
 
 @slots_app.command("swap")
@@ -255,7 +280,13 @@ def cw_slots_swap(
     source: str = typer.Option(..., "--source"),
     target: str = typer.Option(..., "--target"),
 ) -> None:
-    _print_cw("cw.slots.swap", session_id=session, payload={"source": source, "target": target})
+    try:
+        parsed_source = _parse_agent_slot_ref(source)
+        parsed_target = _parse_agent_slot_ref(target)
+    except TrailError as error:
+        print_output("cw.slots.swap", _cw_input_invalid_response(str(error)))
+        return
+    _print_cw("cw.slots.swap", session_id=session, payload={"source": parsed_source, "target": parsed_target})
 
 
 @slots_app.command("place")
@@ -279,13 +310,18 @@ def cw_crystals_collect(session: str = typer.Option(..., "--session")) -> None:
 @hand_app.command("sell")
 def cw_hand_sell(
     session: str = typer.Option(..., "--session"),
-    slot: list[int] | None = typer.Option(None, "--slot"),
+    slot: list[str] | None = typer.Option(None, "--slot"),
 ) -> None:
     slots = list(slot or [])
     if not slots:
         print_output("cw.hand.sell", _cw_input_invalid_response("cw hand sell requires at least one --slot"))
         return
-    _print_cw("cw.hand.sell", session_id=session, payload={"slots": slots})
+    try:
+        parsed_slots = [_parse_agent_hand_slot(value) for value in slots]
+    except TrailError as error:
+        print_output("cw.hand.sell", _cw_input_invalid_response(str(error)))
+        return
+    _print_cw("cw.hand.sell", session_id=session, payload={"slots": parsed_slots})
 
 
 @hand_app.command("sell-plan")

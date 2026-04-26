@@ -11,6 +11,7 @@ from typing import Any
 from trail.core.errors import TrailError
 from trail.runtime.batch_ocr import BatchOcrTarget, run_batch_ocr
 from trail.scenes.cw import stage
+from trail.scenes.cw.catalog import CwCatalog, build_cw_catalog, resolve_cw_role_name, summarize_cw_field_traits
 from trail.scenes.cw.models import ensure_cw_state
 from trail.runtime.resources import resolve_scene_asset
 from trail.session.models import SessionModel
@@ -22,6 +23,16 @@ class CwSlotsReadResult:
     back: list[Any]
     hand: list[Any]
     stage_status: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class CwSlotsReadApplied:
+    session: SessionModel
+    response_snapshot: dict[str, Any]
+
+    @property
+    def scene_state(self) -> dict[str, dict[str, Any]]:
+        return self.session.scene_state
 
 
 SlotsSnapshotReader = Callable[[], CwSlotsReadResult | tuple[list[Any], list[Any], list[Any]]]
@@ -97,6 +108,7 @@ CANNOT_BE_FIELDED_ALIAS = "slots.cannot_be_fielded"
 HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS = 5
 SLOT_PANEL_SETTLE_SECONDS = 0.2
 INITIAL_UI_DISMISS_SETTLE_SECONDS = 1.0
+SLOT_MATCH_DIAGNOSTIC_KEYS = {"raw_name", "match_score", "score", "match_kind"}
 
 
 def _clear_sell_plan(cw_state: dict) -> None:
@@ -238,6 +250,18 @@ def _merge_area_snapshot(previous: Any, current: list[Any], *, size: int, target
     return merged
 
 
+def _strip_slot_match_diagnostics(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    return {key: deepcopy(item) for key, item in value.items() if key not in SLOT_MATCH_DIAGNOSTIC_KEYS}
+
+
+def _strip_area_match_diagnostics(values: Any) -> Any:
+    if not isinstance(values, list):
+        return values
+    return [_strip_slot_match_diagnostics(value) for value in values]
+
+
 def _score_slot_name_candidates(text: str, *, candidates: list[str]) -> list[tuple[str, float]]:
     scored = [(candidate, SequenceMatcher(a=text, b=candidate).ratio()) for candidate in candidates]
     return sorted(scored, key=lambda item: (-item[1], item[0]))
@@ -334,122 +358,96 @@ def _normalize_slot_value(raw: Any, *, authoritative_candidates: list[str], slot
     return _normalize_slot_name(raw, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates)
 
 
-def _normalize_trait_tiers(value: Any) -> list[int]:
-    tiers: list[int] = []
-    if not isinstance(value, list):
-        return tiers
-    for item in value:
-        if isinstance(item, int) and not isinstance(item, bool):
-            tiers.append(int(item))
-            continue
-        if isinstance(item, str) and item.isdigit():
-            tiers.append(int(item))
-            continue
-        if not isinstance(item, dict):
-            continue
-        for key in ("current_role_count", "count", "need_count", "need_num", "role_count", "layer"):
-            raw = item.get(key)
-            if isinstance(raw, int) and not isinstance(raw, bool):
-                tiers.append(int(raw))
-                break
-            if isinstance(raw, str) and raw.isdigit():
-                tiers.append(int(raw))
-                break
-    return sorted(dict.fromkeys(tier for tier in tiers if tier > 0))
+def _slot_value_from_catalog_match(value: Any, match) -> dict[str, Any]:
+    stable: dict[str, Any] = {"name": match.name}
+    if match.role_id is not None:
+        stable["role_id"] = match.role_id
+    if isinstance(value, dict) and "star" in value:
+        stable["star"] = value.get("star")
+    if match.traits:
+        stable["traits"] = list(match.traits)
+    return stable
 
 
-def _build_slot_trait_catalog(guide_config: dict[str, Any] | None) -> tuple[dict[str, list[str]], dict[str, list[int]]]:
-    if not isinstance(guide_config, dict):
-        return {}, {}
-
-    trait_name_by_id: dict[str, str] = {}
-    trait_tiers_by_name: dict[str, list[int]] = {}
-    for trait in guide_config.get("traits") or []:
-        if not isinstance(trait, dict):
-            continue
-        name = str(trait.get("name") or "").strip()
-        if not name:
-            continue
-        trait_id = trait.get("id")
-        if trait_id is not None:
-            trait_name_by_id[str(trait_id)] = name
-        explicit_tiers = _normalize_trait_tiers(trait.get("layers"))
-        if explicit_tiers:
-            trait_tiers_by_name[name] = explicit_tiers
-
-    role_traits_by_name: dict[str, list[str]] = {}
-    inferred_trait_counts: dict[str, int] = {}
-    for role in guide_config.get("roles") or []:
-        if not isinstance(role, dict):
-            continue
-        name = str(role.get("name") or "").strip()
-        if not name:
-            continue
-        traits: list[str] = []
-        for trait_id in role.get("trait_ids") or []:
-            trait_name = trait_name_by_id.get(str(trait_id))
-            if not trait_name or trait_name in traits:
-                continue
-            traits.append(trait_name)
-            inferred_trait_counts[trait_name] = inferred_trait_counts.get(trait_name, 0) + 1
-        role_traits_by_name[name] = traits
-
-    for trait_name, count in inferred_trait_counts.items():
-        trait_tiers_by_name.setdefault(trait_name, list(range(1, count + 1)))
-    return role_traits_by_name, trait_tiers_by_name
+def _slot_response_from_catalog_match(value: Any, match) -> dict[str, Any]:
+    response = _slot_value_from_catalog_match(value, match)
+    if match.match_kind != "exact":
+        if match.raw_name is not None:
+            response["raw_name"] = match.raw_name
+        response["match_score"] = match.match_score
+        response["match_kind"] = match.match_kind
+    return response
 
 
-def _with_slot_traits(value: Any, *, role_traits_by_name: dict[str, list[str]]) -> Any:
+def _resolve_catalog_slot_value(
+    value: Any,
+    *,
+    catalog: CwCatalog | None,
+    position: dict[str, Any] | None,
+) -> tuple[Any, Any, list[dict[str, Any]]]:
     name = _slot_value_name(value)
-    if not name:
-        return None
-    traits = role_traits_by_name.get(name) or []
-    if isinstance(value, dict):
-        enriched = dict(value)
-        if traits:
-            enriched["traits"] = list(traits)
-        return enriched
-    if traits:
-        return {"name": name, "traits": list(traits)}
-    return value
+    if catalog is None or not catalog.roles or not name:
+        return None, None, []
+
+    match = resolve_cw_role_name(name, catalog, position=position)
+    if match is None:
+        return None, None, []
+
+    warnings = [match.warning] if isinstance(match.warning, dict) else []
+    return _slot_value_from_catalog_match(value, match), _slot_response_from_catalog_match(value, match), warnings
+
+
+def _canonicalize_slot_value(
+    value: Any,
+    *,
+    catalog: CwCatalog | None,
+    area: str,
+    index: int,
+    authoritative_candidates: list[str],
+    slot_candidates: list[str],
+) -> tuple[Any, Any, list[dict[str, Any]]]:
+    stable, response, warnings = _resolve_catalog_slot_value(
+        value,
+        catalog=catalog,
+        position={"kind": "slot", "area": area, "index": index},
+    )
+    if stable is not None or response is not None:
+        return stable, response, warnings
+
+    stable = _strip_slot_match_diagnostics(
+        _normalize_slot_value(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates)
+    )
+    return stable, deepcopy(stable), []
+
+
+def _canonicalize_area_snapshot(
+    values: list[Any],
+    *,
+    area: str,
+    catalog: CwCatalog | None,
+    authoritative_candidates: list[str],
+    slot_candidates: list[str],
+) -> tuple[list[Any], list[Any], list[dict[str, Any]]]:
+    stable_values: list[Any] = []
+    response_values: list[Any] = []
+    warnings: list[dict[str, Any]] = []
+    for index, value in enumerate(values):
+        stable, response, slot_warnings = _canonicalize_slot_value(
+            value,
+            catalog=catalog,
+            area=area,
+            index=index,
+            authoritative_candidates=authoritative_candidates,
+            slot_candidates=slot_candidates,
+        )
+        stable_values.append(stable)
+        response_values.append(response)
+        warnings.extend(slot_warnings)
+    return stable_values, response_values, warnings
 
 
 def _summarize_field_trait_status(front: list[Any], back: list[Any], *, guide_config: dict[str, Any] | None) -> list[dict[str, Any]]:
-    role_traits_by_name, trait_tiers_by_name = _build_slot_trait_catalog(guide_config)
-    owned_counts: dict[str, int] = {}
-    for value in list(front) + list(back):
-        name = _slot_value_name(value)
-        if not name:
-            continue
-        if isinstance(value, dict) and isinstance(value.get("traits"), list):
-            traits = [str(item) for item in value.get("traits") if str(item)]
-        else:
-            traits = role_traits_by_name.get(name) or []
-        for trait in traits:
-            owned_counts[trait] = owned_counts.get(trait, 0) + 1
-
-    summary: list[dict[str, Any]] = []
-    for trait, owned_roles in owned_counts.items():
-        tiers = trait_tiers_by_name.get(trait) or list(range(1, owned_roles + 1))
-        active_tier = 0
-        for tier in tiers:
-            if owned_roles >= tier:
-                active_tier = tier
-        total_tiers = len(tiers)
-        ratio = 0.0 if total_tiers == 0 else round(active_tier / total_tiers, 2)
-        summary.append(
-            {
-                "trait": trait,
-                "tiers": tiers,
-                "owned_roles": owned_roles,
-                "active_tier": active_tier,
-                "total_tiers": total_tiers,
-                "ratio": ratio,
-            }
-        )
-
-    summary.sort(key=lambda item: (-float(item.get("ratio", 0.0)), -int(item.get("owned_roles", 0)), str(item.get("trait") or "")))
-    return summary[:10]
+    return summarize_cw_field_traits(front=front, back=back, catalog=build_cw_catalog(guide_config))
 
 
 def _next_slots_stale(previous: dict[str, Any], *, parsed_targets: dict[str, set[int]] | None) -> bool:
@@ -489,17 +487,28 @@ def _slot_role_count(front: list[Any], back: list[Any], hand: list[Any]) -> dict
     }
 
 
+def _format_agent_slot_reference(value: str) -> str:
+    area, separator, raw_index = value.partition(":")
+    if separator == ":" and area in SLOT_POINTS_BY_AREA and raw_index.isdecimal():
+        return f"{area}:{int(raw_index) + 1}"
+    return value
+
+
+def _format_agent_hand_slot(slot: int) -> int:
+    return slot + 1
+
+
 def _parse_slot_reference(value: str, *, allowed_areas: set[str] | None = None) -> tuple[str, int]:
     area, separator, raw_index = value.partition(":")
     if separator != ":" or not raw_index.isdecimal():
-        raise TrailError("SLOTS_POSITION_INVALID", f"invalid slot position: {value}")
+        raise TrailError("SLOTS_POSITION_INVALID", f"invalid slot position: {_format_agent_slot_reference(value)}")
     if allowed_areas is not None and area not in allowed_areas:
-        raise TrailError("SLOTS_POSITION_INVALID", f"invalid slot position: {value}")
+        raise TrailError("SLOTS_POSITION_INVALID", f"invalid slot position: {_format_agent_slot_reference(value)}")
 
     index = int(raw_index)
     points = _slot_points(area)
     if index < 0 or index >= len(points):
-        raise TrailError("SLOTS_POSITION_INVALID", f"invalid slot position: {value}")
+        raise TrailError("SLOTS_POSITION_INVALID", f"invalid slot position: {_format_agent_slot_reference(value)}")
     return area, index
 
 
@@ -508,7 +517,7 @@ def _ensure_fieldable_target(runtime, *, target: str) -> None:
     if box is None:
         return
     runtime.click_point(*INFO_DISMISS_POINT)
-    raise TrailError("SLOTS_CANNOT_BE_FIELDED", f"target slot cannot field character: {target}")
+    raise TrailError("SLOTS_CANNOT_BE_FIELDED", f"target slot cannot field character: {_format_agent_slot_reference(target)}")
 
 
 def build_cw_slots_reader(runtime, targets: list[str] | None = None) -> SlotsSnapshotReader:
@@ -580,7 +589,7 @@ def build_cw_slot_swapper(runtime) -> SlotMover:
 def build_cw_hand_seller(runtime) -> HandSeller:
     def seller(slot: int) -> None:
         if slot < 0 or slot >= len(HAND_SLOT_POINTS):
-            raise TrailError("SLOTS_POSITION_INVALID", f"invalid hand slot: {slot}")
+            raise TrailError("SLOTS_POSITION_INVALID", f"invalid hand slot: {_format_agent_hand_slot(slot)}")
         runtime.drag_to(*HAND_SLOT_POINTS[slot], *SELL_SLOT_POINT)
 
     return seller
@@ -600,7 +609,7 @@ def read_cw_slots(
     reader: SlotsSnapshotReader,
     targets: list[str] | None = None,
     guide_config: dict[str, Any] | None = None,
-) -> SessionModel:
+) -> CwSlotsReadApplied:
     result = reader()
     if isinstance(result, CwSlotsReadResult):
         front, back, hand = result.front, result.back, result.hand
@@ -611,13 +620,36 @@ def read_cw_slots(
     cw_state = ensure_cw_state(session)
     previous = cw_state.get("slots") if isinstance(cw_state.get("slots"), dict) else {}
     parsed_targets = _parse_slot_targets(targets)
+    catalog = build_cw_catalog(guide_config) if isinstance(guide_config, dict) else None
     authoritative_candidates, slot_candidates = _session_slot_name_candidates(cw_state)
-    front = [_normalize_slot_value(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in front]
-    back = [_normalize_slot_value(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in back]
-    hand = [_normalize_slot_value(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates) for value in hand]
-    merged_front = _merge_area_snapshot(previous.get("front"), front, size=len(FRONT_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["front"])
-    merged_back = _merge_area_snapshot(previous.get("back"), back, size=len(BACK_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["back"])
-    merged_hand = _merge_area_snapshot(previous.get("hand"), hand, size=len(HAND_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["hand"])
+    front, response_front, front_warnings = _canonicalize_area_snapshot(
+        front,
+        area="front",
+        catalog=catalog,
+        authoritative_candidates=authoritative_candidates,
+        slot_candidates=slot_candidates,
+    )
+    back, response_back, back_warnings = _canonicalize_area_snapshot(
+        back,
+        area="back",
+        catalog=catalog,
+        authoritative_candidates=authoritative_candidates,
+        slot_candidates=slot_candidates,
+    )
+    hand, response_hand, hand_warnings = _canonicalize_area_snapshot(
+        hand,
+        area="hand",
+        catalog=catalog,
+        authoritative_candidates=authoritative_candidates,
+        slot_candidates=slot_candidates,
+    )
+    match_warnings = [*front_warnings, *back_warnings, *hand_warnings]
+    previous_front = _strip_area_match_diagnostics(previous.get("front"))
+    previous_back = _strip_area_match_diagnostics(previous.get("back"))
+    previous_hand = _strip_area_match_diagnostics(previous.get("hand"))
+    merged_front = _merge_area_snapshot(previous_front, front, size=len(FRONT_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["front"])
+    merged_back = _merge_area_snapshot(previous_back, back, size=len(BACK_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["back"])
+    merged_hand = _merge_area_snapshot(previous_hand, hand, size=len(HAND_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["hand"])
     if _slots_read_empty_snapshot(
         previous,
         parsed_targets=parsed_targets,
@@ -629,28 +661,38 @@ def read_cw_slots(
         merged_hand=merged_hand,
     ):
         raise TrailError("SLOTS_READ_EMPTY", "未读取到任何货币战争槽位角色，请确认当前在编队界面")
-    if guide_config is not None:
-        role_traits_by_name, _ = _build_slot_trait_catalog(guide_config)
-        merged_front = [_with_slot_traits(value, role_traits_by_name=role_traits_by_name) for value in merged_front]
-        merged_back = [_with_slot_traits(value, role_traits_by_name=role_traits_by_name) for value in merged_back]
-        merged_hand = [_with_slot_traits(value, role_traits_by_name=role_traits_by_name) for value in merged_hand]
+    fact_front, fact_back, fact_hand = merged_front, merged_back, merged_hand
+    if parsed_targets is not None and previous.get("stale", True) is not False:
+        fact_front, fact_back, fact_hand = front, back, hand
+    output_front = _merge_area_snapshot(merged_front, response_front, size=len(FRONT_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["front"])
+    output_back = _merge_area_snapshot(merged_back, response_back, size=len(BACK_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["back"])
+    output_hand = _merge_area_snapshot(merged_hand, response_hand, size=len(HAND_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["hand"])
     cw_state["slots"] = {
         "front": deepcopy(merged_front),
         "back": deepcopy(merged_back),
         "hand": deepcopy(merged_hand),
         "stale": _next_slots_stale(previous, parsed_targets=parsed_targets),
     }
-    if guide_config is not None:
-        trait_summary = _summarize_field_trait_status(merged_front, merged_back, guide_config=guide_config)
+    response_snapshot = {
+        "front": deepcopy(output_front),
+        "back": deepcopy(output_back),
+        "hand": deepcopy(output_hand),
+        "stale": cw_state["slots"]["stale"],
+    }
+    if catalog is not None:
+        trait_summary = summarize_cw_field_traits(front=fact_front, back=fact_back, catalog=catalog)
         if trait_summary:
             cw_state["slots"]["trait_summary"] = deepcopy(trait_summary)
+            response_snapshot["trait_summary"] = deepcopy(trait_summary)
+    if match_warnings:
+        response_snapshot["warnings"] = deepcopy(match_warnings)
     if stage_status is not None:
         stage._replace_stage_fields(
             session,
-            status={**stage_status, "role_count": _slot_role_count(merged_front, merged_back, merged_hand)},
+            status={**stage_status, "role_count": _slot_role_count(fact_front, fact_back, fact_hand)},
         )
     _clear_sell_plan(cw_state)
-    return session
+    return CwSlotsReadApplied(session=session, response_snapshot=response_snapshot)
 
 
 def _normalize_place_actions(actions: list[dict[str, str]]) -> list[tuple[str, str]]:
@@ -680,7 +722,7 @@ def _normalize_sell_slots(slots: list[int]) -> list[int]:
         if not isinstance(slot, int) or isinstance(slot, bool):
             raise TrailError("CW_OPTION_INVALID", f"cw hand sell slot invalid: {slot!r}")
         if slot < 0 or slot >= len(HAND_SLOT_POINTS):
-            raise TrailError("SLOTS_POSITION_INVALID", f"invalid hand slot: {slot}")
+            raise TrailError("SLOTS_POSITION_INVALID", f"invalid hand slot: {_format_agent_hand_slot(slot)}")
         normalized.append(slot)
     return normalized
 

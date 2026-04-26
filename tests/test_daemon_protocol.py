@@ -336,6 +336,11 @@ def _set_shop(session, shop: dict):
     return session
 
 
+def _set_shop_applied(session, shop: dict):
+    refreshed = _set_shop(session, shop)
+    return SimpleNamespace(session=refreshed, scene_state=refreshed.scene_state, response_snapshot=dict(shop))
+
+
 def _box(alias: str, *, left: int, top: int, width: int = 40, height: int = 20) -> dict[str, object]:
     return {"left": left, "top": top, "width": width, "height": height, "source": alias}
 
@@ -1926,6 +1931,53 @@ def test_command_service_routes_cw_captured_reads_through_handle_with_capture(
     ]
 
 
+def test_command_service_routes_cw_slots_read_payload_without_agent_slot_conversion(tmp_path: Path):
+    class StubCwService:
+        def __init__(self):
+            self.capture_calls: list[dict[str, object]] = []
+
+        def handle(self, **kwargs):
+            raise AssertionError("cw.slots.read must use captured read routing")
+
+        def handle_mutation(self, **kwargs):
+            raise AssertionError("cw.slots.read must not use mutation journal")
+
+        def handle_with_capture(self, **kwargs):
+            self.capture_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "data": {"front": ["希儿"], "back": [], "hand": [], "stale": False},
+                "screenshot": tmp_path / ".trail" / "shots" / f"{kwargs['request_id']}.png",
+                "image_guidance": {"read_image_first": 1},
+                "timing": {},
+                "warnings": [],
+                "references": [],
+                "debug": None,
+                "error": None,
+            }
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = StubCwService()
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-cw-slots-read-zero-based-routing",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.slots.read",
+        payload={"session_id": session.session_id, "slot": ["front:0"]},
+    )
+
+    response = command_service.handle(request)
+
+    assert response["ok"] is True
+    assert cw_service.capture_calls[0]["payload"] == {"session_id": session.session_id, "slot": ["front:0"]}
+
+
 def test_command_service_routes_cw_shop_status_through_plain_handle(tmp_path: Path):
     class StubCwService:
         def __init__(self):
@@ -1971,6 +2023,57 @@ def test_command_service_routes_cw_shop_status_through_plain_handle(tmp_path: Pa
             "session_service": service,
         }
     ]
+
+
+@pytest.mark.parametrize("slots_state", [None, {"front": [], "back": [], "hand": [], "stale": True}])
+def test_command_service_cw_shop_status_sanitizes_persisted_transient_shop_fields(tmp_path: Path, slots_state):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    loaded = service.load_session(session.session_id)
+    cw_state = loaded.scene_state.setdefault("cw", {})
+    if slots_state is None:
+        cw_state.pop("slots", None)
+    else:
+        cw_state["slots"] = dict(slots_state)
+    cw_state["shop"] = {
+        "items": [{"slot": 1, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}],
+        "coins": 62,
+        "reserve_full": False,
+        "stale": False,
+        "warnings": [{"code": "CW_ROLE_MATCH_LOW_CONFIDENCE", "message": "stale warning"}],
+        "trait_summary": [
+            {"trait": "仙舟", "tiers": [1, 3], "owned_roles": 1, "active_tier": 1, "total_tiers": 2, "ratio": 0.33}
+        ],
+    }
+    service.save_session(loaded)
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+    request = DaemonRequest(
+        request_id="req-cw-shop-status-sanitize-transient",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.shop.status",
+        payload={"session_id": session.session_id},
+    )
+
+    response = command_service.handle(request)
+    persisted_shop = service.load_session(session.session_id).scene_state["cw"]["shop"]
+
+    assert response["ok"] is True
+    assert response["data"]["items"] == [{"slot": 1, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}]
+    assert "warnings" not in response["data"]
+    assert "trait_summary" not in response["data"]
+    assert "warnings" not in persisted_shop
+    assert "trait_summary" not in persisted_shop
 
 
 def test_command_service_handles_cw_stage_detect_with_request_scoped_capture(tmp_path: Path, monkeypatch):
@@ -2022,6 +2125,63 @@ def test_command_service_handles_cw_stage_detect_with_request_scoped_capture(tmp
     with pytest.raises(TrailError) as exc_info:
         service.request_status(request.request_id)
     assert exc_info.value.code == "REQUEST_NOT_FOUND"
+
+
+def test_cw_captured_read_promotes_scene_warnings_and_removes_saved_warnings(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    runtime_warning = {"code": "RUNTIME_WARNING", "message": "runtime warning"}
+    scene_warning = {
+        "code": "CW_ROLE_MATCH_LOW_CONFIDENCE",
+        "query": "交光",
+        "resolved": "爻光",
+        "score": 0.5,
+        "message": "角色名未精确命中，请先看截图确认",
+    }
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional
+            return tmp_path / ".trail" / "shots" / f"{request_id}.png"
+
+        def collect_warnings(self):
+            return [runtime_warning]
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    def fake_detect_cw_stage(session, detector):
+        del detector
+        session.scene_state.setdefault("cw", {})["stage"] = {
+            "value": "preparation",
+            "stale": False,
+            "warnings": [scene_warning],
+        }
+        return session
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    cw_service = CwService(runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: runtime))
+    monkeypatch.setattr("trail.daemon.cw_service.stage_detector_factory", lambda runtime: object())
+    monkeypatch.setattr("trail.daemon.cw_service.detect_cw_stage", fake_detect_cw_stage)
+
+    payload = cw_service.handle_with_capture(
+        method="cw.stage.detect",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+        request_id="req-cw-stage-warning-promotion",
+        verbose=False,
+    )
+
+    assert payload["ok"] is True
+    assert payload["data"] == {"value": "preparation", "stale": False}
+    assert payload["warnings"] == [runtime_warning, scene_warning]
+    persisted = session_service.load_session(session.session_id)
+    assert persisted.scene_state["cw"]["stage"] == {"value": "preparation", "stale": False}
 
 
 def test_command_service_handles_cw_enter_world_to_home(tmp_path: Path):
@@ -2609,7 +2769,7 @@ def test_command_service_handles_cw_slots_place_known_failure_as_completed(tmp_p
         del actions, placer
         session.scene_state.setdefault("cw", {})["slots"] = {"front": ["希儿"], "back": [], "hand": [], "stale": True}
         session.scene_state["cw"]["sell_plan"] = {}
-        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:0")
+        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:1")
         error.known_failure_after_save = True
         raise error
 
@@ -2634,7 +2794,7 @@ def test_command_service_handles_cw_slots_place_known_failure_as_completed(tmp_p
     assert payload["ok"] is False
     assert payload["error"] == {
         "code": "SLOTS_CANNOT_BE_FIELDED",
-        "message": "target slot cannot field character: front:0",
+        "message": "target slot cannot field character: front:1",
     }
     assert payload["screenshot"] == ".trail/shots/req-cw-slots-place-known-fail.png"
     assert status["final_state"] == "completed"
@@ -2667,7 +2827,7 @@ def test_command_service_handles_cw_known_failure_with_non_deepcopy_data_as_comp
     def fail_after_partial_execution(session, actions, placer):
         del actions, placer
         session.scene_state.setdefault("cw", {})["slots"] = {"front": ["希儿"], "back": [], "hand": [], "stale": True}
-        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:0")
+        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:1")
         error.known_failure_after_save = True
         error.data = {"payload": BadDeepcopy()}
         raise error
@@ -2738,6 +2898,54 @@ def test_cw_mutation_scope_collects_trace_emitted_before_auto_capture(tmp_path: 
             }
         ]
     }
+
+
+def test_cw_mutation_promotes_scene_warnings_and_preserves_runtime_warnings(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ScopedDebugProtocolRuntime(tmp_path / "cw-start-warning-promotion.png")
+    runtime.warnings = [{"code": "RUNTIME_WARNING", "message": "runtime warning"}]
+    service = CwService(runtime_service=ProtocolRuntimeService(runtime))
+    scene_warning = {
+        "code": "CW_ROLE_MATCH_FUZZY",
+        "query": "交光",
+        "resolved": "爻光",
+        "score": 0.75,
+        "message": "角色名未精确命中，请先看截图确认",
+    }
+
+    def fake_start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None):
+        del runtime, mode, difficulty, battle_mode, workspace_root
+        session.scene_state.setdefault("cw", {})["portal"] = {"cards": [], "warnings": [scene_warning]}
+        return session.scene_state["cw"]["portal"]
+
+    monkeypatch.setattr("trail.daemon.cw_service._start_cw", fake_start_cw)
+
+    payload = service.handle_mutation(
+        method="cw.start",
+        payload={
+            "session_id": session.session_id,
+            "mode": "new",
+            "difficulty": "lowest",
+            "battle_mode": "standard",
+        },
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+        request_id="req-cw-start-warning-promotion",
+        verbose=False,
+    )
+
+    assert payload["ok"] is True
+    assert payload["data"] == {"cards": []}
+    assert payload["warnings"] == [
+        {"code": "RUNTIME_WARNING", "message": "runtime warning"},
+        scene_warning,
+    ]
+    persisted = session_service.load_session(session.session_id)
+    assert persisted.scene_state["cw"]["portal"] == {"cards": []}
 
 
 def test_cw_mutation_scope_keeps_verbose_trace_for_unknown_side_effect_result(tmp_path: Path, monkeypatch):
@@ -3018,7 +3226,7 @@ def test_command_service_handles_cw_slots_place_known_failure_save_error_as_appl
         del actions, placer
         session.scene_state.setdefault("cw", {})["slots"] = {"front": ["希儿"], "back": [], "hand": [], "stale": True}
         session.scene_state["cw"]["sell_plan"] = {}
-        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:0")
+        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:1")
         error.known_failure_after_save = True
         raise error
 
@@ -3069,7 +3277,7 @@ def test_command_service_handles_cw_slots_place_known_failure_capture_error_as_p
         del actions, placer
         session.scene_state.setdefault("cw", {})["slots"] = {"front": ["希儿"], "back": [], "hand": [], "stale": True}
         session.scene_state["cw"]["sell_plan"] = {}
-        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:0")
+        error = TrailError("SLOTS_CANNOT_BE_FIELDED", "target slot cannot field character: front:1")
         error.known_failure_after_save = True
         raise error
 
@@ -5118,7 +5326,10 @@ def test_command_service_routes_cw_shop_buy_slot_through_mutation_journal(tmp_pa
     monkeypatch.setattr("trail.daemon.cw_service.shop_scanner_factory", lambda runtime: object())
     monkeypatch.setattr(
         "trail.daemon.cw_service.buy_cw_shop_slot",
-        lambda session, slot, expect, buyer, scanner: _set_shop(session, {"slot": slot, "expect": expect}),
+        lambda session, slot, expect, buyer, scanner, guide_config: _set_shop_applied(
+            session,
+            {"slot": slot, "expect": expect},
+        ),
     )
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
@@ -5191,10 +5402,11 @@ def test_command_service_handles_cw_shop_buy_exp_through_mutation_journal(tmp_pa
 
         return scanner
 
-    def fake_buy_exp(session, *, buyer, scanner):
+    def fake_buy_exp(session, *, buyer, scanner, guide_config):
+        del guide_config
         buyer()
         session.scene_state.setdefault("cw", {})["shop"] = scanner()
-        return session
+        return SimpleNamespace(session=session, scene_state=session.scene_state, response_snapshot=session.scene_state["cw"]["shop"])
 
     monkeypatch.setattr("trail.daemon.cw_service.shop_exp_buyer_factory", fake_buyer_factory)
     monkeypatch.setattr("trail.daemon.cw_service.shop_scan_snapshot_reader_factory", fake_scanner_factory)
@@ -5257,8 +5469,8 @@ def test_command_service_marks_cw_shop_buy_exp_post_click_failure_recoverable(tm
         assert getattr(factory_runtime, "_runtime", factory_runtime) is runtime
         return lambda: factory_runtime.click_point(*SHOP_EXP_BUY_POINT)
 
-    def fake_buy_exp(session, *, buyer, scanner):
-        del session, scanner
+    def fake_buy_exp(session, *, buyer, scanner, guide_config):
+        del session, scanner, guide_config
         buyer()
         raise TrailError("CW_SHOP_SCAN_FAILED", "shop scan failed after buying exp")
 

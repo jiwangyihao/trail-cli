@@ -28,17 +28,18 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 
 - 若上一条命令输出 `shot path=...` 和 `info read_image_first=1`，必须先读取原始截图。
 - 若上一条 `cw.portal.select` success 输出含 `info skill_info=运营思路 text=...`，必须先把它读作当前攻略的动态提醒；它不是已解析策略，必须不发明默认优先级。
+- 若 `slots.read` 或 `shop.scan` 输出 `match_kind=low_confidence`、`raw_name` 或低置信度 `warn`，必须先读截图确认，再接受 canonicalized 名称。
 - 不确定阶段时先用 `trail cw stage detect --session <id>` 或 `trail cw stage wait --session <id>`。
 - 如果截图和结构化文本冲突，以截图为准并重新读取相关事实。
 
 ## Command Surface
 
 - `trail cw stage detect|wait`：确认当前 CW 阶段。
-- `trail cw slots read`：读取前台、后台、手牌和羁绊摘要。
-- `trail cw shop scan|status|buy-slot|buy-exp|refresh|close`：读取和执行商店动作。
+- `trail cw slots read`：读取前台、后台、手牌和羁绊摘要；Agent 可见槽位编号从 1 开始。
+- `trail cw shop scan|status|buy-slot|buy-exp|refresh|close`：读取和执行商店动作；`shop.scan` 有截图，`shop.status` 无截图。
 - `trail cw crystals collect`：执行晶矿收集动作，但是否执行属于后续策略决策。
 - `trail cw hand sell-plan|sell`：读取或执行卖牌动作。
-- `trail cw battle run --timeout 570`：执行出战和战斗链，但是否出战属于后续策略决策。
+- `trail cw battle run`：执行出战和战斗链，但是否出战属于后续策略决策。
 
 ## Autonomy Boundary
 

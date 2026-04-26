@@ -250,11 +250,13 @@ class CwService:
         )
 
         capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id)
-        return with_selective_capture(
+        scene_warnings: list[dict] = []
+        response = with_selective_capture(
             capture_runtime,
-            lambda: _handle_and_save_session(handlers[method], session_service, session),
+            lambda: _handle_and_save_session(handlers[method], session_service, session, scene_warnings),
             verbose=verbose,
         )
+        return _merge_envelope_warnings(response, scene_warnings)
 
     def handle_mutation(
         self,
@@ -372,6 +374,8 @@ class CwService:
                 attach_runtime_debug(error)
                 raise
 
+            result, scene_warnings = _pop_scene_warnings(result)
+
             try:
                 session_service.save_session(session)
             except Exception as error:
@@ -387,7 +391,8 @@ class CwService:
                     request_id,
                     extra_delay_seconds=extra_delay_seconds,
                 )
-                return with_auto_capture(capture_runtime, lambda: result, verbose=verbose)
+                response = with_auto_capture(capture_runtime, lambda: result, verbose=verbose)
+                return _merge_envelope_warnings(response, scene_warnings)
             except Exception as error:
                 screenshot = _safe_capture_after_action(capture_runtime)
                 raise PersistedButResponseUnknown(
@@ -480,6 +485,41 @@ class CwService:
             guide = _require_selected_guide(session)
             return _apply_selected_guide_via_ui(session, runtime=runtime(), guide=guide)
 
+        def run_shop_scan() -> dict:
+            base_config = fetch_cw_guide_config(workspace_root=workspace_root)
+            applied = scan_cw_shop(
+                session,
+                scanner=_build_shop_snapshot_reader(runtime()),
+                guide_config=base_config,
+            )
+            trait_config = _fetch_shop_field_trait_config(session, workspace_root=workspace_root)
+            return project_cw_shop_snapshot(
+                applied.session,
+                guide_config=trait_config,
+                include_field_trait_summary=trait_config is not None,
+                shop_snapshot=applied.response_snapshot,
+            )
+
+        def run_shop_buy_slot() -> dict:
+            base_config = fetch_cw_guide_config(workspace_root=workspace_root)
+            return buy_cw_shop_slot(
+                session,
+                slot=payload["slot"],
+                expect=payload["expect"],
+                buyer=shop_buyer_factory(runtime()),
+                scanner=shop_scanner_factory(runtime()),
+                guide_config=base_config,
+            ).response_snapshot
+
+        def run_shop_buy_exp() -> dict:
+            base_config = fetch_cw_guide_config(workspace_root=workspace_root)
+            return buy_cw_shop_exp(
+                session,
+                buyer=shop_exp_buyer_factory(runtime()),
+                scanner=_build_shop_snapshot_reader(runtime(), read_stage_status=True),
+                guide_config=base_config,
+            ).response_snapshot
+
         handlers = {
             "cw.enter": lambda: validated_enter_payload() and enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
             "cw.start": run_start,
@@ -534,8 +574,8 @@ class CwService:
                 session,
                 reader=slots_reader_factory(runtime(), targets=payload.get("slot")),
                 targets=payload.get("slot"),
-                guide_config=fetch_cw_guide_config(workspace_root=workspace_root),
-            ).scene_state["cw"]["slots"],
+                guide_config=fetch_cw_guide_config(workspace_root=workspace_root, enrich_traits=True),
+            ).response_snapshot,
             "cw.slots.swap": lambda: swap_cw_slots(
                 session,
                 source=payload["source"],
@@ -551,24 +591,9 @@ class CwService:
                 session,
                 opener=shop_opener_factory(runtime()),
             ).scene_state["cw"]["shop"],
-            "cw.shop.scan": lambda: project_cw_shop_snapshot(
-                scan_cw_shop(
-                    session,
-                    scanner=_build_shop_snapshot_reader(runtime()),
-                )
-            ),
-            "cw.shop.buy_slot": lambda: buy_cw_shop_slot(
-                session,
-                slot=payload["slot"],
-                expect=payload["expect"],
-                buyer=shop_buyer_factory(runtime()),
-                scanner=shop_scanner_factory(runtime()),
-            ).scene_state["cw"]["shop"],
-            "cw.shop.buy_exp": lambda: buy_cw_shop_exp(
-                session,
-                buyer=shop_exp_buyer_factory(runtime()),
-                scanner=_build_shop_snapshot_reader(runtime(), read_stage_status=True),
-            ).scene_state["cw"]["shop"],
+            "cw.shop.scan": run_shop_scan,
+            "cw.shop.buy_slot": run_shop_buy_slot,
+            "cw.shop.buy_exp": run_shop_buy_exp,
             "cw.shop.refresh": lambda: refresh_cw_shop(
                 session,
                 refresher=shop_refresher_factory(runtime()),
@@ -577,7 +602,7 @@ class CwService:
                 session,
                 closer=shop_closer_factory(runtime()),
             ).scene_state["cw"]["shop"],
-            "cw.shop.status": lambda: _shop_status(session, artifact_store=artifact_store),
+            "cw.shop.status": lambda: _shop_status(session, artifact_store=artifact_store, workspace_root=workspace_root),
             "cw.crystals.collect": lambda: collect_cw_crystals(
                 session,
                 collector=crystal_collector_factory(runtime()),
@@ -649,10 +674,28 @@ class CwService:
         return session, artifact_store, runtime, handlers, tracker, end_runtime_scope_if_started, runtime_if_started
 
 
-def _handle_and_save_session(handler, session_service, session):
+def _handle_and_save_session(handler, session_service, session, scene_warnings: list[dict] | None = None):
     result = handler()
+    result, warnings = _pop_scene_warnings(result)
+    if scene_warnings is not None:
+        scene_warnings.extend(warnings)
     session_service.save_session(session)
     return result
+
+
+def _pop_scene_warnings(data: object) -> tuple[object, list[dict]]:
+    if not isinstance(data, dict):
+        return data, []
+    raw = data.pop("warnings", None)
+    return deepcopy(data), deepcopy(raw) if isinstance(raw, list) else []
+
+
+def _merge_envelope_warnings(envelope: dict, warnings: list[dict]) -> dict:
+    if not warnings:
+        return envelope
+    merged = deepcopy(envelope)
+    merged["warnings"] = [*deepcopy(merged.get("warnings") or []), *deepcopy(warnings)]
+    return merged
 
 
 def _current_guide(session, *, artifact_store: ArtifactStore):
@@ -682,9 +725,28 @@ def _operation_guide_skill_info(guide: dict | None) -> list[dict[str, str]]:
     return [{"name": "运营思路", "text": operation_guide}]
 
 
-def _shop_status(session, *, artifact_store: ArtifactStore) -> dict:
+def _shop_has_fresh_slots(session) -> bool:
+    cw_state = session.scene_state.get("cw")
+    slots = cw_state.get("slots") if isinstance(cw_state, dict) else None
+    if not isinstance(slots, dict) or slots.get("stale", True) is not False:
+        return False
+    return isinstance(slots.get("front"), list) or isinstance(slots.get("back"), list)
+
+
+def _fetch_shop_field_trait_config(session, *, workspace_root: str) -> dict | None:
+    if not _shop_has_fresh_slots(session):
+        return None
+    return fetch_cw_guide_config(workspace_root=workspace_root, enrich_traits=True)
+
+
+def _shop_status(session, *, artifact_store: ArtifactStore, workspace_root: str) -> dict:
     del artifact_store
-    payload = shop_cw_status(session)
+    trait_config = _fetch_shop_field_trait_config(session, workspace_root=workspace_root)
+    payload = shop_cw_status(
+        session,
+        guide_config=trait_config,
+        include_field_trait_summary=trait_config is not None,
+    )
     cw_state = session.scene_state.get("cw")
     guide_state = cw_state.get("guide") if isinstance(cw_state, dict) else None
     if not isinstance(guide_state, dict):
