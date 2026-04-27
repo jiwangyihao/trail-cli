@@ -28,7 +28,7 @@ description: 当上游已经用 `cw start` 成功进入货币战争投资环境�
 - 如果当前还没定攻略，就先切到 `trail-cw-guide` 的无人值守模式，让它在当前环境页上下文里挑出最合适的攻略，再回到 portal 流程决定选哪个环境。
 - 如果不允许刷开局，仍可先做一次 refresh；只有在已确认 `环境优先` 时，portal 才在当前可见环境里选最贴近目标的一项；如果未确定攻略，则必须切到 `trail-cw-guide` 的无人值守模式，不由 portal 直接拍板。
 - 只有当没有带 `待收集=1` 的环境，或所有推荐攻略互动数据都 < 5000 时，才允许先做一次 refresh，然后再综合选择；`版本过旧` 只作为权衡因素，不设硬阈值。
-- `cw.portal.select` / `portal select --card-idx ...` 成功后会输出 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`，并自动收集水晶、slots/shop/stage 预备事实并关闭商店；先读 screenshot，再参考输出中的 slots/shop/stage facts，不要手动再跑 slots/shop 初始扫描，按 handoff 切到 `trail-cw-prep`；如果 auto-collect 失败并输出 recover/taint 或失败状态，先按恢复语义处理，不要继续假设已进入 prep 并操作商店。
+- `cw.portal.select` / `portal select --card-idx ...` 成功后会输出 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`，并自动收集水晶、slots/shop/stage 预备事实并关闭商店；先读 screenshot，再参考输出中的 slots/shop/stage facts，不要手动再跑 slots/shop 初始扫描，按 handoff 切到 `trail-cw-prep`；如果 auto-collect 失败并输出 recover/taint 或失败状态，先按恢复语义处理，不要继续假设已进入 prep 并操作商店。消费 `cw.portal.select` 带截图 success 时必须先读截图；`# ` 行只是板块标题，不是事实行，不要当作 action/prefix。读完截图后，再消费这些标题下的事实：`# 综合信息` 下看 stage/status，`# 攻略提示` 下看 skill_info，`# 角色信息` 下看 slot，`# 羁绊信息` 下看 trait summary，`# 商店信息` 下看 item/coins/reserve facts。
 
 ## When To Hand Off To trail-cw-guide
 

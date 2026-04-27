@@ -272,6 +272,9 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert "- `info read_image_first=1` 只出现在带截图的 success 文本路径，表示 Agent 必须先阅读本次命令返回的原始截图，再参考后续压缩文本" in readme
+    assert "- 默认正文允许出现 `# 标题` 行作为板块标题" in readme
+    assert "`# 标题` 行不是正文前缀，也不承载事实" in readme
+    assert "`# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`" in readme
     assert "只要当前命令有截图，就会先输出 `shot path=...`，再输出 `info read_image_first=1`" not in readme
     assert "- 默认失败路径只要当前结果携带 `request_id`，就会保留 `request id=<id>`，用于恢复与排障" in readme
     assert (
@@ -305,10 +308,23 @@ def test_readme_mentions_text_output_protocol() -> None:
     )
     _assert_text_contains_in_order(
         readme,
+        "ok cw.slots.read front=1 back=0 hand=1 stale=0",
+        "shot path=.trail/shots/req-slots.png\ninfo read_image_first=1",
+        "# 综合信息",
+        "info stage=preparation stale=0",
+        "# 角色信息",
+        "slot pos=front:1 name=希儿 star=1 traits=巡猎",
+        "# 羁绊信息",
+        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+    )
+    _assert_text_contains_in_order(
+        readme,
         "ok cw.shop.scan opened=1 stale=0 count=2",
         "shot path=.trail/shots/req-shop.png\ninfo read_image_first=1",
+        "# 商店信息",
         "item idx=1 slot=1 name=希儿 cost=2",
         "info coins=40 reserve_full=0",
+        "# 综合信息",
         "info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0",
     )
     assert "```text\nok cw.shop.status count=2\nshot path=.trail/shots/req-shop.png\n" not in readme
@@ -321,8 +337,11 @@ def test_readme_mentions_text_output_protocol() -> None:
         readme,
         "ok cw.shop.buy_exp opened=1 stale=0 count=1",
         "shot path=.trail/shots/req-buy-exp.png\ninfo read_image_first=1",
+        "# 商店信息",
         "item idx=1 slot=1 name=灵砂 cost=3",
-        "info coins=36 level=4 exp=0/8 reserve_full=0 team_size=4/4",
+        "info coins=36 reserve_full=0",
+        "# 综合信息",
+        "info level=4 exp=0/8 team_size=4/4",
     )
     assert "商店快照里的 `coins` / `level` / `exp` / `reserve_full` / `team_size` 当前只在 `trail cw shop scan` 与 `trail cw shop status` 暴露" not in readme
     assert "`guide.fetch.cw` 现在也进入 YAML allowlist" in readme
@@ -379,9 +398,10 @@ def test_agents_document_screenshot_first_protocol_facts() -> None:
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
     assert (
-        "success 路径必须先输出首行，再按需要输出 `shot`；若当前结果带截图，再紧跟 `info read_image_first=1`；然后才是 `item`、`guide`、`text`、`slot`、`opt`、其余 `info` 这类实体行"
+        "success 路径必须先输出首行，再按需要输出 `shot`；若当前结果带截图，再紧跟 `info read_image_first=1`；然后才是 `# 标题` 行（如有）与 `item`、`guide`、`text`、`slot`、`opt`、其余 `info` 这类实体行"
         in agents
     )
+    assert "标题行不得插入 `shot path=...` 与 `info read_image_first=1` 之间" in agents
     assert (
         "若命令命中已配置 workflow handoff，success 路径允许在 `warn`、`ref` 之后追加一行尾行强提示 `info handoff_skill=... handoff_strength=... handoff_reason=...`，且该行必须是 success 输出最后一行。"
         in agents
@@ -686,7 +706,7 @@ def test_readme_documents_selected_guide_and_portal_auto_apply_flow() -> None:
         cw_flow_section,
         "- 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入当前 session；这一步不执行 UI 应用，也不创建当前攻略快照或额外追踪产物",
         "- 回到开局链路后，`trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略",
-        "- `cw.portal.select` 成功进入普通备战后会自动收集水晶、slots/shop 预备事实并关闭商店；输出仍要求先读截图，再消费 `slot`、羁绊 `info`、商店 `item`、coins/stage `info`，最后按 handoff 切到 internal 的 `trail-cw-prep`",
+        "- `cw.portal.select` 成功进入普通备战后会自动收集水晶、slots/shop/stage 预备事实并关闭商店；输出仍要求先读截图，再按 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息` 下的事实行消费，最后按 handoff 切到 internal 的 `trail-cw-prep`",
         "- `trail cw guide apply --session <id>` 只作为手动兜底；如需回顾当前已选攻略：`trail cw guide current --session <id>`",
     )
     _assert_text_contains_in_order(
@@ -725,12 +745,18 @@ def test_readme_locks_cw_portal_select_success_screenshot_order() -> None:
         "ok cw.portal.select idx=1 投资环境=击破概念股",
         "shot path=.trail/shots/req-portal-select.png",
         "info read_image_first=1",
+        "# 综合信息",
+        "info stage=preparation stale=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        "# 攻略提示",
         "info skill_info=运营思路 text=前期：先收集事实，再按后续策略处理",
+        "# 角色信息",
         "slot pos=front:1 name=希儿 star=1 traits=巡猎",
+        "# 羁绊信息",
         'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+        "# 商店信息",
         "item idx=1 slot=1 name=银狼 cost=20",
         "info coins=40 reserve_full=0",
-        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
         "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
     )
     assert portal_lines[1:3] == [
@@ -740,9 +766,9 @@ def test_readme_locks_cw_portal_select_success_screenshot_order() -> None:
     assert portal_lines[-1] == "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered"
     assert "`cw.portal.select` 应用攻略后会自动收集水晶、读取槽位、扫描商店并关闭商店" in readme
     assert "最终截图停留在无浮层普通备战页" in readme
-    assert "即使 `cw.portal.select` 已输出 slots/shop 文本事实，Agent 仍必须先读 `shot path=...` 对应原始截图" in readme
+    assert "即使 `cw.portal.select` 已输出 slots/shop/stage 文本事实，Agent 仍必须先读 `shot path=...` 对应原始截图" in readme
     assert " opened=" not in portal_example
-    assert " stale=" not in portal_example
+    assert all(" stale=" not in line for line in portal_example.splitlines() if not line.startswith("info stage="))
 
 
 def test_agents_document_cw_portal_select_auto_collect_contract() -> None:
@@ -753,14 +779,16 @@ def test_agents_document_cw_portal_select_auto_collect_contract() -> None:
         "`cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`",
         "`cw.portal.select` 成功进入备战页后会自动收集 slots/shop 预备事实",
         "`shot path=...` 后必须紧跟 `info read_image_first=1`",
+        "stage/status 事实固定在 `# 综合信息` 输出",
         "`info skill_info=运营思路 text=...`",
         "（如有）之后复用 `cw.slots.read` 的 `slot` 行与羁绊 `info` 摘要",
-        "复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影",
+        "`# 商店信息` 只承载商店 `item` 与 `info coins/reserve_full`",
         "`warn`、`ref` 之前输出",
         "success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`",
     )
     assert "自动收集得到的 shop `opened/stale` 不进入首行，也不作为 body 事实渲染" in agents
     assert "不要因为已有 slots/shop 文本就跳过截图" in agents
+    assert "复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影" not in agents
 
 
 def test_readme_routes_stage_invest_to_strategy() -> None:
@@ -1132,7 +1160,7 @@ def test_render_output_renders_cw_shop_status_without_shot_or_guidance():
         "item idx=2 slot=2 name=停云 cost=1",
         "item idx=3 slot=3 name=布洛妮娅 cost=4",
         "item idx=4 name=无槽位条目 cost=9",
-        "info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7",
+        "info coins=40 reserve_full=0",
     ]
 
 
@@ -1333,6 +1361,183 @@ def test_render_output_renders_shop_stage_status_projection():
 
     assert lines[1:3] == ["shot path=.trail/shots/req-shop-stage.png", "info read_image_first=1"]
     assert lines[-1] == "info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0"
+
+
+def test_render_output_sections_shop_scan_items_and_status():
+    payload = {
+        "ok": True,
+        "data": {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "coins": 40,
+            "reserve_full": False,
+            "stage": "shop",
+            "stage_stale": False,
+            "stage_status": {"stale": False, "level": 3, "exp": "0/8", "team_size": "1/2"},
+            "stage_status_stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.scan", payload).splitlines() == [
+        "ok cw.shop.scan opened=1 stale=0 count=1",
+        "# 商店信息",
+        "item idx=1 slot=1 name=银狼 cost=20",
+        "info coins=40 reserve_full=0",
+        "# 综合信息",
+        "info stage=shop stale=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+    ]
+
+
+def test_render_output_sections_shop_status_only_when_multiple_fact_groups():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "opened": True,
+            "stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.shop.status", payload).splitlines()
+
+    assert lines == ["ok cw.shop.status count=1", "item idx=1 slot=1 name=银狼 cost=20"]
+    assert not any(line.startswith("# ") for line in lines)
+
+
+def test_cw_shop_section_helper_emits_section_heading_by_default():
+    lines: list[str] = []
+
+    rendering_module._append_cw_shop_section(lines, {"items": [{"slot": 1, "name": "银狼", "price": 20}]})
+
+    assert lines == [
+        "# 商店信息",
+        "item idx=1 slot=1 name=银狼 cost=20",
+    ]
+
+
+def test_render_output_sections_shop_status_when_stage_projection_exists():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "opened": True,
+            "stale": False,
+            "stage_status": {"stale": False, "level": 3, "exp": "0/8", "team_size": "2/2"},
+            "stage_status_stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.status", payload).splitlines() == [
+        "ok cw.shop.status count=1",
+        "# 商店信息",
+        "item idx=1 slot=1 name=银狼 cost=20",
+        "# 综合信息",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=2/2 stage_status_stale=0",
+    ]
+
+
+def test_render_output_shop_status_only_fresh_stage_has_no_section_heading():
+    payload = {
+        "ok": True,
+        "data": {
+            "items": [],
+            "stage_status": {"stale": False, "level": 3, "exp": "0/8", "team_size": "2/2"},
+            "stage_status_stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.shop.status", payload).splitlines()
+
+    assert lines == [
+        "ok cw.shop.status count=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=2/2 stage_status_stale=0",
+    ]
+    assert not any(line.startswith("# ") for line in lines)
+
+
+def test_render_output_shop_status_only_stage_stale_has_no_section_heading():
+    payload = {
+        "ok": True,
+        "data": {"items": [], "stage_status_stale": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.status", payload).splitlines() == [
+        "ok cw.shop.status count=0",
+        "info stage_status_stale=1",
+    ]
+
+
+def test_render_output_shop_status_empty_has_no_section_heading():
+    payload = {
+        "ok": True,
+        "data": {"items": []},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.shop.status", payload).splitlines()
+
+    assert lines == ["ok cw.shop.status count=0"]
+    assert not any(line.startswith("# ") for line in lines)
+
+
+def test_render_output_sections_shop_buy_exp_and_preserves_null_team_size():
+    payload = {
+        "ok": True,
+        "data": {
+            "opened": True,
+            "stale": False,
+            "items": [],
+            "coins": 36,
+            "level": 4,
+            "exp": "0/8",
+            "reserve_full": False,
+            "team_size": None,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.shop.buy_exp", payload).splitlines() == [
+        "ok cw.shop.buy_exp opened=1 stale=0 count=0",
+        "# 商店信息",
+        "info coins=36 reserve_full=0",
+        "# 综合信息",
+        "info level=4 exp=0/8 team_size=null",
+    ]
 
 
 def test_render_output_keeps_stage_status_stale_when_missing():
@@ -3339,6 +3544,8 @@ def test_portal_select_renders_collected_slots_and_shop_before_warn_ref_and_hand
                     "back": [],
                     "hand": [{"name": "停云"}],
                     "stale": False,
+                    "stage": "preparation",
+                    "stage_stale": False,
                     "trait_summary": [
                         {
                             "trait": "巡猎",
@@ -3370,18 +3577,140 @@ def test_portal_select_renders_collected_slots_and_shop_before_warn_ref_and_hand
         "ok cw.portal.select idx=1 投资环境=击破概念股",
         "shot path=.trail/shots/portal-prep.png",
         "info read_image_first=1",
+        "# 综合信息",
+        "info stage=preparation stale=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        "# 攻略提示",
         "info skill_info=运营思路 text=先收集事实",
+        "# 角色信息",
         "slot pos=front:1 name=希儿 star=1 traits=巡猎",
         "slot pos=hand:1 name=停云",
+        "# 羁绊信息",
         'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+        "# 商店信息",
         "item idx=1 slot=1 name=银狼 cost=20",
         "info coins=40 reserve_full=0",
-        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
         'warn code=W msg="warn text"',
         "ref path=p sim=0.9",
         "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
     ]
-    assert not any(" opened=" in line or " stale=" in line for line in lines)
+    assert lines[-1].startswith("info handoff_skill=trail-cw-prep ")
+    assert not any(" opened=" in line or " stale=" in line for line in lines if not line.startswith("info stage="))
+
+
+def test_portal_select_status_projection_falls_back_to_slots_when_shop_status_stale() -> None:
+    for shop_status in (
+        {"stage_status": {"level": 9, "exp": "7/8", "team_size": "9/9", "stale": True}, "stage_status_stale": True},
+        {},
+    ):
+        payload = {
+            "ok": True,
+            "data": {
+                "card_idx": 1,
+                "portal_title": "击破概念股",
+                "slots": {
+                    "front": [],
+                    "back": [],
+                    "hand": [],
+                    "stage": "preparation",
+                    "stage_stale": False,
+                    "stage_status": {"level": 2, "exp": "4/8", "team_size": "2/2", "stale": False},
+                    "stage_status_stale": False,
+                },
+                "shop": {
+                    "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                    "coins": 40,
+                    "reserve_full": False,
+                    **shop_status,
+                },
+            },
+            "warnings": [],
+            "references": [],
+        }
+
+        lines = render_output("cw.portal.select", payload).splitlines()
+
+        assert lines == [
+            "ok cw.portal.select idx=1 投资环境=击破概念股",
+            "# 综合信息",
+            "info stage=preparation stale=0",
+            "info stage_level=2 stage_exp=4/8 stage_team_size=2/2 stage_status_stale=0",
+            "# 商店信息",
+            "item idx=1 slot=1 name=银狼 cost=20",
+            "info coins=40 reserve_full=0",
+            "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+        ]
+
+
+def test_portal_select_skill_info_section_has_no_empty_sections() -> None:
+    payload = {
+        "ok": True,
+        "screenshot": ".trail/shots/portal.png",
+        "image_guidance": {"read_image_first": True},
+        "data": {
+            "card_idx": 1,
+            "portal_title": "击破概念股",
+            "skill_info": [{"name": "运营思路", "text": "先读图"}],
+        },
+        "warnings": [],
+        "references": [],
+    }
+
+    lines = render_output("cw.portal.select", payload).splitlines()
+
+    assert lines == [
+        "ok cw.portal.select idx=1 投资环境=击破概念股",
+        "shot path=.trail/shots/portal.png",
+        "info read_image_first=1",
+        "# 攻略提示",
+        "info skill_info=运营思路 text=先读图",
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+    assert lines[-1].startswith("info handoff_skill=trail-cw-prep ")
+    assert "# 综合信息" not in lines
+    assert "# 角色信息" not in lines
+    assert "# 羁绊信息" not in lines
+    assert "# 商店信息" not in lines
+
+
+def test_portal_select_omits_status_section_when_no_status_projection() -> None:
+    payload = {
+        "ok": True,
+        "data": {
+            "card_idx": 1,
+            "portal_title": "击破概念股",
+            "skill_info": [{"name": "运营思路", "text": "先收集事实"}],
+            "slots": {
+                "front": [{"name": "希儿", "star": 1}],
+                "back": [],
+                "hand": [],
+            },
+            "shop": {
+                "opened": True,
+                "stale": False,
+                "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                "coins": 40,
+                "reserve_full": False,
+            },
+        },
+        "warnings": [],
+        "references": [],
+    }
+
+    lines = render_output("cw.portal.select", payload).splitlines()
+
+    assert lines == [
+        "ok cw.portal.select idx=1 投资环境=击破概念股",
+        "# 攻略提示",
+        "info skill_info=运营思路 text=先收集事实",
+        "# 角色信息",
+        "slot pos=front:1 name=希儿 star=1",
+        "# 商店信息",
+        "item idx=1 slot=1 name=银狼 cost=20",
+        "info coins=40 reserve_full=0",
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+    assert "# 综合信息" not in lines
 
 
 def test_portal_select_skips_malformed_skill_info_items(capsys) -> None:
@@ -3620,12 +3949,137 @@ def test_render_output_renders_cw_slots_summary_text():
         "ok cw.slots.read front=1 back=1 hand=1 stale=1",
         "shot path=.trail/shots/req-slots.png",
         "info read_image_first=1",
+        "# 角色信息",
         "slot pos=front:1 name=希儿 star=4",
         "slot pos=front:2 empty=1",
         "slot pos=back:1 name=佩拉 rarity=2",
         "slot pos=hand:1 name=停云 carry=1 cost=2",
         "slot pos=hand:2 empty=1",
     ]
+
+
+def test_render_output_adds_cw_slots_sections_without_breaking_screenshot_order():
+    payload = {
+        "ok": True,
+        "data": {
+            "front": [{"name": "希儿", "star": 1, "traits": ["巡猎"]}],
+            "back": [],
+            "hand": [{"name": "停云"}],
+            "stale": False,
+            "stage": "preparation",
+            "stage_stale": False,
+            "stage_status": {"stale": False, "level": 3, "exp": "0/8", "team_size": "1/2"},
+            "stage_status_stale": False,
+            "trait_summary": [
+                {"trait": "巡猎", "tiers": [1, 2], "owned_roles": 1, "active_tier": 1, "total_tiers": 2, "ratio": 0.5},
+            ],
+        },
+        "screenshot": ".trail/shots/req-slots.png",
+        "image_guidance": {"read_image_first": True},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.slots.read", payload).splitlines() == [
+        "ok cw.slots.read front=1 back=0 hand=1 stale=0",
+        "shot path=.trail/shots/req-slots.png",
+        "info read_image_first=1",
+        "# 综合信息",
+        "info stage=preparation stale=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        "# 角色信息",
+        "slot pos=front:1 name=希儿 star=1 traits=巡猎",
+        "slot pos=hand:1 name=停云",
+        "# 羁绊信息",
+        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+    ]
+
+
+def test_render_output_skips_cw_slots_stage_line_when_stage_unknown():
+    payload = {
+        "ok": True,
+        "data": {
+            "front": [{"name": "希儿"}],
+            "back": [],
+            "hand": [],
+            "stale": False,
+            "stage": None,
+            "stage_status": {"stale": False, "level": 3, "exp": "0/8", "team_size": "1/2"},
+            "stage_status_stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.slots.read", payload).splitlines()
+
+    assert lines == [
+        "ok cw.slots.read front=1 back=0 hand=0 stale=0",
+        "# 综合信息",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        "# 角色信息",
+        "slot pos=front:1 name=希儿",
+    ]
+    assert "stage=null" not in "\n".join(lines)
+    assert not any(line.startswith("info stage=") for line in lines)
+
+
+def test_render_output_does_not_add_sections_to_single_body_commands():
+    payload = {
+        "ok": True,
+        "data": {"value": "preparation", "stale": False},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.stage.detect", payload).splitlines()
+
+    assert lines == ["ok cw.stage.detect stage=preparation stale=0"]
+    assert not any(line.startswith("# ") for line in lines)
+
+
+def test_render_output_does_not_add_sections_to_failures_or_single_action_outputs():
+    failure = {
+        "ok": False,
+        "data": {},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": {"request_id": "req-1"},
+        "error": {"code": "X", "message": "failed"},
+    }
+    assert not any(line.startswith("# ") for line in render_output("cw.slots.read", failure).splitlines())
+
+    place = {
+        "ok": True,
+        "data": {"front": ["希儿"], "back": [], "hand": [], "stale": False},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    assert not any(line.startswith("# ") for line in render_output("cw.slots.place", place).splitlines())
+
+    strategy = {
+        "ok": True,
+        "data": {"cards": [{"name": "存钱"}]},
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+    assert not any(line.startswith("# ") for line in render_output("cw.strategy.detect", strategy).splitlines())
 
 
 def test_render_output_renders_cw_slots_before_warn_and_ref():
@@ -3650,6 +4104,7 @@ def test_render_output_renders_cw_slots_before_warn_and_ref():
         "ok cw.slots.read front=1 back=0 hand=0 stale=0",
         "shot path=.trail/shots/req-slots-order.png",
         "info read_image_first=1",
+        "# 角色信息",
         "slot pos=front:1 name=希儿 star=4",
         'warn code=SLOTS_STALE msg="slots may be stale"',
         "ref path=refs/slots.png sim=0.88",
@@ -3693,6 +4148,7 @@ def test_render_cw_slots_read_renders_role_match_diagnostics_and_warning_1_based
         "ok cw.slots.read front=1 back=0 hand=0 stale=0",
         "shot path=.trail/shots/demo.jpg",
         "info read_image_first=1",
+        "# 角色信息",
         "slot pos=front:1 name=爻光 raw_name=交光 score=0.50 match_kind=low_confidence traits=仙舟",
         "warn code=CW_ROLE_MATCH_LOW_CONFIDENCE pos=front:1 query=交光 resolved=爻光 score=0.50 candidates=爻光:0.50 msg=角色名未精确命中，请先看截图确认",
     ]
@@ -3720,9 +4176,11 @@ def test_render_output_renders_cw_slots_traits_and_trait_summary():
 
     assert render_output("cw.slots.read", payload).splitlines() == [
         "ok cw.slots.read front=1 back=1 hand=1 stale=0",
+        "# 角色信息",
         "slot pos=front:1 name=希儿 star=4 traits=巡猎|量子",
         "slot pos=back:1 name=佩拉 traits=量子",
         "slot pos=hand:1 name=布洛妮娅 traits=巡猎|辅助",
+        "# 羁绊信息",
         'info 羁绊=量子 档位="1,2" 当前角色=2 已激活档位=2/2 占比=1.00',
         'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
     ]
@@ -3941,7 +4399,7 @@ def test_render_output_renders_cw_shop_scan_snapshot_info_text():
         "shot path=.trail/shots/req-shop-scan.png",
         "info read_image_first=1",
         "item idx=1 slot=1 name=银狼 cost=20",
-        "info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7",
+        "info coins=40 reserve_full=0",
     ]
 
 
@@ -3968,8 +4426,13 @@ def test_cw_shop_buy_exp_outputs_snapshot_facts(capsys) -> None:
     assert lines[0] == "ok cw.shop.buy_exp opened=1 stale=0 count=1"
     assert lines[1] == "shot path=.trail/shots/buy-exp.png"
     assert lines[2] == "info read_image_first=1"
-    assert "item idx=1 slot=1 name=灵砂 cost=3" in lines
-    assert "info coins=36 level=4 exp=0/8 reserve_full=0 team_size=null" in lines
+    assert lines[3:] == [
+        "# 商店信息",
+        "item idx=1 slot=1 name=灵砂 cost=3",
+        "info coins=36 reserve_full=0",
+        "# 综合信息",
+        "info level=4 exp=0/8 team_size=null",
+    ]
 
 
 def test_render_output_renders_cw_shop_scan_with_empty_slot_placeholder():

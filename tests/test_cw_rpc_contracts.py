@@ -565,8 +565,11 @@ def test_cw_shop_buy_exp_maps_to_canonical_command(cli_runner, fake_daemon_clien
         "ok cw.shop.buy_exp opened=1 stale=0 count=1",
         screenshot=".trail/shots/req-cw-shop-buy-exp.png",
         body=[
+            "# 商店信息",
             "item idx=1 slot=1 name=灵砂 cost=3",
-            "info coins=36 level=4 exp=0/8 reserve_full=0 team_size=4/4",
+            "info coins=36 reserve_full=0",
+            "# 综合信息",
+            "info level=4 exp=0/8 team_size=4/4",
         ],
     )
     _assert_single_call(client, method="cw.shop.buy_exp", payload={}, tmp_path=tmp_path)
@@ -1063,7 +1066,9 @@ def test_cw_shop_scan_renders_fresh_stage_status_projection(cli_runner, fake_dae
         "ok cw.shop.scan opened=1 stale=0 count=1",
         screenshot=".trail/shots/req-cw-shop-scan-stage-fresh.png",
         body=[
+            "# 商店信息",
             "item idx=1 slot=1 name=银狼 cost=20",
+            "# 综合信息",
             "info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0",
         ],
     )
@@ -1089,7 +1094,7 @@ def test_cw_shop_status_renders_stale_stage_status_without_stale_values(cli_runn
     assert result.exit_code == 0
     assert result.stdout.splitlines() == _expected_lines(
         "ok cw.shop.status count=1",
-        body=["item idx=1 slot=1 name=银狼 cost=20", "info stage_status_stale=1"],
+        body=["# 商店信息", "item idx=1 slot=1 name=银狼 cost=20", "# 综合信息", "info stage_status_stale=1"],
     )
     assert "stage_level=7" not in result.stdout
     _assert_single_call(client, method="cw.shop.status", payload={}, tmp_path=tmp_path)
@@ -1112,6 +1117,23 @@ def test_cw_shop_status_renders_missing_stage_status_as_stale(cli_runner, fake_d
     assert "stage_level" not in result.stdout
     assert "stage_exp" not in result.stdout
     assert "stage_team_size" not in result.stdout
+    _assert_single_call(client, method="cw.shop.status", payload={}, tmp_path=tmp_path)
+
+
+def test_cw_shop_status_renders_empty_status_without_sections(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.shop.status": build_success_response(
+                request_id="req-cw-shop-status-empty",
+                data={"items": []},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "shop", "status", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok cw.shop.status count=0"]
     _assert_single_call(client, method="cw.shop.status", payload={}, tmp_path=tmp_path)
 
 
@@ -1167,6 +1189,7 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
                 "ok cw.slots.read front=1 back=0 hand=1 stale=0",
                 screenshot=".trail/shots/req-cw-slots-read.png",
                 body=[
+                    "# 角色信息",
                     "slot pos=front:1 name=希儿",
                     "slot pos=front:2 empty=1",
                     "slot pos=back:1 empty=1",
@@ -1423,3 +1446,47 @@ def test_cw_rpc_wrapper_matrix(
     assert result.exit_code == 0
     assert result.stdout.splitlines() == expected_lines
     _assert_single_call(client, method=method, payload=payload, tmp_path=tmp_path)
+
+
+def test_cw_slots_read_contract_includes_stage_projection(cli_runner, fake_daemon_client, tmp_path):
+    response_data = {
+        "front": [{"name": "希儿"}],
+        "back": [],
+        "hand": [],
+        "stale": False,
+        "stage": "preparation",
+        "stage_stale": False,
+        "stage_status": {
+            "stale": False,
+            "level": 3,
+            "exp": "0/8",
+            "team_size": "1/2",
+            "role_count": {"front": 1, "back": 0, "hand": 0, "field": 1, "total": 1},
+        },
+        "stage_status_stale": False,
+    }
+    client = fake_daemon_client(
+        {
+            "cw.slots.read": build_success_response(
+                request_id="req-cw-slots-read-stage-projection",
+                data=response_data,
+                screenshot=".trail/shots/req-cw-slots-read-stage-projection.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "slots", "read", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.slots.read front=1 back=0 hand=0 stale=0",
+        screenshot=".trail/shots/req-cw-slots-read-stage-projection.png",
+        body=[
+            "# 综合信息",
+            "info stage=preparation stale=0",
+            "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+            "# 角色信息",
+            "slot pos=front:1 name=希儿",
+        ],
+    )
+    _assert_single_call(client, method="cw.slots.read", payload={"slot": None}, tmp_path=tmp_path)

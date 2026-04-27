@@ -4478,6 +4478,101 @@ def _patch_cw_portal_select_auto_collect_success(monkeypatch, events: list[str],
         monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: sleeps.append(seconds))
 
 
+def test_command_service_handles_cw_slots_read_with_stage_projection(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw import slots as slots_module
+
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: {})
+    expected_role_count = {"front": 1, "back": 0, "hand": 0, "field": 1, "total": 1}
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.slots_reader_factory",
+        lambda runtime, targets=None: lambda: slots_module.CwSlotsReadResult(
+            front=[{"name": "希儿"}],
+            back=[],
+            hand=[],
+            stage="preparation",
+            stage_status={"stale": False, "level": 3, "exp": "0/8", "team_size": "2/2"},
+        ),
+    )
+
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-slots-read",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.slots.read",
+        payload={"session_id": session.session_id},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["data"]["stage"] == "preparation"
+    assert payload["data"]["stage_stale"] is False
+    assert payload["data"]["stage_status"] == {
+        "stale": False,
+        "level": 3,
+        "exp": "0/8",
+        "team_size": "2/2",
+        "role_count": expected_role_count,
+    }
+    assert payload["data"]["stage_status_stale"] is False
+
+
+def test_command_service_persists_cw_slots_read_stage_ambiguous_failure_state(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state.setdefault("cw", {})["stage"] = {
+        "value": "shop",
+        "stale": False,
+        "status": {"stale": False, "level": 3},
+    }
+    session.last_stage = {"scene": "cw", "value": "shop"}
+    service.save_session(session)
+
+    def reader():
+        raise TrailError("STAGE_AMBIGUOUS", "当前资源无法区分阶段: preparation, shop")
+
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: {})
+    monkeypatch.setattr("trail.daemon.cw_service.slots_reader_factory", lambda runtime, targets=None: reader)
+
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-slots-read-stage-ambiguous",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.slots.read",
+            payload={"session_id": session.session_id},
+        )
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "STAGE_AMBIGUOUS"
+    assert persisted.scene_state["cw"]["stage"]["stale"] is True
+    assert persisted.scene_state["cw"]["stage"]["error"]["code"] == "STAGE_AMBIGUOUS"
+    assert persisted.scene_state["cw"]["stage"]["status"] == {"stale": False, "level": 3}
+    assert persisted.last_stage is None
+
+
 def test_command_service_handles_cw_portal_select_and_auto_applies_selected_guide(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 

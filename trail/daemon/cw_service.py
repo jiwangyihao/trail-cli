@@ -680,7 +680,12 @@ class CwService:
 
 
 def _handle_and_save_session(handler, session_service, session, scene_warnings: list[dict] | None = None):
-    result = handler()
+    try:
+        result = handler()
+    except TrailError as error:
+        if _safe_error_attr(error, "known_failure_after_save"):
+            session_service.save_session(session)
+        raise
     result, warnings = _pop_scene_warnings(result)
     if scene_warnings is not None:
         scene_warnings.extend(warnings)

@@ -18,11 +18,18 @@ from trail.session.models import SessionModel
 
 
 @dataclass(frozen=True)
+class CwStatusReadResult:
+    stage: str | None
+    stage_status: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class CwSlotsReadResult:
     front: list[Any]
     back: list[Any]
     hand: list[Any]
     stage_status: dict[str, Any] | None = None
+    stage: str | None = None
 
 
 @dataclass(frozen=True)
@@ -531,10 +538,49 @@ def build_cw_slots_reader(
     *,
     dismiss_initial_overlay: bool = True,
 ) -> SlotsSnapshotReader:
-    parsed_targets = _parse_slot_targets(targets)
+    status_reader = build_cw_status_reader(runtime)
+    roles_reader = build_cw_slot_roles_reader(runtime, targets=targets)
 
     def reader() -> CwSlotsReadResult:
         _collapse_expanded_hand_card(runtime)
+        if dismiss_initial_overlay:
+            dismiss_cw_slots_overlay(runtime)
+        status_result = status_reader()
+        front, back, hand = roles_reader()
+        return CwSlotsReadResult(
+            front=front,
+            back=back,
+            hand=hand,
+            stage_status=status_result.stage_status,
+            stage=status_result.stage,
+        )
+
+    return reader
+
+
+def build_cw_status_reader(runtime) -> Callable[[], CwStatusReadResult]:
+    stage_detector = stage.build_cw_stage_detector(runtime)
+
+    def reader() -> CwStatusReadResult:
+        detected_stage = stage_detector()
+        batch_targets = [
+            BatchOcrTarget(("stage_status", "level"), runtime.capture_image(**stage.CW_STATUS_LEVEL_REGION, normalize=False)),
+            BatchOcrTarget(("stage_status", "exp"), runtime.capture_image(**stage.CW_STATUS_EXP_REGION, normalize=False)),
+            BatchOcrTarget(("stage_status", "team_size"), runtime.capture_image(**stage.CW_STATUS_TEAM_SIZE_REGION, normalize=False)),
+        ]
+        batch_result = run_batch_ocr(runtime, batch_targets, trace_prefix="cw_slots_status_batch_ocr")
+        return CwStatusReadResult(
+            stage=detected_stage,
+            stage_status=stage.parse_cw_stage_status(batch_result.by_key),
+        )
+
+    return reader
+
+
+def build_cw_slot_roles_reader(runtime, targets: list[str] | None = None) -> Callable[[], tuple[list[Any], list[Any], list[Any]]]:
+    parsed_targets = _parse_slot_targets(targets)
+
+    def reader() -> tuple[list[Any], list[Any], list[Any]]:
         front, back, hand = _empty_slots_snapshot()
         targets_by_area = parsed_targets or {
             "front": set(range(len(FRONT_SLOT_POINTS))),
@@ -543,13 +589,7 @@ def build_cw_slots_reader(
         }
 
         captures: list[dict[str, Any]] = []
-        if dismiss_initial_overlay:
-            dismiss_cw_slots_overlay(runtime)
-        batch_targets = [
-            BatchOcrTarget(("stage_status", "level"), runtime.capture_image(**stage.CW_STATUS_LEVEL_REGION, normalize=False)),
-            BatchOcrTarget(("stage_status", "exp"), runtime.capture_image(**stage.CW_STATUS_EXP_REGION, normalize=False)),
-            BatchOcrTarget(("stage_status", "team_size"), runtime.capture_image(**stage.CW_STATUS_TEAM_SIZE_REGION, normalize=False)),
-        ]
+        batch_targets = []
         for area in ("front", "back", "hand"):
             points = SLOT_POINTS_BY_AREA[area]
             for index in sorted(targets_by_area[area]):
@@ -575,12 +615,7 @@ def build_cw_slots_reader(
                 back[index] = slot_value
             else:
                 hand[index] = slot_value
-        return CwSlotsReadResult(
-            front=front,
-            back=back,
-            hand=hand,
-            stage_status=stage.parse_cw_stage_status(batch_result.by_key),
-        )
+        return front, back, hand
 
     return reader
 
@@ -620,13 +655,22 @@ def read_cw_slots(
     targets: list[str] | None = None,
     guide_config: dict[str, Any] | None = None,
 ) -> CwSlotsReadApplied:
-    result = reader()
+    try:
+        result = reader()
+    except TrailError as exc:
+        if exc.code == "STAGE_AMBIGUOUS":
+            stage._invalidate_cw_stage(session, code=exc.code, message=str(exc))
+            session.last_stage = None
+            exc.known_failure_after_save = True
+        raise
     if isinstance(result, CwSlotsReadResult):
         front, back, hand = result.front, result.back, result.hand
         stage_status = result.stage_status
+        detected_stage = result.stage
     else:
         front, back, hand = result
         stage_status = None
+        detected_stage = None
     cw_state = ensure_cw_state(session)
     previous = cw_state.get("slots") if isinstance(cw_state.get("slots"), dict) else {}
     parsed_targets = _parse_slot_targets(targets)
@@ -697,10 +741,22 @@ def read_cw_slots(
     if match_warnings:
         response_snapshot["warnings"] = deepcopy(match_warnings)
     if stage_status is not None:
-        stage._replace_stage_fields(
-            session,
-            status={**stage_status, "role_count": _slot_role_count(fact_front, fact_back, fact_hand)},
-        )
+        status_with_role_count = {**stage_status, "role_count": _slot_role_count(fact_front, fact_back, fact_hand)}
+        if detected_stage is not None:
+            stage._replace_stage_fields(session, value=detected_stage, stale=False, status=status_with_role_count)
+            session.last_stage = {"scene": "cw", "value": detected_stage}
+        else:
+            stage._replace_stage_fields(session, status=status_with_role_count)
+        cw_stage = cw_state.get("stage") if isinstance(cw_state.get("stage"), dict) else {}
+        cw_state["slots"]["stage"] = detected_stage
+        cw_state["slots"]["stage_stale"] = False if detected_stage is not None else bool(cw_stage.get("stale", True))
+        cw_state["slots"]["stage_status"] = deepcopy(status_with_role_count)
+        cw_state["slots"]["stage_status_stale"] = bool(status_with_role_count.get("stale", True))
+        if detected_stage is not None:
+            response_snapshot["stage"] = detected_stage
+            response_snapshot["stage_stale"] = False
+        response_snapshot["stage_status"] = deepcopy(status_with_role_count)
+        response_snapshot["stage_status_stale"] = bool(status_with_role_count.get("stale", True))
     _clear_sell_plan(cw_state)
     return CwSlotsReadApplied(session=session, response_snapshot=response_snapshot)
 
