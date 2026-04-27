@@ -52,6 +52,22 @@ def fake_shop_snapshot_target_unchanged_other_changed():
     }
 
 
+def _shop_catalog_config() -> dict:
+    return {
+        "traits": [
+            {"id": "1007", "name": "仙舟", "layers": [{"layer": 1}, {"layer": 3}]},
+            {"id": "2002", "name": "量子", "layers": [{"layer": 1}, {"layer": 2}]},
+            {"id": "3001", "name": "商店羁绊", "layers": [{"layer": 1}, {"layer": 2}]},
+        ],
+        "roles": [
+            {"id": "1502", "name": "爻光", "trait_ids": ["1007"]},
+            {"id": "1001", "name": "希儿", "trait_ids": ["2002"]},
+            {"id": "1002", "name": "佩拉", "trait_ids": ["2002"]},
+            {"id": "9001", "name": "商店角色", "trait_ids": ["3001"]},
+        ],
+    }
+
+
 def load_cw_shop_module():
     try:
         return importlib.import_module("trail.scenes.cw.shop")
@@ -901,6 +917,157 @@ def test_shop_scan_refreshes_store_snapshot(tmp_path):
     }
 
 
+def test_shop_scan_canonicalizes_items_and_keeps_diagnostics_out_of_status(tmp_path):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    shop_cw_status = getattr(shop_module, "shop_cw_status", None)
+    assert scan_cw_shop is not None
+    assert shop_cw_status is not None
+
+    from tests.conftest import build_fake_cw_session
+
+    session = build_fake_cw_session(tmp_path)
+    applied = scan_cw_shop(
+        session,
+        scanner=lambda: {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 2, "name": "交光", "price": 1}],
+            "coins": 62,
+            "reserve_full": False,
+        },
+        guide_config=_shop_catalog_config(),
+    )
+
+    assert applied.response_snapshot["items"] == [
+        {
+            "slot": 2,
+            "name": "爻光",
+            "role_id": "1502",
+            "price": 1,
+            "traits": ["仙舟"],
+            "raw_name": "交光",
+            "match_score": 0.5,
+            "match_kind": "low_confidence",
+        }
+    ]
+    assert applied.response_snapshot["warnings"][0]["code"] == "CW_ROLE_MATCH_LOW_CONFIDENCE"
+    assert applied.response_snapshot["warnings"][0]["position"] == {"kind": "shop", "slot": 2}
+
+    persisted_item = session.scene_state["cw"]["shop"]["items"][0]
+    assert persisted_item == {"slot": 2, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}
+    assert "warnings" not in session.scene_state["cw"]["shop"]
+
+    status_item = shop_cw_status(session)["items"][0]
+    assert status_item == persisted_item
+    assert "raw_name" not in status_item
+    assert "match_score" not in status_item
+    assert "match_kind" not in status_item
+
+
+def test_shop_scan_unslotted_low_confidence_warning_uses_item_idx(tmp_path):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    assert scan_cw_shop is not None
+
+    from tests.conftest import build_fake_cw_session
+
+    session = build_fake_cw_session(tmp_path)
+    applied = scan_cw_shop(
+        session,
+        scanner=lambda: {
+            "opened": True,
+            "stale": False,
+            "items": [{"name": "交光", "price": 1}],
+            "coins": 62,
+            "reserve_full": False,
+        },
+        guide_config=_shop_catalog_config(),
+    )
+
+    assert applied.response_snapshot["items"] == [
+        {
+            "name": "爻光",
+            "role_id": "1502",
+            "price": 1,
+            "traits": ["仙舟"],
+            "raw_name": "交光",
+            "match_score": 0.5,
+            "match_kind": "low_confidence",
+        }
+    ]
+    assert applied.response_snapshot["warnings"][0]["code"] == "CW_ROLE_MATCH_LOW_CONFIDENCE"
+    assert applied.response_snapshot["warnings"][0]["position"] == {"kind": "shop", "idx": 1}
+
+    persisted_item = session.scene_state["cw"]["shop"]["items"][0]
+    assert persisted_item == {"name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}
+    assert "warnings" not in session.scene_state["cw"]["shop"]
+    assert "raw_name" not in persisted_item
+    assert "match_score" not in persisted_item
+    assert "match_kind" not in persisted_item
+
+
+def test_project_cw_shop_snapshot_trait_summary_uses_fresh_field_slots_only(tmp_path):
+    shop_module = load_cw_shop_module()
+    project_cw_shop_snapshot = getattr(shop_module, "project_cw_shop_snapshot", None)
+    assert project_cw_shop_snapshot is not None
+
+    from tests.conftest import build_fake_cw_session
+
+    session = build_fake_cw_session(tmp_path)
+    cw_state = session.scene_state["cw"]
+    cw_state["slots"] = {
+        "front": [{"name": "希儿", "role_id": "1001", "traits": ["量子"]}, None, None, None],
+        "back": [{"name": "佩拉", "role_id": "1002", "traits": ["量子"]}, None, None, None, None, None],
+        "hand": [],
+        "stale": False,
+    }
+    cw_state["shop"] = {
+        "opened": True,
+        "items": [{"slot": 1, "name": "商店角色", "role_id": "9001", "price": 1, "traits": ["商店羁绊"]}],
+        "coins": 62,
+        "reserve_full": False,
+        "stale": False,
+    }
+
+    snapshot = project_cw_shop_snapshot(
+        session,
+        guide_config=_shop_catalog_config(),
+        include_field_trait_summary=True,
+    )
+
+    assert snapshot["trait_summary"] == [
+        {"trait": "量子", "tiers": [1, 2], "owned_roles": 2, "active_tier": 2, "total_tiers": 2, "ratio": 1.0}
+    ]
+    assert "trait_summary" not in session.scene_state["cw"]["shop"]
+    assert all(item["trait"] != "商店羁绊" for item in snapshot["trait_summary"])
+
+
+@pytest.mark.parametrize("slots_state", [None, {"front": [], "back": [], "hand": [], "stale": True}])
+def test_project_cw_shop_snapshot_omits_trait_summary_when_slots_missing_or_stale(tmp_path, slots_state):
+    shop_module = load_cw_shop_module()
+    project_cw_shop_snapshot = getattr(shop_module, "project_cw_shop_snapshot", None)
+    assert project_cw_shop_snapshot is not None
+
+    from tests.conftest import build_fake_cw_session
+
+    session = build_fake_cw_session(tmp_path)
+    cw_state = session.scene_state["cw"]
+    if slots_state is None:
+        cw_state.pop("slots", None)
+    else:
+        cw_state["slots"] = deepcopy(slots_state)
+    cw_state["shop"] = {"items": [], "coins": 62, "reserve_full": False, "stale": False}
+
+    snapshot = project_cw_shop_snapshot(
+        session,
+        guide_config=_shop_catalog_config(),
+        include_field_trait_summary=True,
+    )
+
+    assert "trait_summary" not in snapshot
+
+
 def test_shop_scan_projects_stage_status_without_rescanning_global_regions(tmp_path):
     shop_module = load_cw_shop_module()
     scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
@@ -1288,6 +1455,40 @@ def test_shop_status_without_selected_guide_filters_legacy_guide_summary(tmp_pat
     }
 
 
+@pytest.mark.parametrize("slots_state", [None, {"front": [], "back": [], "hand": [], "stale": True}])
+def test_shop_status_sanitizes_top_level_warnings_and_trait_summary_when_slots_not_fresh(tmp_path, slots_state):
+    shop_module = load_cw_shop_module()
+    shop_cw_status = getattr(shop_module, "shop_cw_status", None)
+    assert shop_cw_status is not None
+
+    from tests.conftest import build_fake_cw_session
+
+    session = build_fake_cw_session(tmp_path)
+    cw_state = session.scene_state["cw"]
+    if slots_state is None:
+        cw_state.pop("slots", None)
+    else:
+        cw_state["slots"] = deepcopy(slots_state)
+    cw_state["shop"] = {
+        "items": [{"slot": 1, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}],
+        "coins": 62,
+        "reserve_full": False,
+        "stale": False,
+        "warnings": [{"code": "CW_ROLE_MATCH_LOW_CONFIDENCE", "message": "stale warning"}],
+        "trait_summary": [
+            {"trait": "仙舟", "tiers": [1, 3], "owned_roles": 1, "active_tier": 1, "total_tiers": 2, "ratio": 0.33}
+        ],
+    }
+
+    status = shop_cw_status(session)
+
+    assert status["items"] == [{"slot": 1, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}]
+    assert "warnings" not in status
+    assert "trait_summary" not in status
+    assert "warnings" not in session.scene_state["cw"]["shop"]
+    assert "trait_summary" not in session.scene_state["cw"]["shop"]
+
+
 def test_shop_status_ignores_legacy_guide_remaining_purchases_in_summary(tmp_path):
     shop_module = load_cw_shop_module()
     shop_cw_status = getattr(shop_module, "shop_cw_status", None)
@@ -1529,6 +1730,53 @@ def test_shop_buy_slot_retries_confirmation_until_slot_changes(tmp_path, monkeyp
     assert refreshed.scene_state["cw"]["shop"]["items"][0]["name"] == "阮·梅"
     assert refreshed.scene_state["cw"]["shop"]["items"][0]["price"] == 30
     assert sleep_calls == [shop_module.SHOP_BUY_CONFIRM_RETRY_SECONDS]
+
+
+def test_shop_buy_slot_confirmation_canonicalizes_before_expect_compare(tmp_path, monkeypatch):
+    shop_module = load_cw_shop_module()
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session, fake_buy_success
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["shop"] = {
+        "opened": True,
+        "stale": False,
+        "items": [{"slot": 2, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}],
+        "coins": 62,
+        "reserve_full": False,
+    }
+    scanner_calls: list[str] = []
+    monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
+
+    def scanner():
+        scanner_calls.append("scan")
+        return {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 2, "name": "交光", "price": 1}],
+            "coins": 62,
+            "reserve_full": False,
+        }
+
+    with pytest.raises(TrailError) as exc_info:
+        buy_cw_shop_slot(
+            session,
+            slot=2,
+            expect="爻光",
+            buyer=fake_buy_success,
+            scanner=scanner,
+            guide_config=_shop_catalog_config(),
+        )
+
+    assert exc_info.value.code == "SHOP_BUY_NOT_CONFIRMED"
+    assert len(scanner_calls) == shop_module.SHOP_BUY_CONFIRM_MAX_ATTEMPTS
+    persisted_item = session.scene_state["cw"]["shop"]["items"][0]
+    assert persisted_item == {"slot": 2, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}
+    assert "raw_name" not in persisted_item
+    assert "match_score" not in persisted_item
+    assert "match_kind" not in persisted_item
 
 
 @pytest.mark.parametrize(
@@ -1983,6 +2231,230 @@ def _set_shop(session, shop: dict):
     return session
 
 
+def _set_shop_applied(session, shop: dict):
+    refreshed = _set_shop(session, shop)
+    return SimpleNamespace(session=refreshed, scene_state=refreshed.scene_state, response_snapshot=deepcopy(shop))
+
+
+def test_cw_service_shop_scan_uses_base_catalog_and_enriched_summary_only_when_slots_fresh(
+    tmp_path: Path,
+    monkeypatch,
+):
+    registry, service, session, cw_service, _ = _build_cw_harness(tmp_path)
+    del registry
+    loaded = service.load_session(session.session_id)
+    cw_state = loaded.scene_state.setdefault("cw", {})
+    cw_state["slots"] = {
+        "front": [{"name": "希儿", "role_id": "1001", "traits": ["量子"]}, None, None, None],
+        "back": [{"name": "佩拉", "role_id": "1002", "traits": ["量子"]}, None, None, None, None, None],
+        "hand": [],
+        "stale": False,
+    }
+    cw_state["shop"] = {"opened": False, "stale": True}
+    service.save_session(loaded)
+    fetch_calls: list[bool] = []
+
+    def fake_fetch_config(*, workspace_root=None, enrich_traits=False, **kwargs):
+        del workspace_root, kwargs
+        fetch_calls.append(bool(enrich_traits))
+        return _shop_catalog_config()
+
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", fake_fetch_config)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.shop_scan_snapshot_reader_factory",
+        lambda runtime, read_stage_status=False: lambda: {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 2, "name": "交光", "price": 1}],
+            "coins": 62,
+            "reserve_full": False,
+        },
+    )
+
+    scanned = cw_service.handle(
+        method="cw.shop.scan",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+
+    assert fetch_calls == [False, True]
+    assert scanned["items"][0]["name"] == "爻光"
+    assert scanned["items"][0]["raw_name"] == "交光"
+    assert scanned["warnings"][0]["code"] == "CW_ROLE_MATCH_LOW_CONFIDENCE"
+    assert scanned["trait_summary"] == [
+        {"trait": "量子", "tiers": [1, 2], "owned_roles": 2, "active_tier": 2, "total_tiers": 2, "ratio": 1.0}
+    ]
+    persisted_shop = service.load_session(session.session_id).scene_state["cw"]["shop"]
+    assert persisted_shop["items"] == [{"slot": 2, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}]
+    assert "raw_name" not in persisted_shop["items"][0]
+    assert "warnings" not in persisted_shop
+    assert "trait_summary" not in persisted_shop
+
+
+def test_cw_service_shop_status_uses_persisted_snapshot_and_fetches_enriched_only_for_fresh_slots(
+    tmp_path: Path,
+    monkeypatch,
+):
+    registry, service, session, cw_service, _ = _build_cw_harness(tmp_path)
+    del registry
+    loaded = service.load_session(session.session_id)
+    cw_state = loaded.scene_state.setdefault("cw", {})
+    cw_state["slots"] = {
+        "front": [{"name": "希儿", "role_id": "1001", "traits": ["量子"]}, None, None, None],
+        "back": [{"name": "佩拉", "role_id": "1002", "traits": ["量子"]}, None, None, None, None, None],
+        "hand": [],
+        "stale": False,
+    }
+    cw_state["shop"] = {
+        "opened": True,
+        "items": [{"slot": 2, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}],
+        "coins": 62,
+        "reserve_full": False,
+        "stale": False,
+    }
+    service.save_session(loaded)
+    fetch_calls: list[bool] = []
+
+    def fake_fetch_config(*, workspace_root=None, enrich_traits=False, **kwargs):
+        del workspace_root, kwargs
+        fetch_calls.append(bool(enrich_traits))
+        return _shop_catalog_config()
+
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", fake_fetch_config)
+
+    status = cw_service.handle(
+        method="cw.shop.status",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+
+    assert fetch_calls == [True]
+    assert status["items"] == [{"slot": 2, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}]
+    assert status["trait_summary"] == [
+        {"trait": "量子", "tiers": [1, 2], "owned_roles": 2, "active_tier": 2, "total_tiers": 2, "ratio": 1.0}
+    ]
+    assert "raw_name" not in status["items"][0]
+    assert "match_score" not in status["items"][0]
+    assert "match_kind" not in status["items"][0]
+
+
+@pytest.mark.parametrize("slots_state", [None, {"front": [], "back": [], "hand": [], "stale": True}])
+def test_cw_service_shop_status_does_not_fetch_enriched_config_when_slots_missing_or_stale(
+    tmp_path: Path,
+    monkeypatch,
+    slots_state,
+):
+    registry, service, session, cw_service, _ = _build_cw_harness(tmp_path)
+    del registry
+    loaded = service.load_session(session.session_id)
+    cw_state = loaded.scene_state.setdefault("cw", {})
+    if slots_state is None:
+        cw_state.pop("slots", None)
+    else:
+        cw_state["slots"] = deepcopy(slots_state)
+    cw_state["shop"] = {
+        "opened": True,
+        "items": [{"slot": 2, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}],
+        "coins": 62,
+        "reserve_full": False,
+        "stale": False,
+    }
+    service.save_session(loaded)
+    fetch_calls: list[bool] = []
+
+    def fake_fetch_config(*, workspace_root=None, enrich_traits=False, **kwargs):
+        del workspace_root, kwargs
+        fetch_calls.append(bool(enrich_traits))
+        return _shop_catalog_config()
+
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", fake_fetch_config)
+
+    status = cw_service.handle(
+        method="cw.shop.status",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+
+    assert fetch_calls == []
+    assert "trait_summary" not in status
+
+
+@pytest.mark.parametrize("method", ["cw.shop.buy_slot", "cw.shop.buy_exp"])
+def test_cw_service_shop_buy_actions_use_base_catalog_without_field_trait_summary(
+    tmp_path: Path,
+    monkeypatch,
+    method: str,
+):
+    registry, service, session, cw_service, _ = _build_cw_harness(tmp_path)
+    del registry
+    loaded = service.load_session(session.session_id)
+    cw_state = loaded.scene_state.setdefault("cw", {})
+    cw_state["slots"] = {
+        "front": [{"name": "希儿", "role_id": "1001", "traits": ["量子"]}, None, None, None],
+        "back": [{"name": "佩拉", "role_id": "1002", "traits": ["量子"]}, None, None, None, None, None],
+        "hand": [],
+        "stale": False,
+    }
+    cw_state["shop"] = {
+        "opened": True,
+        "stale": False,
+        "items": [{"slot": 2, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}],
+        "coins": 62,
+        "reserve_full": False,
+    }
+    service.save_session(loaded)
+    fetch_calls: list[bool] = []
+
+    def fake_fetch_config(*, workspace_root=None, enrich_traits=False, **kwargs):
+        del workspace_root, kwargs
+        fetch_calls.append(bool(enrich_traits))
+        return _shop_catalog_config()
+
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", fake_fetch_config)
+    monkeypatch.setattr("trail.daemon.cw_service.shop_buyer_factory", lambda runtime: lambda slot, expect: None)
+    monkeypatch.setattr("trail.daemon.cw_service.shop_exp_buyer_factory", lambda runtime: lambda: None)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.shop_scanner_factory",
+        lambda runtime: lambda: {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 2, "name": "希儿", "price": 1}],
+            "coins": 61,
+            "reserve_full": False,
+        },
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.shop_scan_snapshot_reader_factory",
+        lambda runtime, read_stage_status=False: lambda: {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 2, "name": "交光", "price": 1}],
+            "coins": 58,
+            "level": 4,
+            "exp": "0/8",
+            "reserve_full": False,
+            "team_size": "4/4",
+        },
+    )
+    payload = {"session_id": session.session_id}
+    if method == "cw.shop.buy_slot":
+        payload.update({"slot": 2, "expect": "爻光"})
+
+    result = cw_service.handle(
+        method=method,
+        payload=payload,
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+
+    assert fetch_calls == [False]
+    assert "trait_summary" not in result
+    assert result["items"]
+
+
 @pytest.mark.parametrize(
     ("method", "request_id", "payload", "setup_patches", "expected_key", "expected_value"),
     [
@@ -2006,7 +2478,10 @@ def _set_shop(session, shop: dict):
                 monkeypatch.setattr("trail.daemon.cw_service.shop_scanner_factory", lambda runtime: object()),
                 monkeypatch.setattr(
                     "trail.daemon.cw_service.buy_cw_shop_slot",
-                    lambda session, slot, expect, buyer, scanner: _set_shop(session, {"slot": slot, "expect": expect, "opened": True, "stale": False}),
+                    lambda session, slot, expect, buyer, scanner, guide_config: _set_shop_applied(
+                        session,
+                        {"slot": slot, "expect": expect, "opened": True, "stale": False},
+                    ),
                 ),
             ),
             "expect",
@@ -2092,7 +2567,7 @@ def test_cw_shop_scan_read_commands_persist_two_phase_snapshot(tmp_path: Path, m
 
     expected_shop_snapshot = {
         "opened": True,
-        "items": [{"name": "黑塔", "price": 1}],
+        "items": [{"name": "黑塔", "price": 1, "role_id": "1013", "traits": ["银河学者", "群攻"]}],
         "coins": 62,
         "reserve_full": False,
         "guide_summary": {
@@ -2145,7 +2620,7 @@ def test_cw_shop_scan_flows_through_command_service_mutation_journal_and_persist
 
     expected_shop_snapshot = {
         "opened": True,
-        "items": [{"name": "黑塔", "price": 1}],
+        "items": [{"name": "黑塔", "price": 1, "role_id": "1013", "traits": ["银河学者", "群攻"]}],
         "coins": 62,
         "reserve_full": False,
         "guide_summary": {
@@ -2648,7 +3123,7 @@ def test_cw_shop_scan_ignores_metadata_boom_after_persist(
     persisted = service.load_session(session.session_id)
     expected_shop_snapshot = {
         "opened": True,
-        "items": [{"name": "黑塔", "price": 1}],
+        "items": [{"name": "黑塔", "price": 1, "role_id": "1013", "traits": ["银河学者", "群攻"]}],
         "coins": 62,
         "reserve_full": False,
         "guide_summary": {

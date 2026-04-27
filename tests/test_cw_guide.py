@@ -760,6 +760,411 @@ def test_fetch_cw_guide_config_writes_and_reuses_workspace_cache(monkeypatch, tm
     assert cache_path.is_file()
 
 
+def test_fetch_cw_guide_config_enriches_trait_layers_from_raw_lineup_list(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+    payload = fake_cw_config_response()
+    payload["data"]["trait_info_list"] = [
+        {"trait_id": "1004", "trait_name": "公司", "layers": []},
+        {"trait_id": "1007", "trait_name": "仙舟", "layers": []},
+        {"trait_id": "2002", "trait_name": "击破", "layers": []},
+    ]
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda **kwargs: payload["data"])
+    calls = []
+
+    def fake_list(**kwargs):
+        calls.append(kwargs.get("trait_id"))
+        return {
+            "list": [
+                {
+                    "tourn_detail": {
+                        "role_stages": [
+                            {
+                                "stage": "Early",
+                                "traits": [
+                                    {
+                                        "trait_id": "1004",
+                                        "trait_name": "公司",
+                                        "layers": [{"layer": 2}, {"layer": 3}],
+                                        "current_role_count": 2,
+                                    }
+                                ],
+                            },
+                            {
+                                "stage": "Middle",
+                                "traits": [
+                                    {
+                                        "trait_id": "1007",
+                                        "trait_name": "仙舟",
+                                        "layers": [{"layer": 3}, {"layer": 5}, {"layer": 7}, {"layer": 10}],
+                                        "current_role_count": 3,
+                                    }
+                                ],
+                            },
+                            {
+                                "stage": "Final",
+                                "traits": [
+                                    {
+                                        "trait_id": "2002",
+                                        "trait_name": "击破",
+                                        "layers": [{"layer": 2}, {"layer": 4}, {"layer": 6}, {"layer": 8}, {"layer": 10}],
+                                        "current_role_count": 4,
+                                    }
+                                ],
+                            },
+                        ]
+                    }
+                }
+            ],
+            "next_page_token": None,
+        }
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_guide_list_data", fake_list)
+
+    config = guide_module.fetch_cw_guide_config(workspace_root=tmp_path, enrich_traits=True)
+
+    by_name = {item["name"]: item for item in config["traits"]}
+    assert [layer["layer"] for layer in by_name["公司"]["layers"]] == [2, 3]
+    assert [layer["layer"] for layer in by_name["仙舟"]["layers"]] == [3, 5, 7, 10]
+    assert [layer["layer"] for layer in by_name["击破"]["layers"]] == [2, 4, 6, 8, 10]
+    assert calls == [None]
+
+
+def test_fetch_cw_guide_config_default_does_not_request_guide_list(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda **kwargs: fake_cw_config_response()["data"])
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("should not fetch list")),
+    )
+
+    config = guide_module.fetch_cw_guide_config(workspace_root=tmp_path)
+
+    assert config["traits"]
+
+
+def test_fetch_cw_guide_config_enriched_cache_hit_avoids_guide_list(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+    cache_path = tmp_path / ".trail" / "cache" / "cw-guide-config-enriched.json"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cached_traits = [
+        {"id": "2001", "name": "巡猎", "type": "path", "layers": [{"layer": 2}, {"layer": 4}]},
+        {"id": "2002", "name": "量子", "type": "element", "layers": [{"layer": 3}]},
+    ]
+    cache_path.write_text(
+        json.dumps(
+            {
+                "complete": True,
+                "meta": {
+                    "season_id": 12,
+                    "sub_season_id": 3,
+                    "rpg_game_big_version": "3.2",
+                    "rpg_game_lineup_tourn_filter": "lineup-filter-v2",
+                },
+                "traits": cached_traits,
+                "missing_trait_ids": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda **kwargs: fake_cw_config_response()["data"])
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("cache hit should avoid list fetch")),
+    )
+
+    config = guide_module.fetch_cw_guide_config(workspace_root=tmp_path, enrich_traits=True)
+
+    assert config["traits"] == cached_traits
+
+
+def test_fetch_cw_guide_config_enrichment_failure_without_cache_returns_base_traits(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+    payload = fake_cw_config_response()
+    payload["data"]["trait_info_list"] = [
+        {"trait_id": "1004", "trait_name": "公司", "layers": []},
+    ]
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda **kwargs: payload["data"])
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: (_ for _ in ()).throw(TrailError("GUIDE_FETCH_FAILED", "guide list failed")),
+    )
+
+    config = guide_module.fetch_cw_guide_config(workspace_root=tmp_path, enrich_traits=True)
+
+    assert config["traits"] == [{"id": "1004", "name": "公司", "type": None}]
+    assert not (tmp_path / ".trail" / "cache" / "cw-guide-config-enriched.json").exists()
+
+
+def test_fetch_cw_guide_config_writes_complete_cache_with_missing_trait_ids(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+    payload = fake_cw_config_response()
+    payload["data"]["trait_info_list"] = [
+        {"trait_id": "1004", "trait_name": "公司", "layers": []},
+        {"trait_id": "9999", "trait_name": "未知羁绊", "layers": []},
+    ]
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda **kwargs: payload["data"])
+    calls = []
+
+    def fake_list(**kwargs):
+        calls.append(kwargs.get("trait_id"))
+        if kwargs.get("trait_id") is None:
+            return {
+                "list": [
+                    {
+                        "tourn_detail": {
+                            "role_stages": [
+                                {
+                                    "stage": "Final",
+                                    "traits": [
+                                        {"trait_id": "1004", "trait_name": "公司", "layers": [{"layer": 2}, {"layer": 3}]}
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "next_page_token": None,
+            }
+        return {"list": [], "next_page_token": None}
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_guide_list_data", fake_list)
+
+    config = guide_module.fetch_cw_guide_config(workspace_root=tmp_path, enrich_traits=True)
+
+    by_name = {item["name"]: item for item in config["traits"]}
+    assert [layer["layer"] for layer in by_name["公司"]["layers"]] == [2, 3]
+    assert "layers" not in by_name["未知羁绊"]
+    assert calls == [None, 9999]
+    cache_payload = json.loads((tmp_path / ".trail" / "cache" / "cw-guide-config-enriched.json").read_text(encoding="utf-8"))
+    assert cache_payload["complete"] is True
+    assert cache_payload["missing_trait_ids"] == ["9999"]
+    assert cache_payload["meta"]["rpg_game_big_version"] == "3.2"
+    assert cache_payload["meta"]["rpg_game_lineup_tourn_filter"] == "lineup-filter-v2"
+
+
+def test_fetch_cw_guide_config_enrichment_reads_beyond_thirty_pages(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+    payload = fake_cw_config_response()
+    payload["data"]["trait_info_list"] = [
+        {"trait_id": "1004", "trait_name": "公司", "layers": []},
+    ]
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda **kwargs: payload["data"])
+    calls = []
+
+    def fake_list(**kwargs):
+        token = kwargs.get("next_page_token")
+        calls.append(token)
+        page_number = 1 if token is None else int(str(token).removeprefix("page-"))
+        if page_number == 31:
+            return {
+                "list": [
+                    {
+                        "tourn_detail": {
+                            "role_stages": [
+                                {
+                                    "stage": "Final",
+                                    "traits": [{"trait_id": "1004", "trait_name": "公司", "layers": [{"layer": 2}]}],
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "next_page_token": None,
+            }
+        return {"list": [], "next_page_token": f"page-{page_number + 1}"}
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_guide_list_data", fake_list)
+
+    config = guide_module.fetch_cw_guide_config(workspace_root=tmp_path, enrich_traits=True)
+
+    by_name = {item["name"]: item for item in config["traits"]}
+    assert [layer["layer"] for layer in by_name["公司"]["layers"]] == [2]
+    assert len(calls) == 31
+    cache_payload = json.loads((tmp_path / ".trail" / "cache" / "cw-guide-config-enriched.json").read_text(encoding="utf-8"))
+    assert cache_payload["complete"] is True
+
+
+def test_fetch_cw_guide_config_enrichment_stops_on_repeated_next_page_token(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+    payload = fake_cw_config_response()
+    payload["data"]["trait_info_list"] = [
+        {"trait_id": "1004", "trait_name": "公司", "layers": []},
+    ]
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda **kwargs: payload["data"])
+    calls = []
+
+    def fake_list(**kwargs):
+        token = kwargs.get("next_page_token")
+        calls.append(token)
+        traits = []
+        if token == "repeat-token":
+            traits = [{"trait_id": "1004", "trait_name": "公司", "layers": [{"layer": 2}]}]
+        return {
+            "list": [{"tourn_detail": {"role_stages": [{"stage": "Final", "traits": traits}]}}],
+            "next_page_token": "repeat-token",
+        }
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_guide_list_data", fake_list)
+
+    config = guide_module.fetch_cw_guide_config(workspace_root=tmp_path, enrich_traits=True)
+
+    by_name = {item["name"]: item for item in config["traits"]}
+    assert [layer["layer"] for layer in by_name["公司"]["layers"]] == [2]
+    assert calls == [None, "repeat-token"]
+
+
+def test_fetch_cw_guide_config_enrichment_merges_name_only_raw_trait_with_base_id(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+    payload = fake_cw_config_response()
+    payload["data"]["trait_info_list"] = [
+        {"trait_id": "1004", "trait_name": "公司", "layers": []},
+    ]
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda **kwargs: payload["data"])
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: {
+            "list": [
+                {
+                    "tourn_detail": {
+                        "role_stages": [
+                            {
+                                "stage": "Final",
+                                "traits": [{"trait_name": "公司", "layers": [{"layer": 2}]}],
+                            }
+                        ]
+                    }
+                }
+            ],
+            "next_page_token": None,
+        },
+    )
+
+    config = guide_module.fetch_cw_guide_config(workspace_root=tmp_path, enrich_traits=True)
+
+    assert config["traits"] == [{"id": "1004", "name": "公司", "layers": [{"layer": 2}]}]
+
+
+def test_fetch_cw_guide_config_enrichment_keeps_result_when_cache_write_fails(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+    payload = fake_cw_config_response()
+    payload["data"]["trait_info_list"] = [
+        {"trait_id": "1004", "trait_name": "公司", "layers": []},
+    ]
+    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda **kwargs: payload["data"])
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_guide_list_data",
+        lambda **kwargs: {
+            "list": [
+                {
+                    "tourn_detail": {
+                        "role_stages": [
+                            {
+                                "stage": "Final",
+                                "traits": [{"trait_id": "1004", "trait_name": "公司", "layers": [{"layer": 2}]}],
+                            }
+                        ]
+                    }
+                }
+            ],
+            "next_page_token": None,
+        },
+    )
+    monkeypatch.setattr(
+        guide_module,
+        "_write_enriched_traits_cache",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("cache write failed")),
+    )
+
+    config = guide_module.fetch_cw_guide_config(workspace_root=tmp_path, enrich_traits=True)
+
+    by_name = {item["name"]: item for item in config["traits"]}
+    assert [layer["layer"] for layer in by_name["公司"]["layers"]] == [2]
+
+
+def test_write_enriched_traits_cache_uses_unique_temp_file(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+    cache_path = guide_module._cw_guide_enriched_config_cache_path(workspace_root=tmp_path)
+    path_type = type(cache_path)
+    written_paths = []
+    replaced_paths = []
+
+    def fake_write_text(self, *args, **kwargs):
+        written_paths.append(self.name)
+        return 1
+
+    def fake_replace(self, target):
+        replaced_paths.append((self.name, target.name))
+        return target
+
+    monkeypatch.setattr(path_type, "write_text", fake_write_text)
+    monkeypatch.setattr(path_type, "replace", fake_replace)
+
+    guide_module._write_enriched_traits_cache(
+        {"season_id": 12},
+        [{"id": "1004", "name": "公司", "layers": [{"layer": 2}]}],
+        [],
+        workspace_root=tmp_path,
+    )
+
+    assert written_paths
+    assert written_paths[0] != "cw-guide-config-enriched.json.tmp"
+    assert written_paths[0].startswith("cw-guide-config-enriched.json.")
+    assert replaced_paths == [(written_paths[0], "cw-guide-config-enriched.json")]
+
+
+def test_guide_config_yaml_uses_enriched_config(monkeypatch, tmp_path: Path):
+    from trail.daemon.models import DaemonRequest
+    from trail.daemon.protocol import PROTOCOL_VERSION
+    from trail.output.rendering import render_output
+
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    del registry, service, session, cw_service
+    captured_kwargs = {}
+
+    def fake_fetch_config(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {
+            "meta": {"season_id": 12, "sub_season_id": 3, "big_version": "3.2"},
+            "lineup_levels": [],
+            "traits": [{"id": "1004", "name": "公司", "layers": [{"layer": 2}, {"layer": 3}]}],
+            "roles": [],
+            "role_tags": [],
+            "portal_list": [],
+            "strategy_list": [],
+        }
+
+    monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide_config", fake_fetch_config)
+
+    envelope = command_service.handle(
+        DaemonRequest(
+            request_id="req-guide-config-yaml",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="guide.config.cw",
+            payload={},
+        )
+    )
+    rendered = render_output("guide.config.cw", envelope, output_format="yaml")
+
+    assert captured_kwargs["enrich_traits"] is True
+    assert rendered.splitlines()[:2] == [
+        "ok guide.config.cw 赛季=12 子赛季=3 大版本=3.2",
+        "info 搜牌档位=0 羁绊=1 角色=0 角色标签=0 投资环境=0",
+    ]
+    assert "traits:" in rendered
+    assert "layers:" in rendered
+    assert "- layer: 2" in rendered
+
+
 def test_fetch_cw_guide_list_uses_cached_workspace_config_for_trait_resolution(monkeypatch, tmp_path):
     guide_module = load_cw_guide_module()
 

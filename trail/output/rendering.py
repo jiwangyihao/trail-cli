@@ -69,6 +69,8 @@ def _append_warnings(lines: list[str], payload: dict[str, Any]) -> None:
     for warning in warnings:
         if not isinstance(warning, dict):
             continue
+        if _append_role_match_warning(lines, warning):
+            continue
         if warning.get("portal") is not None:
             lines.append(
                 f"warn portal={_encode_value(warning.get('portal'))} score={_encode_value(_format_score_value(warning.get('score')))}"
@@ -91,6 +93,53 @@ def _append_warnings(lines: list[str], payload: dict[str, Any]) -> None:
             ("resolved", warning.get("resolved")),
             ("msg", warning.get("message")),
         )
+
+
+def _append_role_match_warning(lines: list[str], warning: dict[str, Any]) -> bool:
+    code = warning.get("code")
+    if code not in {"CW_ROLE_MATCH_LOW_CONFIDENCE", "CW_ROLE_MATCH_AMBIGUOUS", "CW_ROLE_MATCH_FUZZY"}:
+        return False
+
+    facts: list[tuple[str, Any]] = [("code", code)]
+    position = _as_dict(warning.get("position"))
+    if position.get("kind") == "slot":
+        area = position.get("area")
+        index = _coerce_int(position.get("index"))
+        if isinstance(area, str) and index is not None:
+            facts.append(("pos", _format_agent_slot_pos(area, index)))
+    elif position.get("kind") == "shop":
+        if position.get("slot") is not None:
+            facts.append(("slot", position.get("slot")))
+        elif position.get("idx") is not None:
+            facts.append(("idx", position.get("idx")))
+
+    facts.extend(
+        [
+            ("query", warning.get("query")),
+            ("resolved", warning.get("resolved")),
+            ("score", _format_score_value(warning.get("score"))),
+            ("candidates", _compact_role_match_candidates(warning.get("candidates"))),
+            ("msg", warning.get("message")),
+        ]
+    )
+    _append_fact_line(lines, "warn", *facts)
+    return True
+
+
+def _compact_role_match_candidates(value: Any) -> str | None:
+    text = _first_string(value)
+    if text is not None:
+        return text
+    items: list[str] = []
+    for item in _as_list(value):
+        if isinstance(item, str) and item:
+            items.append(item)
+            continue
+        if isinstance(item, (int, float)) and not isinstance(item, bool):
+            items.append(str(item))
+    if not items:
+        return None
+    return "|".join(items)
 
 
 def _append_references(lines: list[str], payload: dict[str, Any]) -> None:
@@ -155,6 +204,10 @@ def _coerce_int(value: Any) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _format_agent_slot_pos(area: str, index: int) -> str:
+    return f"{area}:{index + 1}"
 
 
 def _first_string(value: Any) -> str | None:
@@ -223,6 +276,12 @@ def _compact_text_or_sequence(value: Any) -> str | None:
     if text is not None:
         return text
     return _compact_sequence(value)
+
+
+def _match_score_value(item: dict[str, Any]) -> Any:
+    if item.get("match_score") is not None:
+        return item.get("match_score")
+    return item.get("score")
 
 
 def _format_score_value(value: Any) -> str | None:
@@ -457,6 +516,10 @@ def _append_cw_shop_items(lines: list[str], data: dict[str, Any]) -> None:
             facts.append(("cost", cost))
         elif name is None and slot is not None:
             facts.append(("empty", True))
+        facts.append(("traits", _compact_text_or_sequence(item.get("traits"))))
+        facts.append(("raw_name", item.get("raw_name")))
+        facts.append(("score", _format_score_value(_match_score_value(item))))
+        facts.append(("match_kind", item.get("match_kind")))
         lines.append("item " + _format_fact_sequence(*facts))
 
 
@@ -698,7 +761,7 @@ def _render_cw_slots(command: str, payload: dict[str, Any]) -> list[str]:
 def _append_cw_slot_lines(lines: list[str], data: dict[str, Any]) -> None:
     for zone in ("front", "back", "hand"):
         for index, value in enumerate(_as_list(data.get(zone))):
-            facts: list[tuple[str, Any]] = [("pos", f"{zone}:{index}")]
+            facts: list[tuple[str, Any]] = [("pos", _format_agent_slot_pos(zone, index))]
 
             if value in (None, ""):
                 facts.append(("empty", True))
@@ -710,8 +773,18 @@ def _append_cw_slot_lines(lines: list[str], data: dict[str, Any]) -> None:
                 name = item.get("name")
                 cost = item.get("cost") if item.get("cost") is not None else item.get("price")
                 facts.append(("name", name if name is not None else value))
-                facts.append(("star", item.get("star")))
-                facts.append(("traits", _compact_text_or_sequence(item.get("traits"))))
+                has_match_diagnostics = any(
+                    item.get(key) is not None for key in ("raw_name", "match_score", "score", "match_kind")
+                )
+                if has_match_diagnostics:
+                    facts.append(("raw_name", item.get("raw_name")))
+                    facts.append(("score", _format_score_value(_match_score_value(item))))
+                    facts.append(("match_kind", item.get("match_kind")))
+                    facts.append(("traits", _compact_text_or_sequence(item.get("traits"))))
+                    facts.append(("star", item.get("star")))
+                else:
+                    facts.append(("star", item.get("star")))
+                    facts.append(("traits", _compact_text_or_sequence(item.get("traits"))))
                 facts.append(("rarity", item.get("rarity")))
                 facts.append(("carry", True if item.get("is_carry") is True else None))
                 facts.append(("cost", cost))
@@ -728,10 +801,16 @@ def _append_cw_slot_trait_summary(lines: list[str], data: dict[str, Any]) -> Non
             continue
         active_tier = item.get("active_tier")
         total_tiers = item.get("total_tiers")
+        tiers = item.get("tiers")
+        max_tier = None
+        if isinstance(tiers, list):
+            tier_values = [_coerce_int(value) for value in tiers]
+            compact_tiers = [value for value in tier_values if value is not None]
+            if compact_tiers:
+                max_tier = max(compact_tiers)
         activated = None
         if active_tier is not None and total_tiers is not None:
-            activated = f"{active_tier}/{total_tiers}"
-        tiers = item.get("tiers")
+            activated = f"{active_tier}/{max_tier if max_tier is not None else total_tiers}"
         tiers_text = None
         if isinstance(tiers, list):
             compact = [str(value) for value in tiers if value is not None]
@@ -759,9 +838,9 @@ def _render_cw_slots_read(command: str, payload: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _iter_sorted_cw_shop_items(data: dict[str, Any]) -> list[dict[str, Any]]:
+def _iter_sorted_cw_shop_items_with_raw_idx(data: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
     items = _as_list(data.get("items"))
-    decorated: list[tuple[int, int, int, dict[str, Any]]] = []
+    decorated: list[tuple[int, int, int, int, dict[str, Any]]] = []
     for original_index, item in enumerate(items):
         if not isinstance(item, dict):
             continue
@@ -771,11 +850,49 @@ def _iter_sorted_cw_shop_items(data: dict[str, Any]) -> list[dict[str, Any]]:
                 1 if slot_value is None else 0,
                 0 if slot_value is None else slot_value,
                 original_index,
+                original_index + 1,
                 item,
             )
         )
     decorated.sort(key=lambda entry: (entry[0], entry[1], entry[2]))
-    return [item for _, _, _, item in decorated]
+    return [(raw_idx, item) for _, _, _, raw_idx, item in decorated]
+
+
+def _iter_sorted_cw_shop_items(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [item for _, item in _iter_sorted_cw_shop_items_with_raw_idx(data)]
+
+
+def _cw_shop_display_idx_by_raw_idx(data: dict[str, Any]) -> dict[int, int]:
+    return {
+        raw_idx: display_idx
+        for display_idx, (raw_idx, _) in enumerate(_iter_sorted_cw_shop_items_with_raw_idx(data), start=1)
+    }
+
+
+def _append_cw_shop_warnings(lines: list[str], payload: dict[str, Any], data: dict[str, Any]) -> None:
+    warnings = payload.get("warnings") or []
+    if not isinstance(warnings, list):
+        return
+
+    display_idx_by_raw_idx = _cw_shop_display_idx_by_raw_idx(data)
+    adjusted_warnings: list[Any] = []
+    for warning in warnings:
+        if not isinstance(warning, dict):
+            adjusted_warnings.append(warning)
+            continue
+        position = _as_dict(warning.get("position"))
+        raw_idx = _coerce_int(position.get("idx"))
+        if position.get("kind") != "shop" or position.get("slot") is not None or raw_idx is None:
+            adjusted_warnings.append(warning)
+            continue
+        display_idx = display_idx_by_raw_idx.get(raw_idx)
+        if display_idx is None:
+            adjusted_warnings.append(warning)
+            continue
+        adjusted_position = {**position, "idx": display_idx}
+        adjusted_warnings.append({**warning, "position": adjusted_position})
+
+    _append_warnings(lines, {**payload, "warnings": adjusted_warnings})
 
 
 def _count_cw_shop_items(items: list[Any]) -> int:
@@ -794,10 +911,9 @@ def _render_cw_shop_status(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     items = _as_list(data.get("items"))
     lines = [f"ok {command} count={_encode_value(_count_cw_shop_items(items))}"]
-    _append_success_capture_block(lines, payload)
     _append_cw_shop_items(lines, data)
     _append_cw_shop_snapshot_info(lines, data)
-    _append_warnings(lines, payload)
+    _append_cw_shop_warnings(lines, payload, data)
     _append_references(lines, payload)
     return lines
 
@@ -819,7 +935,7 @@ def _render_cw_shop_action(command: str, payload: dict[str, Any]) -> list[str]:
         _append_cw_shop_items(lines, data)
     if command in {"cw.shop.scan", "cw.shop.buy_exp"}:
         _append_cw_shop_snapshot_info(lines, data)
-    _append_warnings(lines, payload)
+    _append_cw_shop_warnings(lines, payload, data)
     _append_references(lines, payload)
     return lines
 
@@ -857,7 +973,7 @@ def _render_cw_sell_plan(command: str, payload: dict[str, Any]) -> list[str]:
         lines.append(
             "slot "
             + _format_fact_sequence(
-                ("pos", f"hand:{slot}"),
+                ("pos", _format_agent_slot_pos("hand", slot)),
                 ("name", entry.get("name")),
                 ("star", entry.get("star")),
                 ("target_star", entry.get("target_star")),

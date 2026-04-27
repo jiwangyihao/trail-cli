@@ -15,6 +15,9 @@ from trail.scenes.cw.models import ensure_cw_state
 from trail.session.store import SessionStore
 
 
+SESSION_ID = "s" * 32
+
+
 def load_cw_slots_module():
     try:
         return importlib.import_module("trail.scenes.cw.slots")
@@ -136,6 +139,123 @@ def _record_batch_capture(slots_module, runtime, kwargs, image, *, slot_text: st
 
     if key is not None:
         runtime.batch_targets.append({"key": key, "size": image.size, "text": text})
+
+
+@pytest.mark.parametrize(
+    ("args", "command", "payload"),
+    [
+        (
+            ["cw", "slots", "read", "--session", SESSION_ID, "--slot", "front:1", "--slot", "back:2"],
+            "cw.slots.read",
+            {"slot": ["front:0", "back:1"]},
+        ),
+        (
+            ["cw", "slots", "swap", "--session", SESSION_ID, "--source", "hand:1", "--target", "front:1"],
+            "cw.slots.swap",
+            {"source": "hand:0", "target": "front:0"},
+        ),
+        (
+            ["cw", "slots", "place", "--session", SESSION_ID, "--action", "hand:1,front:1"],
+            "cw.slots.place",
+            {"actions": [{"source": "hand:0", "target": "front:0"}]},
+        ),
+        (
+            ["cw", "hand", "sell", "--session", SESSION_ID, "--slot", "1", "--slot", "3"],
+            "cw.hand.sell",
+            {"slots": [0, 2]},
+        ),
+    ],
+)
+def test_cw_slot_cli_converts_agent_visible_slots_to_internal_zero_based(
+    cli_runner,
+    monkeypatch,
+    args,
+    command,
+    payload,
+):
+    from trail.cli import app
+
+    captured = {}
+    monkeypatch.setattr(
+        "trail.commands.cw._print_cw",
+        lambda command, *, session_id, payload=None: captured.update(command=command, session_id=session_id, payload=payload),
+    )
+
+    result = cli_runner.invoke(app, args)
+
+    assert result.exit_code == 0
+    assert captured == {"command": command, "session_id": SESSION_ID, "payload": payload}
+
+
+@pytest.mark.parametrize(
+    ("args", "command", "leaked_refs"),
+    [
+        (["cw", "slots", "read", "--session", SESSION_ID, "--slot", "front:0"], "cw.slots.read", ["front:0"]),
+        (
+            ["cw", "slots", "swap", "--session", SESSION_ID, "--source", "hand:0", "--target", "front:1"],
+            "cw.slots.swap",
+            ["hand:0"],
+        ),
+        (["cw", "slots", "place", "--session", SESSION_ID, "--action", "hand:0,front:1"], "cw.slots.place", ["hand:0"]),
+        (["cw", "hand", "sell", "--session", SESSION_ID, "--slot", "0"], "cw.hand.sell", ["hand:0"]),
+    ],
+)
+def test_cw_slot_cli_rejects_zero_agent_visible_slot_without_rpc(cli_runner, monkeypatch, args, command, leaked_refs):
+    from trail.cli import app
+
+    calls = []
+    monkeypatch.setattr(
+        "trail.commands.cw._print_cw",
+        lambda command, *, session_id, payload=None: calls.append((command, session_id, payload)),
+    )
+
+    result = cli_runner.invoke(app, args)
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines()[0] == f"fail {command} code=CW_OPTION_INVALID"
+    for leaked_ref in leaked_refs:
+        assert leaked_ref not in result.stdout
+    assert calls == []
+
+
+@pytest.mark.parametrize("action", ["hand:0-front:0", "hand:1-front:1"])
+def test_cw_slots_place_malformed_action_omits_slot_refs_without_rpc(cli_runner, monkeypatch, action):
+    from trail.cli import app
+
+    calls = []
+    monkeypatch.setattr(
+        "trail.commands.cw._print_cw",
+        lambda command, *, session_id, payload=None: calls.append((command, session_id, payload)),
+    )
+
+    result = cli_runner.invoke(app, ["cw", "slots", "place", "--session", SESSION_ID, "--action", action])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.slots.place code=CW_OPTION_INVALID",
+        'why msg="cw slots place action invalid"',
+    ]
+    assert "hand:" not in result.stdout
+    assert "front:" not in result.stdout
+    assert "hand:2-front:2" not in result.stdout
+    assert calls == []
+
+
+def test_cw_hand_sell_rejects_non_numeric_slot_with_protocol_failure(cli_runner, monkeypatch):
+    from trail.cli import app
+
+    calls = []
+    monkeypatch.setattr(
+        "trail.commands.cw._print_cw",
+        lambda command, *, session_id, payload=None: calls.append((command, session_id, payload)),
+    )
+
+    result = cli_runner.invoke(app, ["cw", "hand", "sell", "--session", SESSION_ID, "--slot", "abc"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines()[0] == "fail cw.hand.sell code=CW_OPTION_INVALID"
+    assert "Usage:" not in result.stdout
+    assert calls == []
 
 
 def test_slots_module_does_not_expose_legacy_strip_ocr_helpers():
@@ -913,6 +1033,157 @@ def test_slots_read_preserves_star_metadata_when_normalizing_name(tmp_path):
     assert refreshed.scene_state["cw"]["slots"]["front"][0] == {"name": "布洛妮娅", "star": 3}
 
 
+def test_slots_read_uses_full_config_catalog_without_selected_guide(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"].pop("guide", None)
+    guide_config = {
+        "traits": [{"id": "1007", "name": "仙舟", "layers": [{"layer": 3}]}],
+        "roles": [{"id": "1502", "name": "爻光", "trait_ids": ["1007"]}],
+    }
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: ([{"name": "交光", "star": 1}, None, None, None], [None] * 6, [None] * 9),
+        guide_config=guide_config,
+    )
+
+    stored = refreshed.scene_state["cw"]["slots"]["front"][0]
+    assert stored == {"name": "爻光", "role_id": "1502", "star": 1, "traits": ["仙舟"]}
+    assert "raw_name" not in stored
+    assert "match_score" not in stored
+    assert "match_kind" not in stored
+
+
+def test_slots_read_keeps_match_diagnostics_response_only(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    guide_config = {
+        "traits": [{"id": "1007", "name": "仙舟", "layers": [{"layer": 3}]}],
+        "roles": [{"id": "1502", "name": "爻光", "trait_ids": ["1007"]}],
+    }
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: ([{"name": "交光", "star": 1}, None, None, None], [None] * 6, [None] * 9),
+        guide_config=guide_config,
+    )
+
+    response_slot = refreshed.response_snapshot["front"][0]
+    assert response_slot == {
+        "name": "爻光",
+        "role_id": "1502",
+        "star": 1,
+        "traits": ["仙舟"],
+        "raw_name": "交光",
+        "match_score": 0.5,
+        "match_kind": "low_confidence",
+    }
+    assert refreshed.response_snapshot["warnings"][0]["code"] == "CW_ROLE_MATCH_LOW_CONFIDENCE"
+    assert refreshed.response_snapshot["warnings"][0]["position"] == {"kind": "slot", "area": "front", "index": 0}
+    stored = refreshed.scene_state["cw"]["slots"]["front"][0]
+    assert stored == {"name": "爻光", "role_id": "1502", "star": 1, "traits": ["仙舟"]}
+    assert "warnings" not in refreshed.scene_state["cw"]["slots"]
+
+
+def _assert_no_slot_match_diagnostics(value):
+    if isinstance(value, dict):
+        assert "raw_name" not in value
+        assert "match_score" not in value
+        assert "score" not in value
+        assert "match_kind" not in value
+        for child in value.values():
+            _assert_no_slot_match_diagnostics(child)
+        return
+    if isinstance(value, list):
+        for child in value:
+            _assert_no_slot_match_diagnostics(child)
+
+
+def test_slots_read_strips_stale_match_diagnostics_from_preserved_targeted_snapshot(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"] = {
+        "front": [
+            {
+                "name": "爻光",
+                "role_id": "1502",
+                "star": 1,
+                "traits": ["仙舟"],
+                "raw_name": "交光",
+                "match_score": 0.5,
+                "score": 0.5,
+                "match_kind": "low_confidence",
+            },
+            None,
+            None,
+            None,
+        ],
+        "back": [None] * 6,
+        "hand": [None] * 9,
+        "stale": False,
+    }
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: ([None, {"name": "布洛妮娅", "star": 1}, None, None], [None] * 6, [None] * 9),
+        targets=["front:1"],
+        guide_config={"traits": [], "roles": []},
+    )
+
+    stored_slots = refreshed.scene_state["cw"]["slots"]
+    _assert_no_slot_match_diagnostics(stored_slots)
+    _assert_no_slot_match_diagnostics(refreshed.response_snapshot)
+    assert stored_slots["front"][0] == {"name": "爻光", "role_id": "1502", "star": 1, "traits": ["仙舟"]}
+    assert refreshed.response_snapshot["front"][0] == {"name": "爻光", "role_id": "1502", "star": 1, "traits": ["仙舟"]}
+
+
+def test_slots_read_does_not_catalog_rename_unrefreshed_preserved_slots(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"] = {
+        "front": ["交光", None, None, None],
+        "back": [None] * 6,
+        "hand": [None] * 9,
+        "stale": False,
+    }
+    guide_config = {
+        "traits": [
+            {"id": "1007", "name": "仙舟", "layers": [{"layer": 1}, {"layer": 3}]},
+            {"id": "2001", "name": "风", "layers": [{"layer": 1}, {"layer": 2}]},
+        ],
+        "roles": [
+            {"id": "1502", "name": "爻光", "trait_ids": ["1007"]},
+            {"id": "1003", "name": "布洛妮娅", "trait_ids": ["2001"]},
+        ],
+    }
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: ([None, {"name": "布洛妮娅", "star": 1}, None, None], [None] * 6, [None] * 9),
+        targets=["front:1"],
+        guide_config=guide_config,
+    )
+
+    assert refreshed.scene_state["cw"]["slots"]["front"][0] == "交光"
+    assert refreshed.response_snapshot["front"][0] == "交光"
+    assert refreshed.scene_state["cw"]["slots"]["front"][1] == {"name": "布洛妮娅", "role_id": "1003", "star": 1, "traits": ["风"]}
+    assert "warnings" not in refreshed.response_snapshot
+    _assert_no_slot_match_diagnostics(refreshed.scene_state["cw"]["slots"])
+
+
 def test_slots_read_enriches_slot_traits_and_summarizes_field_traits(tmp_path):
     slots_module = load_cw_slots_module()
     read_cw_slots = getattr(slots_module, "read_cw_slots", None)
@@ -921,9 +1192,9 @@ def test_slots_read_enriches_slot_traits_and_summarizes_field_traits(tmp_path):
     session = build_fake_cw_session(tmp_path)
     guide_config = {
         "traits": [
-            {"id": 2001, "name": "巡猎"},
-            {"id": 2002, "name": "量子"},
-            {"id": 2003, "name": "辅助"},
+            {"id": 2001, "name": "巡猎", "layers": [{"layer": 1}, {"layer": 2}]},
+            {"id": 2002, "name": "量子", "layers": [{"layer": 1}, {"layer": 2}]},
+            {"id": 2003, "name": "辅助", "layers": [{"layer": 1}, {"layer": 2}]},
         ],
         "roles": [
             {"id": 1001, "name": "希儿", "trait_ids": [2001, 2002]},
@@ -942,13 +1213,151 @@ def test_slots_read_enriches_slot_traits_and_summarizes_field_traits(tmp_path):
         guide_config=guide_config,
     )
 
-    assert refreshed.scene_state["cw"]["slots"]["front"][0] == {"name": "希儿", "star": 4, "traits": ["巡猎", "量子"]}
-    assert refreshed.scene_state["cw"]["slots"]["back"][0] == {"name": "佩拉", "star": 2, "traits": ["量子"]}
-    assert refreshed.scene_state["cw"]["slots"]["hand"][0] == {"name": "布洛妮娅", "star": 3, "traits": ["巡猎", "辅助"]}
+    assert refreshed.scene_state["cw"]["slots"]["front"][0] == {"name": "希儿", "role_id": "1001", "star": 4, "traits": ["巡猎", "量子"]}
+    assert refreshed.scene_state["cw"]["slots"]["back"][0] == {"name": "佩拉", "role_id": "1002", "star": 2, "traits": ["量子"]}
+    assert refreshed.scene_state["cw"]["slots"]["hand"][0] == {"name": "布洛妮娅", "role_id": "1003", "star": 3, "traits": ["巡猎", "辅助"]}
     assert refreshed.scene_state["cw"]["slots"]["trait_summary"] == [
         {"trait": "量子", "tiers": [1, 2], "owned_roles": 2, "active_tier": 2, "total_tiers": 2, "ratio": 1.0},
         {"trait": "巡猎", "tiers": [1, 2], "owned_roles": 1, "active_tier": 1, "total_tiers": 2, "ratio": 0.5},
     ]
+
+
+def test_slots_read_trait_summary_uses_enriched_layers_without_role_count_fallback(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    guide_config = {
+        "traits": [
+            {"id": "1007", "name": "仙舟", "layers": [{"layer": 3}, {"layer": 5}]},
+            {"id": "1004", "name": "公司"},
+        ],
+        "roles": [
+            {"id": "1502", "name": "爻光", "trait_ids": ["1007"]},
+            {"id": "1304", "name": "砂金", "trait_ids": ["1004"]},
+        ],
+    }
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: (
+            [{"name": "爻光", "star": 1}, {"name": "砂金", "star": 1}, None, None],
+            [None] * 6,
+            [None] * 9,
+        ),
+        guide_config=guide_config,
+    )
+
+    assert refreshed.scene_state["cw"]["slots"]["trait_summary"] == [
+        {"trait": "仙舟", "tiers": [3, 5], "owned_roles": 1, "active_tier": 0, "total_tiers": 2, "ratio": 0.0}
+    ]
+
+
+def test_slots_read_stage_role_count_uses_merged_snapshot_for_partial_reads(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"] = {
+        "front": ["希儿", None, None, None],
+        "back": ["佩拉", None, None, None, None, None],
+        "hand": ["银狼", None, "阮·梅", None, None, None, None, None, None],
+        "stale": False,
+    }
+    result = slots_module.CwSlotsReadResult(
+        front=[None, {"name": "布洛妮娅", "star": 1}, None, None],
+        back=[None] * 6,
+        hand=[None] * 9,
+        stage_status={"stale": False, "level": 7, "exp": "4/52", "team_size": "3/3"},
+    )
+
+    refreshed = read_cw_slots(session, reader=lambda: result, targets=["front:1"])
+
+    assert refreshed.scene_state["cw"]["stage"]["status"]["role_count"] == {
+        "front": 2,
+        "back": 1,
+        "hand": 2,
+        "field": 3,
+        "total": 5,
+    }
+
+
+def test_slots_read_stage_role_count_ignores_stale_previous_snapshot_on_partial_reads(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"] = {
+        "front": ["希儿", "黑塔", None, None],
+        "back": ["佩拉", "停云", None, None, None, None],
+        "hand": ["银狼", None, "阮·梅", None, None, None, None, None, None],
+        "stale": True,
+    }
+    result = slots_module.CwSlotsReadResult(
+        front=[None, {"name": "布洛妮娅", "star": 1}, None, None],
+        back=[None] * 6,
+        hand=[None] * 9,
+        stage_status={"stale": False, "level": 7, "exp": "4/52", "team_size": "3/3"},
+    )
+
+    refreshed = read_cw_slots(session, reader=lambda: result, targets=["front:1"])
+
+    assert refreshed.scene_state["cw"]["stage"]["status"]["role_count"] == {
+        "front": 1,
+        "back": 0,
+        "hand": 0,
+        "field": 1,
+        "total": 1,
+    }
+
+
+def test_slots_read_trait_summary_ignores_stale_previous_field_roles_on_partial_reads(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"] = {
+        "front": ["希儿", None, None, None],
+        "back": ["佩拉", None, None, None, None, None],
+        "hand": ["银狼", None, None, None, None, None, None, None, None],
+        "stale": True,
+    }
+    guide_config = {
+        "traits": [
+            {"id": "1007", "name": "仙舟", "layers": [{"layer": 1}, {"layer": 3}]},
+            {"id": "2002", "name": "量子", "layers": [{"layer": 1}, {"layer": 2}]},
+        ],
+        "roles": [
+            {"id": "1502", "name": "爻光", "trait_ids": ["1007"]},
+            {"id": "1001", "name": "希儿", "trait_ids": ["2002"]},
+            {"id": "1002", "name": "佩拉", "trait_ids": ["2002"]},
+            {"id": "1004", "name": "银狼", "trait_ids": ["2002"]},
+        ],
+    }
+    result = slots_module.CwSlotsReadResult(
+        front=[None, {"name": "爻光", "star": 1}, None, None],
+        back=[None] * 6,
+        hand=[None] * 9,
+        stage_status={"stale": False, "level": 7, "exp": "4/52", "team_size": "3/3"},
+    )
+
+    refreshed = read_cw_slots(session, reader=lambda: result, targets=["front:1"], guide_config=guide_config)
+
+    assert refreshed.scene_state["cw"]["stage"]["status"]["role_count"] == {
+        "front": 1,
+        "back": 0,
+        "hand": 0,
+        "field": 1,
+        "total": 1,
+    }
+    assert refreshed.scene_state["cw"]["slots"]["trait_summary"] == [
+        {"trait": "仙舟", "tiers": [1, 3], "owned_roles": 1, "active_tier": 1, "total_tiers": 2, "ratio": 0.33}
+    ]
+    assert refreshed.response_snapshot["trait_summary"] == refreshed.scene_state["cw"]["slots"]["trait_summary"]
 
 
 def test_summarize_field_trait_status_sorts_by_activation_ratio_and_limits_top_ten():
@@ -959,7 +1368,10 @@ def test_summarize_field_trait_status_sorts_by_activation_ratio_and_limits_top_t
     front = [{"name": f"角色{index}", "traits": [f"羁绊{index}"]} for index in range(12)]
     back = []
     guide_config = {
-        "traits": [{"id": index, "name": f"羁绊{index}"} for index in range(12)],
+        "traits": [
+            {"id": index, "name": f"羁绊{index}", "layers": [{"layer": role_idx + 1} for role_idx in range(index + 1)]}
+            for index in range(12)
+        ],
         "roles": [
             {"id": f"r{index}-{role_idx}", "name": f"角色{index}" if role_idx == 0 else f"羁绊{index}候补{role_idx}", "trait_ids": [index]}
             for index in range(12)
@@ -1210,6 +1622,28 @@ def test_build_cw_slot_swapper_drags_between_slot_points_and_rejects_cannot_be_f
 
     assert exc_info.value.code == "SLOTS_CANNOT_BE_FIELDED"
     assert blocked_runtime.clicks == [slots_module.INFO_DISMISS_POINT]
+
+
+def test_cannot_be_fielded_error_uses_agent_visible_slot_reference():
+    slots_module = load_cw_slots_module()
+
+    class RuntimeSpy:
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int):
+            del from_x, from_y, to_x, to_y
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return Box(left=0, top=0, width=10, height=10)
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del x, y, kwargs
+
+    with pytest.raises(TrailError) as exc_info:
+        slots_module.build_cw_slot_swapper(RuntimeSpy())(source="hand:0", target="front:0")
+
+    assert exc_info.value.code == "SLOTS_CANNOT_BE_FIELDED"
+    assert str(exc_info.value) == "target slot cannot field character: front:1"
+    assert "front:0" not in str(exc_info.value)
 
 
 def test_place_cw_slots_runs_actions_in_order(tmp_path):
@@ -2135,6 +2569,81 @@ def test_cw_slots_read_service_preserves_existing_snapshot_shape(tmp_path: Path,
 
     assert result["front"][1] == "布洛妮娅"
     assert service.load_session(session.session_id).scene_state["cw"]["slots"]["front"][1] == "布洛妮娅"
+
+
+def test_cw_slots_read_service_requests_enriched_guide_config(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.fetch_cw_guide_config",
+        lambda **kwargs: calls.append(dict(kwargs)) or {"traits": [], "roles": []},
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.slots_reader_factory",
+        lambda runtime, targets=None: lambda: (["希儿", None, None, None], [None] * 6, [None] * 9),
+    )
+
+    cw_service.handle(
+        method="cw.slots.read",
+        payload={"session_id": session.session_id, "slot": ["front:0"]},
+        workspace_root=str(tmp_path),
+        session_service=service,
+    )
+
+    assert calls == [{"workspace_root": str(tmp_path), "enrich_traits": True}]
+
+
+def test_cw_slots_read_command_service_promotes_catalog_warnings_without_persisting_them(tmp_path: Path, monkeypatch):
+    from trail.daemon.models import DaemonRequest
+    from trail.daemon.protocol import PROTOCOL_VERSION
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional
+            return tmp_path / ".trail" / "shots" / f"{request_id}.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    runtime = Runtime()
+    cw_service.runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.fetch_cw_guide_config",
+        lambda **kwargs: {
+            "traits": [{"id": "1007", "name": "仙舟", "layers": [{"layer": 3}]}],
+            "roles": [{"id": "1502", "name": "爻光", "trait_ids": ["1007"]}],
+        },
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.slots_reader_factory",
+        lambda runtime, targets=None: lambda: ([{"name": "交光", "star": 1}, None, None, None], [None] * 6, [None] * 9),
+    )
+
+    envelope = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-slots-read-catalog-warning",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.slots.read",
+            payload={"session_id": session.session_id, "slot": ["front:0"]},
+        )
+    )
+
+    assert envelope["ok"] is True
+    assert envelope["data"]["front"][0]["raw_name"] == "交光"
+    assert envelope["data"]["front"][0]["match_kind"] == "low_confidence"
+    assert "warnings" not in envelope["data"]
+    assert envelope["warnings"][0]["code"] == "CW_ROLE_MATCH_LOW_CONFIDENCE"
+    persisted = service.load_session(session.session_id).scene_state["cw"]["slots"]
+    assert persisted["front"][0] == {"name": "爻光", "role_id": "1502", "star": 1, "traits": ["仙舟"]}
+    assert "warnings" not in persisted
 
 
 def test_cw_slots_read_command_service_captures_screenshot(tmp_path: Path, monkeypatch):

@@ -342,6 +342,39 @@ def test_readme_mentions_text_output_protocol() -> None:
     assert "ok/data/screenshot/debug" not in readme
 
 
+def test_cw_slot_and_catalog_matching_docs_are_agent_visible_one_based() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    prep_skill = (PROJECT_ROOT / "skills" / "trail-cw-prep" / "SKILL.md").read_text(encoding="utf-8")
+    prep_command_surface = (
+        PROJECT_ROOT / "skills" / "trail-cw-prep" / "references" / "command-surface.md"
+    ).read_text(encoding="utf-8")
+    public_docs = "\n".join((readme, prep_skill, prep_command_surface))
+
+    assert "trail cw slots read --session <id> --slot front:1 --slot hand:4" in readme
+    assert "trail cw slots place --session <id> --action hand:1,front:1 --action hand:2,back:3" in readme
+    assert "trail cw hand sell --session <id> --slot 1 --slot 3" in readme
+    assert "slot pos=front:1 name=爻光 raw_name=交光 score=0.50 match_kind=low_confidence traits=仙舟|战技点|欢愉" in readme
+    assert "默认文本输出改为 Agent 可见 1-based" in agents
+    assert "cw.shop.status 不产出截图" in agents
+    assert "raw_name" in "\n".join((readme, agents))
+    assert "score=0.50" in "\n".join((readme, agents))
+    assert "`slots.read` 和 `shop.scan` 会按 CW config canonicalize 角色名" in readme
+    assert "低置信度告警必须先读本次截图" in readme
+    assert "`item ... traits=...` 来自 shop/catalog canonicalization 的商品角色羁绊" in readme
+    assert "`field trait_summary` 不是默认文本中的 `item traits`" in readme
+    assert "`field trait_summary` 只在 slots snapshot fresh 的结构化/RPC 投影中可用" in readme
+    assert "`item traits=...` 是商品角色 canonicalization 结果" in prep_command_surface
+    assert "`field trait_summary` 不是默认文本 `item traits`" in prep_command_surface
+    assert "只在 fresh slots 的结构化/RPC 投影中可用" in prep_command_surface
+    assert "商品 `traits=...` summary 只在 slots snapshot fresh 时出现" not in readme
+    assert "商品 trait summary 只在 slots snapshot fresh 时出现" not in prep_command_surface
+    assert "`cw.shop.status` 不产出截图，也不输出 `info read_image_first=1`" in readme
+
+    for stale_example in ("hand:0,front:0", "front:0", "--slot 0", "slot pos=hand:0"):
+        assert stale_example not in public_docs
+
+
 def test_agents_document_screenshot_first_protocol_facts() -> None:
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
@@ -693,7 +726,7 @@ def test_readme_locks_cw_portal_select_success_screenshot_order() -> None:
         "shot path=.trail/shots/req-portal-select.png",
         "info read_image_first=1",
         "info skill_info=运营思路 text=前期：先收集事实，再按后续策略处理",
-        "slot pos=front:0 name=希儿 star=1 traits=巡猎",
+        "slot pos=front:1 name=希儿 star=1 traits=巡猎",
         'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
         "item idx=1 slot=1 name=银狼 cost=20",
         "info coins=40 reserve_full=0",
@@ -1101,6 +1134,180 @@ def test_render_output_renders_cw_shop_status_without_shot_or_guidance():
         "item idx=4 name=无槽位条目 cost=9",
         "info coins=40 level=7 exp=4/52 reserve_full=0 team_size=7/7",
     ]
+
+
+def test_render_cw_shop_status_never_renders_screenshot_guidance():
+    envelope = {
+        "ok": True,
+        "data": {"items": [{"slot": 1, "name": "刃", "traits": ["燃血"]}], "coins": 5, "stale": False},
+        "screenshot": ".trail/shots/should-not-render.jpg",
+        "warnings": [],
+        "references": [],
+        "error": None,
+    }
+
+    lines = render_output("cw.shop.status", envelope).splitlines()
+
+    assert "shot path=" not in "\n".join(lines)
+    assert "info read_image_first=1" not in lines
+    assert "item idx=1 slot=1 name=刃 traits=燃血" in lines
+
+
+def test_render_cw_shop_item_renders_match_diagnostics_and_shop_warning():
+    envelope = {
+        "ok": True,
+        "data": {
+            "opened": True,
+            "stale": False,
+            "items": [
+                {
+                    "slot": 2,
+                    "name": "爻光",
+                    "cost": 1,
+                    "traits": ["仙舟"],
+                    "raw_name": "交光",
+                    "match_score": 0.5,
+                    "match_kind": "low_confidence",
+                }
+            ],
+        },
+        "screenshot": None,
+        "warnings": [
+            {
+                "code": "CW_ROLE_MATCH_LOW_CONFIDENCE",
+                "position": {"kind": "shop", "slot": 2},
+                "query": "交光",
+                "resolved": "爻光",
+                "score": 0.5,
+                "candidates": ["爻光:0.50", {"role": "交光", "match_score": 0.49}],
+                "message": "角色名未精确命中，请先看截图确认",
+            }
+        ],
+        "references": [],
+        "error": None,
+    }
+
+    rendered = render_output("cw.shop.scan", envelope)
+
+    assert rendered.splitlines() == [
+        "ok cw.shop.scan opened=1 stale=0 count=1",
+        "item idx=1 slot=2 name=爻光 cost=1 traits=仙舟 raw_name=交光 score=0.50 match_kind=low_confidence",
+        "warn code=CW_ROLE_MATCH_LOW_CONFIDENCE slot=2 query=交光 resolved=爻光 score=0.50 candidates=爻光:0.50 msg=角色名未精确命中，请先看截图确认",
+    ]
+    assert "match_score" not in rendered
+
+
+def test_render_cw_shop_item_warning_uses_idx_when_slot_missing():
+    envelope = {
+        "ok": True,
+        "data": {
+            "opened": True,
+            "stale": False,
+            "items": [
+                {
+                    "name": "爻光",
+                    "cost": 1,
+                    "traits": ["仙舟"],
+                    "raw_name": "交光",
+                    "match_score": 0.5,
+                    "match_kind": "low_confidence",
+                }
+            ],
+        },
+        "screenshot": None,
+        "warnings": [
+            {
+                "code": "CW_ROLE_MATCH_LOW_CONFIDENCE",
+                "position": {"kind": "shop", "idx": 1},
+                "query": "交光",
+                "resolved": "爻光",
+                "score": 0.5,
+                "candidates": ["爻光:0.50"],
+                "message": "角色名未精确命中，请先看截图确认",
+            }
+        ],
+        "references": [],
+        "error": None,
+    }
+
+    assert render_output("cw.shop.scan", envelope).splitlines() == [
+        "ok cw.shop.scan opened=1 stale=0 count=1",
+        "item idx=1 name=爻光 cost=1 traits=仙舟 raw_name=交光 score=0.50 match_kind=low_confidence",
+        "warn code=CW_ROLE_MATCH_LOW_CONFIDENCE idx=1 query=交光 resolved=爻光 score=0.50 candidates=爻光:0.50 msg=角色名未精确命中，请先看截图确认",
+    ]
+
+
+def test_render_cw_shop_item_warning_idx_follows_sorted_output_order_when_slot_missing():
+    envelope = {
+        "ok": True,
+        "data": {
+            "opened": True,
+            "stale": False,
+            "items": [
+                {
+                    "name": "爻光",
+                    "cost": 1,
+                    "traits": ["仙舟"],
+                    "raw_name": "交光",
+                    "match_score": 0.5,
+                    "match_kind": "low_confidence",
+                },
+                {"slot": 1, "name": "希儿", "cost": 2},
+            ],
+        },
+        "screenshot": None,
+        "warnings": [
+            {
+                "code": "CW_ROLE_MATCH_LOW_CONFIDENCE",
+                "position": {"kind": "shop", "idx": 1},
+                "query": "交光",
+                "resolved": "爻光",
+                "score": 0.5,
+                "candidates": ["爻光:0.50"],
+                "message": "角色名未精确命中，请先看截图确认",
+            }
+        ],
+        "references": [],
+        "error": None,
+    }
+
+    assert render_output("cw.shop.scan", envelope).splitlines() == [
+        "ok cw.shop.scan opened=1 stale=0 count=2",
+        "item idx=1 slot=1 name=希儿 cost=2",
+        "item idx=2 name=爻光 cost=1 traits=仙舟 raw_name=交光 score=0.50 match_kind=low_confidence",
+        "warn code=CW_ROLE_MATCH_LOW_CONFIDENCE idx=2 query=交光 resolved=爻光 score=0.50 candidates=爻光:0.50 msg=角色名未精确命中，请先看截图确认",
+    ]
+
+
+def test_render_cw_slots_trait_summary_uses_actual_max_tier_for_activation_display():
+    envelope = {
+        "ok": True,
+        "data": {
+            "front": [{"name": "爻光", "traits": ["仙舟"]}, None, None, None],
+            "back": [None] * 6,
+            "hand": [None] * 9,
+            "stale": False,
+            "trait_summary": [
+                {
+                    "trait": "仙舟",
+                    "tiers": [3, 5],
+                    "owned_roles": 3,
+                    "active_tier": 3,
+                    "total_tiers": 2,
+                    "ratio": 0.6,
+                }
+            ],
+        },
+        "screenshot": None,
+        "warnings": [],
+        "references": [],
+        "error": None,
+    }
+
+    rendered = render_output("cw.slots.read", envelope)
+
+    assert "已激活档位=3/5" in rendered
+    assert "已激活档位=3/2" not in rendered
 
 
 def test_render_output_renders_shop_stage_status_projection():
@@ -3164,8 +3371,8 @@ def test_portal_select_renders_collected_slots_and_shop_before_warn_ref_and_hand
         "shot path=.trail/shots/portal-prep.png",
         "info read_image_first=1",
         "info skill_info=运营思路 text=先收集事实",
-        "slot pos=front:0 name=希儿 star=1 traits=巡猎",
-        "slot pos=hand:0 name=停云",
+        "slot pos=front:1 name=希儿 star=1 traits=巡猎",
+        "slot pos=hand:1 name=停云",
         'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
         "item idx=1 slot=1 name=银狼 cost=20",
         "info coins=40 reserve_full=0",
@@ -3413,11 +3620,11 @@ def test_render_output_renders_cw_slots_summary_text():
         "ok cw.slots.read front=1 back=1 hand=1 stale=1",
         "shot path=.trail/shots/req-slots.png",
         "info read_image_first=1",
-        "slot pos=front:0 name=希儿 star=4",
-        "slot pos=front:1 empty=1",
-        "slot pos=back:0 name=佩拉 rarity=2",
-        "slot pos=hand:0 name=停云 carry=1 cost=2",
-        "slot pos=hand:1 empty=1",
+        "slot pos=front:1 name=希儿 star=4",
+        "slot pos=front:2 empty=1",
+        "slot pos=back:1 name=佩拉 rarity=2",
+        "slot pos=hand:1 name=停云 carry=1 cost=2",
+        "slot pos=hand:2 empty=1",
     ]
 
 
@@ -3443,9 +3650,51 @@ def test_render_output_renders_cw_slots_before_warn_and_ref():
         "ok cw.slots.read front=1 back=0 hand=0 stale=0",
         "shot path=.trail/shots/req-slots-order.png",
         "info read_image_first=1",
-        "slot pos=front:0 name=希儿 star=4",
+        "slot pos=front:1 name=希儿 star=4",
         'warn code=SLOTS_STALE msg="slots may be stale"',
         "ref path=refs/slots.png sim=0.88",
+    ]
+
+
+def test_render_cw_slots_read_renders_role_match_diagnostics_and_warning_1_based():
+    envelope = {
+        "ok": True,
+        "data": {
+            "front": [
+                {
+                    "name": "爻光",
+                    "raw_name": "交光",
+                    "match_score": 0.5,
+                    "match_kind": "low_confidence",
+                    "traits": ["仙舟"],
+                }
+            ],
+            "back": [],
+            "hand": [],
+            "stale": False,
+        },
+        "screenshot": ".trail/shots/demo.jpg",
+        "warnings": [
+            {
+                "code": "CW_ROLE_MATCH_LOW_CONFIDENCE",
+                "position": {"kind": "slot", "area": "front", "index": 0},
+                "query": "交光",
+                "resolved": "爻光",
+                "score": 0.5,
+                "candidates": ["爻光:0.50"],
+                "message": "角色名未精确命中，请先看截图确认",
+            }
+        ],
+        "references": [],
+        "error": None,
+    }
+
+    assert render_output("cw.slots.read", envelope).splitlines() == [
+        "ok cw.slots.read front=1 back=0 hand=0 stale=0",
+        "shot path=.trail/shots/demo.jpg",
+        "info read_image_first=1",
+        "slot pos=front:1 name=爻光 raw_name=交光 score=0.50 match_kind=low_confidence traits=仙舟",
+        "warn code=CW_ROLE_MATCH_LOW_CONFIDENCE pos=front:1 query=交光 resolved=爻光 score=0.50 candidates=爻光:0.50 msg=角色名未精确命中，请先看截图确认",
     ]
 
 
@@ -3471,9 +3720,9 @@ def test_render_output_renders_cw_slots_traits_and_trait_summary():
 
     assert render_output("cw.slots.read", payload).splitlines() == [
         "ok cw.slots.read front=1 back=1 hand=1 stale=0",
-        "slot pos=front:0 name=希儿 star=4 traits=巡猎|量子",
-        "slot pos=back:0 name=佩拉 traits=量子",
-        "slot pos=hand:0 name=布洛妮娅 traits=巡猎|辅助",
+        "slot pos=front:1 name=希儿 star=4 traits=巡猎|量子",
+        "slot pos=back:1 name=佩拉 traits=量子",
+        "slot pos=hand:1 name=布洛妮娅 traits=巡猎|辅助",
         'info 羁绊=量子 档位="1,2" 当前角色=2 已激活档位=2/2 占比=1.00',
         'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
     ]
@@ -3514,7 +3763,7 @@ def test_render_output_renders_cw_slots_place_known_failure_without_recover():
         "debug": {"request_id": "req-cw-slots-place-failed"},
         "error": {
             "code": "SLOTS_CANNOT_BE_FIELDED",
-            "message": "target slot cannot field character: front:0",
+            "message": "target slot cannot field character: front:1",
         },
     }
 
@@ -3522,8 +3771,9 @@ def test_render_output_renders_cw_slots_place_known_failure_without_recover():
         "fail cw.slots.place code=SLOTS_CANNOT_BE_FIELDED",
         "request id=req-cw-slots-place-failed",
         "shot path=.trail/shots/req-cw-slots-place-failed.png",
-        'why msg="target slot cannot field character: front:0"',
+        'why msg="target slot cannot field character: front:1"',
     ]
+    assert "front:2" not in render_output("cw.slots.place", payload)
 
 
 @pytest.mark.parametrize(
@@ -3893,7 +4143,7 @@ def test_render_output_renders_cw_hand_sell_plan_text():
 
     assert render_output("cw.hand.sell_plan", payload).splitlines() == [
         "ok cw.hand.sell_plan count=1 reference_only=1 candidates=0 todos=1",
-        "slot pos=hand:0 name=阮·梅 star=1 分类=非攻略 推荐度=不推荐 priority=10 protected=0 reason=缺少当前阶段，仅提供参考",
+        "slot pos=hand:1 name=阮·梅 star=1 分类=非攻略 推荐度=不推荐 priority=10 protected=0 reason=缺少当前阶段，仅提供参考",
         "info todo=stage",
     ]
 
@@ -3927,7 +4177,7 @@ def test_render_output_filters_malformed_cw_hand_sell_plan_payload():
 
     assert render_output("cw.hand.sell_plan", payload).splitlines() == [
         "ok cw.hand.sell_plan count=1 reference_only=1 candidates=0 todos=1",
-        "slot pos=hand:0 name=阮·梅 分类=非攻略 推荐度=不推荐 priority=10 reason=缺少当前阶段，仅提供参考",
+        "slot pos=hand:1 name=阮·梅 分类=非攻略 推荐度=不推荐 priority=10 reason=缺少当前阶段，仅提供参考",
         "info todo=stage",
     ]
 
@@ -4720,8 +4970,10 @@ def test_skill_docs_split_simple_and_advanced_commands() -> None:
 def test_readme_documents_batch_place_sell_contract() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "`trail cw slots place --session <id> --action hand:0,front:0 --action hand:1,back:2`" in readme
-    assert "`trail cw hand sell --session <id> --slot 0 --slot 2`" in readme
+    assert "`trail cw slots place --session <id> --action hand:1,front:1 --action hand:2,back:3`" in readme
+    assert "`trail cw hand sell --session <id> --slot 1 --slot 3`" in readme
+    assert "hand:0,front:0" not in readme
+    assert "--slot 0" not in readme
     assert "严格保序、遇错即停" in readme
     assert "重新执行 `trail cw slots read`" in readme
 

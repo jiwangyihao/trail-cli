@@ -10,10 +10,12 @@ from pathlib import Path
 from time import monotonic, sleep
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
+from trail.scenes.cw.catalog import clean_cw_trait_entry, merge_cw_trait_entries
 from trail.scenes.cw.models import CwSceneState, ensure_cw_state
 from trail.scenes.cw.stage import _replace_stage_fields
 from trail.session.models import SessionModel
@@ -41,8 +43,10 @@ CW_GUIDE_STATE_INVALID_MESSAGE = "当前攻略不完整，请重新执行 guide.
 LOOKUP_WHITESPACE_PATTERN = re.compile(r"\s+")
 CW_GUIDE_UPSTREAM_PAGE_SIZE = 10
 CW_GUIDE_PORTAL_MAX_PAGES = 30
+CW_GUIDE_ENRICHMENT_MAX_PAGES = 1000
 GUIDE_ROLE_HIGH_RISK_SIMILARITY_THRESHOLD = 0.75
 CW_GUIDE_CONFIG_CACHE_RELATIVE = Path(".trail") / "cache" / "cw-guide-config.json"
+CW_GUIDE_CONFIG_ENRICHED_CACHE_RELATIVE = Path(".trail") / "cache" / "cw-guide-config-enriched.json"
 
 CW_WIDTH = 1920
 CW_HEIGHT = 1080
@@ -390,6 +394,275 @@ def _get_cw_config_data(*, timeout: int = 10, workspace_root: str | Path | None 
     data = _fetch_cw_config_data(timeout=timeout)
     _write_cached_cw_config_data(data, workspace_root=workspace_root)
     return data
+
+
+def _cw_guide_enriched_config_cache_path(*, workspace_root: str | Path | None = None) -> Path:
+    root = Path.cwd() if workspace_root is None else Path(workspace_root)
+    return root / CW_GUIDE_CONFIG_ENRICHED_CACHE_RELATIVE
+
+
+def _cw_config_meta_key(data: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "season_id": data.get("season_id"),
+        "sub_season_id": data.get("sub_season_id"),
+        "rpg_game_big_version": data.get("rpg_game_big_version"),
+        "rpg_game_lineup_tourn_filter": data.get("rpg_game_lineup_tourn_filter"),
+    }
+
+
+def _iter_raw_lineup_trait_entries(lineup_list: object):
+    if not isinstance(lineup_list, list):
+        return
+    for lineup in lineup_list:
+        if not isinstance(lineup, Mapping):
+            continue
+        tourn_detail = lineup.get("tourn_detail")
+        if not isinstance(tourn_detail, Mapping):
+            continue
+        role_stages = tourn_detail.get("role_stages")
+        if not isinstance(role_stages, list):
+            continue
+        for stage in role_stages:
+            if not isinstance(stage, Mapping):
+                continue
+            traits = stage.get("traits")
+            if not isinstance(traits, list):
+                continue
+            for trait in traits:
+                if isinstance(trait, Mapping):
+                    yield trait
+
+
+def _merge_trait_entry_map(target: dict[str, dict[str, object]], raw_entry: Mapping[str, object]) -> None:
+    cleaned = clean_cw_trait_entry(raw_entry)
+    if cleaned is None:
+        return
+    aliases = _trait_entry_aliases(cleaned)
+    if not aliases:
+        return
+    existing = next((target[alias] for alias in aliases if alias in target), None)
+    merged = merge_cw_trait_entries(existing, cleaned) if existing is not None else cleaned
+    for alias in _unique_trait_aliases([*aliases, *_trait_entry_aliases(existing), *_trait_entry_aliases(merged)]):
+        target[alias] = merged
+
+
+def _trait_entry_aliases(entry: Mapping[str, object] | None) -> list[str]:
+    if not isinstance(entry, Mapping):
+        return []
+    aliases: list[str] = []
+    for key in ("id", "name"):
+        value = entry.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            aliases.append(text)
+    return _unique_trait_aliases(aliases)
+
+
+def _unique_trait_aliases(aliases: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        if alias in seen:
+            continue
+        seen.add(alias)
+        result.append(alias)
+    return result
+
+
+def _load_valid_enriched_traits_from_cache(
+    meta: Mapping[str, object],
+    *,
+    workspace_root: str | Path | None = None,
+) -> list[dict[str, object]] | None:
+    path = _cw_guide_enriched_config_cache_path(workspace_root=workspace_root)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    if not payload.get("complete"):
+        return None
+    if payload.get("meta") != dict(meta):
+        return None
+    traits = payload.get("traits")
+    if not isinstance(traits, list):
+        return None
+    if not all(isinstance(item, Mapping) for item in traits):
+        return None
+    return [dict(item) for item in traits]
+
+
+def _write_enriched_traits_cache(
+    meta: Mapping[str, object],
+    traits: list[dict[str, object]],
+    missing_trait_ids: list[str],
+    *,
+    workspace_root: str | Path | None = None,
+) -> None:
+    path = _cw_guide_enriched_config_cache_path(workspace_root=workspace_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
+    try:
+        tmp_path.write_text(
+            json.dumps(
+                {
+                    "complete": True,
+                    "meta": dict(meta),
+                    "traits": traits,
+                    "missing_trait_ids": missing_trait_ids,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        tmp_path.replace(path)
+    except OSError:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _trait_entry_has_layers(entry: Mapping[str, object] | None) -> bool:
+    return isinstance(entry, Mapping) and isinstance(entry.get("layers"), list) and bool(entry.get("layers"))
+
+
+def _base_trait_key(trait: Mapping[str, object]) -> str | None:
+    trait_id = trait.get("id")
+    if trait_id is not None:
+        return str(trait_id)
+    name = str(trait.get("name") or "").strip()
+    return name or None
+
+
+def _missing_base_trait_ids(
+    base_traits: list[Mapping[str, object]],
+    trait_map: Mapping[str, dict[str, object]],
+) -> list[str]:
+    missing: list[str] = []
+    seen: set[str] = set()
+    for trait in base_traits:
+        trait_id = trait.get("id")
+        if trait_id is None:
+            continue
+        trait_id_text = str(trait_id)
+        if trait_id_text in seen:
+            continue
+        key = _base_trait_key(trait)
+        if key is None or not _trait_entry_has_layers(trait_map.get(key)):
+            missing.append(trait_id_text)
+            seen.add(trait_id_text)
+    return missing
+
+
+def _coerce_trait_filter_id(trait_id: str) -> int | None:
+    return int(trait_id) if trait_id.isdecimal() else None
+
+
+def _fetch_and_merge_cw_lineup_traits(
+    trait_map: dict[str, dict[str, object]],
+    *,
+    trait_id: int | None,
+    timeout: int,
+) -> None:
+    next_page_token: str | None = None
+    seen_page_tokens: set[str] = set()
+    pages_scanned = 0
+    while pages_scanned < CW_GUIDE_ENRICHMENT_MAX_PAGES:
+        data = _fetch_cw_guide_list_data(
+            page=1,
+            limit=CW_GUIDE_UPSTREAM_PAGE_SIZE,
+            trait_id=trait_id,
+            role_ids=[],
+            order=None,
+            next_page_token=next_page_token,
+            match_change_job=None,
+            match_hard=None,
+            timeout=timeout,
+        )
+        for raw_trait in _iter_raw_lineup_trait_entries(data.get("list")):
+            _merge_trait_entry_map(trait_map, raw_trait)
+        pages_scanned += 1
+        raw_next = data.get("next_page_token")
+        next_page_token = raw_next if isinstance(raw_next, str) and raw_next else None
+        if next_page_token is None:
+            return
+        if next_page_token in seen_page_tokens:
+            return
+        seen_page_tokens.add(next_page_token)
+
+
+def _ordered_enriched_traits(
+    base_traits: list[Mapping[str, object]],
+    trait_map: Mapping[str, dict[str, object]],
+) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for trait in base_traits:
+        key = _base_trait_key(trait)
+        if key is None:
+            continue
+        entry = dict(trait_map.get(key) or trait)
+        result.append(entry)
+        identity = _base_trait_key(entry)
+        if identity is not None:
+            seen.add(identity)
+        seen.update(_trait_entry_aliases(entry))
+    for trait in trait_map.values():
+        identity = _base_trait_key(trait)
+        aliases = _trait_entry_aliases(trait)
+        if (identity is not None and identity in seen) or any(alias in seen for alias in aliases):
+            continue
+        result.append(dict(trait))
+        if identity is not None:
+            seen.add(identity)
+        seen.update(aliases)
+    return result
+
+
+def _enrich_cw_config_traits(
+    raw_config: Mapping[str, object],
+    normalized_config: Mapping[str, object],
+    *,
+    timeout: int,
+    workspace_root: str | Path | None = None,
+) -> list[dict[str, object]]:
+    meta = _cw_config_meta_key(raw_config)
+    cached = _load_valid_enriched_traits_from_cache(meta, workspace_root=workspace_root)
+    if cached is not None:
+        return cached
+
+    base_traits = [dict(item) for item in normalized_config.get("traits") or [] if isinstance(item, Mapping)]
+    trait_map: dict[str, dict[str, object]] = {}
+    for trait in base_traits:
+        _merge_trait_entry_map(trait_map, trait)
+
+    try:
+        _fetch_and_merge_cw_lineup_traits(trait_map, trait_id=None, timeout=timeout)
+        missing_trait_ids = _missing_base_trait_ids(base_traits, trait_map)
+        for missing_trait_id in list(missing_trait_ids):
+            if missing_trait_id not in _missing_base_trait_ids(base_traits, trait_map):
+                continue
+            resolved_trait_id = _coerce_trait_filter_id(missing_trait_id)
+            if resolved_trait_id is None:
+                continue
+            _fetch_and_merge_cw_lineup_traits(trait_map, trait_id=resolved_trait_id, timeout=timeout)
+        missing_trait_ids = _missing_base_trait_ids(base_traits, trait_map)
+        traits = _ordered_enriched_traits(base_traits, trait_map)
+        try:
+            _write_enriched_traits_cache(meta, traits, missing_trait_ids, workspace_root=workspace_root)
+        except OSError:
+            pass
+        return traits
+    except TrailError:
+        return base_traits
 
 
 def _build_guide_list_request_payload(
@@ -1175,12 +1448,17 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
     }
 
 
-def fetch_cw_guide_config(*, timeout: int = 10, workspace_root: str | Path | None = None) -> dict:
+def fetch_cw_guide_config(
+    *,
+    timeout: int = 10,
+    workspace_root: str | Path | None = None,
+    enrich_traits: bool = False,
+) -> dict:
     data = _get_cw_config_data(timeout=timeout, workspace_root=workspace_root)
     strategy_source = data.get("fight_augment_list")
     if not isinstance(strategy_source, list):
         strategy_source = data.get("strategy_list")
-    return {
+    config = {
         "meta": {
             "game": "hkrpg",
             "season_id": data.get("season_id"),
@@ -1195,6 +1473,14 @@ def fetch_cw_guide_config(*, timeout: int = 10, workspace_root: str | Path | Non
         "portal_list": _normalize_portal_list(data.get("portal_list")),
         "strategy_list": _normalize_strategy_list(strategy_source),
     }
+    if enrich_traits:
+        config["traits"] = _enrich_cw_config_traits(
+            data,
+            config,
+            timeout=timeout,
+            workspace_root=workspace_root,
+        )
+    return config
 
 
 def fetch_cw_guide_list(

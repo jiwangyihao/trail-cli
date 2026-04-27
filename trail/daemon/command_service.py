@@ -626,7 +626,7 @@ class CommandService:
         from trail.scenes.cw.guide import fetch_cw_guide_config
 
         return success(
-            to_jsonable(fetch_cw_guide_config(workspace_root=request.workspace_root)),
+            to_jsonable(fetch_cw_guide_config(workspace_root=request.workspace_root, enrich_traits=True)),
             request_id=request.request_id,
         )
 

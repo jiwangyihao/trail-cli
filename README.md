@@ -87,8 +87,8 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 开局投资环境页仍是 `trail cw portal.*`；普通局内 invest 事件的兼容/粗粒度入口才是 `trail cw invest.*`
 - `trail cw invest read|choose` 继续只表示局内 invest 事件，不是开局投资环境页命令
 - 策略页显式流程示例：`trail cw stage detect --session <id>` -> `trail cw strategy detect --session <id>` -> `trail cw strategy refresh --session <id> --card-idx <n>` -> `trail cw strategy select --session <id> --card-idx <n>`
-- 如需批量从手牌上场：`trail cw slots place --session <id> --action hand:0,front:0 --action hand:1,back:2`
-- 如需卖牌，先看参考：`trail cw hand sell-plan --session <id>`；它会基于当前攻略 `role_stages`、槽位星级、阶段与人口信息输出 `slot ... 分类=... 推荐度=...`，但不是权威售出计划；真正出售时仍需显式执行 `trail cw hand sell --session <id> --slot 0 --slot 2`
+- 如需批量从手牌上场，Agent 可见槽位编号从 1 开始：`trail cw slots place --session <id> --action hand:1,front:1 --action hand:2,back:3`
+- 如需卖牌，先看参考：`trail cw hand sell-plan --session <id>`；它会基于当前攻略 `role_stages`、槽位星级、阶段与人口信息输出 `slot ... 分类=... 推荐度=...`，但不是权威售出计划；真正出售时仍需显式执行 `trail cw hand sell --session <id> --slot 1 --slot 3`
 - 这两类命令都严格保序、遇错即停；只要中途失败且前面动作可能已生效，就应重新执行 `trail cw slots read`
 - 常规 battle / settle 流程默认执行：`trail cw battle run --session <id>`；默认 timeout 现在是 `90s`
 - `trail cw battle run` 设计上依赖短等待、`status=in_progress` 与重跑续跑；看到 `info next_action=cw.battle.run why=battle_flow_not_finished` 时，Agent 必须先看截图，若仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`
@@ -100,10 +100,13 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 编队槽位读取建议：
 
 - 先看当前阶段已有 screenshot，再决定是否真的需要读取槽位名字。
-- `trail cw slots read --session <id> --slot front:0 --slot hand:3` 是首选定向确认路径，只读“看见有角色但名字不确定”的槽位。
+- `trail cw slots read --session <id> --slot front:1 --slot hand:4` 是首选定向确认路径，只读“看见有角色但名字不确定”的槽位。
 - 不传 `--slot` 时，`trail cw slots read --session <id>` 仍保留现有全量读取语义，只作为完整快照兜底，不表示默认行为已经改变。
 - 如果局部读取结果带 `stale=1`，它不等于新的完整 fresh 快照；后续判断仍要结合已有截图和基线来源。
 - `slots.read` 的 `slot ...` 行现在可能附带 `star=<n>`；没有稳定数出星级时不会强行输出 `star=`。
+- `slots.read` 和 `shop.scan` 会按 CW config canonicalize 角色名；如果 OCR 名称只低置信度匹配，会保留 `raw_name`、`score` 与 `match_kind` 供复核。
+- 低置信度告警必须先读本次截图：先核对 `shot path=...` 对应原图，再决定是否接受 `raw_name -> name` 的 canonicalized 结果。
+- 示例：`slot pos=front:1 name=爻光 raw_name=交光 score=0.50 match_kind=low_confidence traits=仙舟|战技点|欢愉`
 - `trail cw slots read` 会顺带刷新 `cw_state.stage.status`，用于记录当前等级、经验、人口与槽位角色数量等全局状态。
 
 ## 命令面概览
@@ -238,7 +241,7 @@ ok cw.portal.select idx=1 投资环境=击破概念股
 shot path=.trail/shots/req-portal-select.png
 info read_image_first=1
 info skill_info=运营思路 text=前期：先收集事实，再按后续策略处理
-slot pos=front:0 name=希儿 star=1 traits=巡猎
+slot pos=front:1 name=希儿 star=1 traits=巡猎
 info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50
 item idx=1 slot=1 name=银狼 cost=20
 info coins=40 reserve_full=0
@@ -281,7 +284,7 @@ info read_image_first=1
 
 ```text
 ok cw.hand.sell_plan count=1 reference_only=1 candidates=0 todos=1
-slot pos=hand:0 name=阮·梅 star=1 分类=非攻略 推荐度=不推荐 priority=10 protected=0 reason=缺少当前阶段，仅提供参考
+slot pos=hand:1 name=阮·梅 star=1 分类=非攻略 推荐度=不推荐 priority=10 protected=0 reason=缺少当前阶段，仅提供参考
 info todo=stage
 ```
 
@@ -324,7 +327,9 @@ info stage_level=7 stage_exp=4/52 stage_team_size=3/3 stage_status_stale=0
 - 商店快照里的 `coins` / `reserve_full` 来自 `trail cw shop scan` 的商店页扫描；`open` / `refresh` / `close` 不重复输出旧快照事实
 - `trail cw shop scan` 只扫描商店页商品/金币切片，不重新识别全局状态；需要刷新全局状态时先执行 `trail cw slots read`
 - `trail cw shop scan` 与 `trail cw shop status` 只投影 session 中已有的 `cw_state.stage.status`；fresh 时输出 `stage_level/stage_exp/stage_team_size stage_status_stale=0`，缺失或 stale 时只输出 `stage_status_stale=1`
-- `trail cw shop scan` 是当前画面读命令，所以会带 `shot path=...` 与 `info read_image_first=1`；`trail cw shop status` 仍是 session / artifact 汇总读，不默认带图
+- `trail cw shop scan` 会按 CW config canonicalize 角色名；默认文本里的 `item ... traits=...` 来自 shop/catalog canonicalization 的商品角色羁绊，可在 slots snapshot 不 fresh 时仍出现；低置信度商品名同样会保留 `raw_name`、`score` 与 `match_kind`，并要求先读截图确认
+- `field trait_summary` 不是默认文本中的 `item traits`；当前默认文本 renderer 不渲染 shop `trait_summary`，`field trait_summary` 只在 slots snapshot fresh 的结构化/RPC 投影中可用，供上层判断场上羁绊 freshness
+- `trail cw shop scan` 是当前画面读命令，所以会带 `shot path=...` 与 `info read_image_first=1`；`cw.shop.status` 不产出截图，也不输出 `info read_image_first=1`，因为 `trail cw shop status` 是 session / artifact 汇总读
 - `trail cw shop buy-exp` 是 shop action renderer family，会输出买经验后的 fresh snapshot facts `coins/level/exp/reserve_full/team_size`，且 `team_size=null` 是 must-keep null fact
 
 ```text

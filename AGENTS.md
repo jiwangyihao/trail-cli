@@ -35,6 +35,7 @@
 - 高频冻结字段至少包括：`session_id` -> `session`、`next_page_token` -> `next`、`similarity` -> `sim`、`confidence/score` -> `score`、`bbox/rect` -> `box`、条目序号 -> `idx`、人类消息 -> `msg`。
 - 默认文本统一使用 `key=value`；除首行的 `ok|fail` 和 `<command>` 外，不再新增位置参数。
 - 布尔值统一编码为 `0/1`；含空格、引号、反斜杠、换行、等号或逗号歧义的值必须使用双引号。
+- 默认文本输出改为 Agent 可见 1-based：`slot` 行的 `pos=front:1`、CLI 示例里的 `--slot front:1` / `--slot 1`、以及 `--action hand:1,front:1` 都从 1 开始；daemon/RPC/session internal remains 0-based，不得把内部 0-based shape 泄漏给默认文本或 Agent 可见文档。
 - `box` 统一压成 `left,top,width,height`，不要回退成嵌套对象。
 - `image_guidance.read_image_first=1` 是 envelope 顶层冻结元数据，不进入默认文本业务 body，也不下沉到各命令 `data`。
 - 只省略语义缺失值，不能省略会影响下一步动作的 `0`、`false`、`count`、`more`、`tainted`。
@@ -100,7 +101,9 @@
 - `cw.battle.clear_in_progress` 只清 battle.run 的内部续跑提示位，不清 battle 摘要、`last_result`、`last_screenshot` 或阶段事实；它不产出截图，不加入 YAML allowlist。
 - `cw.shop.scan|status` 的 stage 投影固定使用 `stage_level/stage_exp/stage_team_size/stage_status_stale`，属于既有 `info` 行，不新增正文前缀。
 - `cw.shop.scan|status` 必须保留 `stage_status_stale=0|1`；只有 `stage_status_stale=0` 时才允许输出 `stage_level/stage_exp/stage_team_size`，stale 或缺失时不得把旧值渲染成有效事实。
+- `cw.shop.status 不产出截图`，也不输出 `info read_image_first=1`；它只读取 session / artifact 汇总，不得为了 status 补图。
 - `cw.slots.read` 会刷新 `cw_state.stage.status`；`cw.shop.scan` 只扫描商店页商品/金币切片，并只投影 session 中已有的 `cw_state.stage.status`，不得重新 OCR 全局状态。
+- `cw.slots.read` 与 `cw.shop.scan` 的角色名默认按 CW config canonicalize；低置信度结果必须保留 `raw_name`、`score=0.50` 这类诊断事实，Agent 需要先读截图再接受该匹配。
 - `cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id。
 - `cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径；`current/apply` 只看当前已选攻略摘要，完整攻略仍由 `guide.fetch.cw` 提供。
 - `guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。

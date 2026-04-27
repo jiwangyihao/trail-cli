@@ -712,9 +712,9 @@ def test_cw_slots_place_renders_slot_counts_and_shot(cli_runner, fake_daemon_cli
             "--session",
             SESSION_ID,
             "--action",
-            "hand:0,front:0",
+            "hand:1,front:1",
             "--action",
-            "hand:1,back:2",
+            "hand:2,back:3",
         ],
     )
 
@@ -749,7 +749,7 @@ def test_cw_hand_sell_renders_slot_counts_and_shot(cli_runner, fake_daemon_clien
 
     result = cli_runner.invoke(
         app,
-        ["cw", "hand", "sell", "--session", SESSION_ID, "--slot", "0", "--slot", "2"],
+        ["cw", "hand", "sell", "--session", SESSION_ID, "--slot", "1", "--slot", "3"],
     )
 
     assert result.exit_code == 0
@@ -788,8 +788,12 @@ def test_cw_slots_place_rejects_malformed_action_without_rpc(cli_runner, fake_da
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
         "fail cw.slots.place code=CW_OPTION_INVALID",
-        'why msg="cw slots place action invalid: hand:0-front:0"',
+        'why msg="cw slots place action invalid"',
     ]
+    assert "hand:0" not in result.stdout
+    assert "hand:1" not in result.stdout
+    assert "front:0" not in result.stdout
+    assert "front:1" not in result.stdout
     assert client.calls == []
 
 
@@ -1154,7 +1158,7 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
     ("args", "method", "payload", "response_data", "screenshot", "expected_lines"),
     [
         (
-            ["cw", "slots", "read", "--session", SESSION_ID, "--slot", "front:0", "--slot", "back:1"],
+            ["cw", "slots", "read", "--session", SESSION_ID, "--slot", "front:1", "--slot", "back:2"],
             "cw.slots.read",
             {"slot": ["front:0", "back:1"]},
             {"front": ["希儿", None], "back": [None], "hand": ["停云", None], "stale": False},
@@ -1163,16 +1167,16 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
                 "ok cw.slots.read front=1 back=0 hand=1 stale=0",
                 screenshot=".trail/shots/req-cw-slots-read.png",
                 body=[
-                    "slot pos=front:0 name=希儿",
-                    "slot pos=front:1 empty=1",
-                    "slot pos=back:0 empty=1",
-                    "slot pos=hand:0 name=停云",
-                    "slot pos=hand:1 empty=1",
+                    "slot pos=front:1 name=希儿",
+                    "slot pos=front:2 empty=1",
+                    "slot pos=back:1 empty=1",
+                    "slot pos=hand:1 name=停云",
+                    "slot pos=hand:2 empty=1",
                 ],
             ),
         ),
         (
-            ["cw", "slots", "swap", "--session", SESSION_ID, "--source", "hand:0", "--target", "front:0"],
+            ["cw", "slots", "swap", "--session", SESSION_ID, "--source", "hand:1", "--target", "front:1"],
             "cw.slots.swap",
             {"source": "hand:0", "target": "front:0"},
             {"front": ["希儿"], "back": ["佩拉"], "hand": [], "stale": True},
@@ -1242,7 +1246,7 @@ def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path
             None,
             [
                 "ok cw.hand.sell_plan count=1 reference_only=1 candidates=0 todos=1",
-                "slot pos=hand:0 name=阮·梅 star=1 分类=非攻略 推荐度=不推荐 priority=10 protected=0 reason=缺少当前阶段，仅提供参考",
+                "slot pos=hand:1 name=阮·梅 star=1 分类=非攻略 推荐度=不推荐 priority=10 protected=0 reason=缺少当前阶段，仅提供参考",
                 "info todo=stage",
             ],
         ),
