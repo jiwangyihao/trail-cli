@@ -4427,8 +4427,9 @@ def _patch_cw_portal_select_auto_collect_success(monkeypatch, events: list[str],
         }
         return session
 
-    def fake_scan_shop(session, scanner):
+    def fake_scan_shop(session, scanner, guide_config=None):
         assert scanner == "page-reader"
+        assert guide_config == {"roles": [], "traits": []}
         events.append("shop.scan")
         session.scene_state.setdefault("cw", {})["shop"] = {
             "opened": True,
@@ -4661,6 +4662,175 @@ def test_command_service_handles_cw_portal_select_and_auto_applies_selected_guid
     assert service.request_status("req-cw-portal-select")["final_state"] == "completed"
     assert runtime.capture_requests == [(False, "req-cw-portal-select")]
     assert runtime.capture_after_shop_close is True
+
+
+def test_cw_portal_select_preserves_auto_collect_response_diagnostics_and_promotes_warnings(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw.shop import CwShopApplied
+    from trail.scenes.cw.slots import CwSlotsReadApplied
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return tmp_path / ".trail" / "shots" / "req-cw-portal-select.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": _complete_cw_guide_fixture(),
+        "constraints": _complete_cw_constraints_fixture(),
+        "portal": {"cards": [{"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}], "stale": False},
+    }
+    service.save_session(session)
+
+    slot_warning = {
+        "code": "CW_ROLE_MATCH_LOW_CONFIDENCE",
+        "position": {"kind": "slot", "area": "front", "index": 0},
+        "query": "交光",
+        "resolved": "爻光",
+        "score": 0.5,
+        "candidates": ["爻光:0.50"],
+        "message": "角色名未精确命中，请先看截图确认",
+    }
+    shop_warning = {
+        "code": "CW_ROLE_MATCH_LOW_CONFIDENCE",
+        "position": {"kind": "shop", "slot": 1},
+        "query": "交光",
+        "resolved": "爻光",
+        "score": 0.5,
+        "candidates": ["爻光:0.50"],
+        "message": "角色名未精确命中，请先看截图确认",
+    }
+
+    def fake_read_slots(session, reader, targets=None, guide_config=None):
+        del reader, targets
+        assert guide_config == {"roles": [], "traits": []}
+        session.scene_state.setdefault("cw", {})["slots"] = {
+            "front": [{"name": "爻光", "traits": ["仙舟"]}],
+            "back": [],
+            "hand": [],
+            "stale": False,
+        }
+        return CwSlotsReadApplied(
+            session=session,
+            response_snapshot={
+                "front": [
+                    {
+                        "name": "爻光",
+                        "raw_name": "交光",
+                        "match_score": 0.5,
+                        "match_kind": "low_confidence",
+                        "traits": ["仙舟"],
+                    }
+                ],
+                "back": [],
+                "hand": [],
+                "stale": False,
+                "warnings": [slot_warning],
+            },
+        )
+
+    def fake_scan_shop(session, scanner, guide_config=None):
+        del scanner
+        assert guide_config == {"roles": [], "traits": []}
+        session.scene_state.setdefault("cw", {})["shop"] = {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 1, "name": "爻光", "price": 1, "traits": ["仙舟"]}],
+            "coins": 5,
+            "reserve_full": False,
+        }
+        return CwShopApplied(
+            session=session,
+            response_snapshot={
+                "opened": True,
+                "stale": False,
+                "items": [
+                    {
+                        "slot": 1,
+                        "name": "爻光",
+                        "price": 1,
+                        "traits": ["仙舟"],
+                        "raw_name": "交光",
+                        "match_score": 0.5,
+                        "match_kind": "low_confidence",
+                    }
+                ],
+                "coins": 5,
+                "reserve_full": False,
+                "warnings": [shop_warning],
+            },
+        )
+
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88},
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
+    monkeypatch.setattr("trail.daemon.cw_service.collect_cw_crystals", lambda session, collector: session.scene_state.setdefault("cw", {}).setdefault("metrics", {}))
+    monkeypatch.setattr("trail.daemon.cw_service.dismiss_cw_slots_overlay", lambda runtime: None)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {"roles": [], "traits": []})
+    monkeypatch.setattr("trail.daemon.cw_service.slots_reader_factory", lambda runtime, **kwargs: "slots-reader")
+    monkeypatch.setattr("trail.daemon.cw_service.read_cw_slots", fake_read_slots)
+    monkeypatch.setattr("trail.daemon.cw_service.open_cw_shop", lambda session, opener: session)
+    monkeypatch.setattr("trail.daemon.cw_service.shop_page_snapshot_reader_factory", lambda runtime, **kwargs: "page-reader")
+    monkeypatch.setattr("trail.daemon.cw_service.scan_cw_shop", fake_scan_shop)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.project_cw_shop_snapshot",
+        lambda session: {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 1, "name": "爻光", "price": 1, "traits": ["仙舟"]}],
+            "coins": 5,
+            "reserve_full": False,
+            "stage_status_stale": True,
+        },
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.close_cw_shop", lambda session, closer: session)
+    monkeypatch.setattr("trail.daemon.cw_service.crystal_collector_factory", lambda runtime: "crystal-collector")
+    monkeypatch.setattr("trail.daemon.cw_service.shop_opener_factory", lambda runtime: "shop-opener")
+    monkeypatch.setattr("trail.daemon.cw_service.shop_closer_factory", lambda runtime: "shop-closer")
+    monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: None)
+
+    command_service = CommandService(
+        runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: Runtime()),
+        session_service=registry,
+        cw_service=CwService(runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: Runtime())),
+    )
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-portal-select-diagnostics",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.portal.select",
+            payload={"session_id": session.session_id, "card_idx": 2},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["data"]["slots"]["front"][0]["raw_name"] == "交光"
+    assert payload["data"]["slots"]["front"][0]["match_kind"] == "low_confidence"
+    assert payload["data"]["shop"]["items"][0]["raw_name"] == "交光"
+    assert payload["data"]["shop"]["items"][0]["match_kind"] == "low_confidence"
+    assert "warnings" not in payload["data"]["slots"]
+    assert "warnings" not in payload["data"]["shop"]
+    assert payload["warnings"] == [slot_warning, shop_warning]
+    persisted = service.load_session(session.session_id).scene_state["cw"]
+    assert "raw_name" not in persisted["slots"]["front"][0]
+    assert "raw_name" not in persisted["shop"]["items"][0]
 
 
 def test_command_service_handles_cw_portal_select_waits_extra_before_capture(tmp_path: Path, monkeypatch):

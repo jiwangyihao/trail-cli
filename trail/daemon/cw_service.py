@@ -779,6 +779,18 @@ def _apply_selected_guide_via_ui(session, *, runtime, guide: dict | None = None)
     return selected_guide
 
 
+def _response_snapshot_or_fallback(result: object, fallback: object) -> dict:
+    snapshot = getattr(result, "response_snapshot", None)
+    if isinstance(snapshot, dict):
+        return deepcopy(snapshot)
+    return deepcopy(fallback) if isinstance(fallback, dict) else {}
+
+
+def _pop_response_snapshot_warnings(snapshot: dict) -> list[dict]:
+    raw = snapshot.pop("warnings", None)
+    return deepcopy(raw) if isinstance(raw, list) else []
+
+
 def _select_portal_and_apply_selected_guide(
     session,
     *,
@@ -801,23 +813,31 @@ def _select_portal_and_apply_selected_guide(
     collect_cw_crystals(session, collector=crystal_collector_factory(runtime))
     dismiss_cw_slots_overlay(runtime)
     guide_config = fetch_cw_guide_config(workspace_root=workspace_root)
-    read_cw_slots(
+    slots_result = read_cw_slots(
         session,
         reader=slots_reader_factory(runtime, dismiss_initial_overlay=False),
         guide_config=guide_config,
     )
+    slots_snapshot = _response_snapshot_or_fallback(slots_result, ensure_cw_state(session).get("slots") or {})
+    slot_warnings = _pop_response_snapshot_warnings(slots_snapshot)
     open_cw_shop(session, opener=shop_opener_factory(runtime))
     sleep(SHOP_SCAN_OPEN_SETTLE_SECONDS)
-    scan_cw_shop(
+    shop_result = scan_cw_shop(
         session,
         scanner=shop_page_snapshot_reader_factory(runtime),
+        guide_config=guide_config,
     )
-    shop_snapshot = project_cw_shop_snapshot(session)
-    slots_snapshot = deepcopy(ensure_cw_state(session).get("slots") or {})
+    shop_projection = project_cw_shop_snapshot(session)
+    shop_response = _response_snapshot_or_fallback(shop_result, {})
+    shop_warnings = _pop_response_snapshot_warnings(shop_response)
+    shop_snapshot = {**shop_projection, **shop_response}
     close_cw_shop(session, closer=shop_closer_factory(runtime))
     selected_data["crystals"] = deepcopy(ensure_cw_state(session).get("metrics") or {})
     selected_data["slots"] = slots_snapshot
     selected_data["shop"] = shop_snapshot
+    response_warnings = [*slot_warnings, *shop_warnings]
+    if response_warnings:
+        selected_data["warnings"] = [*deepcopy(selected_data.get("warnings") or []), *response_warnings]
     return selected_data
 
 

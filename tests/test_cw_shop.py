@@ -2128,8 +2128,9 @@ def test_cw_portal_select_collects_prep_facts_and_closes_shop(tmp_path: Path, mo
         events.append("shop.open")
         return session
 
-    def fake_scan_shop(session, *, scanner):
+    def fake_scan_shop(session, *, scanner, guide_config=None):
         assert scanner == "page-reader"
+        assert guide_config == {"roles": [], "traits": []}
         events.append("shop.scan")
         session.scene_state.setdefault("cw", {})["shop"] = {
             "opened": True,
