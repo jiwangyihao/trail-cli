@@ -824,6 +824,24 @@ def test_strategy_protocol_is_frozen_in_readme_and_agents() -> None:
     assert "`cw.strategy.detect|refresh` 必须输出 `info 已加载攻略=0|1`，且固定在所有 `opt` 行之后" in agents
 
 
+def test_readme_and_agents_document_cw_equipment_protocol() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    prep_skill = (PROJECT_ROOT / "skills" / "trail-cw-prep" / "SKILL.md").read_text(encoding="utf-8")
+    prep_surface = (
+        PROJECT_ROOT / "skills" / "trail-cw-prep" / "references" / "command-surface.md"
+    ).read_text(encoding="utf-8")
+
+    assert "trail cw equipment prepare --session <id> [--refresh]" in readme
+    assert "trail cw equipment read --session <id>" in readme
+    assert "ok cw.equipment.read count=1 uncertain=1 empty=17" in readme
+    assert "ok cw.equipment.prepare big_version=3.2 count=2 cached=1 downloaded=1 refreshed=0" in readme
+    assert "`cw.equipment.read` 归入列表读取 renderer 家族" in agents
+    assert "`cw.equipment.prepare` 归入检测/状态摘要 renderer 家族" in agents
+    assert "cw.equipment.read" in prep_skill
+    assert "cw.equipment.prepare" in prep_surface
+
+
 def test_readme_includes_cw_strategy_refresh_example_and_flow() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
@@ -1609,6 +1627,66 @@ def test_render_output_hides_legacy_top_level_stage_values_when_projection_is_st
     assert "team_size=3/3" not in rendered
     assert "stage_level" not in rendered
     assert "stage_exp" not in rendered
+
+
+def test_render_output_cw_equipment_prepare_summary_keeps_zero_values():
+    payload = {
+        "ok": True,
+        "data": {"big_version": "3.2", "count": 2, "cached": 0, "downloaded": 0, "refreshed": False},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.equipment.prepare", payload).splitlines() == [
+        "ok cw.equipment.prepare big_version=3.2 count=2 cached=0 downloaded=0 refreshed=0",
+    ]
+
+
+def test_render_output_cw_equipment_read_orders_shot_items_info_warn_ref():
+    payload = {
+        "ok": True,
+        "data": {
+            "count": 1,
+            "uncertain": 1,
+            "empty": 17,
+            "backend": "vector",
+            "layout": "default",
+            "items": [
+                {
+                    "idx": 1,
+                    "row": 1,
+                    "col": 1,
+                    "box": {"left": 1820, "top": 240, "width": 70, "height": 70},
+                    "name": "幸运星",
+                    "score": 0.88,
+                    "gap": 0.03,
+                    "uncertain": True,
+                    "alt": "和平手枪",
+                    "alt_score": 0.85,
+                }
+            ],
+        },
+        "screenshot": ".trail/shots/req-equipment.png",
+        "timing": {},
+        "warnings": [],
+        "references": [{"path": "trail/references/cw/equipment.png", "similarity": 0.9}],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.equipment.read", payload).splitlines() == [
+        "ok cw.equipment.read count=1 uncertain=1 empty=17",
+        "shot path=.trail/shots/req-equipment.png",
+        "info read_image_first=1",
+        "item idx=1 row=1 col=1 box=1820,240,70,70 name=幸运星 score=0.88 gap=0.03 uncertain=1 alt=和平手枪 alt_score=0.85",
+        "info backend=vector layout=default",
+        'warn code=LOW_CONFIDENCE count=1 msg="装备图标低置信，请先看截图确认"',
+        "ref path=trail/references/cw/equipment.png sim=0.9",
+    ]
 
 
 @pytest.mark.parametrize(

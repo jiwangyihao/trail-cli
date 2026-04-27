@@ -1147,6 +1147,67 @@ def _render_cw_shop_action(command: str, payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_cw_equipment_prepare(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    return _render_success_summary(
+        command,
+        payload,
+        ("big_version", data.get("big_version")),
+        ("count", data.get("count") if "count" in data else 0),
+        ("cached", data.get("cached") if "cached" in data else 0),
+        ("downloaded", data.get("downloaded") if "downloaded" in data else 0),
+        ("refreshed", bool(data.get("refreshed"))),
+    )
+
+
+def _render_cw_equipment_read(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    lines = [
+        "ok "
+        + command
+        + " "
+        + _format_fact_sequence(
+            ("count", data.get("count") if "count" in data else 0),
+            ("uncertain", data.get("uncertain") if "uncertain" in data else 0),
+            ("empty", data.get("empty") if "empty" in data else 0),
+        )
+    ]
+    _append_success_capture_block(lines, payload)
+    for item in _as_list(data.get("items")):
+        if not isinstance(item, dict):
+            continue
+        line = "item " + _format_fact_sequence(
+            ("idx", item.get("idx")),
+            ("row", item.get("row")),
+            ("col", item.get("col")),
+        )
+        box = _format_box(item.get("box"))
+        if box is not None:
+            line += f" box={box}"
+        tail = _format_fact_sequence(
+            ("name", item.get("name")),
+            ("score", _format_score_value(item.get("score"))),
+            ("gap", _format_score_value(item.get("gap"))),
+            ("uncertain", bool(item.get("uncertain")) if "uncertain" in item else None),
+            ("alt", item.get("alt")),
+            ("alt_score", _format_score_value(item.get("alt_score"))),
+        )
+        if tail:
+            line += f" {tail}"
+        lines.append(line)
+    _append_fact_line(lines, "info", ("backend", data.get("backend")), ("layout", data.get("layout")))
+    uncertain_count = _coerce_int(data.get("uncertain")) or 0
+    if uncertain_count > 0:
+        lines.append(
+            "warn "
+            + _format_fact_sequence(("code", "LOW_CONFIDENCE"), ("count", uncertain_count))
+            + f" msg={_quote('装备图标低置信，请先看截图确认')}"
+        )
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
+
+
 def _render_cw_metrics(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     return _render_success_summary(
@@ -1762,6 +1823,8 @@ TEXT_RENDERERS = {
     "cw.shop.refresh": _render_cw_shop_action,
     "cw.shop.close": _render_cw_shop_action,
     "cw.shop.status": _render_cw_shop_status,
+    "cw.equipment.prepare": _render_cw_equipment_prepare,
+    "cw.equipment.read": _render_cw_equipment_read,
     "cw.replenish.read": _render_cw_options,
     "cw.replenish.choose": _render_cw_stage,
     "cw.invest.read": _render_cw_options,

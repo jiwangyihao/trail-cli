@@ -36,6 +36,7 @@ CW_STRATEGY_HELP = (
 CW_STAGE_HELP = "仅用于货币战争内部阶段的快速检测或等待；不适用于登录页、大世界等非 CW 场景。"
 CW_SLOTS_HELP = "读取编队槽位并执行换位或上场。"
 CW_SHOP_HELP = "读取商店、购买槽位/经验并刷新或关闭。"
+CW_EQUIPMENT_HELP = "读取货币战争装备背包图标；prepare 只准备资源缓存，read 会截图并识别当前装备网格。"
 CW_CRYSTALS_HELP = "收取当前局内结晶产出。"
 CW_HAND_HELP = "出售手牌或生成出售候选。"
 CW_REPLENISH_HELP = "读取或选择局内补给事件。"
@@ -60,6 +61,7 @@ strategy_app = typer.Typer(no_args_is_help=True, help=CW_STRATEGY_HELP)
 stage_app = typer.Typer(no_args_is_help=True, help=CW_STAGE_HELP)
 slots_app = typer.Typer(no_args_is_help=True, help=CW_SLOTS_HELP)
 shop_app = typer.Typer(no_args_is_help=True, help=CW_SHOP_HELP)
+equipment_app = typer.Typer(no_args_is_help=True, help=CW_EQUIPMENT_HELP)
 crystals_app = typer.Typer(no_args_is_help=True, help=CW_CRYSTALS_HELP)
 hand_app = typer.Typer(no_args_is_help=True, help=CW_HAND_HELP)
 replenish_app = typer.Typer(no_args_is_help=True, help=CW_REPLENISH_HELP)
@@ -88,6 +90,7 @@ cw_app.add_typer(strategy_app, name="strategy")
 cw_app.add_typer(stage_app, name="stage")
 cw_app.add_typer(slots_app, name="slots")
 cw_app.add_typer(shop_app, name="shop")
+cw_app.add_typer(equipment_app, name="equipment")
 cw_app.add_typer(crystals_app, name="crystals")
 cw_app.add_typer(hand_app, name="hand")
 cw_app.add_typer(replenish_app, name="replenish")
@@ -366,6 +369,19 @@ def cw_shop_close(session: str = typer.Option(..., "--session")) -> None:
 @shop_app.command("status")
 def cw_shop_status(session: str = typer.Option(..., "--session")) -> None:
     _print_cw("cw.shop.status", session_id=session)
+
+
+@equipment_app.command("prepare")
+def cw_equipment_prepare(
+    session: str = typer.Option(..., "--session"),
+    refresh: bool = typer.Option(False, "--refresh"),
+) -> None:
+    _print_cw("cw.equipment.prepare", session_id=session, payload={"refresh": refresh})
+
+
+@equipment_app.command("read")
+def cw_equipment_read(session: str = typer.Option(..., "--session")) -> None:
+    _print_cw("cw.equipment.read", session_id=session)
 
 
 @replenish_app.command("read")

@@ -1165,6 +1165,21 @@ def test_guide_config_yaml_uses_enriched_config(monkeypatch, tmp_path: Path):
     assert "- layer: 2" in rendered
 
 
+def test_fetch_cw_raw_guide_config_returns_cached_raw_data(monkeypatch, tmp_path):
+    from trail.scenes.cw import guide
+
+    monkeypatch.setattr(
+        guide,
+        "_get_cw_config_data",
+        lambda timeout=10, workspace_root=None: {"rpg_game_big_version": "3.2", "equipment_list": []},
+    )
+
+    assert guide.fetch_cw_raw_guide_config(workspace_root=tmp_path) == {
+        "rpg_game_big_version": "3.2",
+        "equipment_list": [],
+    }
+
+
 def test_fetch_cw_guide_list_uses_cached_workspace_config_for_trait_resolution(monkeypatch, tmp_path):
     guide_module = load_cw_guide_module()
 
