@@ -1175,6 +1175,10 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
     }
 
 
+def fetch_cw_raw_guide_config(*, timeout: int = 10, workspace_root: str | Path | None = None) -> dict:
+    return _get_cw_config_data(timeout=timeout, workspace_root=workspace_root)
+
+
 def fetch_cw_guide_config(*, timeout: int = 10, workspace_root: str | Path | None = None) -> dict:
     data = _get_cw_config_data(timeout=timeout, workspace_root=workspace_root)
     strategy_source = data.get("fight_augment_list")

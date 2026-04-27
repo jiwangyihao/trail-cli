@@ -106,6 +106,11 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `slots.read` 的 `slot ...` 行现在可能附带 `star=<n>`；没有稳定数出星级时不会强行输出 `star=`。
 - `trail cw slots read` 会顺带刷新 `cw_state.stage.status`，用于记录当前等级、经验、人口与槽位角色数量等全局状态。
 
+装备背包读取建议：
+
+- 如需读取当前装备背包，先准备或补齐图标缓存：`trail cw equipment prepare --session <id> [--refresh]`；常规使用 `trail cw equipment prepare --session <id>`，如果确认同一版本资源 URL 变更，显式运行 `trail cw equipment prepare --session <id> --refresh`。
+- 读取装备背包：`trail cw equipment read --session <id>`。该命令会返回截图，必须先读 `shot path=...` 对应原始截图，再消费 `item` 行；低置信格子会保留 `alt/alt_score` 并输出 `warn code=LOW_CONFIDENCE`。
+
 ## 命令面概览
 
 - `start`：simple-first 启动入口，自动收口 daemon、游戏、窗口与 session
@@ -119,7 +124,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `image`：进阶模板识别与等待
 - `input`：点击、拖拽、按键
 - `state`：进阶读取 session 与 scene state
-- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`portal` 负责开局投资环境页的识别/选择/刷新/重开；`strategy` 负责局内“请选择投资策略”页的识别/单卡刷新/选择；常规 battle / settle 默认入口是 `trail cw battle run --session <id>`，默认 timeout 现在是 `90s`，`status=in_progress` 时输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，先看截图，仍在 battle flow 就重跑，且结算页也属于 battle flow；`trail cw battle clear-in-progress --session <id>` 只清内部提示位；`battle` / `settle` 分组仍保留兼容原子命令，但只建议在内部 fallback 流程使用；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口；其余分组处理局内阶段与资源，包含 `portal`、`strategy`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
+- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`portal` 负责开局投资环境页的识别/选择/刷新/重开；`strategy` 负责局内“请选择投资策略”页的识别/单卡刷新/选择；常规 battle / settle 默认入口是 `trail cw battle run --session <id>`，默认 timeout 现在是 `90s`，`status=in_progress` 时输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，先看截图，仍在 battle flow 就重跑，且结算页也属于 battle flow；`trail cw battle clear-in-progress --session <id>` 只清内部提示位；`battle` / `settle` 分组仍保留兼容原子命令，但只建议在内部 fallback 流程使用；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口；其余分组处理局内阶段与资源，包含 `portal`、`strategy`、`guide`、`stage`、`slots`、`shop`、`equipment`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
 ## Window Launch
 
@@ -286,6 +291,19 @@ info todo=stage
 ```
 
 - `cw.hand.sell_plan` 只提供 Agent 参考信息；`candidates=0` 不代表已经生成可自动执行的售出计划，实际卖牌仍需显式运行 `trail cw hand sell --session <id> --slot <n>`
+
+```text
+ok cw.equipment.prepare big_version=3.2 count=2 cached=1 downloaded=1 refreshed=0
+```
+
+```text
+ok cw.equipment.read count=1 uncertain=1 empty=17
+shot path=.trail/shots/req-equipment-read.png
+info read_image_first=1
+item idx=1 row=1 col=1 box=1820,240,70,70 name=幸运星 score=0.88 gap=0.03 uncertain=1 alt=和平手枪 alt_score=0.85
+info backend=vector layout=default
+warn code=LOW_CONFIDENCE count=1 msg="装备图标低置信，请先看截图确认"
+```
 
 ```text
 ok cw.guide.current 攻略ID=abc 攻略标题=7群攻2银河学者 攻略码=##demo## 版本=3.2

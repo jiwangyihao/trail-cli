@@ -2026,6 +2026,64 @@ def test_command_service_handles_cw_stage_detect_with_request_scoped_capture(tmp
     assert exc_info.value.code == "REQUEST_NOT_FOUND"
 
 
+def test_command_service_routes_cw_equipment_read_through_capture(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    calls: list[str] = []
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            assert optional is False
+            calls.append(f"capture:{request_id}")
+            return tmp_path / ".trail" / "shots" / "equipment.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.read_cw_equipment",
+        lambda runtime, workspace_root=None: calls.append("read")
+        or {"count": 0, "uncertain": 0, "empty": 18, "items": [], "backend": "vector", "layout": "default"},
+        raising=False,
+    )
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+
+    response = command_service.handle(
+        DaemonRequest(
+            request_id="req-equipment-read",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.equipment.read",
+            payload={},
+        )
+    )
+
+    assert response["ok"] is True
+    assert response["screenshot"] == ".trail/shots/equipment.png"
+    assert calls == ["read", "capture:req-equipment-read"]
+
+
+def test_cw_equipment_methods_are_classified_for_command_routing():
+    from trail.daemon.command_service import CW_CAPTURE_METHODS, CW_SESSION_SAVE_METHODS
+
+    assert "cw.equipment.read" in CW_CAPTURE_METHODS
+    assert "cw.equipment.prepare" in CW_SESSION_SAVE_METHODS
+
+
 def test_command_service_handles_cw_enter_world_to_home(tmp_path: Path):
     from trail.daemon.cw_service import CwService
     from trail.runtime.resources import resolve_scene_asset

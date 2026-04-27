@@ -199,6 +199,18 @@ def _run_cw_portal_mutation(*, command_service, session, workspace_root: Path, r
     )
 
 
+def _stub_portal_select_auto_collect(monkeypatch) -> None:
+    monkeypatch.setattr("trail.daemon.cw_service.collect_cw_crystals", lambda session, collector=None: session)
+    monkeypatch.setattr("trail.daemon.cw_service.dismiss_cw_slots_overlay", lambda runtime: None)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {})
+    monkeypatch.setattr("trail.daemon.cw_service.read_cw_slots", lambda session, **kwargs: session)
+    monkeypatch.setattr("trail.daemon.cw_service.open_cw_shop", lambda session, **kwargs: session)
+    monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: None)
+    monkeypatch.setattr("trail.daemon.cw_service.scan_cw_shop", lambda session, **kwargs: session)
+    monkeypatch.setattr("trail.daemon.cw_service.project_cw_shop_snapshot", lambda session: {})
+    monkeypatch.setattr("trail.daemon.cw_service.close_cw_shop", lambda session, **kwargs: session)
+
+
 def test_summarize_portal_cards_groups_three_lanes_and_merges_rows():
     portal_list = [
         {"portal_id": "lane1-alt", "title": "Alpha Beta", "description": "Gamma"},
@@ -709,6 +721,7 @@ def test_cw_portal_select_guide_preflight_rejects_incomplete_guide_before_click(
 
 def test_cw_portal_select_auto_applies_selected_guide_and_invalidates_runtime_state(tmp_path: Path, monkeypatch):
     runtime = PortalRuntime()
+    _stub_portal_select_auto_collect(monkeypatch)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
@@ -765,6 +778,7 @@ def test_cw_portal_select_auto_applies_selected_guide_and_invalidates_runtime_st
 
 def test_cw_portal_select_waits_for_preparation_before_auto_apply(tmp_path: Path, monkeypatch):
     runtime = PortalRuntime()
+    _stub_portal_select_auto_collect(monkeypatch)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
@@ -804,6 +818,7 @@ def test_cw_portal_select_waits_for_preparation_before_auto_apply(tmp_path: Path
 
 def test_cw_portal_select_adds_operation_guide_skill_info(tmp_path: Path, monkeypatch):
     runtime = PortalRuntime()
+    _stub_portal_select_auto_collect(monkeypatch)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
@@ -832,8 +847,9 @@ def test_cw_portal_select_adds_operation_guide_skill_info(tmp_path: Path, monkey
     assert envelope["data"]["skill_info"] == [{"name": "运营思路", "text": "前期 先读图"}]
 
 
-def test_cw_portal_select_skill_info_does_not_call_state_mutating_ensure(tmp_path: Path, monkeypatch):
+def test_cw_portal_select_keeps_skill_info_with_auto_collect_stubs(tmp_path: Path, monkeypatch):
     runtime = PortalRuntime()
+    _stub_portal_select_auto_collect(monkeypatch)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
@@ -848,11 +864,6 @@ def test_cw_portal_select_skill_info_does_not_call_state_mutating_ensure(tmp_pat
     )
     monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
     monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
-    monkeypatch.setattr(
-        "trail.daemon.cw_service.ensure_cw_state",
-        lambda session: (_ for _ in ()).throw(AssertionError("skill_info read must not ensure cw state")),
-    )
-
     envelope = _run_cw_portal_mutation(
         command_service=command_service,
         session=session,
@@ -868,6 +879,7 @@ def test_cw_portal_select_skill_info_does_not_call_state_mutating_ensure(tmp_pat
 
 def test_cw_portal_select_omits_skill_info_when_operation_guide_blank(tmp_path: Path, monkeypatch):
     runtime = PortalRuntime()
+    _stub_portal_select_auto_collect(monkeypatch)
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},

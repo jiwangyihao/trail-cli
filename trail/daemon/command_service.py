@@ -52,6 +52,7 @@ CW_MUTATING_METHODS = {
 }
 
 CW_CAPTURE_METHODS = {
+    "cw.equipment.read",
     "cw.slots.read",
     "cw.portal.detect",
     "cw.strategy.detect",
@@ -68,6 +69,7 @@ CW_CAPTURED_READ_METHODS = {
 
 CW_SESSION_SAVE_METHODS = {
     "cw.battle.clear_in_progress",
+    "cw.equipment.prepare",
 }
 
 START_RUN_STATUS_ALLOWLIST = {

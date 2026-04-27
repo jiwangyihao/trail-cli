@@ -13,6 +13,7 @@ from trail.output.capture import with_auto_capture, with_selective_capture
 from trail.output.envelope import build_image_guidance
 from trail.scenes.cw.battle import run_cw_battle
 from trail.scenes.cw.entry import enter_cw, is_cw_exact_difficulty_token, start_cw
+from trail.scenes.cw.equipment import prepare_cw_equipment, read_cw_equipment
 from trail.scenes.cw.events import (
     build_cw_battle_continuer,
     build_cw_battle_starter,
@@ -535,6 +536,11 @@ class CwService:
             ).scene_state["cw"]["stage"],
             "cw.guide.apply": run_guide_apply,
             "cw.guide.current": lambda: _current_guide(session, artifact_store=artifact_store),
+            "cw.equipment.prepare": lambda: prepare_cw_equipment(
+                workspace_root=workspace_root,
+                refresh=bool(payload.get("refresh")),
+            ),
+            "cw.equipment.read": lambda: read_cw_equipment(runtime(), workspace_root=workspace_root),
             "cw.slots.read": lambda: read_cw_slots(
                 session,
                 reader=slots_reader_factory(runtime(), targets=payload.get("slot")),
