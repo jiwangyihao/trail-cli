@@ -110,6 +110,35 @@ def _build_cw_harness(tmp_path: Path, *, runtime):
     return registry, service, session, command_service
 
 
+def _patch_portal_select_auto_collect(monkeypatch, *, slots_snapshot: dict | None = None, shop_snapshot: dict | None = None) -> None:
+    slots_snapshot = slots_snapshot or {"front": [], "back": [], "hand": [], "stale": True}
+    shop_snapshot = shop_snapshot or {"items": [], "stale": True, "reserve_full": False}
+
+    def collect(session, collector):
+        del collector
+        session.scene_state.setdefault("cw", {})["metrics"] = {"last_crystal_collection": "ok"}
+
+    def read_slots(session, reader, targets=None, guide_config=None):
+        del reader, targets, guide_config
+        session.scene_state.setdefault("cw", {})["slots"] = dict(slots_snapshot)
+
+    def scan_shop(session, scanner, guide_config=None):
+        del scanner, guide_config
+        session.scene_state.setdefault("cw", {})["shop"] = dict(shop_snapshot)
+
+    def close_shop(session, closer):
+        del closer
+        session.scene_state.setdefault("cw", {}).setdefault("shop", {}).setdefault("stale", True)
+
+    monkeypatch.setattr("trail.daemon.cw_service.collect_cw_crystals", collect)
+    monkeypatch.setattr("trail.daemon.cw_service.dismiss_cw_slots_overlay", lambda runtime: None)
+    monkeypatch.setattr("trail.daemon.cw_service.read_cw_slots", read_slots)
+    monkeypatch.setattr("trail.daemon.cw_service.open_cw_shop", lambda session, opener: None)
+    monkeypatch.setattr("trail.daemon.cw_service.scan_cw_shop", scan_shop)
+    monkeypatch.setattr("trail.daemon.cw_service.project_cw_shop_snapshot", lambda session: dict(shop_snapshot))
+    monkeypatch.setattr("trail.daemon.cw_service.close_cw_shop", close_shop)
+
+
 def _run_cw_start(
     *,
     command_service,
@@ -738,6 +767,7 @@ def test_cw_portal_select_auto_applies_selected_guide_and_invalidates_runtime_st
         lambda session, runtime: None,
         raising=False,
     )
+    _patch_portal_select_auto_collect(monkeypatch)
 
     envelope = _run_cw_portal_mutation(
         command_service=command_service,
@@ -788,6 +818,7 @@ def test_cw_portal_select_waits_for_preparation_before_auto_apply(tmp_path: Path
         "trail.daemon.cw_service.apply_cw_guide_via_ui",
         lambda runtime, share_code: events.append("apply"),
     )
+    _patch_portal_select_auto_collect(monkeypatch)
 
     envelope = _run_cw_portal_mutation(
         command_service=command_service,
@@ -818,6 +849,7 @@ def test_cw_portal_select_adds_operation_guide_skill_info(tmp_path: Path, monkey
     )
     monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
     monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+    _patch_portal_select_auto_collect(monkeypatch)
 
     envelope = _run_cw_portal_mutation(
         command_service=command_service,
@@ -832,7 +864,7 @@ def test_cw_portal_select_adds_operation_guide_skill_info(tmp_path: Path, monkey
     assert envelope["data"]["skill_info"] == [{"name": "运营思路", "text": "前期 先读图"}]
 
 
-def test_cw_portal_select_skill_info_does_not_call_state_mutating_ensure(tmp_path: Path, monkeypatch):
+def test_cw_portal_select_skill_info_survives_auto_collect(tmp_path: Path, monkeypatch):
     runtime = PortalRuntime()
     registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     session.scene_state["cw"] = {
@@ -848,10 +880,7 @@ def test_cw_portal_select_skill_info_does_not_call_state_mutating_ensure(tmp_pat
     )
     monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
     monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
-    monkeypatch.setattr(
-        "trail.daemon.cw_service.ensure_cw_state",
-        lambda session: (_ for _ in ()).throw(AssertionError("skill_info read must not ensure cw state")),
-    )
+    _patch_portal_select_auto_collect(monkeypatch)
 
     envelope = _run_cw_portal_mutation(
         command_service=command_service,
@@ -882,6 +911,7 @@ def test_cw_portal_select_omits_skill_info_when_operation_guide_blank(tmp_path: 
     )
     monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
     monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+    _patch_portal_select_auto_collect(monkeypatch)
 
     envelope = _run_cw_portal_mutation(
         command_service=command_service,
