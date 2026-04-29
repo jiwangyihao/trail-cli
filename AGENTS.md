@@ -60,7 +60,7 @@
 
 - `--format yaml` 是结构化兜底，不是默认主通道。
 - 只有进入 YAML allowlist 的命令才允许输出 YAML；新增命令前先确认是否真的存在结构化兜底需求。
-- 当前 YAML allowlist 是 `daemon.status`、`state.dump`、`guide.fetch.cw`、`guide.config.cw`。
+- 当前 YAML allowlist 是 `cw.equipment.read`、`daemon.status`、`state.dump`、`guide.fetch.cw`、`guide.config.cw`。
 - `image_guidance` 不进入 YAML body；YAML 继续只回落命令数据本体。
 - 非 allowlist 命令不要回退到旧式结构化 envelope；保持默认文本协议，并在不支持时显式返回格式不支持错误。
 
@@ -100,9 +100,10 @@
 - `cw.strategy.detect|refresh` 的 cards family 正文字段固定使用 `投资策略/攻略推荐/刷新次数`；说明继续使用 `opt idx=... 说明=...`。
 - `cw.strategy.detect|refresh` 必须输出 `info 已加载攻略=0|1`，且固定在所有 `opt` 行之后。
 - `cw.equipment.read` 归入列表读取 renderer 家族；canonical command 固定为 `cw.equipment.read`，success 首行固定为 `ok cw.equipment.read count=<n> uncertain=<n> empty=<n>`，`count/uncertain/empty` 即使为 `0` 也必须保留。
-- `cw.equipment.read` success 正文顺序固定为首行 -> `shot` -> `info read_image_first=1` -> `item` -> `info` -> `warn` -> `ref`；`item` 行字段固定使用 `idx/row/col/box/name/score/gap/uncertain/alt/alt_score`，`box` 固定为 `left,top,width,height`。
+- `cw.equipment.read` success 正文顺序固定为首行 -> `shot` -> `info read_image_first=1` -> `item` -> `info` -> `warn` -> `ref`；`item` 行字段固定使用 `pos/center/name/score/uncertain/gap/alt/alt_score`，确定项默认只输出 `pos/center/name/score/uncertain`，只有 `uncertain=1` 时才输出 `gap/alt/alt_score`。
+- `cw.equipment.read` 默认文本不输出 `idx/row/col/box`；`row/col` 只保留在结构化 `data`、`trail --format yaml cw equipment read --session <id>` 与 `trail --format yaml state dump --session <id>` 的 `cw_state.equipment` 中，供诊断使用。
 - `cw.equipment.read` 单格低置信不失败；当 `uncertain>0` 时默认文本输出 `warn code=LOW_CONFIDENCE count=... msg=...`。
-- `cw.equipment.read` 第一版不写入 `cw_state` 长期状态；它不加入 YAML allowlist，`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`。
+- `cw.equipment.read` 成功写入 `cw_state.equipment` 最近快照，并加入 YAML allowlist；除 `cw.equipment.prepare` 外，成功进入 CW mutation 处理的命令应保留最近装备 items 并将该快照标记为 `stale=True`。
 - `cw.equipment.prepare` 归入检测/状态摘要 renderer 家族；canonical command 固定为 `cw.equipment.prepare`，不产截图，success 首行固定为 `ok cw.equipment.prepare big_version=<version> count=<n> cached=<n> downloaded=<n> refreshed=0|1`，这些事实即使为 `0` 也必须保留。
 - `cw.equipment.prepare --refresh` 才处理同一 `rpg_game_big_version` 下 `cache_key` 的 `icon_url` 变化；普通 prepare/read 只补齐缺失或损坏图标。`cw.equipment.prepare` 不加入 YAML allowlist。
 - `cw.shop.buy_exp` 属于 shop action renderer family；canonical command 是 `cw.shop.buy_exp`，success 首行固定为 `ok cw.shop.buy_exp opened=1 stale=0 count=<n>`，正文使用 `# 商店信息` 输出 `item` 与 `coins/reserve_full`，再用 `# 综合信息` 输出 `level/exp/team_size`。
@@ -121,7 +122,7 @@
 - `cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径；`current/apply` 只看当前已选攻略摘要，完整攻略仍由 `guide.fetch.cw` 提供。
 - `guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。
 - `guide.config.cw` 使用 `赛季/子赛季/大版本/搜牌档位/羁绊/角色/角色标签/投资环境`；这五个统计项即使为 `0` 也必须保留。
-- `guide.config.cw --format yaml` 仍然先输出中文摘要，再追加原英文 key 的 YAML shape，不得回退成纯英文首屏。
+- `trail --format yaml guide config cw` 仍然先输出中文摘要，再追加原英文 key 的 YAML shape，不得回退成纯英文首屏。
 - `cw.hand.sell_plan` success 首行固定为 `ok cw.hand.sell_plan count=... reference_only=1 candidates=... todos=...`；该命令只提供 Agent 参考信息，不是权威出售计划。
 - `cw.hand.sell_plan` 正文 `slot` 行固定使用 `pos/name/star/target_star/current_star/分类/推荐度/priority/protected/reason`，缺失值按默认 key=value 省略规则处理。
 - `cw.hand.sell_plan` 缺失参考信息用 `info todo=stage|team_size|boss_preview|missing_final|stage_granularity|star`；不新增正文前缀，不进入 YAML allowlist。

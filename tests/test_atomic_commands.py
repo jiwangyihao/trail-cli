@@ -1490,6 +1490,60 @@ def test_state_dump_renders_summary_before_yaml(cli_runner, fake_daemon_client, 
     ]
 
 
+def test_state_dump_yaml_includes_cw_equipment_snapshot(cli_runner, fake_daemon_client, tmp_path, monkeypatch):
+    session_id = "session-equipment"
+
+    def fail_local_state_dump(*args, **kwargs):
+        raise AssertionError("local state dump path used")
+
+    monkeypatch.setattr("trail.commands.state.run_session_command", fail_local_state_dump, raising=False)
+    client = fake_daemon_client(
+        {
+            "state.dump": build_success_response(
+                request_id="req-state-dump-equipment",
+                data={
+                    "session_id": session_id,
+                    "scene_state": {
+                        "cw": {
+                            "equipment": {
+                                "items": [
+                                    {
+                                        "pos": "equipment:1",
+                                        "center": {"x": 1855, "y": 275},
+                                        "row": 1,
+                                        "col": 1,
+                                        "name": "生命之花",
+                                    }
+                                ],
+                                "stale": False,
+                            }
+                        }
+                    },
+                },
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["--format", "yaml", "state", "dump", "--session", session_id])
+
+    assert result.exit_code == 0
+    assert "equipment:" in result.stdout
+    assert "pos: equipment:1" in result.stdout
+    assert "center:" in result.stdout
+    assert "row: 1" in result.stdout
+    assert "col: 1" in result.stdout
+    assert "box:" not in result.stdout
+    assert client.calls == [
+        {
+            "method": "state.dump",
+            "payload": {"session_id": session_id},
+            "workspace_root": str(tmp_path),
+            "session_id": session_id,
+            "verbose": False,
+        }
+    ]
+
+
 def test_state_dump_surfaces_stage_error_summary(cli_runner, fake_daemon_client, tmp_path):
     session_id = "session-2"
     client = fake_daemon_client(

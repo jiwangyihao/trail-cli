@@ -298,7 +298,7 @@ def test_readme_mentions_text_output_protocol() -> None:
         in readme
     )
     assert "guide 投资环境=购物区 count=1 more=1 next=group-token" in readme
-    assert "guide.config.cw --format yaml" in readme
+    assert "trail --format yaml guide config cw" in readme
     assert "`trail guide fetch cw` 默认文本会直接返回你选中的完整攻略字段，字段名尽量使用货币战争页面里的中文文案；现在还会补充 `羁绊列表`、`运营思路`" in readme
     _assert_text_contains_in_order(
         readme,
@@ -529,7 +529,7 @@ def test_readme_and_active_skills_document_help_boundaries() -> None:
     assert "常规 battle / settle 流程默认执行：`trail cw battle run --session <id>`；默认 timeout 现在是 `90s`" in readme
     assert "info next_action=cw.battle.run why=battle_flow_not_finished" in readme
     assert "结算页也属于 battle flow" in readme
-    assert "`trail state dump --session <id> --format yaml`" in readme
+    assert "`trail --format yaml state dump --session <id>`" in readme
     assert "`trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断" in readme
     assert "`cw`：货币战争固定流程命令" in readme
     assert "`stage` 只用于已进入货币战争后的内部阶段快速检测/等待" in readme
@@ -542,7 +542,7 @@ def test_readme_and_active_skills_document_help_boundaries() -> None:
     assert "`trail-hsr-advanced` 是内部恢复层" in readme
     assert "`trail-hsr-advanced` 不作为用户入口" in readme
     assert "guide 投资环境=购物区 count=1 more=1 next=group-token" in readme
-    assert "guide.config.cw --format yaml" in readme
+    assert "trail --format yaml guide config cw" in readme
     assert "artifact=" not in readme
     assert (
         "```text\nok guide.list.cw count=2 more=1 next=token-2\nguide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1\nguide id=def idx=2 hard=0 change_equip=1 expert=0\n```"
@@ -558,7 +558,7 @@ def test_readme_and_active_skills_document_help_boundaries() -> None:
     assert "trail daemon status" not in hsr_skill
     assert "trail daemon request-status --request-id <id>" in request_status_and_taint
     assert "trail daemon reconcile-session --session <id>" in request_status_and_taint
-    assert "trail state dump --session <id> --format yaml" in advanced_command_surface
+    assert "trail --format yaml state dump --session <id>" in advanced_command_surface
 
 
 def test_readme_documents_battle_run_short_timeout_and_resume_contract() -> None:
@@ -834,7 +834,9 @@ def test_readme_and_agents_document_cw_equipment_protocol() -> None:
 
     assert "trail cw equipment prepare --session <id> [--refresh]" in readme
     assert "trail cw equipment read --session <id>" in readme
-    assert "ok cw.equipment.read count=1 uncertain=1 empty=17" in readme
+    assert "ok cw.equipment.read count=1 uncertain=0 empty=17" in readme
+    assert "item pos=equipment:1 center=1855,275 name=生命之花 score=0.93 uncertain=0" in readme
+    assert "item idx=1 row=1 col=1 box=" not in readme
     assert "ok cw.equipment.prepare big_version=3.2 count=2 cached=1 downloaded=1 refreshed=0" in readme
     assert "`cw.equipment.read` 归入列表读取 renderer 家族" in agents
     assert "`cw.equipment.prepare` 归入检测/状态摘要 renderer 家族" in agents
@@ -867,7 +869,7 @@ def test_battle_run_as_default_entry_is_documented_across_readme_and_skills() ->
     assert "`trail cw battle run --session <id>`；默认 timeout 现在是 `90s`" in cw_flow_section
     assert "info next_action=cw.battle.run why=battle_flow_not_finished" in cw_flow_section
     assert "结算页也属于 battle flow" in cw_flow_section
-    assert "`trail state dump --session <id> --format yaml`" in cw_flow_section
+    assert "`trail --format yaml state dump --session <id>`" in cw_flow_section
     assert "`trail cw battle start` / `trail cw battle continue` / `trail cw settle next`" in cw_flow_section
     assert "只建议在内部 fallback 流程中手工拆链使用" in cw_flow_section
     assert "`battle` / `settle` 分组仍保留兼容原子命令" in command_overview_section
@@ -879,7 +881,7 @@ def test_battle_run_as_default_entry_is_documented_across_readme_and_skills() ->
     assert "当前 scene entry 一旦命中并接管某个具体场景，该 scene entry 就成为该场景内的唯一编排 owner" in skill_boundary_section
     assert "`trail-hsr-advanced` 是内部恢复层" in skill_boundary_section
     assert "`trail-hsr-advanced` 不作为用户入口" in skill_boundary_section
-    assert "`trail state dump --session <id> --format yaml`" in advanced_command_surface
+    assert "`trail --format yaml state dump --session <id>`" in advanced_command_surface
     assert "`trail cw battle run --session <id>`" in preparation_stage_section
     assert "默认 timeout 现在是 `90s`" in preparation_stage_section
     assert "`trail cw battle start --session <id>`" in preparation_stage_section
@@ -1650,23 +1652,28 @@ def test_render_output_cw_equipment_read_orders_shot_items_info_warn_ref():
     payload = {
         "ok": True,
         "data": {
-            "count": 1,
+            "count": 2,
             "uncertain": 1,
-            "empty": 17,
+            "empty": 58,
             "backend": "vector",
             "layout": "default",
             "items": [
                 {
-                    "idx": 1,
-                    "row": 1,
-                    "col": 1,
-                    "box": {"left": 1820, "top": 240, "width": 70, "height": 70},
+                    "pos": "equipment:1",
+                    "center": {"x": 1855, "y": 275},
                     "name": "幸运星",
                     "score": 0.88,
-                    "gap": 0.03,
+                    "uncertain": False,
+                },
+                {
+                    "pos": "equipment:7",
+                    "center": {"x": 1775, "y": 275},
+                    "name": "蓝钻",
+                    "score": 0.78,
                     "uncertain": True,
-                    "alt": "和平手枪",
-                    "alt_score": 0.85,
+                    "gap": 0.03,
+                    "alt": "光能电池",
+                    "alt_score": 0.75,
                 }
             ],
         },
@@ -1679,10 +1686,11 @@ def test_render_output_cw_equipment_read_orders_shot_items_info_warn_ref():
     }
 
     assert render_output("cw.equipment.read", payload).splitlines() == [
-        "ok cw.equipment.read count=1 uncertain=1 empty=17",
+        "ok cw.equipment.read count=2 uncertain=1 empty=58",
         "shot path=.trail/shots/req-equipment.png",
         "info read_image_first=1",
-        "item idx=1 row=1 col=1 box=1820,240,70,70 name=幸运星 score=0.88 gap=0.03 uncertain=1 alt=和平手枪 alt_score=0.85",
+        "item pos=equipment:1 center=1855,275 name=幸运星 score=0.88 uncertain=0",
+        "item pos=equipment:7 center=1775,275 name=蓝钻 score=0.78 uncertain=1 gap=0.03 alt=光能电池 alt_score=0.75",
         "info backend=vector layout=default",
         'warn code=LOW_CONFIDENCE count=1 msg="装备图标低置信，请先看截图确认"',
         "ref path=trail/references/cw/equipment.png sim=0.9",
@@ -5504,8 +5512,8 @@ def test_skill_docs_split_simple_and_advanced_commands() -> None:
     assert "trail screen shot" in advanced_reference_text
     assert "trail image locate" in advanced_reference_text
     assert "trail image wait" in advanced_reference_text
-    assert "trail state dump" in advanced_reference_text
-    assert "trail state dump --session <id> --format yaml" in advanced_reference_text
+    assert "trail --format yaml state dump" in advanced_reference_text
+    assert "trail --format yaml state dump --session <id>" in advanced_reference_text
 
 
 def test_readme_documents_batch_place_sell_contract() -> None:

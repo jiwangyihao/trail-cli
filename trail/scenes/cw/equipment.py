@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict
 from io import BytesIO
 from pathlib import Path
@@ -8,10 +9,12 @@ from typing import Any
 from PIL import Image
 
 from trail.core.errors import TrailError
+from trail.session.models import SessionModel
 from trail.scenes.cw.equipment_grid import (
     DEFAULT_EQUIPMENT_GRID_PROFILE,
     crop_equipment_cells,
     crop_has_equipment_slot_markers,
+    equipment_cell_center,
     iter_equipment_grid_cells,
 )
 from trail.scenes.cw.equipment_recognition import EquipmentRecognitionResult, VectorEquipmentIconRecognizer
@@ -21,6 +24,7 @@ from trail.scenes.cw.equipment_resources import (
     prepare_equipment_icon_cache,
 )
 from trail.scenes.cw.guide import fetch_cw_raw_guide_config
+from trail.scenes.cw.models import ensure_cw_state
 
 
 def prepare_cw_equipment(*, workspace_root: str | Path | None = None, refresh: bool = False) -> dict[str, Any]:
@@ -61,11 +65,13 @@ def _item_from_result(crop, result: EquipmentRecognitionResult) -> dict[str, Any
         return None
     top = result.candidates[0] if result.candidates else None
     alt = result.candidates[1] if len(result.candidates) > 1 else None
+    center_x, center_y = equipment_cell_center(crop.cell)
     item = {
         "idx": crop.cell.idx,
+        "pos": f"equipment:{crop.cell.idx}",
         "row": crop.cell.row,
         "col": crop.cell.col,
-        "box": dict(crop.cell.box),
+        "center": {"x": center_x, "y": center_y},
         "name": top.name if top is not None else None,
         "equipment_id": top.equipment_id if top is not None else None,
         "cache_key": top.cache_key if top is not None else None,
@@ -108,4 +114,18 @@ def read_cw_equipment(runtime, *, workspace_root: str | Path | None = None) -> d
         "items": items,
         "backend": "vector",
         "layout": "default",
+        "columns": 10,
+        "rows": 6,
+        "stale": False,
     }
+
+
+def apply_cw_equipment_read(
+    session: SessionModel,
+    runtime,
+    *,
+    workspace_root: str | Path | None = None,
+) -> dict[str, Any]:
+    snapshot = read_cw_equipment(runtime, workspace_root=workspace_root)
+    ensure_cw_state(session)["equipment"] = deepcopy(snapshot)
+    return snapshot

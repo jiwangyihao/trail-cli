@@ -13,7 +13,7 @@ from trail.output.capture import with_auto_capture, with_selective_capture
 from trail.output.envelope import build_image_guidance
 from trail.scenes.cw.battle import run_cw_battle
 from trail.scenes.cw.entry import enter_cw, is_cw_exact_difficulty_token, start_cw
-from trail.scenes.cw.equipment import prepare_cw_equipment, read_cw_equipment
+from trail.scenes.cw.equipment import apply_cw_equipment_read, prepare_cw_equipment
 from trail.scenes.cw.events import (
     build_cw_battle_continuer,
     build_cw_battle_starter,
@@ -380,6 +380,7 @@ class CwService:
                 raise
 
             result, scene_warnings = _pop_scene_warnings(result)
+            _mark_cw_equipment_stale(session)
 
             try:
                 session_service.save_session(session)
@@ -580,7 +581,7 @@ class CwService:
                 workspace_root=workspace_root,
                 refresh=bool(payload.get("refresh")),
             ),
-            "cw.equipment.read": lambda: read_cw_equipment(runtime(), workspace_root=workspace_root),
+            "cw.equipment.read": lambda: apply_cw_equipment_read(session, runtime(), workspace_root=workspace_root),
             "cw.slots.read": lambda: read_cw_slots(
                 session,
                 reader=slots_reader_factory(runtime(), targets=payload.get("slot")),
@@ -697,6 +698,12 @@ def _handle_and_save_session(handler, session_service, session, scene_warnings: 
         scene_warnings.extend(warnings)
     session_service.save_session(session)
     return result
+
+
+def _mark_cw_equipment_stale(session) -> None:
+    equipment = ensure_cw_state(session).get("equipment")
+    if isinstance(equipment, dict) and equipment.get("stale") is not True:
+        equipment["stale"] = True
 
 
 def _pop_scene_warnings(data: object) -> tuple[object, list[dict]]:

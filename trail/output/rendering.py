@@ -16,7 +16,7 @@ class OutputFormat(StrEnum):
 
 
 _OUTPUT_OPTIONS = {"format": OutputFormat.TEXT, "verbose": False}
-YAML_ALLOWLIST = {"daemon.status", "state.dump", "guide.fetch.cw", "guide.config.cw"}
+YAML_ALLOWLIST = {"daemon.status", "state.dump", "guide.fetch.cw", "guide.config.cw", "cw.equipment.read"}
 WORKFLOW_HANDOFFS_PATH = Path(__file__).resolve().parents[2] / "skills" / "registry" / "workflow-handoffs.yaml"
 
 
@@ -169,6 +169,16 @@ def _format_box(box: Any) -> str | None:
     if left is None or top is None or width is None or height is None:
         return None
     return f"{left},{top},{width},{height}"
+
+
+def _format_center(center: Any) -> str | None:
+    if not isinstance(center, dict):
+        return None
+    x = center.get("x")
+    y = center.get("y")
+    if x is None or y is None:
+        return None
+    return f"{x},{y}"
 
 
 def _format_fact_sequence(*facts: tuple[str, Any]) -> str:
@@ -1176,24 +1186,28 @@ def _render_cw_equipment_read(command: str, payload: dict[str, Any]) -> list[str
     for item in _as_list(data.get("items")):
         if not isinstance(item, dict):
             continue
-        line = "item " + _format_fact_sequence(
-            ("idx", item.get("idx")),
-            ("row", item.get("row")),
-            ("col", item.get("col")),
-        )
-        box = _format_box(item.get("box"))
-        if box is not None:
-            line += f" box={box}"
-        tail = _format_fact_sequence(
+        line = "item"
+        head = _format_fact_sequence(("pos", item.get("pos")))
+        if head:
+            line += f" {head}"
+        center = _format_center(item.get("center"))
+        if center is not None:
+            line += f" center={center}"
+        facts = _format_fact_sequence(
             ("name", item.get("name")),
             ("score", _format_score_value(item.get("score"))),
-            ("gap", _format_score_value(item.get("gap"))),
             ("uncertain", bool(item.get("uncertain")) if "uncertain" in item else None),
-            ("alt", item.get("alt")),
-            ("alt_score", _format_score_value(item.get("alt_score"))),
         )
-        if tail:
-            line += f" {tail}"
+        if facts:
+            line += f" {facts}"
+        if item.get("uncertain") is True:
+            diagnostics = _format_fact_sequence(
+                ("gap", _format_score_value(item.get("gap"))),
+                ("alt", item.get("alt")),
+                ("alt_score", _format_score_value(item.get("alt_score"))),
+            )
+            if diagnostics:
+                line += f" {diagnostics}"
         lines.append(line)
     _append_fact_line(lines, "info", ("backend", data.get("backend")), ("layout", data.get("layout")))
     uncertain_count = _coerce_int(data.get("uncertain")) or 0

@@ -94,7 +94,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `trail cw battle run` 设计上依赖短等待、`status=in_progress` 与重跑续跑；看到 `info next_action=cw.battle.run why=battle_flow_not_finished` 时，Agent 必须先看截图，若仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`
 - battle flow 包含战斗中、结算页、结算翻页但未回到下一稳定阶段；结算页也属于 battle flow，不要因为到结算页就切回旧 `trail cw settle next`
 - 如需清掉上一轮 battle.run 的内部续跑提示位，执行：`trail cw battle clear-in-progress --session <id>`；它只清内部提示位，不清 battle 摘要、截图或阶段事实
-- 如果 `trail cw battle run` 已在 daemon 内成功收口但当前 stdout 丢失，立刻执行：`trail state dump --session <id> --format yaml`
+- 如果 `trail cw battle run` 已在 daemon 内成功收口但当前 stdout 丢失，立刻执行：`trail --format yaml state dump --session <id>`
 - `trail cw battle start` / `trail cw battle continue` / `trail cw settle next` 仍保留为 CLI 兼容命令，但只建议在内部 fallback 流程中手工拆链使用
 
 编队槽位读取建议：
@@ -112,7 +112,8 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 装备背包读取建议：
 
 - 如需读取当前装备背包，先准备或补齐图标缓存：`trail cw equipment prepare --session <id> [--refresh]`；常规使用 `trail cw equipment prepare --session <id>`，如果确认同一版本资源 URL 变更，显式运行 `trail cw equipment prepare --session <id> --refresh`。
-- 读取装备背包：`trail cw equipment read --session <id>`。该命令会返回截图，必须先读 `shot path=...` 对应原始截图，再消费 `item` 行；低置信格子会保留 `alt/alt_score` 并输出 `warn code=LOW_CONFIDENCE`。
+- 读取装备背包：`trail cw equipment read --session <id>`。该命令会返回截图，必须先读 `shot path=...` 对应原始截图，再消费 `item pos=equipment:<idx> center=x,y ...` 行；确定结果默认隐藏 `gap/alt/alt_score`，只有低置信格子才输出这些诊断字段并追加 `warn code=LOW_CONFIDENCE`。
+- 如需查看装备格 `row/col` 诊断，使用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`；默认文本不输出 `row/col/box`。
 
 ## 命令面概览
 
@@ -194,7 +195,7 @@ DirectML 安装与环境 profile 说明：
 - 只有结果未知或当前失败显式可恢复时，才会出现 `recover action=daemon.request_status request=<id>`；仅有 `request id=<id>` 不等于当前失败一定可恢复
 - `trail daemon request-status --request-id <id>` 用于回查某个请求的终态、关联 session、最近可见阶段与污染状态，典型输出是 `ok daemon.request_status request=req-42 session=sess-1 final_state=completed last_visible_stage=responded tainted=0`
 - `tainted=1` 表示当前 failure 或状态带有运行态污染风险；继续执行前，先确认请求终态，再决定是否执行 `trail daemon reconcile-session --session <id>`
-- `--format yaml` 仍然保留同一条首行摘要，但只在允许的命令上提供结构化视图；当前更适合 `daemon status`、`state dump`、`guide fetch cw`、`guide config cw` 这类结果体量更大或层级更深的命令
+- `--format yaml` 仍然保留同一条首行摘要，但只在允许的命令上提供结构化视图；当前更适合 `cw equipment read`、`daemon status`、`state dump`、`guide fetch cw`、`guide config cw` 这类结果体量更大、层级更深或需要诊断字段的命令
 - `--verbose` 只追加 `debug kind=...` 调试行，不改变默认文本协议里的事实集合与顺序；shared helper 的 major action trace 会固定追加为 `debug kind=trace ...` 行
 - finalized helper 动作 trace 至少携带 `step=<helper>`、`ts=<UTC RFC3339 毫秒时间戳>` 与 `ok=0|1`
 - `trace/context` 边界固定：`trace` 只承载 finalized helper 动作事件；`context` 只承载跨动作请求级事实，不能再拿来补某次 helper 的动作结果
@@ -308,12 +309,11 @@ ok cw.equipment.prepare big_version=3.2 count=2 cached=1 downloaded=1 refreshed=
 ```
 
 ```text
-ok cw.equipment.read count=1 uncertain=1 empty=17
+ok cw.equipment.read count=1 uncertain=0 empty=17
 shot path=.trail/shots/req-equipment-read.png
 info read_image_first=1
-item idx=1 row=1 col=1 box=1820,240,70,70 name=幸运星 score=0.88 gap=0.03 uncertain=1 alt=和平手枪 alt_score=0.85
+item pos=equipment:1 center=1855,275 name=生命之花 score=0.93 uncertain=0
 info backend=vector layout=default
-warn code=LOW_CONFIDENCE count=1 msg="装备图标低置信，请先看截图确认"
 ```
 
 ```text
@@ -344,7 +344,7 @@ info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50
 - `guide.list.cw` 看筛选摘要
 - `cw.guide.current|apply` 看当前已选攻略摘要
 - `guide.config.cw` 看筛选枚举和全局配置规模
-- `guide.config.cw --format yaml` 会先输出中文摘要，再附原始英文 key 的结构化 YAML data
+- `trail --format yaml guide config cw` 会先输出中文摘要，再附原始英文 key 的结构化 YAML data
 
 ```text
 ok ocr.read hits=2
@@ -428,7 +428,7 @@ recover action=daemon.request_status request=req-42
 - 这两类批量命令都严格保序、遇错即停；如果中途失败且前面动作可能已生效，先重新执行 `trail cw slots read --session <id>` 再继续后续判断
 - `trail-hsr` 负责 session、窗口检查与场景切换，并在没有已上线 scene entry 时继续承担总入口 owner
 - 当前 scene entry 一旦命中并接管某个具体场景，该 scene entry 就成为该场景内的唯一编排 owner；常规 battle / settle 链默认执行 `trail cw battle run --session <id>`，默认 timeout 现在是 `90s`，`status=in_progress` 输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，先看截图，仍在 battle flow 就重跑，结算页也属于 battle flow；`trail cw battle clear-in-progress --session <id>` 只清内部提示位
-- `trail-hsr-advanced` 是内部恢复层，继续负责 daemon / request-status / reconcile-session / window / session / screen / image / state 这类 control-plane 与恢复链路；如果 `trail cw battle run` 的 stdout 丢失但 `session=<id>` 还在，立刻执行 `trail state dump --session <id> --format yaml`
+- `trail-hsr-advanced` 是内部恢复层，继续负责 daemon / request-status / reconcile-session / window / session / screen / image / state 这类 control-plane 与恢复链路；如果 `trail cw battle run` 的 stdout 丢失但 `session=<id>` 还在，立刻执行 `trail --format yaml state dump --session <id>`
 - `trail-hsr-advanced` 不作为用户入口；它完成恢复后必须把控制权交回调用它的上层 active skill
 - 归档 skill 不再作为 active owner 或推荐入口
 - README 里的 simple 层序列是默认入口；advanced 段落只在 simple 层失败或不够用时启用

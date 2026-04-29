@@ -32,6 +32,7 @@ class CwSceneState:
     strategy: dict = field(default_factory=lambda: {"cards": [], "stale": True})
     shop: dict = field(default_factory=lambda: {"stale": True})
     stage: dict = field(default_factory=lambda: {"stale": True})
+    equipment: dict = field(default_factory=lambda: {"stale": True})
     metrics: dict = field(default_factory=dict)
 
     def model_dump(self) -> dict:
@@ -44,6 +45,7 @@ class CwSceneState:
             "strategy": deepcopy(self.strategy),
             "shop": deepcopy(self.shop),
             "stage": deepcopy(self.stage),
+            "equipment": deepcopy(self.equipment),
             "metrics": deepcopy(self.metrics),
         }
 

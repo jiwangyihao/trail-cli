@@ -6,6 +6,8 @@ from typing import Iterable
 
 from PIL import Image, ImageStat
 
+from trail.core.errors import TrailError
+
 
 @dataclass(frozen=True)
 class EquipmentGridProfile:
@@ -73,6 +75,35 @@ def iter_equipment_grid_cells(
             x, y, box = _box_for(profile, col=col, row=row)
             yield EquipmentGridCell(idx=idx, row=row, col=col, x=x, y=y, box=box)
             idx += 1
+
+
+def equipment_cell_center(cell: EquipmentGridCell) -> tuple[int, int]:
+    return (
+        cell.box["left"] + cell.box["width"] // 2,
+        cell.box["top"] + cell.box["height"] // 2,
+    )
+
+
+def equipment_slot_center(
+    value: str,
+    *,
+    profile: EquipmentGridProfile = DEFAULT_EQUIPMENT_GRID_PROFILE,
+    columns: int = 10,
+    rows: int = 6,
+) -> tuple[int, int]:
+    prefix, separator, raw_idx = str(value).partition(":")
+    if prefix != "equipment" or separator != ":" or not raw_idx.isdecimal():
+        raise TrailError("CW_EQUIPMENT_SLOT_INVALID", f"invalid equipment slot: {value}")
+
+    idx = int(raw_idx)
+    if idx < 1 or idx > columns * rows:
+        raise TrailError("CW_EQUIPMENT_SLOT_INVALID", f"invalid equipment slot: {value}")
+
+    for cell in iter_equipment_grid_cells(profile, columns=columns, rows=rows):
+        if cell.idx == idx:
+            return equipment_cell_center(cell)
+
+    raise TrailError("CW_EQUIPMENT_SLOT_INVALID", f"invalid equipment slot: {value}")
 
 
 def _luma_mean(image: Image.Image) -> float:

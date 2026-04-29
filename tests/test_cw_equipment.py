@@ -265,6 +265,25 @@ def load_equipment_grid_module():
     return importlib.import_module("trail.scenes.cw.equipment_grid")
 
 
+def test_equipment_slot_center_uses_agent_visible_equipment_position():
+    grid = load_equipment_grid_module()
+
+    assert grid.equipment_slot_center("equipment:1") == (1855, 275)
+    assert grid.equipment_slot_center("equipment:6") == (1855, 663)
+    assert grid.equipment_slot_center("equipment:7") == (1775, 275)
+    assert grid.equipment_slot_center("equipment:60") == (1137, 663)
+
+
+@pytest.mark.parametrize("value", ["1", "front:1", "equipment:0", "equipment:61", "equipment:x", "equipment:"])
+def test_equipment_slot_center_rejects_invalid_agent_positions(value):
+    grid = load_equipment_grid_module()
+
+    with pytest.raises(Exception) as exc_info:
+        grid.equipment_slot_center(value)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_SLOT_INVALID"
+
+
 def test_default_equipment_grid_profile_locks_confirmed_coordinates():
     grid = load_equipment_grid_module()
     profile = grid.DEFAULT_EQUIPMENT_GRID_PROFILE
@@ -721,6 +740,9 @@ def test_read_cw_equipment_recognizes_best_variants_and_counts(monkeypatch, tmp_
     assert result["uncertain"] == 0
     assert result["empty"] == 1
     assert result["items"][0]["idx"] == 1
+    assert result["items"][0]["pos"] == "equipment:1"
+    assert result["items"][0]["center"] == {"x": 1855, "y": 275}
+    assert "box" not in result["items"][0]
     assert result["items"][0]["name"] == "幸运星"
     assert result["backend"] == "vector"
     assert result["layout"] == "default"
@@ -889,9 +911,11 @@ def test_read_cw_equipment_keeps_non_empty_uncertain_without_candidates(monkeypa
     assert result["uncertain"] == 1
     item = result["items"][0]
     assert item["idx"] == 1
+    assert item["pos"] == "equipment:1"
     assert item["row"] == 1
     assert item["col"] == 1
-    assert item["box"] == {"left": 1820, "top": 240, "width": 70, "height": 70}
+    assert item["center"] == {"x": 1855, "y": 275}
+    assert "box" not in item
     assert item["name"] is None
     assert item["equipment_id"] is None
     assert item["cache_key"] is None

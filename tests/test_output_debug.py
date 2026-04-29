@@ -376,7 +376,14 @@ def test_project_agents_declares_renderer_contracts() -> None:
     assert "标题行不承载 must-keep 事实" in agents
     assert "标题行不得插入 `shot path=...` 与 `info read_image_first=1` 之间" in agents
     assert "首批固定标题" in agents
-    assert "当前 YAML allowlist 是 `daemon.status`、`state.dump`、`guide.fetch.cw`、`guide.config.cw`。" in agents
+    assert "当前 YAML allowlist 是 `cw.equipment.read`、`daemon.status`、`state.dump`、`guide.fetch.cw`、`guide.config.cw`。" in agents
+    assert "`item` 行字段固定使用 `pos/center/name/score/uncertain/gap/alt/alt_score`" in agents
+    assert "只有 `uncertain=1` 时才输出 `gap/alt/alt_score`" in agents
+    assert "`cw.equipment.read` 默认文本不输出 `idx/row/col/box`" in agents
+    assert "`row/col` 只保留在结构化 `data`、`trail --format yaml cw equipment read --session <id>` 与 `trail --format yaml state dump --session <id>` 的 `cw_state.equipment` 中" in agents
+    assert "`cw.equipment.read` 成功写入 `cw_state.equipment` 最近快照" in agents
+    assert "`cw.equipment.read` 第一版不写入 `cw_state` 长期状态" not in agents
+    assert "`cw.equipment.read` 第一版不写入 `cw_state` 长期状态；它不加入 YAML allowlist" not in agents
     assert "guide.list.cw 的默认文本改用 攻略ID/攻略标题/版本/主C/攻略标签/最终阵容" in agents
     assert "cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`" in agents
     assert "cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id" in agents

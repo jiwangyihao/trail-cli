@@ -594,12 +594,12 @@ def test_cw_equipment_prepare_maps_to_canonical_command(cli_runner, fake_daemon_
     _assert_single_call(client, method="cw.equipment.prepare", payload={"refresh": True}, tmp_path=tmp_path)
 
 
-def test_cw_equipment_read_maps_to_canonical_command_and_rejects_yaml(cli_runner, fake_daemon_client, tmp_path):
+def test_cw_equipment_read_maps_to_canonical_command_and_supports_yaml(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
             "cw.equipment.read": build_success_response(
                 request_id="req-equipment-read",
-                data={"count": 0, "uncertain": 0, "empty": 18, "items": [], "backend": "vector", "layout": "default"},
+                data={"count": 0, "uncertain": 0, "empty": 60, "items": [], "backend": "vector", "layout": "default"},
                 screenshot=".trail/shots/req-equipment-read.png",
             )
         }
@@ -610,7 +610,7 @@ def test_cw_equipment_read_maps_to_canonical_command_and_rejects_yaml(cli_runner
         {
             "cw.equipment.read": build_success_response(
                 request_id="req-equipment-read-yaml",
-                data={"count": 0, "uncertain": 0, "empty": 18, "items": [], "backend": "vector", "layout": "default"},
+                data={"count": 0, "uncertain": 0, "empty": 60, "items": [], "backend": "vector", "layout": "default"},
                 screenshot=".trail/shots/req-equipment-read.png",
             )
         }
@@ -619,17 +619,20 @@ def test_cw_equipment_read_maps_to_canonical_command_and_rejects_yaml(cli_runner
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
-        "ok cw.equipment.read count=0 uncertain=0 empty=18",
+        "ok cw.equipment.read count=0 uncertain=0 empty=60",
         "shot path=.trail/shots/req-equipment-read.png",
         "info read_image_first=1",
         "info backend=vector layout=default",
     ]
     assert yaml_result.exit_code == 0
-    assert yaml_result.stdout.splitlines() == [
-        "fail cw.equipment.read code=OUTPUT_FORMAT_NOT_SUPPORTED",
+    yaml_lines = yaml_result.stdout.splitlines()
+    assert yaml_lines[:3] == [
+        "ok cw.equipment.read count=0 uncertain=0 empty=60",
         "shot path=.trail/shots/req-equipment-read.png",
-        'why msg="yaml not supported for cw.equipment.read"',
+        "info read_image_first=1",
     ]
+    assert "items: []" in yaml_result.stdout
+    assert "backend: vector" in yaml_result.stdout
     assert client.calls[0]["method"] == "cw.equipment.read"
     _assert_single_call(client, method="cw.equipment.read", payload={}, tmp_path=tmp_path)
     _assert_single_call(yaml_client, method="cw.equipment.read", payload={}, tmp_path=tmp_path)

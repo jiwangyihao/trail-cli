@@ -2208,10 +2208,44 @@ def test_command_service_routes_cw_equipment_read_through_capture(tmp_path: Path
     service = registry.for_workspace(str(tmp_path))
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    snapshot = {
+        "count": 1,
+        "uncertain": 0,
+        "empty": 59,
+        "items": [
+            {
+                "pos": "equipment:1",
+                "idx": 1,
+                "row": 1,
+                "col": 1,
+                "center": {"x": 1855, "y": 275},
+                "name": "生命之花",
+                "equipment_id": "life-flower",
+                "cache_key": "advanced-life-flower",
+                "score": 0.93,
+                "gap": 0.14,
+                "uncertain": False,
+                "alt": "光能电池",
+                "alt_score": 0.79,
+                "candidates": [],
+            }
+        ],
+        "backend": "vector",
+        "layout": "default",
+        "columns": 10,
+        "rows": 6,
+        "stale": False,
+    }
+
+    def fake_read_equipment(runtime, workspace_root=None):
+        del runtime, workspace_root
+        calls.append("read")
+        return snapshot
+
+    monkeypatch.setattr("trail.scenes.cw.equipment.read_cw_equipment", fake_read_equipment)
     monkeypatch.setattr(
         "trail.daemon.cw_service.read_cw_equipment",
-        lambda runtime, workspace_root=None: calls.append("read")
-        or {"count": 0, "uncertain": 0, "empty": 18, "items": [], "backend": "vector", "layout": "default"},
+        fake_read_equipment,
         raising=False,
     )
     command_service = CommandService(
@@ -2234,7 +2268,65 @@ def test_command_service_routes_cw_equipment_read_through_capture(tmp_path: Path
 
     assert response["ok"] is True
     assert response["screenshot"] == ".trail/shots/equipment.png"
+    assert response["data"] == snapshot
     assert calls == ["read", "capture:req-equipment-read"]
+    persisted = service.load_session(session.session_id).scene_state["cw"]["equipment"]
+    assert persisted["stale"] is False
+    assert persisted["items"][0]["pos"] == "equipment:1"
+    assert persisted["items"][0]["center"] == {"x": 1855, "y": 275}
+
+
+def test_command_service_marks_cw_equipment_snapshot_stale_after_mutation(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state.setdefault("cw", {})["equipment"] = {"items": [{"pos": "equipment:1"}], "stale": False}
+    service.save_session(session)
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return tmp_path / ".trail" / "shots" / "collect.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    def fake_collect_crystals(session, collector):
+        del collector
+        session.scene_state.setdefault("cw", {})["metrics"] = {"collected": True}
+        return session
+
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    monkeypatch.setattr("trail.daemon.cw_service.collect_cw_crystals", fake_collect_crystals)
+    monkeypatch.setattr("trail.daemon.cw_service.crystal_collector_factory", lambda runtime: "crystal-collector")
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+
+    response = command_service.handle(
+        DaemonRequest(
+            request_id="req-collect",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.crystals.collect",
+            payload={},
+        )
+    )
+
+    assert response["ok"] is True
+    persisted = service.load_session(session.session_id).scene_state["cw"]["equipment"]
+    assert persisted["stale"] is True
+    assert persisted["items"] == [{"pos": "equipment:1"}]
 
 
 def test_cw_equipment_methods_are_classified_for_command_routing():
