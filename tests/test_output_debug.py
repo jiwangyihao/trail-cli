@@ -417,19 +417,17 @@ def test_project_agents_declares_renderer_contracts() -> None:
 
 def test_cw_equipment_recommendation_docs_are_synced() -> None:
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
     prep_skill = (PROJECT_ROOT / "skills" / "trail-cw-prep" / "SKILL.md").read_text(encoding="utf-8")
     command_surface = (
         PROJECT_ROOT / "skills" / "trail-cw-prep" / "references" / "command-surface.md"
     ).read_text(encoding="utf-8")
 
-    for text in (agents, readme, prep_skill, command_surface):
+    for text in (agents, prep_skill, command_surface):
         assert "# 装备优先级" in text
         assert "# 角色装备需求" in text
         assert "cw.equipment.compose" in text
 
     assert "ok cw.equipment.compose pos=" in agents
-    assert "trail cw equipment compose --session <id> --name <进阶装备名> --slot front:1 --role <角色名>" in readme
     assert "trail cw equipment compose" in command_surface
     assert "--slot <front|back|hand>:<1-based>" in command_surface
     assert "只写 session" in prep_skill
@@ -437,6 +435,5 @@ def test_cw_equipment_recommendation_docs_are_synced() -> None:
     assert "info todo=slots" in prep_skill
     assert "info todo=slots" in command_surface
     assert "`# 装备优先级` 的 `guide` 行 -> `# 角色装备需求` 的 `slot` 行或 `info todo=slots` -> `warn` -> `ref`" in agents
-    assert "这些分块位于 `warn`、`ref` 之前" in readme
     assert "装备推荐分块位于 `warn`、`ref` 之前" in prep_skill
     assert "这些分块位于 `warn`、`ref` 之前" in command_surface

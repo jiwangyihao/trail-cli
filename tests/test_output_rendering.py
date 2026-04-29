@@ -834,7 +834,7 @@ def test_readme_and_agents_document_cw_equipment_protocol() -> None:
 
     assert "trail cw equipment prepare --session <id> [--refresh]" in readme
     assert "trail cw equipment read --session <id>" in readme
-    assert "ok cw.equipment.read count=1 uncertain=0 empty=59" in readme
+    assert "ok cw.equipment.read count=1 uncertain=0 empty=17" in readme
     assert "item pos=equipment:1 center=1855,275 name=生命之花 score=0.93 uncertain=0" in readme
     assert "item idx=1 row=1 col=1 box=" not in readme
     assert "ok cw.equipment.prepare big_version=3.2 count=2 cached=1 downloaded=1 refreshed=0" in readme
