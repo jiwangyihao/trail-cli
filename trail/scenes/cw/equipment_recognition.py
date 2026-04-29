@@ -43,6 +43,8 @@ class _IndexedIcon:
     entry: EquipmentCatalogEntry
     feature: Image.Image
     match_image: Image.Image
+    feature_mask: Image.Image
+    match_mask: Image.Image
 
 
 def _normalized_rgba(image: Image.Image, size: tuple[int, int]) -> Image.Image:
@@ -52,12 +54,44 @@ def _normalized_rgba(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     return background.resize(size, Image.Resampling.LANCZOS)
 
 
+def _alpha_mask(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+    return image.convert("RGBA").getchannel("A").resize(size, Image.Resampling.LANCZOS)
+
+
+def _image_data(image: Image.Image):
+    get_flattened_data = getattr(image, "get_flattened_data", None)
+    return get_flattened_data() if callable(get_flattened_data) else image.getdata()
+
+
 def _mean_abs_similarity(left: Image.Image, right: Image.Image) -> float:
     left_rgb = left.convert("RGB")
     right_rgb = right.convert("RGB")
     diff = ImageChops.difference(left_rgb, right_rgb)
     channel_means = ImageStat.Stat(diff).mean
     mean_abs_diff = sum(channel_means) / len(channel_means)
+    return max(0.0, min(1.0, 1.0 - mean_abs_diff / 255.0))
+
+
+def _masked_mean_abs_similarity(left: Image.Image, right: Image.Image, mask: Image.Image) -> float:
+    left_pixels = _image_data(left.convert("RGB"))
+    right_pixels = _image_data(right.convert("RGB"))
+    mask_pixels = _image_data(mask.convert("L"))
+    total_weight = 0
+    weighted_diff = 0
+    for (left_red, left_green, left_blue), (right_red, right_green, right_blue), weight in zip(
+        left_pixels,
+        right_pixels,
+        mask_pixels,
+    ):
+        if weight <= 8:
+            continue
+        total_weight += weight
+        weighted_diff += (
+            abs(left_red - right_red) + abs(left_green - right_green) + abs(left_blue - right_blue)
+        ) * weight
+    if total_weight <= 0:
+        return _mean_abs_similarity(left, right)
+    mean_abs_diff = weighted_diff / (3 * total_weight)
     return max(0.0, min(1.0, 1.0 - mean_abs_diff / 255.0))
 
 
@@ -86,6 +120,8 @@ class VectorEquipmentIconRecognizer:
                 entry=entry,
                 feature=_normalized_rgba(icon, FEATURE_SIZE),
                 match_image=_normalized_rgba(icon, MATCH_SIZE),
+                feature_mask=_alpha_mask(icon, FEATURE_SIZE),
+                match_mask=_alpha_mask(icon, MATCH_SIZE),
             )
             for entry, icon in icons
         ]
@@ -97,13 +133,13 @@ class VectorEquipmentIconRecognizer:
         query_feature = _normalized_rgba(image, FEATURE_SIZE)
         query_match = _normalized_rgba(image, MATCH_SIZE)
         ranked = sorted(
-            ((_mean_abs_similarity(query_feature, indexed.feature), indexed) for indexed in self._icons),
+            ((_masked_mean_abs_similarity(query_feature, indexed.feature, indexed.feature_mask), indexed) for indexed in self._icons),
             key=lambda item: (-item[0], item[1].entry.name),
         )[: self.top_k]
 
         scored: list[tuple[float, EquipmentCatalogEntry]] = []
         for feature_score, indexed in ranked:
-            match_score = _mean_abs_similarity(query_match, indexed.match_image)
+            match_score = _masked_mean_abs_similarity(query_match, indexed.match_image, indexed.match_mask)
             scored.append(((feature_score + match_score) / 2.0, indexed.entry))
 
         scored.sort(key=lambda item: (-item[0], item[1].name))

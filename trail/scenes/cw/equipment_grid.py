@@ -42,6 +42,7 @@ DARK_CORNER_SIZE = 12
 DARK_CORNER_LUMA_THRESHOLD = 55.0
 MIN_DARK_CORNERS = 2
 FRAME_BAND_WIDTH = 6
+FRAME_INSET = 8
 LIGHT_FRAME_LUMA_THRESHOLD = 120.0
 LIGHT_FRAME_MIN_RATIO = 0.01
 MIN_LIGHT_FRAME_EDGES = 2
@@ -107,12 +108,22 @@ def _corner_boxes(width: int, height: int, size: int) -> list[tuple[int, int, in
 def _edge_band_boxes(width: int, height: int, band_width: int) -> list[tuple[int, int, int, int]]:
     band_x = min(band_width, width)
     band_y = min(band_width, height)
-    return [
+    boxes = [
         (0, 0, width, band_y),
         (0, height - band_y, width, height),
         (0, 0, band_x, height),
         (width - band_x, 0, width, height),
     ]
+    if width > FRAME_INSET * 2 + band_x and height > FRAME_INSET * 2 + band_y:
+        boxes.extend(
+            [
+                (FRAME_INSET, FRAME_INSET, width - FRAME_INSET, FRAME_INSET + band_y),
+                (FRAME_INSET, height - FRAME_INSET - band_y, width - FRAME_INSET, height - FRAME_INSET),
+                (FRAME_INSET, FRAME_INSET, FRAME_INSET + band_x, height - FRAME_INSET),
+                (width - FRAME_INSET - band_x, FRAME_INSET, width - FRAME_INSET, height - FRAME_INSET),
+            ]
+        )
+    return boxes
 
 
 def crop_has_equipment_slot_markers(image: Image.Image) -> bool:

@@ -338,6 +338,18 @@ def test_equipment_slot_marker_requires_dark_corners_and_light_frame():
     assert grid.crop_has_equipment_slot_markers(frame_only) is False
 
 
+def test_equipment_slot_marker_accepts_inset_light_frame():
+    grid = load_equipment_grid_module()
+    slot = Image.new("RGBA", (70, 70), (25, 25, 25, 255))
+    draw = ImageDraw.Draw(slot)
+    draw.line((16, 10, 54, 10), fill=(190, 190, 200, 255), width=3)
+    draw.line((16, 59, 54, 59), fill=(190, 190, 200, 255), width=3)
+    draw.line((10, 16, 10, 54), fill=(190, 190, 200, 255), width=3)
+    draw.line((59, 16, 59, 54), fill=(190, 190, 200, 255), width=3)
+
+    assert grid.crop_has_equipment_slot_markers(slot) is True
+
+
 def load_equipment_recognition_module():
     return importlib.import_module("trail.scenes.cw.equipment_recognition")
 
@@ -500,6 +512,38 @@ def test_vector_equipment_recognizer_ignores_hidden_rgb_in_transparent_icon_back
 
     assert result.candidates[0].name == "正确"
     assert result.candidates[0].score > result.candidates[1].score
+
+
+def test_vector_equipment_recognizer_weights_transparent_icon_foreground_over_slot_background():
+    recognition = load_equipment_recognition_module()
+    resources = load_equipment_resources_module()
+    correct_entry = resources.EquipmentCatalogEntry(
+        "advanced-correct", "correct", "正确", "advanced", None, None, "https://act-webstatic.mihoyo.com/correct.png", "3.2"
+    )
+    wrong_entry = resources.EquipmentCatalogEntry(
+        "advanced-wrong", "wrong", "错误", "advanced", None, None, "https://act-webstatic.mihoyo.com/wrong.png", "3.2"
+    )
+    correct_icon = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    ImageDraw.Draw(correct_icon).rectangle((24, 24, 39, 39), fill=(255, 0, 0, 255))
+    wrong_icon = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    ImageDraw.Draw(wrong_icon).rectangle((24, 24, 39, 39), fill=(0, 0, 255, 255))
+    query = Image.new("RGBA", (70, 70), (25, 25, 30, 255))
+    draw = ImageDraw.Draw(query)
+    draw.line((18, 2, 52, 2), fill=(170, 170, 180, 255), width=3)
+    draw.line((18, 67, 52, 67), fill=(170, 170, 180, 255), width=3)
+    draw.line((2, 18, 2, 52), fill=(170, 170, 180, 255), width=3)
+    draw.line((67, 18, 67, 52), fill=(170, 170, 180, 255), width=3)
+    draw.rectangle((27, 27, 42, 42), fill=(255, 0, 0, 255))
+    recognizer = recognition.VectorEquipmentIconRecognizer(
+        [(correct_entry, correct_icon), (wrong_entry, wrong_icon)],
+        min_gap=0.15,
+    )
+
+    result = recognizer.recognize(query)
+
+    assert result.candidates[0].name == "正确"
+    assert result.gap >= 0.15
+    assert result.uncertain is False
 
 
 def load_equipment_scene_module():
