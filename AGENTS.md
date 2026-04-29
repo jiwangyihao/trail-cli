@@ -20,7 +20,7 @@
 - 带截图的 success 结果在 `shot path=...` 之后必须紧跟 `info read_image_first=1`，提示 Agent 先读本次原始截图，再消费后续压缩文本。
 - envelope 顶层若带 `screenshot`，同步生成 `image_guidance.read_image_first=1`；该元数据只存在于 envelope 顶层，不下沉到命令 `data`。
 - 标题行不承载 must-keep 事实，不输出 `key=value`；所有业务事实仍必须落在既有 allowed prefixes 的实体行中。
-- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；当前新增固定标题包括 `# 装备优先级`、`# 角色装备需求`；新增标题必须同步更新 renderer、README、skills 与测试。
+- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；当前新增固定标题包括 `# 装备优先级`、`# 角色装备需求`；新增标题必须同步更新 renderer、skills 与测试；只有影响普通安装、用户入口或公开定位时才更新根目录 `README.md`。
 - `# 装备优先级` 与 `# 角色装备需求` 只用于分组，不承载 must-keep 事实；相关事实仍必须落在 `guide`、`slot` 或 `info` 行中。
 - 失败结果只要带 `request_id`，就必须输出 `request id=<id>` 供恢复或排障使用。
 - 只有结果未知或当前失败显式可恢复时，才输出 `recover action=daemon.request_status request=<id>`。
