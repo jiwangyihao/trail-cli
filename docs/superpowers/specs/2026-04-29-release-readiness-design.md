@@ -150,21 +150,18 @@ GitHub Release 附带版本化 asset `trail-cli-windows-x64-vX.Y.Z.zip`。zip �
 
 ## README 结构设计
 
-README 改为普通用户优先：
+README 改为普通用户入口，不再承载输出协议或命令面长文：
 
 1. Trail 是什么：一句话说明它是面向《崩坏：星穹铁道》的 Agent skill + CLI 工具。
-2. 谁需要它：想让 AI Agent 接管星铁、尤其是货币战争流程的用户。
-3. 最快安装：普通用户三步，第一步必须是直达最新版下载页的链接，不以“GitHub Releases”作为唯一动作文案。Agent 自动安装命令放在紧随其后的独立小节，标题明确为“给 Agent / 高级用户”。
-4. 安装到哪些 AI 环境：OpenCode、OpenClaw、Claude Code、GitHub Copilot、Cursor、Gemini、自定义 skills 目录。
-5. 第一次使用：打开目标 AI 工具，请 Agent 使用 `trail-hsr` 接管星铁；首个 CLI 命令是 `trail start`。
-6. 常见问题：Windows 拦截脚本、杀软误报、找不到 `trail`、skills 没被加载、如何更新。
-7. Agent / 高级安装：`agent-install.ps1` 参数、生态安装器、手工校验 SHA256、更新、卸载、验证。
-8. 开发者说明：源码安装、uv、pytest、wheel 构建。
-9. 输出协议和命令面：保留现有协议说明，但下沉到用户安装之后。
+2. 最快安装：普通用户三步，第一步必须是直达最新版下载页的链接，不以“GitHub Releases”作为唯一动作文案。
+3. 第一次使用：打开目标 AI 工具，请 Agent 使用 `trail-hsr` 接管星铁；可补充“帮我玩货币战争”的自然语言入口。
+4. Agent 自动安装：只链接 `AGENT_INSTALL.md`，不把所有自动化细节塞进用户首屏。
+5. 能做什么：用少量普通用户能理解的能力摘要描述窗口接管、截图/OCR、明确输入动作和货币战争支持。
+6. 许可证：说明 MPL-2.0，并链接第三方声明。
 
-项目规则要求 README 与 skills 文档同步。凡是影响普通用户或 Agent 使用方式的安装入口，都要同步更新相关 `skills/*/SKILL.md` 或引用文档，尤其是 `trail-hsr`、`trail-cw-entry` 和 registry 入口说明。
+项目规则改为：只有影响普通安装、用户入口或公开定位时才更新根目录 README。输出协议、renderer family、恢复语义和 CW 命令约束由 `AGENTS.md`、相关 `skills/*/SKILL.md` 与契约测试维护，不再要求 README 同步协议长文。
 
-同时新增 Agent 可读安装说明 `AGENT_INSTALL.md`，内容只服务自动化安装：推荐命令、目标环境矩阵、错误码、dry-run、验证、更新、卸载、版本 pin、`CliOnly` / `SkillsOnly` 风险说明。README 首屏链接该文件，不把所有自动化细节塞进用户首屏。
+同时新增 Agent 可读安装说明 `AGENT_INSTALL.md`，内容只服务自动化安装：推荐命令、目标环境矩阵、错误码、dry-run、验证、更新、卸载、版本 pin、`CliOnly` / `SkillsOnly` 风险说明。README 链接该文件。
 
 ## 许可证设计
 

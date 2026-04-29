@@ -11,7 +11,7 @@
 - 默认模式一律使用内部 canonical command 名，必须是点号形式，例如 `cw.shop.buy_slot`、`daemon.request_status`、`screen.shot`；不要写成 `cw.shop.buy-slot`、`daemon request-status`。
 - 默认正文前缀只允许使用 `request`、`shot`、`item`、`guide`、`text`、`slot`、`opt`、`why`、`warn`、`ref`、`recover`、`info`；`debug` 仅用于 `--verbose` 追加层。
 - 默认正文可以出现 `# 标题` 行作为板块标题；标题行不是正文前缀，不进入 allowed prefix 列表，也不得被 Agent 当作 action/prefix 消费。
-- 如果某个命令需要新增正文前缀，先更新 `trail/output/rendering.py` 的 renderer、README 示例和对应测试，再写文档。
+- 如果某个命令需要新增正文前缀，先更新 `trail/output/rendering.py` 的 renderer、对应契约测试和相关 skill 说明，再写文档。
 
 ## 默认模式必出事实
 
@@ -20,7 +20,7 @@
 - 带截图的 success 结果在 `shot path=...` 之后必须紧跟 `info read_image_first=1`，提示 Agent 先读本次原始截图，再消费后续压缩文本。
 - envelope 顶层若带 `screenshot`，同步生成 `image_guidance.read_image_first=1`；该元数据只存在于 envelope 顶层，不下沉到命令 `data`。
 - 标题行不承载 must-keep 事实，不输出 `key=value`；所有业务事实仍必须落在既有 allowed prefixes 的实体行中。
-- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；新增标题必须同步更新 renderer、README、skills 与测试。
+- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；新增标题必须同步更新 renderer、skills 与测试。
 - 失败结果只要带 `request_id`，就必须输出 `request id=<id>` 供恢复或排障使用。
 - 只有结果未知或当前失败显式可恢复时，才输出 `recover action=daemon.request_status request=<id>`。
 - 会影响下一步决策的 `0`、`false`、`count`、`more`、`tainted` 不能因为“看起来为空”而省略。
@@ -66,11 +66,11 @@
 
 ## 文档与测试同步要求
 
-- 新命令或现有命令输出发生变化时，必须同步更新 `README.md` 示例与说明。
-- 所有会影响普通用户或 Agent 使用方式的变更，都必须同步更新相关 `skills/*/SKILL.md`，不要只改 README 或 spec/plan。
+- 新命令或现有命令输出发生变化时，必须同步更新对应契约测试和相关 `skills/*/SKILL.md`；只有影响普通安装、用户入口或公开定位时才更新根目录 `README.md`。
+- 所有会影响普通用户或 Agent 使用方式的变更，都必须同步更新相关 `skills/*/SKILL.md`，不要只改 spec/plan。
 - 新命令至少要补 renderer 单测，以及受影响的 CLI stdout 测试或 RPC/契约测试增量。
-- 如果新增前缀词、冻结字段、恢复语义或 `--verbose` 事件类型，必须同步更新本文件与 README。
-- 评审输出变更时，优先检查：renderer 家族是否明确、默认模式必出事实是否稳定、YAML allowlist 是否合理、README 与测试是否已同步。
+- 如果新增前缀词、冻结字段、恢复语义或 `--verbose` 事件类型，必须同步更新本文件、相关 skills 与契约测试。
+- 评审输出变更时，优先检查：renderer 家族是否明确、默认模式必出事实是否稳定、YAML allowlist 是否合理、skills 与测试是否已同步。
 
 ## guide.fetch.cw 约束
 

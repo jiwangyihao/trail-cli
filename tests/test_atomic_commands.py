@@ -941,15 +941,6 @@ def test_ocr_read_rejects_invalid_retry_high_env_before_daemon_call(cli_runner, 
     assert client.calls == []
 
 
-def test_readme_documents_windows_directml_profile_contract() -> None:
-    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-
-    assert "Windows 默认安装就是 DML 基线" in readme
-    assert "CPU 现在只作为显式兼容/排障路径" in readme
-    assert "不要在同一环境里模糊共存 `onnxruntime` 与 `onnxruntime-directml`" in readme
-    assert "确认当前环境最终只保留预期的 ONNX Runtime 变体" in readme
-
-
 def test_pyproject_declares_windows_directml_runtime_dependency() -> None:
     pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
 

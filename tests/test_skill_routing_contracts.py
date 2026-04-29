@@ -7,7 +7,6 @@ import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-README = PROJECT_ROOT / "README.md"
 AGENTS = PROJECT_ROOT / "AGENTS.md"
 REGISTRY = PROJECT_ROOT / "skills" / "registry" / "scene-entries.yaml"
 WORKFLOW_HANDOFFS = PROJECT_ROOT / "skills" / "registry" / "workflow-handoffs.yaml"
@@ -467,19 +466,6 @@ def test_routing_review_keeps_auditable_methodology_and_complete_rows() -> None:
 
     assert _routing_review_declared_conclusion(text) == _routing_review_expected_conclusion(rows)
     assert text.rstrip().endswith(("结论：PASS", "结论：FAIL"))
-
-
-def test_new_skill_topology_is_documented_in_readme() -> None:
-    text = README.read_text(encoding="utf-8")
-
-    assert "trail-hsr" in text and "总入口" in text
-    assert "trail-<scene>-entry" in text and "scene entry" in text
-    _assert_cw_entry_mentions_are_scoped(text)
-    _assert_cw_guide_mentions_are_scoped(text)
-    _assert_cw_portal_mentions_are_scoped(text)
-    assert "trail-hsr-advanced" in text and "内部恢复层" in text
-    _assert_expected_workflow_handoff_doc_smoke(text)
-    _assert_no_legacy_cw_skill_mentions(text)
 
 
 def test_new_skill_topology_is_documented_in_agents() -> None:

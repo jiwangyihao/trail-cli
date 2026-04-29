@@ -410,6 +410,7 @@ def test_project_agents_declares_renderer_contracts() -> None:
     assert "cw guide apply --session <id> --lineup-id <lineup_id>" not in agents
     assert "--lineup-id" not in agents
     assert "guide.config.cw` 使用 `赛季/子赛季/大版本/搜牌档位/羁绊/角色/角色标签/投资环境`" in agents
-    assert "README.md` 示例与说明" in agents
+    assert "对应契约测试和相关 `skills/*/SKILL.md`" in agents
+    assert "只有影响普通安装、用户入口或公开定位时才更新根目录 `README.md`" in agents
     assert "renderer 单测" in agents
     assert "CLI stdout 测试或 RPC/契约测试增量" in agents

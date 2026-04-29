@@ -18,7 +18,7 @@
 - Modify `pyproject.toml`：加入 `license`、`license-files`、构建依赖。
 - Modify `uv.lock`：运行 `uv lock` 后提交锁文件。
 - Create `AGENT_INSTALL.md`：Agent 可读安装说明、参数矩阵、错误码、验证、更新、卸载。
-- Modify `README.md`：普通用户首屏、Agent 安装、许可证、开发者说明、输出协议下沉。
+- Modify `README.md`：普通用户首屏、Agent 自动安装链接、能力摘要、许可证；不承载内部实现说明或输出协议长文。
 - Modify `skills/trail-hsr/SKILL.md` and scene entry docs：补充发布后安装/使用入口，保持 README 与 skills 同步。
 - Create `scripts/agent-install.ps1`：无交互/菜单安装器，支持 dry-run、目标 agent、scope、OpenClaw、hash 校验。
 - Create `scripts/install-trail.cmd`：普通用户双击入口，调用 PowerShell 安装器。
@@ -800,14 +800,14 @@ If PATH is not changed, tell the Agent to call the full executable path, for exa
 
 - [ ] **Step 5: 重写 README 首屏**
 
-Move the existing protocol-heavy content below a new user-first introduction. The first sections should be:
+Replace the protocol-heavy README with a user-first entry. The first sections should be:
 
 ```markdown
 # Trail CLI
 
 Trail CLI 是给 AI Agent 使用的《崩坏：星穹铁道》自动化工具，包含 `trail` 命令行和一组 Trail skills。
 
-## 普通用户快速安装
+## 安装
 
 1. 打开 [最新版下载](https://github.com/trail-cli/trail-cli/releases/latest)。
 2. 下载 Assets 里的 `trail-cli-windows-x64-vX.Y.Z.zip`，解压到固定文件夹。
@@ -815,12 +815,19 @@ Trail CLI 是给 AI Agent 使用的《崩坏：星穹铁道》自动化工具，
 
 安装完成后，打开你的 AI 工具，对 Agent 说：使用 `trail-hsr` 接管星铁。
 
-## 给 Agent / 高级用户
+## Agent 自动安装
 
 详见 `AGENT_INSTALL.md`。
+
+## 能做什么
+
+- 启动或接管游戏窗口。
+- 读取截图和 OCR 文本。
+- 执行点击、拖拽、按键等明确动作。
+- 通过 Trail skills 编排玩法流程。
 ```
 
-Keep the existing output protocol and CW command details later in README instead of deleting them.
+Do not keep output protocol, CW command details, developer notes, or stage screenshot reference links in README. Protocol and command contracts are maintained by renderer tests, `AGENTS.md`, and the relevant skills.
 
 - [ ] **Step 6: 同步 skill 文档**
 
