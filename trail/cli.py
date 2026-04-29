@@ -40,6 +40,32 @@ def version() -> None:
     print(f"trail {resolved}")
 
 
+def _selfcheck_release() -> tuple[bool, bool, bool]:
+    from trail.output.rendering import render_output
+    from trail.runtime.resources import resolve_scene_asset
+
+    asset = resolve_scene_asset("cw", "guide.strategy")
+    assets_ok = asset.exists()
+    entry_text = render_output("cw.enter", {"ok": True, "data": {}})
+    entry_handoff_ok = "handoff_skill=trail-cw-entry" in entry_text
+    prep_text = render_output(
+        "cw.portal.select",
+        {"ok": True, "data": {"card_idx": 1, "portal_title": "测试环境"}},
+    )
+    prep_handoff_ok = "handoff_skill=trail-cw-prep" in prep_text
+    return assets_ok, entry_handoff_ok, prep_handoff_ok
+
+
+@app.command("selfcheck", hidden=True)
+def selfcheck_release(kind: str = typer.Argument(...)) -> None:
+    if kind != "release":
+        raise typer.BadParameter("expected release")
+    assets_ok, entry_handoff_ok, prep_handoff_ok = _selfcheck_release()
+    if not assets_ok or not entry_handoff_ok or not prep_handoff_ok:
+        raise typer.Exit(2)
+    typer.echo("ok release selfcheck assets=1 handoff=1")
+
+
 app.add_typer(session_app, name="session")
 app.add_typer(start_app, name="start")
 app.add_typer(daemon_app, name="daemon")

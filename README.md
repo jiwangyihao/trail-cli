@@ -1,5 +1,21 @@
 # Trail CLI
 
+Trail CLI 是给 AI Agent 使用的《崩坏：星穹铁道》自动化工具，包含 `trail` 命令行和完整 Trail skills。普通用户安装后，只需要让 Agent 使用 `trail-hsr` 接管星铁；命令输出协议和开发细节保留在后续章节。
+
+## 普通用户三步安装
+
+1. 打开 [最新版下载](https://github.com/trail-cli/trail-cli/releases/latest)。
+2. 下载 Assets 里的 `trail-cli-windows-x64-vX.Y.Z.zip`，解压到固定文件夹。
+3. 双击 `安装 Trail.cmd`，按中文菜单选择 OpenCode、OpenClaw、Claude Code、GitHub Copilot、Cursor、Gemini 或自定义 skills 目录。
+
+安装完成后，打开你的 AI 工具，对 Agent 说：使用 `trail-hsr` 接管星铁。
+
+## 给 Agent / 高级用户
+
+自动安装、OpenClaw、project scope、dry-run、更新、卸载、错误码和兜底方案详见 [`AGENT_INSTALL.md`](AGENT_INSTALL.md)。
+
+## 项目与协议说明
+
 Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输出 Agent 友好的紧凑文本协议，并在命令产生截图时显式返回截图路径，供多模态 agent 直接消费。
 
 ## Simple / Advanced 分层
