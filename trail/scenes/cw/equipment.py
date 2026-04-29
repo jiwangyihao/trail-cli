@@ -85,6 +85,17 @@ def _item_from_result(crop, result: EquipmentRecognitionResult) -> dict[str, Any
     return item
 
 
+def _filter_isolated_equipment_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    idxs = {int(item["idx"]) for item in items}
+    return [
+        item
+        for item in items
+        if int(item["idx"]) == 1
+        or int(item["idx"]) - 1 in idxs
+        or int(item["idx"]) + 1 in idxs
+    ]
+
+
 def read_cw_equipment(runtime, *, workspace_root: str | Path | None = None) -> dict[str, Any]:
     raw_config = fetch_cw_raw_guide_config(workspace_root=workspace_root)
     catalog = build_cw_equipment_catalog(raw_config)
@@ -106,7 +117,7 @@ def read_cw_equipment(runtime, *, workspace_root: str | Path | None = None) -> d
         if previous is None or float(item_score if item_score is not None else -1.0) > float(previous_score if previous_score is not None else -1.0):
             best_by_idx[crop.cell.idx] = item
 
-    items = [best_by_idx[idx] for idx in sorted(best_by_idx)]
+    items = _filter_isolated_equipment_items([best_by_idx[idx] for idx in sorted(best_by_idx)])
     return {
         "count": len(items),
         "uncertain": sum(1 for item in items if item.get("uncertain")),
