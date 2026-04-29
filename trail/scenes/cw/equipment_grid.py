@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
 
-from PIL import Image
+from PIL import Image, ImageStat
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,13 @@ class EquipmentCrop:
 
 
 DEFAULT_EQUIPMENT_GRID_PROFILE = EquipmentGridProfile()
+DARK_CORNER_SIZE = 12
+DARK_CORNER_LUMA_THRESHOLD = 55.0
+MIN_DARK_CORNERS = 2
+FRAME_BAND_WIDTH = 6
+LIGHT_FRAME_LUMA_THRESHOLD = 120.0
+LIGHT_FRAME_MIN_RATIO = 0.01
+MIN_LIGHT_FRAME_EDGES = 2
 
 
 def round_half_up(value: float) -> int:
@@ -56,15 +63,75 @@ def _box_for(
 def iter_equipment_grid_cells(
     profile: EquipmentGridProfile = DEFAULT_EQUIPMENT_GRID_PROFILE,
     *,
-    columns: int = 3,
+    columns: int = 10,
     rows: int = 6,
 ) -> Iterable[EquipmentGridCell]:
     idx = 1
-    for row in range(1, rows + 1):
-        for col in range(1, columns + 1):
+    for col in range(1, columns + 1):
+        for row in range(1, rows + 1):
             x, y, box = _box_for(profile, col=col, row=row)
             yield EquipmentGridCell(idx=idx, row=row, col=col, x=x, y=y, box=box)
             idx += 1
+
+
+def _luma_mean(image: Image.Image) -> float:
+    red, green, blue = ImageStat.Stat(image.convert("RGB")).mean
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def _light_ratio(image: Image.Image, threshold: float) -> float:
+    rgb = image.convert("RGB")
+    get_flattened_data = getattr(rgb, "get_flattened_data", None)
+    pixels = get_flattened_data() if callable(get_flattened_data) else rgb.getdata()
+    total = 0
+    light = 0
+    for red, green, blue in pixels:
+        total += 1
+        luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        if luma >= threshold:
+            light += 1
+    return 0.0 if total == 0 else light / total
+
+
+def _corner_boxes(width: int, height: int, size: int) -> list[tuple[int, int, int, int]]:
+    corner_width = min(size, width)
+    corner_height = min(size, height)
+    return [
+        (0, 0, corner_width, corner_height),
+        (width - corner_width, 0, width, corner_height),
+        (0, height - corner_height, corner_width, height),
+        (width - corner_width, height - corner_height, width, height),
+    ]
+
+
+def _edge_band_boxes(width: int, height: int, band_width: int) -> list[tuple[int, int, int, int]]:
+    band_x = min(band_width, width)
+    band_y = min(band_width, height)
+    return [
+        (0, 0, width, band_y),
+        (0, height - band_y, width, height),
+        (0, 0, band_x, height),
+        (width - band_x, 0, width, height),
+    ]
+
+
+def crop_has_equipment_slot_markers(image: Image.Image) -> bool:
+    rgb = image.convert("RGB")
+    width, height = rgb.size
+    dark_corners = sum(
+        1
+        for box in _corner_boxes(width, height, DARK_CORNER_SIZE)
+        if _luma_mean(rgb.crop(box)) <= DARK_CORNER_LUMA_THRESHOLD
+    )
+    if dark_corners < MIN_DARK_CORNERS:
+        return False
+
+    light_edges = sum(
+        1
+        for box in _edge_band_boxes(width, height, FRAME_BAND_WIDTH)
+        if _light_ratio(rgb.crop(box), LIGHT_FRAME_LUMA_THRESHOLD) >= LIGHT_FRAME_MIN_RATIO
+    )
+    return light_edges >= MIN_LIGHT_FRAME_EDGES
 
 
 def _crop_exact(source: Image.Image, *, left: int, top: int, width: int, height: int) -> Image.Image:

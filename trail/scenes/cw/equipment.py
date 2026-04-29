@@ -8,7 +8,12 @@ from typing import Any
 from PIL import Image
 
 from trail.core.errors import TrailError
-from trail.scenes.cw.equipment_grid import DEFAULT_EQUIPMENT_GRID_PROFILE, crop_equipment_cells, iter_equipment_grid_cells
+from trail.scenes.cw.equipment_grid import (
+    DEFAULT_EQUIPMENT_GRID_PROFILE,
+    crop_equipment_cells,
+    crop_has_equipment_slot_markers,
+    iter_equipment_grid_cells,
+)
 from trail.scenes.cw.equipment_recognition import EquipmentRecognitionResult, VectorEquipmentIconRecognizer
 from trail.scenes.cw.equipment_resources import (
     build_cw_equipment_catalog,
@@ -28,7 +33,7 @@ def _runtime_image(runtime) -> Image.Image:
     capture_image = getattr(runtime, "capture_image", None)
     if callable(capture_image):
         try:
-            image = capture_image(normalize=False)
+            image = capture_image(normalize=True)
         except TypeError:
             image = capture_image()
     else:
@@ -80,10 +85,12 @@ def read_cw_equipment(runtime, *, workspace_root: str | Path | None = None) -> d
     prepare_equipment_icon_cache(catalog, workspace_root=workspace_root, refresh=False)
     recognizer = VectorEquipmentIconRecognizer(load_cached_equipment_icons(catalog, workspace_root=workspace_root))
     image = _runtime_image(runtime)
-    cells = list(iter_equipment_grid_cells(DEFAULT_EQUIPMENT_GRID_PROFILE, columns=3, rows=6))
+    cells = list(iter_equipment_grid_cells(DEFAULT_EQUIPMENT_GRID_PROFILE, columns=10, rows=6))
     best_by_idx: dict[int, dict[str, Any]] = {}
 
     for crop in crop_equipment_cells(image, cells):
+        if not crop_has_equipment_slot_markers(crop.image):
+            continue
         item = _item_from_result(crop, recognizer.recognize(crop.image))
         if item is None:
             continue

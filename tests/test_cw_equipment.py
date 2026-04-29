@@ -282,14 +282,20 @@ def test_default_equipment_grid_profile_locks_confirmed_coordinates():
     assert cells[0].row == 1
     assert cells[0].col == 1
     assert cells[0].x == 1820.0
-    assert cells[1].x == 1740.25
-    assert cells[2].x == 1660.5
+    assert cells[1].idx == 2
+    assert cells[1].row == 2
+    assert cells[1].col == 1
+    assert cells[1].x == 1820.0
+    assert cells[5].row == 6
+    assert cells[5].col == 1
+    assert cells[5].box["top"] == 628
+    assert cells[6].idx == 7
+    assert cells[6].row == 1
+    assert cells[6].col == 2
+    assert cells[6].x == 1740.25
     assert cells[0].box == {"left": 1820, "top": 240, "width": 70, "height": 70}
-    assert cells[1].box == {"left": 1740, "top": 240, "width": 70, "height": 70}
-    assert cells[2].box == {"left": 1660, "top": 240, "width": 70, "height": 70}
-    assert cells[9].row == 4
-    assert cells[9].col == 1
-    assert cells[9].box["top"] == 473
+    assert cells[1].box == {"left": 1820, "top": 318, "width": 70, "height": 70}
+    assert cells[6].box == {"left": 1740, "top": 240, "width": 70, "height": 70}
     assert len(cells) == 18
 
 
@@ -304,6 +310,32 @@ def test_crop_equipment_cells_returns_70x70_images_and_float_candidates():
     assert [crop.image.size for crop in crops] == [(70, 70), (70, 70), (70, 70)]
     assert [crop.variant for crop in crops] == ["exact", "floor", "ceil"]
     assert crops[1].cell == crops[2].cell
+
+
+def test_equipment_slot_marker_requires_dark_corners_and_light_frame():
+    grid = load_equipment_grid_module()
+    slot = Image.new("RGBA", (70, 70), (25, 25, 25, 255))
+    draw = ImageDraw.Draw(slot)
+    draw.line((18, 2, 52, 2), fill=(170, 170, 180, 255), width=3)
+    draw.line((18, 67, 52, 67), fill=(170, 170, 180, 255), width=3)
+    draw.line((2, 18, 2, 52), fill=(170, 170, 180, 255), width=3)
+    draw.line((67, 18, 67, 52), fill=(170, 170, 180, 255), width=3)
+
+    dark_line_only = Image.new("RGBA", (70, 70), (80, 80, 110, 255))
+    draw = ImageDraw.Draw(dark_line_only)
+    draw.rectangle((0, 0, 14, 14), fill=(15, 15, 18, 255))
+    draw.rectangle((56, 56, 69, 69), fill=(15, 15, 18, 255))
+
+    frame_only = Image.new("RGBA", (70, 70), (95, 95, 120, 255))
+    draw = ImageDraw.Draw(frame_only)
+    draw.line((18, 2, 52, 2), fill=(170, 170, 180, 255), width=3)
+    draw.line((18, 67, 52, 67), fill=(170, 170, 180, 255), width=3)
+    draw.line((2, 18, 2, 52), fill=(170, 170, 180, 255), width=3)
+    draw.line((67, 18, 67, 52), fill=(170, 170, 180, 255), width=3)
+
+    assert grid.crop_has_equipment_slot_markers(slot) is True
+    assert grid.crop_has_equipment_slot_markers(dark_line_only) is False
+    assert grid.crop_has_equipment_slot_markers(frame_only) is False
 
 
 def load_equipment_recognition_module():
@@ -497,12 +529,33 @@ def test_runtime_image_accepts_capture_image_without_normalize_and_bytes():
     assert image.size == (1920, 1080)
 
 
+def test_runtime_image_uses_normalized_capture_from_shared_window_helper():
+    scene = load_equipment_scene_module()
+
+    class Runtime:
+        def __init__(self):
+            self.calls = []
+
+        def capture_image(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs == {"normalize": True}:
+                return Image.new("RGBA", (1920, 1080), "black")
+            return Image.new("RGBA", (1600, 900), "black")
+
+    runtime = Runtime()
+
+    image = scene._runtime_image(runtime)
+
+    assert runtime.calls == [{"normalize": True}]
+    assert image.size == (1920, 1080)
+
+
 def test_runtime_image_rejects_non_canonical_large_capture():
     scene = load_equipment_scene_module()
 
     class Runtime:
         def capture_image(self, **kwargs):
-            assert kwargs == {"normalize": False}
+            assert kwargs == {"normalize": True}
             return Image.new("RGBA", (1921, 1080), "black")
 
     with pytest.raises(Exception) as exc_info:
@@ -516,7 +569,7 @@ def test_runtime_image_rejects_invalid_image_bytes_with_fixed_error_code():
 
     class Runtime:
         def capture_image(self, **kwargs):
-            assert kwargs == {"normalize": False}
+            assert kwargs == {"normalize": True}
             return b"not a png"
 
     with pytest.raises(Exception) as exc_info:
@@ -562,7 +615,7 @@ def test_read_cw_equipment_recognizes_best_variants_and_counts(monkeypatch, tmp_
 
     class Runtime:
         def capture_image(self, **kwargs):
-            assert kwargs == {"normalize": False}
+            assert kwargs == {"normalize": True}
             return Image.new("RGBA", (1920, 1080), "black")
 
     class Recognizer:
@@ -596,22 +649,30 @@ def test_read_cw_equipment_recognizes_best_variants_and_counts(monkeypatch, tmp_
     )
     monkeypatch.setattr(scene, "load_cached_equipment_icons", lambda catalog, workspace_root=None: [(entry, Image.new("RGBA", (128, 128), "red"))])
     monkeypatch.setattr(scene, "VectorEquipmentIconRecognizer", lambda icons: Recognizer())
+    iter_calls = []
+
+    def iter_cells(profile, columns=3, rows=6):
+        iter_calls.append((columns, rows))
+        return [
+            grid.EquipmentGridCell(1, 1, 1, 1820.0, 240, {"left": 1820, "top": 240, "width": 70, "height": 70}),
+            grid.EquipmentGridCell(2, 2, 1, 1820.0, 318, {"left": 1820, "top": 318, "width": 70, "height": 70}),
+        ]
+
     monkeypatch.setattr(
         scene,
         "iter_equipment_grid_cells",
-        lambda profile, columns=3, rows=6: [
-            grid.EquipmentGridCell(1, 1, 1, 1820.0, 240, {"left": 1820, "top": 240, "width": 70, "height": 70}),
-            grid.EquipmentGridCell(2, 1, 2, 1740.25, 240, {"left": 1740, "top": 240, "width": 70, "height": 70}),
-        ],
+        iter_cells,
     )
     monkeypatch.setattr(
         scene,
         "crop_equipment_cells",
         lambda image, cells: [grid.EquipmentCrop(cell, Image.new("RGBA", (70, 70), "red"), "exact") for cell in cells],
     )
+    monkeypatch.setattr(scene, "crop_has_equipment_slot_markers", lambda image: True)
 
     result = scene.read_cw_equipment(Runtime(), workspace_root=tmp_path)
 
+    assert iter_calls == [(10, 6)]
     assert result["count"] == 1
     assert result["uncertain"] == 0
     assert result["empty"] == 1
@@ -619,6 +680,65 @@ def test_read_cw_equipment_recognizes_best_variants_and_counts(monkeypatch, tmp_
     assert result["items"][0]["name"] == "幸运星"
     assert result["backend"] == "vector"
     assert result["layout"] == "default"
+
+
+def test_read_cw_equipment_filters_crops_without_slot_markers(monkeypatch, tmp_path):
+    scene = load_equipment_scene_module()
+    grid = load_equipment_grid_module()
+    resources = load_equipment_resources_module()
+    recognition = load_equipment_recognition_module()
+    raw_config = {
+        "rpg_game_big_version": "3.2",
+        "equipment_list": [{"id": "e1", "name": "幸运星", "icon": "https://act-webstatic.mihoyo.com/e1.png"}],
+    }
+    entry = resources.build_cw_equipment_catalog(raw_config)[0]
+    cells = [
+        grid.EquipmentGridCell(1, 1, 1, 1820.0, 240, {"left": 1820, "top": 240, "width": 70, "height": 70}),
+        grid.EquipmentGridCell(2, 2, 1, 1820.0, 318, {"left": 1820, "top": 318, "width": 70, "height": 70}),
+    ]
+
+    class Runtime:
+        def capture_image(self, **kwargs):
+            assert kwargs == {"normalize": True}
+            return Image.new("RGBA", (1920, 1080), "black")
+
+    class Recognizer:
+        def __init__(self):
+            self.calls = 0
+
+        def recognize(self, image):
+            del image
+            self.calls += 1
+            return recognition.EquipmentRecognitionResult(
+                candidates=[recognition.EquipmentCandidate("e1", "advanced-e1", "幸运星", 0.93)],
+                score=0.93,
+                gap=0.2,
+                uncertain=False,
+                empty=False,
+            )
+
+    recognizer = Recognizer()
+    monkeypatch.setattr(scene, "fetch_cw_raw_guide_config", lambda workspace_root=None: raw_config)
+    monkeypatch.setattr(scene, "prepare_equipment_icon_cache", lambda catalog, workspace_root=None, refresh=False: {})
+    monkeypatch.setattr(scene, "load_cached_equipment_icons", lambda catalog, workspace_root=None: [(entry, Image.new("RGBA", (128, 128), "red"))])
+    monkeypatch.setattr(scene, "VectorEquipmentIconRecognizer", lambda icons: recognizer)
+    monkeypatch.setattr(scene, "iter_equipment_grid_cells", lambda profile, columns=10, rows=6: cells)
+    monkeypatch.setattr(
+        scene,
+        "crop_equipment_cells",
+        lambda image, cells: [
+            grid.EquipmentCrop(cells[0], Image.new("RGBA", (70, 70), "black"), "exact"),
+            grid.EquipmentCrop(cells[1], Image.new("RGBA", (70, 70), "red"), "exact"),
+        ],
+    )
+    monkeypatch.setattr(scene, "crop_has_equipment_slot_markers", lambda image: image.getpixel((0, 0)) == (255, 0, 0, 255))
+
+    result = scene.read_cw_equipment(Runtime(), workspace_root=tmp_path)
+
+    assert recognizer.calls == 1
+    assert result["count"] == 1
+    assert result["empty"] == 1
+    assert result["items"][0]["idx"] == 2
 
 
 def test_read_cw_equipment_picks_non_empty_later_variant_for_same_cell(monkeypatch, tmp_path):
@@ -634,7 +754,7 @@ def test_read_cw_equipment_picks_non_empty_later_variant_for_same_cell(monkeypat
 
     class Runtime:
         def capture_image(self, **kwargs):
-            assert kwargs == {"normalize": False}
+            assert kwargs == {"normalize": True}
             return Image.new("RGBA", (1920, 1080), "black")
 
     class Recognizer:
@@ -668,6 +788,7 @@ def test_read_cw_equipment_picks_non_empty_later_variant_for_same_cell(monkeypat
             grid.EquipmentCrop(cell, Image.new("RGBA", (70, 70), "red"), "ceil"),
         ],
     )
+    monkeypatch.setattr(scene, "crop_has_equipment_slot_markers", lambda image: True)
 
     result = scene.read_cw_equipment(Runtime(), workspace_root=tmp_path)
 
@@ -691,7 +812,7 @@ def test_read_cw_equipment_keeps_non_empty_uncertain_without_candidates(monkeypa
 
     class Runtime:
         def capture_image(self, **kwargs):
-            assert kwargs == {"normalize": False}
+            assert kwargs == {"normalize": True}
             return Image.new("RGBA", (1920, 1080), "black")
 
     class Recognizer:
@@ -715,6 +836,7 @@ def test_read_cw_equipment_keeps_non_empty_uncertain_without_candidates(monkeypa
         "crop_equipment_cells",
         lambda image, cells: [grid.EquipmentCrop(cell, Image.new("RGBA", (70, 70), "red"), "exact")],
     )
+    monkeypatch.setattr(scene, "crop_has_equipment_slot_markers", lambda image: True)
 
     result = scene.read_cw_equipment(Runtime(), workspace_root=tmp_path)
 
@@ -750,7 +872,7 @@ def test_read_cw_equipment_prefers_zero_score_candidate_over_unknown_variant(mon
 
     class Runtime:
         def capture_image(self, **kwargs):
-            assert kwargs == {"normalize": False}
+            assert kwargs == {"normalize": True}
             return Image.new("RGBA", (1920, 1080), "black")
 
     class Recognizer:
@@ -789,6 +911,7 @@ def test_read_cw_equipment_prefers_zero_score_candidate_over_unknown_variant(mon
             grid.EquipmentCrop(cell, Image.new("RGBA", (70, 70), "red"), "ceil"),
         ],
     )
+    monkeypatch.setattr(scene, "crop_has_equipment_slot_markers", lambda image: True)
 
     result = scene.read_cw_equipment(Runtime(), workspace_root=tmp_path)
 
