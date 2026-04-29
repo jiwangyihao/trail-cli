@@ -44,6 +44,10 @@ def set_output_options(*, output_format: str | OutputFormat, verbose: bool) -> N
     _OUTPUT_OPTIONS["verbose"] = bool(verbose)
 
 
+def current_output_format() -> OutputFormat:
+    return _OUTPUT_OPTIONS["format"]
+
+
 def _quote(value: Any) -> str:
     text = str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     return f'"{text}"'
@@ -1190,6 +1194,73 @@ def _render_cw_equipment_prepare(command: str, payload: dict[str, Any]) -> list[
     )
 
 
+def _render_cw_equipment_compose(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    return _render_success_summary(
+        command,
+        payload,
+        ("pos", data.get("pos")),
+        ("name", data.get("name")),
+        ("装备", data.get("equipment")),
+        ("count", data.get("count") if "count" in data else 0),
+    )
+
+
+def _compact_equipment_basics(value: Any) -> str | None:
+    items = []
+    for item in _as_list(value):
+        entry = _as_dict(item)
+        name = _first_string(entry.get("name"))
+        if name is None:
+            continue
+        have = entry.get("have") if "have" in entry else 0
+        need = entry.get("need") if "need" in entry else 0
+        items.append(f"{name}:{have}/{need}")
+    return "|".join(items) if items else None
+
+
+def _append_cw_equipment_recommendation_lines(lines: list[str], data: dict[str, Any]) -> None:
+    recommendations = _as_dict(data.get("recommendations"))
+    if not recommendations:
+        return
+    priority = _as_list(recommendations.get("priority"))
+    role_missing = _as_list(recommendations.get("role_missing"))
+    todos = [todo for todo in _as_list(recommendations.get("todos")) if isinstance(todo, str) and todo]
+    if priority:
+        _append_section(lines, "装备优先级")
+        for item in priority:
+            entry = _as_dict(item)
+            facts: list[tuple[str, Any]] = [
+                ("idx", entry.get("idx")),
+                ("装备", entry.get("name")),
+                ("基础装备", _compact_equipment_basics(entry.get("basics"))),
+                ("需求角色", _compact_sequence(entry.get("required_roles"))),
+            ]
+            if "acquired_roles" in entry:
+                acquired = _as_list(entry.get("acquired_roles"))
+                facts.append(("已获取数", len(acquired)))
+                facts.append(("已获取角色", _compact_sequence(acquired)))
+            if "missing_roles" in entry:
+                missing = _as_list(entry.get("missing_roles"))
+                facts.append(("未获取数", len(missing)))
+                facts.append(("未获取角色", _compact_sequence(missing)))
+            _append_fact_line(lines, "guide", *facts)
+    if role_missing or todos:
+        _append_section(lines, "角色装备需求")
+        for item in role_missing:
+            entry = _as_dict(item)
+            _append_fact_line(
+                lines,
+                "slot",
+                ("pos", entry.get("pos")),
+                ("name", entry.get("role")),
+                ("装备", entry.get("equipment")),
+                ("分类", entry.get("category")),
+            )
+        for todo in todos:
+            _append_fact_line(lines, "info", ("todo", todo))
+
+
 def _render_cw_equipment_read(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     lines = [
@@ -1230,6 +1301,7 @@ def _render_cw_equipment_read(command: str, payload: dict[str, Any]) -> list[str
                 line += f" {diagnostics}"
         lines.append(line)
     _append_fact_line(lines, "info", ("backend", data.get("backend")), ("layout", data.get("layout")))
+    _append_cw_equipment_recommendation_lines(lines, data)
     uncertain_count = _coerce_int(data.get("uncertain")) or 0
     if uncertain_count > 0:
         lines.append(
@@ -1857,6 +1929,7 @@ TEXT_RENDERERS = {
     "cw.shop.refresh": _render_cw_shop_action,
     "cw.shop.close": _render_cw_shop_action,
     "cw.shop.status": _render_cw_shop_status,
+    "cw.equipment.compose": _render_cw_equipment_compose,
     "cw.equipment.prepare": _render_cw_equipment_prepare,
     "cw.equipment.read": _render_cw_equipment_read,
     "cw.replenish.read": _render_cw_options,

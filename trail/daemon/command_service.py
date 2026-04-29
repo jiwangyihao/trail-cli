@@ -72,6 +72,10 @@ CW_SESSION_SAVE_METHODS = {
     "cw.equipment.prepare",
 }
 
+CW_SESSION_ONLY_MUTATION_METHODS = {
+    "cw.equipment.compose",
+}
+
 START_RUN_STATUS_ALLOWLIST = {
     "attached",
     "launched_needs_check",
@@ -529,6 +533,16 @@ class CommandService:
                 return self._run_cw_with_capture(request, service=service, payload=payload)
             if request.method in CW_SESSION_SAVE_METHODS:
                 return success(self._run_cw(request, service=service, payload=payload), request_id=request.request_id)
+            if request.method in CW_SESSION_ONLY_MUTATION_METHODS:
+                return self._run_mutation(
+                    request,
+                    request.method,
+                    lambda session_service: self._run_cw(request, service=session_service, payload=payload),
+                    handler_persisted_state=True,
+                    response_builder=lambda payload: success(payload),
+                    enforce_cw_tainted=True,
+                    tainted_session_id=session_id,
+                )
             if request.method in CW_MUTATING_METHODS:
                 return self._run_mutation(
                     request,

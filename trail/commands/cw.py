@@ -8,7 +8,7 @@ from trail.commands.helpers import call_daemon
 from trail.core.errors import TrailError
 from trail.daemon.command_timeouts import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS
 from trail.output.capture import with_auto_capture as _with_auto_capture
-from trail.output.rendering import print_output
+from trail.output.rendering import OutputFormat, current_output_format, print_output
 
 
 DEFAULT_CW_STAGE_WAIT_TIMEOUT = 120
@@ -36,7 +36,10 @@ CW_STRATEGY_HELP = (
 CW_STAGE_HELP = "仅用于货币战争内部阶段的快速检测或等待；不适用于登录页、大世界等非 CW 场景。"
 CW_SLOTS_HELP = "读取编队槽位并执行换位或上场。"
 CW_SHOP_HELP = "读取商店、购买槽位/经验并刷新或关闭。"
-CW_EQUIPMENT_HELP = "读取货币战争装备背包图标；prepare 只准备资源缓存，read 会截图并识别当前装备网格。"
+CW_EQUIPMENT_HELP = (
+    "compose 是只写 session 的装备记录命令，不执行真实 UI 合成，slot 使用从 1 开始的位置。"
+    "prepare 只准备资源缓存，read 会截图并识别当前装备网格。"
+)
 CW_CRYSTALS_HELP = "收取当前局内结晶产出。"
 CW_HAND_HELP = "出售手牌或生成出售候选。"
 CW_REPLENISH_HELP = "读取或选择局内补给事件。"
@@ -116,6 +119,18 @@ def _cw_input_invalid_response(message: str) -> dict:
         None,
         lambda: (_ for _ in ()).throw(TrailError("CW_OPTION_INVALID", message)),
     )
+
+
+def _output_format_not_supported_response(command: str) -> dict:
+    return {
+        "ok": False,
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "error": {"code": "OUTPUT_FORMAT_NOT_SUPPORTED", "message": f"yaml not supported for {command}"},
+    }
 
 
 def _parse_agent_slot_ref(value: str) -> str:
@@ -382,6 +397,34 @@ def cw_equipment_prepare(
 @equipment_app.command("read")
 def cw_equipment_read(session: str = typer.Option(..., "--session")) -> None:
     _print_cw("cw.equipment.read", session_id=session)
+
+
+@equipment_app.command(
+    "compose",
+    help=(
+        "记录某个角色已合成/装备指定进阶装备；只写 session，不执行真实 UI 合成。"
+        "--slot 使用 front:1/back:1/hand:1 这种 Agent 可见 1-based 位置。"
+    ),
+)
+def cw_equipment_compose(
+    session: str = typer.Option(..., "--session"),
+    name: str = typer.Option(..., "--name", help="要记录的进阶装备名称。"),
+    slot: str = typer.Option(..., "--slot", help="角色所在槽位，格式 front:1/back:1/hand:1，从 1 开始。"),
+    role: str = typer.Option(..., "--role", help="槽位中预期的角色名称。"),
+) -> None:
+    if current_output_format() is OutputFormat.YAML:
+        print_output("cw.equipment.compose", _output_format_not_supported_response("cw.equipment.compose"))
+        return
+    try:
+        parsed_slot = _parse_agent_slot_ref(slot)
+    except TrailError as error:
+        print_output("cw.equipment.compose", _cw_input_invalid_response(str(error)))
+        return
+    _print_cw(
+        "cw.equipment.compose",
+        session_id=session,
+        payload={"name": name, "slot": parsed_slot, "role": role},
+    )
 
 
 @replenish_app.command("read")

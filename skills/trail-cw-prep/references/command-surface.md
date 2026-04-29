@@ -6,7 +6,8 @@
 - `trail cw slots place --session <id> --action hand:1,front:1 --action hand:2,back:3` / `trail cw slots swap --session <id> ...`：显式改变槽位；本 skill 不决定何时执行。
 - `trail cw shop scan --session <id>` / `trail cw shop status --session <id>`：读取商店和经济事实；`shop.scan` 有截图，`cw.shop.status` 不产出截图，也不输出 `info read_image_first=1`。
 - `trail cw equipment prepare --session <id> [--refresh]`：准备装备图标缓存；普通读取会自动补齐缺失/损坏缓存，`--refresh` 只在确认同版本 URL 变化时使用；canonical 为 `cw.equipment.prepare`。
-- `trail cw equipment read --session <id>`：读取当前装备背包图标；截图优先，默认 `item` 使用 `pos=equipment:<idx>` 和 `center=x,y`，确定项隐藏 `gap/alt/alt_score`，低置信 `uncertain=1` 才看这些诊断字段；需要 `row/col` 诊断时用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`；canonical 为 `cw.equipment.read`。
+- `trail cw equipment read --session <id>`：读取当前装备背包图标；截图优先，默认 `item` 使用 `pos=equipment:<idx>` 和 `center=x,y`，确定项隐藏 `gap/alt/alt_score`，低置信 `uncertain=1` 才看这些诊断字段；有当前攻略时可在背包 `item` 与 `info backend/layout` 后输出 `# 装备优先级` 的 `guide` 行和 `# 角色装备需求` 的 `slot` 行或 `info todo=slots`，这些分块位于 `warn`、`ref` 之前；看到 `info todo=slots` 时先刷新 `cw.slots.read`，不要用 stale slots 推断角色缺口；需要 `row/col` 诊断时用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`；canonical 为 `cw.equipment.read`。
+- `trail cw equipment compose --session <id> --name <进阶装备名> --slot <front|back|hand>:<1-based> --role <角色名>`：canonical command 为 `cw.equipment.compose`；只写 session，记录某个 canonical 角色已持有一件进阶装备，不截图，不执行真实 UI 合成，不支持 YAML；slot 使用 Agent 可见 1-based，例如 `front:1`；成功首行固定为 `ok cw.equipment.compose pos=<slot> name=<角色名> 装备=<装备名> count=<角色装备数>`。
 - `trail cw shop buy-slot --session <id> --slot <n> --expect <name>`：商店 mutation；本 skill 不决定何时执行。
 - `trail cw shop buy-exp --session <id>`：商店 mutation；本 skill 不决定何时执行。
 - `trail cw shop refresh --session <id>` / `trail cw shop close --session <id>`：商店 mutation；本 skill 不决定何时执行。

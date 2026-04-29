@@ -55,6 +55,61 @@ def test_build_equipment_catalog_includes_advanced_and_basic_without_kind_collis
     assert catalog[0].big_version == "3.2"
 
 
+def test_build_equipment_recipes_preserves_basic_identity_and_counts():
+    resources = load_equipment_resources_module()
+    raw_config = {
+        "rpg_game_big_version": "3.2",
+        "equipment_list": [
+            {
+                "id": "same-id",
+                "name": "高周波电锯",
+                "icon": "https://act-webstatic.mihoyo.com/advanced.png",
+                "compose_list": [
+                    {
+                        "childrens": [
+                            {
+                                "id": "same-id",
+                                "name": "基础装甲",
+                                "icon": "https://act-webstatic.mihoyo.com/basic-a.png",
+                            },
+                            {
+                                "id": "same-id",
+                                "name": "基础装甲",
+                                "icon": "https://act-webstatic.mihoyo.com/basic-a.png",
+                            },
+                            {
+                                "id": "battery",
+                                "name": "光能电池",
+                                "icon": "https://act-webstatic.mihoyo.com/basic-b.png",
+                            },
+                        ]
+                    }
+                ],
+            }
+        ],
+    }
+
+    recipes = resources.build_cw_equipment_recipes(raw_config)
+
+    assert list(recipes) == ["高周波电锯"]
+    recipe = recipes["高周波电锯"]
+    assert recipe.name == "高周波电锯"
+    assert recipe.cache_key == "advanced-same-id"
+    assert [(child.name, child.cache_key, child.need) for child in recipe.basics] == [
+        ("基础装甲", "basic-same-id", 2),
+        ("光能电池", "basic-battery", 1),
+    ]
+
+
+def test_build_equipment_recipes_requires_valid_equipment_list():
+    resources = load_equipment_resources_module()
+
+    with pytest.raises(Exception) as exc_info:
+        resources.build_cw_equipment_recipes({"rpg_game_big_version": "3.2", "equipment_list": None})
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_CONFIG_INVALID"
+
+
 def test_build_equipment_catalog_uses_stable_noid_key_for_missing_id():
     resources = load_equipment_resources_module()
     catalog = resources.build_cw_equipment_catalog(
@@ -1069,3 +1124,269 @@ def test_read_cw_equipment_prefers_zero_score_candidate_over_unknown_variant(mon
     assert item["equipment_id"] == "e1"
     assert item["cache_key"] == "advanced-e1"
     assert item["score"] == 0.0
+
+
+def load_equipment_module():
+    return importlib.import_module("trail.scenes.cw.equipment")
+
+
+def _cw_session_with_equipment_guide(tmp_path, *, slots_stale: bool = False):
+    from trail.scenes.cw.models import ensure_cw_state
+    from trail.session.store import SessionStore
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    cw_state = ensure_cw_state(session)
+    cw_state["guide"] = {
+        "lineup_id": "guide-equipment",
+        "title": "装备攻略",
+        "share_code": "##equipment##",
+        "version": "4.0",
+        "operation_guide": "测试运营",
+        "role_stages": [
+            {
+                "front_roles": [
+                    {"name": "希儿", "first_equipments": [{"name": "高周波电锯"}], "second_equipments": ["战场手册"]}
+                ],
+                "back_roles": [{"name": "佩拉", "first_equipments": ["战场手册"], "second_equipments": []}],
+            }
+        ],
+        "first_fight_augments": [],
+        "second_fight_augments": [],
+        "order_basic": [],
+        "order_compose": [{"name": "高周波电锯"}, "战场手册", {"name": "未知攻略装备"}],
+    }
+    cw_state["constraints"] = {"min_coins": 0, "min_level": 0, "mid_level": 0}
+    cw_state["slots"] = {
+        "front": [{"name": "希儿", "equipments": ["战场手册"]}],
+        "back": ["佩拉"],
+        "hand": ["希儿", "佩拉"],
+        "stale": slots_stale,
+    }
+    return session
+
+
+def _equipment_raw_config_for_recommendations():
+    return {
+        "rpg_game_big_version": "3.2",
+        "equipment_list": [
+            {
+                "id": "saw",
+                "name": "高周波电锯",
+                "icon": "https://act-webstatic.mihoyo.com/saw.png",
+                "compose_list": [
+                    {
+                        "childrens": [
+                            {"id": "armor", "name": "基础装甲", "icon": "https://act-webstatic.mihoyo.com/armor.png"},
+                            {"id": "battery", "name": "光能电池", "icon": "https://act-webstatic.mihoyo.com/battery.png"},
+                        ]
+                    }
+                ],
+            },
+            {"id": "manual", "name": "战场手册", "icon": "https://act-webstatic.mihoyo.com/manual.png", "compose_list": []},
+        ],
+    }
+
+
+def test_build_equipment_recommendations_uses_guide_order_slots_and_basic_counts(tmp_path):
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    snapshot = {
+        "items": [
+            {"name": "基础装甲", "equipment_id": "armor", "cache_key": "basic-armor"},
+            {"name": "高周波电锯", "equipment_id": "saw", "cache_key": "advanced-saw"},
+        ]
+    }
+
+    recommendations = equipment.build_cw_equipment_recommendations(
+        session,
+        snapshot=snapshot,
+        raw_config=_equipment_raw_config_for_recommendations(),
+    )
+
+    assert recommendations["priority"][0] == {
+        "idx": 1,
+        "name": "高周波电锯",
+        "known": True,
+        "basics": [
+            {"name": "基础装甲", "have": 1, "need": 1},
+            {"name": "光能电池", "have": 0, "need": 1},
+        ],
+        "required_roles": ["希儿"],
+        "acquired_roles": [],
+        "missing_roles": ["希儿"],
+    }
+    assert recommendations["priority"][1]["name"] == "战场手册"
+    assert recommendations["priority"][2]["known"] is False
+    assert recommendations["role_missing"] == [
+        {"pos": "front:1", "role": "希儿", "equipment": "高周波电锯", "category": "优选"},
+        {"pos": "back:1", "role": "佩拉", "equipment": "战场手册", "category": "优选"},
+    ]
+    assert recommendations["todos"] == []
+
+
+def test_build_equipment_recommendations_with_stale_slots_omits_current_role_fields(tmp_path):
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path, slots_stale=True)
+
+    recommendations = equipment.build_cw_equipment_recommendations(
+        session,
+        snapshot={"items": []},
+        raw_config=_equipment_raw_config_for_recommendations(),
+    )
+
+    first = recommendations["priority"][0]
+    assert first["required_roles"] == ["希儿"]
+    assert "acquired_roles" not in first
+    assert "missing_roles" not in first
+    assert recommendations["role_missing"] == []
+    assert recommendations["todos"] == ["slots"]
+
+
+def test_build_equipment_recommendations_does_not_count_advanced_item_as_basic_when_id_matches(tmp_path):
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    raw_config = {
+        "rpg_game_big_version": "3.2",
+        "equipment_list": [
+            {
+                "id": "same-id",
+                "name": "高周波电锯",
+                "icon": "https://act-webstatic.mihoyo.com/advanced.png",
+                "compose_list": [
+                    {
+                        "childrens": [
+                            {"id": "same-id", "name": "基础装甲", "icon": "https://act-webstatic.mihoyo.com/basic.png"}
+                        ]
+                    }
+                ],
+            }
+        ],
+    }
+    snapshot = {"items": [{"name": "高周波电锯", "equipment_id": "same-id", "cache_key": "advanced-same-id"}]}
+
+    recommendations = equipment.build_cw_equipment_recommendations(session, snapshot=snapshot, raw_config=raw_config)
+
+    assert recommendations["priority"][0]["basics"] == [{"name": "基础装甲", "have": 0, "need": 1}]
+
+
+def test_build_equipment_recommendations_does_not_count_advanced_item_as_basic_when_name_matches(tmp_path):
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    raw_config = {
+        "rpg_game_big_version": "3.2",
+        "equipment_list": [
+            {
+                "id": "advanced-armor",
+                "name": "高周波电锯",
+                "icon": "https://act-webstatic.mihoyo.com/advanced.png",
+                "compose_list": [
+                    {
+                        "childrens": [
+                            {"id": "basic-armor", "name": "基础装甲", "icon": "https://act-webstatic.mihoyo.com/basic.png"}
+                        ]
+                    }
+                ],
+            }
+        ],
+    }
+    snapshot = {"items": [{"name": "基础装甲", "equipment_id": "advanced-armor", "cache_key": "advanced-advanced-armor"}]}
+
+    recommendations = equipment.build_cw_equipment_recommendations(session, snapshot=snapshot, raw_config=raw_config)
+
+    assert recommendations["priority"][0]["basics"] == [{"name": "基础装甲", "have": 0, "need": 1}]
+
+
+def test_build_equipment_recommendations_prefers_first_equipment_category_across_stages(tmp_path):
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    cw_state = ensure_cw_state(session)
+    cw_state["guide"]["role_stages"] = [
+        {"front_roles": [{"name": "希儿", "first_equipments": [], "second_equipments": ["高周波电锯"]}], "back_roles": []},
+        {"front_roles": [{"name": "希儿", "first_equipments": ["高周波电锯"], "second_equipments": []}], "back_roles": []},
+    ]
+    cw_state["slots"]["front"] = [{"name": "希儿", "equipments": []}]
+    cw_state["slots"]["back"] = []
+    cw_state["slots"]["hand"] = []
+
+    recommendations = equipment.build_cw_equipment_recommendations(
+        session,
+        snapshot={"items": []},
+        raw_config=_equipment_raw_config_for_recommendations(),
+    )
+
+    assert recommendations["role_missing"] == [
+        {"pos": "front:1", "role": "希儿", "equipment": "高周波电锯", "category": "优选"}
+    ]
+
+
+def test_record_equipment_compose_writes_role_object_and_marks_equipment_stale(tmp_path):
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    ensure_cw_state(session)["equipment"] = {"stale": False, "items": [], "recommendations": {}}
+
+    result = equipment.record_cw_equipment_compose(
+        session,
+        name="高周波电锯",
+        slot="front:0",
+        role="希儿",
+        raw_config=_equipment_raw_config_for_recommendations(),
+    )
+
+    assert result == {"pos": "front:1", "name": "希儿", "equipment": "高周波电锯", "count": 2}
+    role = ensure_cw_state(session)["slots"]["front"][0]
+    assert role["equipments"] == ["战场手册", "高周波电锯"]
+    assert ensure_cw_state(session)["equipment"]["stale"] is True
+    assert "recommendations" not in ensure_cw_state(session)["equipment"]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "kwargs", "code"),
+    [
+        (lambda cw_state: cw_state["slots"].update(stale=True), {"slot": "front:0", "role": "希儿", "name": "高周波电锯"}, "CW_EQUIPMENT_ROLE_SLOT_STALE"),
+        (lambda cw_state: cw_state.pop("guide", None), {"slot": "front:0", "role": "希儿", "name": "高周波电锯"}, "CW_GUIDE_STATE_INVALID"),
+        (lambda cw_state: cw_state["slots"]["front"].__setitem__(0, None), {"slot": "front:0", "role": "希儿", "name": "高周波电锯"}, "CW_EQUIPMENT_ROLE_SLOT_EMPTY"),
+        (lambda cw_state: None, {"slot": "front:0", "role": "佩拉", "name": "高周波电锯"}, "CW_EQUIPMENT_ROLE_SLOT_MISMATCH"),
+        (lambda cw_state: None, {"slot": "hand:0", "role": "希儿", "name": "高周波电锯"}, "CW_EQUIPMENT_ROLE_DUPLICATE_SLOT"),
+        (lambda cw_state: None, {"slot": "front:0", "role": "希儿", "name": "不存在装备"}, "CW_EQUIPMENT_NAME_INVALID"),
+        (lambda cw_state: None, {"slot": "front:0", "role": "希儿", "name": "战场手册"}, "CW_EQUIPMENT_ALREADY_HELD"),
+        (lambda cw_state: cw_state["slots"]["front"].__setitem__(0, {"name": "希儿", "equipments": ["A", "B", "C"]}), {"slot": "front:0", "role": "希儿", "name": "高周波电锯"}, "CW_EQUIPMENT_ROLE_EQUIPMENT_FULL"),
+        (lambda cw_state: cw_state["slots"]["front"].__setitem__(0, {"name": "希儿", "equipments": "bad"}), {"slot": "front:0", "role": "希儿", "name": "高周波电锯"}, "CW_EQUIPMENT_ROLE_EQUIPMENT_STATE_INVALID"),
+    ],
+)
+def test_record_equipment_compose_rejects_invalid_state(tmp_path, mutate, kwargs, code):
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    cw_state = ensure_cw_state(session)
+    mutate(cw_state)
+
+    with pytest.raises(Exception) as exc_info:
+        equipment.record_cw_equipment_compose(
+            session,
+            raw_config=_equipment_raw_config_for_recommendations(),
+            **kwargs,
+        )
+
+    assert getattr(exc_info.value, "code", None) == code
+
+
+@pytest.mark.parametrize("slot", ["front:99", "enemy:0", "bad", 123])
+def test_record_equipment_compose_rejects_invalid_rpc_slot(tmp_path, slot):
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+
+    with pytest.raises(Exception) as exc_info:
+        equipment.record_cw_equipment_compose(
+            session,
+            name="高周波电锯",
+            slot=slot,
+            role="希儿",
+            raw_config=_equipment_raw_config_for_recommendations(),
+        )
+
+    assert getattr(exc_info.value, "code", None) == "SLOTS_POSITION_INVALID"

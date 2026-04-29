@@ -20,7 +20,8 @@
 - 带截图的 success 结果在 `shot path=...` 之后必须紧跟 `info read_image_first=1`，提示 Agent 先读本次原始截图，再消费后续压缩文本。
 - envelope 顶层若带 `screenshot`，同步生成 `image_guidance.read_image_first=1`；该元数据只存在于 envelope 顶层，不下沉到命令 `data`。
 - 标题行不承载 must-keep 事实，不输出 `key=value`；所有业务事实仍必须落在既有 allowed prefixes 的实体行中。
-- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；新增标题必须同步更新 renderer、skills 与测试。
+- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；当前新增固定标题包括 `# 装备优先级`、`# 角色装备需求`；新增标题必须同步更新 renderer、README、skills 与测试。
+- `# 装备优先级` 与 `# 角色装备需求` 只用于分组，不承载 must-keep 事实；相关事实仍必须落在 `guide`、`slot` 或 `info` 行中。
 - 失败结果只要带 `request_id`，就必须输出 `request id=<id>` 供恢复或排障使用。
 - 只有结果未知或当前失败显式可恢复时，才输出 `recover action=daemon.request_status request=<id>`。
 - 会影响下一步决策的 `0`、`false`、`count`、`more`、`tainted` 不能因为“看起来为空”而省略。
@@ -100,10 +101,14 @@
 - `cw.strategy.detect|refresh` 的 cards family 正文字段固定使用 `投资策略/攻略推荐/刷新次数`；说明继续使用 `opt idx=... 说明=...`。
 - `cw.strategy.detect|refresh` 必须输出 `info 已加载攻略=0|1`，且固定在所有 `opt` 行之后。
 - `cw.equipment.read` 归入列表读取 renderer 家族；canonical command 固定为 `cw.equipment.read`，success 首行固定为 `ok cw.equipment.read count=<n> uncertain=<n> empty=<n>`，`count/uncertain/empty` 即使为 `0` 也必须保留。
-- `cw.equipment.read` success 正文顺序固定为首行 -> `shot` -> `info read_image_first=1` -> `item` -> `info` -> `warn` -> `ref`；`item` 行字段固定使用 `pos/center/name/score/uncertain/gap/alt/alt_score`，确定项默认只输出 `pos/center/name/score/uncertain`，只有 `uncertain=1` 时才输出 `gap/alt/alt_score`。
+- `cw.equipment.read` success 正文顺序固定为首行 -> `shot` -> `info read_image_first=1` -> 背包 `item` -> `info backend/layout` -> `# 装备优先级` 的 `guide` 行 -> `# 角色装备需求` 的 `slot` 行或 `info todo=slots` -> `warn` -> `ref`；`item` 行字段固定使用 `pos/center/name/score/uncertain/gap/alt/alt_score`，确定项默认只输出 `pos/center/name/score/uncertain`，只有 `uncertain=1` 时才输出 `gap/alt/alt_score`。
+- `cw.equipment.read` 在 slots 缺失或 stale 时，`# 装备优先级` 仍可输出攻略顺序、基础装备持有情况和需求角色，但不得输出依赖当前角色集合的已获取/未获取字段；`# 角色装备需求` 输出 `info todo=slots`，提示先刷新 `cw.slots.read`。
 - `cw.equipment.read` 默认文本不输出 `idx/row/col/box`；`row/col` 只保留在结构化 `data`、`trail --format yaml cw equipment read --session <id>` 与 `trail --format yaml state dump --session <id>` 的 `cw_state.equipment` 中，供诊断使用。
 - `cw.equipment.read` 单格低置信不失败；当 `uncertain>0` 时默认文本输出 `warn code=LOW_CONFIDENCE count=... msg=...`。
 - `cw.equipment.read` 成功写入 `cw_state.equipment` 最近快照，并加入 YAML allowlist；除 `cw.equipment.prepare` 外，成功进入 CW mutation 处理的命令应保留最近装备 items 并将该快照标记为 `stale=True`。
+- `cw.equipment.compose` 归入检测/状态摘要 renderer 家族；canonical command 固定为 `cw.equipment.compose`；success 首行固定为 `ok cw.equipment.compose pos=<agent-visible-slot> name=<角色名> 装备=<装备名> count=<n>`，字段顺序固定为 `pos/name/装备/count`，其中 `count` 是写入后该角色已记录装备数量。
+- `cw.equipment.compose` 只写 session，不截图，不执行真实 UI 合成，不加入 YAML allowlist；`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`。
+- `cw.equipment.compose` 的 `slot` 与 `role` 必须基于 fresh session slots 校验，Agent 可见 slot 使用 1-based，例如 `front:1`、`back:1`、`hand:1`；daemon/RPC/session internal 仍保持 0-based。
 - `cw.equipment.prepare` 归入检测/状态摘要 renderer 家族；canonical command 固定为 `cw.equipment.prepare`，不产截图，success 首行固定为 `ok cw.equipment.prepare big_version=<version> count=<n> cached=<n> downloaded=<n> refreshed=0|1`，这些事实即使为 `0` 也必须保留。
 - `cw.equipment.prepare --refresh` 才处理同一 `rpg_game_big_version` 下 `cache_key` 的 `icon_url` 变化；普通 prepare/read 只补齐缺失或损坏图标。`cw.equipment.prepare` 不加入 YAML allowlist。
 - `cw.shop.buy_exp` 属于 shop action renderer family；canonical command 是 `cw.shop.buy_exp`，success 首行固定为 `ok cw.shop.buy_exp opened=1 stale=0 count=<n>`，正文使用 `# 商店信息` 输出 `item` 与 `coins/reserve_full`，再用 `# 综合信息` 输出 `level/exp/team_size`。

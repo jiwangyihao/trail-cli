@@ -37,6 +37,23 @@ class EquipmentCatalogEntry:
     big_version: str
 
 
+@dataclass(frozen=True)
+class EquipmentRecipeChild:
+    cache_key: str | None
+    id: str | None
+    name: str
+    kind: str
+    need: int
+
+
+@dataclass(frozen=True)
+class EquipmentRecipe:
+    cache_key: str | None
+    id: str | None
+    name: str
+    basics: tuple[EquipmentRecipeChild, ...]
+
+
 def _text_or_none(value: Any) -> str | None:
     if value is None:
         return None
@@ -185,6 +202,84 @@ def build_cw_equipment_catalog(raw_config: Mapping[str, Any]) -> list[EquipmentC
                 if isinstance(child, Mapping):
                     _append_unique(catalog, seen, _entry_from_mapping(child, kind="basic", big_version=big_version))
     return catalog
+
+
+def _recipe_child_identity(child: EquipmentRecipeChild) -> tuple[str, str]:
+    if child.cache_key:
+        return ("cache_key", child.cache_key)
+    if child.id:
+        return ("kind_id", f"{child.kind}:{child.id}")
+    return ("name", child.name)
+
+
+def _recipe_child_from_mapping(item: Mapping[str, Any], *, big_version: str) -> EquipmentRecipeChild | None:
+    name = _text_or_none(item.get("name"))
+    if name is None:
+        return None
+    entry = _entry_from_mapping(item, kind="basic", big_version=big_version)
+    equipment_id = _text_or_none(item.get("id"))
+    return EquipmentRecipeChild(
+        cache_key=None if entry is None else entry.cache_key,
+        id=equipment_id,
+        name=name,
+        kind="basic",
+        need=1,
+    )
+
+
+def build_cw_equipment_recipes(raw_config: Mapping[str, Any]) -> dict[str, EquipmentRecipe]:
+    big_version = _text_or_none(raw_config.get("rpg_game_big_version"))
+    if big_version is None:
+        raise TrailError("CW_EQUIPMENT_VERSION_MISSING", "cw equipment config missing rpg_game_big_version")
+    equipment_list = raw_config.get("equipment_list")
+    if not isinstance(equipment_list, list):
+        raise TrailError("CW_EQUIPMENT_CONFIG_INVALID", "cw equipment config missing equipment_list")
+
+    recipes: dict[str, EquipmentRecipe] = {}
+    for item in equipment_list:
+        if not isinstance(item, Mapping):
+            continue
+        advanced = _entry_from_mapping(item, kind="advanced", big_version=big_version)
+        if advanced is None:
+            continue
+
+        children_by_identity: dict[tuple[str, str], EquipmentRecipeChild] = {}
+        child_order: list[tuple[str, str]] = []
+        compose_list = item.get("compose_list")
+        if isinstance(compose_list, list):
+            for compose in compose_list:
+                if not isinstance(compose, Mapping):
+                    continue
+                childrens = compose.get("childrens")
+                if not isinstance(childrens, list):
+                    continue
+                for child_item in childrens:
+                    if not isinstance(child_item, Mapping):
+                        continue
+                    child = _recipe_child_from_mapping(child_item, big_version=big_version)
+                    if child is None:
+                        continue
+                    identity = _recipe_child_identity(child)
+                    if identity not in children_by_identity:
+                        child_order.append(identity)
+                        children_by_identity[identity] = child
+                    else:
+                        previous = children_by_identity[identity]
+                        children_by_identity[identity] = EquipmentRecipeChild(
+                            cache_key=previous.cache_key,
+                            id=previous.id,
+                            name=previous.name,
+                            kind=previous.kind,
+                            need=previous.need + 1,
+                        )
+
+        recipes[advanced.name] = EquipmentRecipe(
+            cache_key=advanced.cache_key,
+            id=advanced.id,
+            name=advanced.name,
+            basics=tuple(children_by_identity[key] for key in child_order),
+        )
+    return recipes
 
 
 @contextmanager

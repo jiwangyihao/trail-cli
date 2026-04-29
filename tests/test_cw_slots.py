@@ -304,6 +304,47 @@ def test_slots_read_refreshes_snapshot(tmp_path):
     assert refreshed.scene_state["cw"]["sell_plan"] == {}
 
 
+def test_canonical_cw_role_slots_deduplicates_front_back_hand_order():
+    slots = load_cw_slots_module()
+    snapshot = {
+        "front": [{"name": "希儿"}],
+        "back": [{"name": "佩拉"}, {"name": "希儿"}],
+        "hand": ["希儿", "银狼", {"name": "银狼"}],
+        "stale": False,
+    }
+
+    roles = slots.canonical_cw_role_slots(snapshot)
+
+    assert [(role["pos"], role["name"]) for role in roles] == [
+        ("front:1", "希儿"),
+        ("back:1", "佩拉"),
+        ("hand:2", "银狼"),
+    ]
+
+
+def test_read_cw_slots_preserves_equipments_for_new_canonical_only(tmp_path):
+    slots = load_cw_slots_module()
+    session = build_fake_cw_session(tmp_path)
+    cw_state = ensure_cw_state(session)
+    cw_state["slots"] = {
+        "front": [{"name": "希儿", "equipments": ["高周波电锯"]}],
+        "back": [None],
+        "hand": [{"name": "希儿", "equipments": ["错误副本装备"]}, {"name": "佩拉", "equipments": ["战场手册"]}],
+        "stale": False,
+    }
+
+    def reader():
+        return [None], [{"name": "希儿"}], [{"name": "希儿"}, {"name": "佩拉"}]
+
+    result = slots.read_cw_slots(session, reader=reader, guide_config=None)
+
+    assert result.response_snapshot["back"][0]["equipments"] == ["高周波电锯"]
+    assert "equipments" not in result.response_snapshot["hand"][0]
+    assert result.response_snapshot["hand"][1]["equipments"] == ["战场手册"]
+    assert cw_state["slots"]["back"][0]["equipments"] == ["高周波电锯"]
+    assert "equipments" not in cw_state["slots"]["hand"][0]
+
+
 def test_read_cw_slots_persists_stage_status_without_overwriting_stage_value(tmp_path):
     slots = load_cw_slots_module()
     session = build_fake_cw_session(tmp_path)

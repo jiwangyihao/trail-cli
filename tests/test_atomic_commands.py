@@ -1943,6 +1943,29 @@ def test_cw_slots_read_help_describes_slot_as_targeted_confirmation(cli_runner):
     assert "全量读取" in slot_help
 
 
+def test_cw_equipment_help_mentions_compose_session_record(cli_runner):
+    from trail.cli import app
+
+    result = cli_runner.invoke(app, ["cw", "equipment", "--help"])
+
+    assert result.exit_code == 0
+    assert "compose" in result.stdout
+    assert "只写 session" in result.stdout
+    assert "不执行真实 UI 合成" in result.stdout
+
+
+def test_cw_equipment_compose_help_lists_required_options(cli_runner):
+    from trail.cli import app
+
+    result = cli_runner.invoke(app, ["cw", "equipment", "compose", "--help"])
+
+    assert result.exit_code == 0
+    assert "--name" in result.stdout
+    assert "--slot" in result.stdout
+    assert "--role" in result.stdout
+    assert "1-based" in result.stdout or "从 1 开始" in result.stdout
+
+
 def test_cw_portal_help_distinguishes_detect_and_refresh(cli_runner):
     result = cli_runner.invoke(app, ["cw", "portal", "--help"])
     normalized = _normalize_help(result.output)
