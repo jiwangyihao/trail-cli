@@ -834,7 +834,7 @@ def test_readme_and_agents_document_cw_equipment_protocol() -> None:
 
     assert "trail cw equipment prepare --session <id> [--refresh]" in readme
     assert "trail cw equipment read --session <id>" in readme
-    assert "ok cw.equipment.read count=1 uncertain=0 empty=17" in readme
+    assert "ok cw.equipment.read count=1 uncertain=0 empty=59" in readme
     assert "item pos=equipment:1 center=1855,275 name=生命之花 score=0.93 uncertain=0" in readme
     assert "item idx=1 row=1 col=1 box=" not in readme
     assert "ok cw.equipment.prepare big_version=3.2 count=2 cached=1 downloaded=1 refreshed=0" in readme
@@ -1694,6 +1694,124 @@ def test_render_output_cw_equipment_read_orders_shot_items_info_warn_ref():
         "info backend=vector layout=default",
         'warn code=LOW_CONFIDENCE count=1 msg="装备图标低置信，请先看截图确认"',
         "ref path=trail/references/cw/equipment.png sim=0.9",
+    ]
+
+
+def test_render_output_cw_equipment_read_appends_recommendation_sections_before_warn_ref():
+    payload = {
+        "ok": True,
+        "data": {
+            "count": 1,
+            "uncertain": 1,
+            "empty": 59,
+            "backend": "vector",
+            "layout": "default",
+            "items": [
+                {
+                    "pos": "equipment:1",
+                    "center": {"x": 100, "y": 200},
+                    "name": "基础装甲",
+                    "score": 0.9,
+                    "uncertain": True,
+                    "gap": 0.01,
+                    "alt": "光能电池",
+                    "alt_score": 0.89,
+                }
+            ],
+            "recommendations": {
+                "priority": [
+                    {
+                        "idx": 1,
+                        "name": "高周波电锯",
+                        "known": True,
+                        "basics": [
+                            {"name": "基础装甲", "have": 1, "need": 1},
+                            {"name": "光能电池", "have": 0, "need": 1},
+                        ],
+                        "required_roles": ["希儿"],
+                        "acquired_roles": [],
+                        "missing_roles": ["希儿"],
+                    }
+                ],
+                "role_missing": [
+                    {"pos": "front:1", "role": "希儿", "equipment": "高周波电锯", "category": "优选"}
+                ],
+                "todos": [],
+            },
+        },
+        "screenshot": ".trail/shots/req-equipment.png",
+        "timing": {},
+        "warnings": [],
+        "references": [{"path": "trail/references/cw/equipment.png", "similarity": 0.9}],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.equipment.read", payload).splitlines() == [
+        "ok cw.equipment.read count=1 uncertain=1 empty=59",
+        "shot path=.trail/shots/req-equipment.png",
+        "info read_image_first=1",
+        "item pos=equipment:1 center=100,200 name=基础装甲 score=0.90 uncertain=1 gap=0.01 alt=光能电池 alt_score=0.89",
+        "info backend=vector layout=default",
+        "# 装备优先级",
+        "guide idx=1 装备=高周波电锯 基础装备=基础装甲:1/1|光能电池:0/1 需求角色=希儿 已获取数=0 未获取数=1 未获取角色=希儿",
+        "# 角色装备需求",
+        "slot pos=front:1 name=希儿 装备=高周波电锯 分类=优选",
+        'warn code=LOW_CONFIDENCE count=1 msg="装备图标低置信，请先看截图确认"',
+        "ref path=trail/references/cw/equipment.png sim=0.9",
+    ]
+
+
+def test_render_output_cw_equipment_read_stale_slots_outputs_todo_without_current_role_counts():
+    payload = {
+        "ok": True,
+        "data": {
+            "count": 0,
+            "uncertain": 0,
+            "empty": 60,
+            "backend": "vector",
+            "layout": "default",
+            "items": [],
+            "recommendations": {
+                "priority": [
+                    {"idx": 1, "name": "高周波电锯", "known": True, "basics": [], "required_roles": ["希儿"]}
+                ],
+                "role_missing": [],
+                "todos": ["slots"],
+            },
+        },
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    rendered = render_output("cw.equipment.read", payload)
+
+    assert "# 装备优先级" in rendered
+    assert "guide idx=1 装备=高周波电锯 需求角色=希儿" in rendered
+    assert "已获取数" not in rendered
+    assert "未获取数" not in rendered
+    assert "# 角色装备需求" in rendered
+    assert "info todo=slots" in rendered
+
+
+def test_render_output_cw_equipment_compose_summary():
+    payload = {
+        "ok": True,
+        "data": {"pos": "front:1", "name": "希儿", "equipment": "高周波电锯", "count": 1},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.equipment.compose", payload).splitlines() == [
+        "ok cw.equipment.compose pos=front:1 name=希儿 装备=高周波电锯 count=1",
     ]
 
 

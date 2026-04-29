@@ -620,6 +620,58 @@ def test_command_service_routes_guide_fetch_select_through_run_mutation(tmp_path
     }
 
 
+def test_command_service_routes_cw_equipment_compose_through_journaled_session_mutation(tmp_path: Path, monkeypatch):
+    registry = SessionServiceRegistry()
+    session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    command_service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
+    observed: dict[str, object] = {}
+
+    def fake_run_mutation(request, command_name, handler, **kwargs):
+        observed["request"] = request
+        observed["command_name"] = command_name
+        observed["handler"] = handler
+        observed["kwargs"] = kwargs
+        return {
+            "request_id": request.request_id,
+            "ok": True,
+            "data": {"pos": "front:1", "name": "希儿", "equipment": "高周波电锯", "count": 1},
+            "screenshot": None,
+            "timing": {},
+            "warnings": [],
+            "references": [],
+            "debug": None,
+            "error": None,
+        }
+
+    monkeypatch.setattr(command_service, "_run_mutation", fake_run_mutation)
+    request = DaemonRequest(
+        request_id="req-cw-equipment-compose-route",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.equipment.compose",
+        payload={"name": "高周波电锯", "slot": "front:0", "role": "希儿"},
+    )
+
+    payload = command_service.handle(request)
+
+    assert payload["ok"] is True
+    assert payload["screenshot"] is None
+    assert observed["request"] is request
+    assert observed["command_name"] == "cw.equipment.compose"
+    assert callable(observed["handler"])
+    kwargs = observed["kwargs"]
+    assert kwargs["handler_persisted_state"] is True
+    assert kwargs["enforce_cw_tainted"] is True
+    assert kwargs["tainted_session_id"] == session.session_id
+    assert callable(kwargs["response_builder"])
+    built_response = kwargs["response_builder"]({"pos": "front:1"})
+    assert built_response["ok"] is True
+    assert built_response["data"] == {"pos": "front:1"}
+    assert built_response["screenshot"] is None
+
+
 def test_command_service_guide_fetch_select_stores_complete_guide_no_artifact(tmp_path: Path, monkeypatch):
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))
@@ -2237,8 +2289,8 @@ def test_command_service_routes_cw_equipment_read_through_capture(tmp_path: Path
         "stale": False,
     }
 
-    def fake_read_equipment(runtime, workspace_root=None):
-        del runtime, workspace_root
+    def fake_read_equipment(runtime, workspace_root=None, raw_config=None):
+        del runtime, workspace_root, raw_config
         calls.append("read")
         return snapshot
 

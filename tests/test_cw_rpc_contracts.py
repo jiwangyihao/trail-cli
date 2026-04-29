@@ -638,6 +638,67 @@ def test_cw_equipment_read_maps_to_canonical_command_and_supports_yaml(cli_runne
     _assert_single_call(yaml_client, method="cw.equipment.read", payload={}, tmp_path=tmp_path)
 
 
+def test_cw_equipment_compose_rpc_contract(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.equipment.compose": build_success_response(
+                request_id="req-cw-equipment-compose",
+                data={"pos": "front:1", "name": "希儿", "equipment": "高周波电锯", "count": 1},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        ["cw", "equipment", "compose", "--session", SESSION_ID, "--name", "高周波电锯", "--slot", "front:1", "--role", "希儿"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok cw.equipment.compose pos=front:1 name=希儿 装备=高周波电锯 count=1"]
+    _assert_single_call(
+        client,
+        method="cw.equipment.compose",
+        payload={"name": "高周波电锯", "slot": "front:0", "role": "希儿"},
+        tmp_path=tmp_path,
+    )
+
+
+def test_cw_equipment_compose_rejects_zero_slot_without_rpc(cli_runner, fake_daemon_client):
+    client = fake_daemon_client({})
+
+    result = cli_runner.invoke(
+        app,
+        ["cw", "equipment", "compose", "--session", SESSION_ID, "--name", "高周波电锯", "--slot", "front:0", "--role", "希儿"],
+    )
+
+    assert result.exit_code == 0
+    assert "fail cw.equipment.compose code=CW_OPTION_INVALID" in result.stdout
+    assert client.calls == []
+
+
+def test_cw_equipment_compose_rejects_yaml_output(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {
+            "cw.equipment.compose": build_success_response(
+                request_id="req-cw-equipment-compose-yaml",
+                data={"pos": "front:1", "name": "希儿", "equipment": "高周波电锯", "count": 1},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        ["--format", "yaml", "cw", "equipment", "compose", "--session", SESSION_ID, "--name", "高周波电锯", "--slot", "front:1", "--role", "希儿"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.equipment.compose code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        'why msg="yaml not supported for cw.equipment.compose"',
+    ]
+    assert client.calls == []
+
+
 def test_cw_shop_scan_renders_unknown_result_failure_contract(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {

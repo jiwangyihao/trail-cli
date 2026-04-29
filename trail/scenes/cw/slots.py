@@ -140,6 +140,45 @@ def _slot_value_name(value: Any) -> str:
     return str(value or "").strip()
 
 
+CW_ROLE_SLOT_AREAS = ("front", "back", "hand")
+
+
+def format_cw_agent_slot_reference(area: str, index: int) -> str:
+    return _format_agent_slot_reference(f"{area}:{index}")
+
+
+def parse_cw_slot_reference(value: str, *, allowed_areas: set[str] | None = None) -> tuple[str, int]:
+    if not isinstance(value, str) or not value.strip():
+        raise TrailError("SLOTS_POSITION_INVALID", f"invalid slot position: {value}")
+    return _parse_slot_reference(value, allowed_areas=allowed_areas)
+
+
+def canonical_cw_role_slots(slots: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(slots, dict):
+        return []
+    seen: set[str] = set()
+    roles: list[dict[str, Any]] = []
+    for area in CW_ROLE_SLOT_AREAS:
+        values = slots.get(area)
+        if not isinstance(values, list):
+            continue
+        for index, value in enumerate(values):
+            name = _slot_value_name(value)
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            roles.append(
+                {
+                    "area": area,
+                    "index": index,
+                    "pos": format_cw_agent_slot_reference(area, index),
+                    "name": name,
+                    "value": value,
+                }
+            )
+    return roles
+
+
 def _template(scene_alias: str) -> str:
     return str(resolve_scene_asset("cw", scene_alias))
 
@@ -255,6 +294,77 @@ def _merge_area_snapshot(previous: Any, current: list[Any], *, size: int, target
     for index in targets:
         merged[index] = current[index]
     return merged
+
+
+def _normalized_slot_equipments(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    raw = value.get("equipments")
+    if not isinstance(raw, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        result.append(name)
+    return result
+
+
+def _role_value_with_equipments(value: Any, equipments: list[str] | None) -> Any:
+    if not equipments:
+        if isinstance(value, dict) and "equipments" in value:
+            cleaned = deepcopy(value)
+            cleaned.pop("equipments", None)
+            return cleaned
+        return value
+    if isinstance(value, dict):
+        return {**deepcopy(value), "equipments": list(equipments)}
+    name = _slot_value_name(value)
+    return {"name": name, "equipments": list(equipments)} if name else value
+
+
+def _preserve_canonical_slot_equipments(previous: dict[str, Any], merged: dict[str, list[Any]]) -> dict[str, list[Any]]:
+    previous_by_name: dict[str, list[str]] = {}
+    for role in canonical_cw_role_slots(previous):
+        equipments = _normalized_slot_equipments(role.get("value"))
+        if equipments:
+            previous_by_name[role["name"]] = equipments
+
+    canonical_positions = {(role["area"], role["index"]): role["name"] for role in canonical_cw_role_slots(merged)}
+    preserved = {area: list(values) for area, values in merged.items()}
+    for area in CW_ROLE_SLOT_AREAS:
+        values = preserved.get(area)
+        if not isinstance(values, list):
+            continue
+        for index, value in enumerate(values):
+            canonical_name = canonical_positions.get((area, index))
+            equipments = previous_by_name.get(canonical_name or "") if canonical_name else None
+            values[index] = _role_value_with_equipments(value, equipments)
+    return preserved
+
+
+def _merge_area_response_snapshot_with_equipments(
+    preserved: list[Any],
+    response: list[Any],
+    *,
+    size: int,
+    targets: set[int] | None,
+) -> list[Any]:
+    output = _merge_area_snapshot(preserved, response, size=size, targets=targets)
+    for index, preserved_value in enumerate(preserved[: len(output)]):
+        equipments = _normalized_slot_equipments(preserved_value)
+        output_value = output[index]
+        if equipments:
+            base_value = output_value if _slot_value_name(output_value) else preserved_value
+            output[index] = _role_value_with_equipments(base_value, equipments)
+        elif isinstance(output_value, dict) and "equipments" in output_value:
+            output[index] = _role_value_with_equipments(output_value, None)
+    return output
 
 
 def _strip_slot_match_diagnostics(value: Any) -> Any:
@@ -704,6 +814,13 @@ def read_cw_slots(
     merged_front = _merge_area_snapshot(previous_front, front, size=len(FRONT_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["front"])
     merged_back = _merge_area_snapshot(previous_back, back, size=len(BACK_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["back"])
     merged_hand = _merge_area_snapshot(previous_hand, hand, size=len(HAND_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["hand"])
+    preserved = _preserve_canonical_slot_equipments(
+        previous,
+        {"front": merged_front, "back": merged_back, "hand": merged_hand},
+    )
+    merged_front = preserved["front"]
+    merged_back = preserved["back"]
+    merged_hand = preserved["hand"]
     if _slots_read_empty_snapshot(
         previous,
         parsed_targets=parsed_targets,
@@ -718,9 +835,24 @@ def read_cw_slots(
     fact_front, fact_back, fact_hand = merged_front, merged_back, merged_hand
     if parsed_targets is not None and previous.get("stale", True) is not False:
         fact_front, fact_back, fact_hand = front, back, hand
-    output_front = _merge_area_snapshot(merged_front, response_front, size=len(FRONT_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["front"])
-    output_back = _merge_area_snapshot(merged_back, response_back, size=len(BACK_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["back"])
-    output_hand = _merge_area_snapshot(merged_hand, response_hand, size=len(HAND_SLOT_POINTS), targets=None if parsed_targets is None else parsed_targets["hand"])
+    output_front = _merge_area_response_snapshot_with_equipments(
+        merged_front,
+        response_front,
+        size=len(FRONT_SLOT_POINTS),
+        targets=None if parsed_targets is None else parsed_targets["front"],
+    )
+    output_back = _merge_area_response_snapshot_with_equipments(
+        merged_back,
+        response_back,
+        size=len(BACK_SLOT_POINTS),
+        targets=None if parsed_targets is None else parsed_targets["back"],
+    )
+    output_hand = _merge_area_response_snapshot_with_equipments(
+        merged_hand,
+        response_hand,
+        size=len(HAND_SLOT_POINTS),
+        targets=None if parsed_targets is None else parsed_targets["hand"],
+    )
     cw_state["slots"] = {
         "front": deepcopy(merged_front),
         "back": deepcopy(merged_back),

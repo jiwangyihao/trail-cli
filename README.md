@@ -112,7 +112,10 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 装备背包读取建议：
 
 - 如需读取当前装备背包，先准备或补齐图标缓存：`trail cw equipment prepare --session <id> [--refresh]`；常规使用 `trail cw equipment prepare --session <id>`，如果确认同一版本资源 URL 变更，显式运行 `trail cw equipment prepare --session <id> --refresh`。
-- 读取装备背包：`trail cw equipment read --session <id>`。该命令会返回截图，必须先读 `shot path=...` 对应原始截图，再消费 `item pos=equipment:<idx> center=x,y ...` 行；确定结果默认隐藏 `gap/alt/alt_score`，只有低置信格子才输出这些诊断字段并追加 `warn code=LOW_CONFIDENCE`。
+- 读取装备背包：`trail cw equipment read --session <id>`。该命令会返回截图，必须先读 `shot path=...` 对应原始截图，再消费背包 `item pos=equipment:<idx> center=x,y ...`、`# 装备优先级` 下的 `guide` 行、`# 角色装备需求` 下的 `slot` 行或 `info todo=slots`；这些分块位于 `warn`、`ref` 之前。确定结果默认隐藏 `gap/alt/alt_score`，只有低置信格子才输出这些诊断字段并追加 `warn code=LOW_CONFIDENCE`。
+- 有当前攻略时，`# 装备优先级` 会按攻略进阶装备优先度展示基础装备持有情况、需求角色、已获取/未获取角色等；如果 slots 缺失或 stale，不输出依赖当前角色集合的已获取/未获取字段。
+- `# 角色装备需求` 下的 `slot` 行展示当前 canonical 已有角色尚未记录的推荐装备；如果只看到 `info todo=slots`，先执行或刷新 `trail cw slots read --session <id>`，不要用 stale slots 推断角色缺口。
+- 记录已决定合成并装备的进阶装备：`trail cw equipment compose --session <id> --name <进阶装备名> --slot front:1 --role <角色名>`。该命令的 canonical command 是 `cw.equipment.compose`，只写 session，不执行真实 UI 合成；成功首行固定为 `ok cw.equipment.compose pos=... name=... 装备=... count=...`。
 - 如需查看装备格 `row/col` 诊断，使用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`；默认文本不输出 `row/col/box`。
 
 ## 命令面概览
@@ -187,7 +190,7 @@ DirectML 安装与环境 profile 说明：
 - 默认模式绝不输出 YAML；只有显式指定 `--format yaml` 且命令进入 allowlist 时，才会在首行摘要后追加结构化块
 - 常见正文前缀包括 `shot`、`item`、`guide`、`text`、`info`、`why`、`warn`、`ref`、`request`、`recover`；`debug` 仅在 `--verbose` 下追加
 - 默认正文允许出现 `# 标题` 行作为板块标题；`# 标题` 行不是正文前缀，也不承载事实，Agent 可跳过标题后消费其下方事实行
-- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；业务事实仍必须使用既有 prefix 的 `key=value` 行
+- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；装备推荐新增固定标题为 `# 装备优先级`、`# 角色装备需求`；业务事实仍必须使用既有 prefix 的 `key=value` 行
 - `shot path=...` 表示当前命令结果对应的截图路径；带截图的 success 结果会先输出 `shot path=...`，再输出 `info read_image_first=1`，然后才是实体行
 - `info read_image_first=1` 只出现在带截图的 success 文本路径，表示 Agent 必须先阅读本次命令返回的原始截图，再参考后续压缩文本
 - 已配置 workflow handoff 的 success 结果会在正常 success 内容、`warn`、`ref` 之后，额外追加一行尾行强提示：`info handoff_skill=... handoff_strength=... handoff_reason=...`；它始终是 success 输出最后一行
@@ -309,11 +312,19 @@ ok cw.equipment.prepare big_version=3.2 count=2 cached=1 downloaded=1 refreshed=
 ```
 
 ```text
-ok cw.equipment.read count=1 uncertain=0 empty=17
+ok cw.equipment.read count=1 uncertain=0 empty=59
 shot path=.trail/shots/req-equipment-read.png
 info read_image_first=1
 item pos=equipment:1 center=1855,275 name=生命之花 score=0.93 uncertain=0
 info backend=vector layout=default
+# 装备优先级
+guide idx=1 装备=高周波电锯 基础装备=生命之花:1/1 需求角色=希儿|停云 已获取数=1 已获取角色=希儿 未获取数=1 未获取角色=停云
+# 角色装备需求
+slot pos=front:1 name=停云 装备=高周波电锯 分类=优选
+```
+
+```text
+ok cw.equipment.compose pos=front:1 name=希儿 装备=高周波电锯 count=1
 ```
 
 ```text
