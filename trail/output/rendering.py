@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
+import os
 from pathlib import Path
+import sys
 from typing import Any
 
 import yaml
@@ -17,7 +19,18 @@ class OutputFormat(StrEnum):
 
 _OUTPUT_OPTIONS = {"format": OutputFormat.TEXT, "verbose": False}
 YAML_ALLOWLIST = {"daemon.status", "state.dump", "guide.fetch.cw", "guide.config.cw", "cw.equipment.read"}
-WORKFLOW_HANDOFFS_PATH = Path(__file__).resolve().parents[2] / "skills" / "registry" / "workflow-handoffs.yaml"
+
+
+def workflow_handoffs_path() -> Path:
+    skills_root = os.environ.get("TRAIL_SKILLS_ROOT")
+    if skills_root:
+        return Path(skills_root) / "registry" / "workflow-handoffs.yaml"
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parents[2] / "skills" / "registry" / "workflow-handoffs.yaml"
+    return Path(__file__).resolve().parents[2] / "skills" / "registry" / "workflow-handoffs.yaml"
+
+
+WORKFLOW_HANDOFFS_PATH = workflow_handoffs_path()
 
 
 def _normalize_output_format(output_format: str | OutputFormat) -> OutputFormat:
@@ -362,14 +375,21 @@ def _append_skill_info_section(lines: list[str], data: dict[str, Any]) -> None:
         lines.pop()
 
 
-@lru_cache(maxsize=1)
-def _load_workflow_handoffs() -> dict[str, Any]:
+@lru_cache(maxsize=8)
+def _load_workflow_handoffs_from_path(path: str) -> dict[str, Any]:
     try:
-        registry = yaml.safe_load(WORKFLOW_HANDOFFS_PATH.read_text(encoding="utf-8")) or {}
+        registry = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     except (FileNotFoundError, OSError, yaml.YAMLError):
         return {}
     commands = registry.get("commands")
     return commands if isinstance(commands, dict) else {}
+
+
+def _load_workflow_handoffs() -> dict[str, Any]:
+    return _load_workflow_handoffs_from_path(str(workflow_handoffs_path()))
+
+
+_load_workflow_handoffs.cache_clear = _load_workflow_handoffs_from_path.cache_clear  # type: ignore[attr-defined]
 
 
 def _select_workflow_handoff(command: Any, payload: dict[str, Any]) -> dict[str, Any]:

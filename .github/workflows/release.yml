@@ -1,0 +1,77 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: uv sync --locked --all-groups
+      - run: uv run pytest -q
+      - shell: pwsh
+        run: |
+          $project = python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          if ('${{ github.ref_type }}' -eq 'tag' -and '${{ github.ref_name }}' -ne "v$project") { throw "tag does not match project.version" }
+          .\scripts\build-windows.ps1 -Version $project
+      - shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist\trail-cli-windows-x64-v*.zip | Select-Object -First 1
+          if (-not $zip) { throw 'release zip missing' }
+          Expand-Archive $zip.FullName -DestinationPath dist\smoke -Force
+          if (-not (Test-Path dist\smoke\trail\bin\trail.exe)) { throw 'trail.exe missing' }
+          if (-not (Test-Path dist\smoke\trail\bin\traild.exe)) { throw 'traild.exe missing' }
+          dist\smoke\trail\bin\trail.exe version
+          $env:TRAIL_SKILLS_ROOT = (Resolve-Path dist\smoke\skills).Path
+          dist\smoke\trail\bin\trail.exe selfcheck release
+
+          $sums = Get-Content dist\SHA256SUMS.txt
+          $wheel = @(Get-ChildItem dist -File -Filter '*.whl')
+          $sdist = @(Get-ChildItem dist -File -Filter '*.tar.gz')
+          if ($wheel.Count -eq 0) { throw 'wheel asset missing' }
+          if ($sdist.Count -eq 0) { throw 'sdist asset missing' }
+          $required = @($zip.Name, 'agent-install.ps1') + @($wheel | ForEach-Object { $_.Name }) + @($sdist | ForEach-Object { $_.Name })
+          foreach ($asset in $required) {
+            if (-not ($sums -match [regex]::Escape($asset))) { throw "missing checksum for $asset" }
+          }
+
+          @"
+          ## Agent install
+
+          ````powershell
+          `$script = Join-Path `$env:TEMP 'trail-agent-install.ps1'
+          iwr 'https://github.com/${{ github.repository }}/releases/latest/download/agent-install.ps1' -UseB -OutFile `$script
+          powershell -NoProfile -ExecutionPolicy Bypass -File `$script -Agent openclaw -Scope user -CliVersion latest -RepoSlug '${{ github.repository }}' -Yes
+          ````
+          "@ | Set-Content dist\RELEASE_NOTES.md -Encoding utf8
+          Get-Content dist\SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trail-cli-windows-release
+          path: |
+            dist\trail-cli-windows-x64-v*.zip
+            dist\agent-install.ps1
+            dist\SHA256SUMS.txt
+            dist\*.whl
+            dist\*.tar.gz
+      - uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        with:
+          files: |
+            dist\trail-cli-windows-x64-v*.zip
+            dist\agent-install.ps1
+            dist\SHA256SUMS.txt
+            dist\*.whl
+            dist\*.tar.gz
+          generate_release_notes: true
+          body_path: dist\RELEASE_NOTES.md

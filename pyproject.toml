@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Agent-friendly HSR automation CLI"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MPL-2.0"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES*"]
 dependencies = [
   "typer>=0.12",
   "pillow>=10.0",
@@ -19,7 +21,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "build>=1.2", "pyinstaller>=6.11"]
 
 [project.scripts]
 trail = "trail.cli:app"

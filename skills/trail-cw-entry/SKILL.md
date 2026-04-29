@@ -5,6 +5,12 @@ description: 当用户已经明确要进入《崩坏：星穹铁道》的货币�
 
 # Skill: trail-cw-entry
 
+## Installation Note
+
+- Trail CLI and the complete Trail skill bundle should be installed through the release installer or `AGENT_INSTALL.md`.
+- OpenClaw is a supported target environment for the installer.
+- Do not install only this single skill for normal play; handoff depends on the bundle's active public/internal skills, `registry`, and `shared` references.
+
 ## Role
 
 - `trail-cw-entry` 是货币战争的 active public 开局入口说明 skill，不是整局 owner。

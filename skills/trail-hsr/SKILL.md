@@ -5,6 +5,12 @@ description: 当用户希望 Agent 接管并自动游玩《崩坏：星穹铁道
 
 # Skill: trail-hsr
 
+## Installation Note
+
+- Trail CLI and the complete Trail skill bundle should be installed through the release installer or `AGENT_INSTALL.md`.
+- OpenClaw is a supported target environment for the installer.
+- Do not install only this single skill for normal play; handoff depends on the bundle's active public/internal skills, `registry`, and `shared` references.
+
 ## Role
 
 - `trail-hsr` 是《崩坏：星穹铁道》的对外总入口 skill，先承接“接管并自动游玩”或“从当前局面继续推进”的用户意图。

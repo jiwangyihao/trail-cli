@@ -17,11 +17,29 @@ from trail.daemon.protocol import PROTOCOL_VERSION
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def _frozen_traild_executable() -> Path:
+    return Path(sys.executable).with_name("traild.exe")
+
+
+def _daemon_entrypoint() -> str:
+    return "traild.exe" if _is_frozen() else "trail.daemon.server:main"
+
+
 def launcher_script_path(daemon_home: Path) -> Path:
     return Path(daemon_home) / "traild-launch.pyw"
 
 
 def write_launcher_script(daemon_home: Path) -> tuple[Path, Path]:
+    if _is_frozen():
+        traild = _frozen_traild_executable()
+        return traild, traild
+
     launcher = launcher_script_path(daemon_home)
     python_executable = Path(sys.executable)
     pythonw_executable = python_executable.with_name("pythonw.exe")
@@ -39,8 +57,14 @@ def write_launcher_script(daemon_home: Path) -> tuple[Path, Path]:
     return launcher, launcher_python
 
 
+def _scheduled_task_action(*, launcher: Path, launcher_python: Path) -> str:
+    if _is_frozen() and launcher == launcher_python:
+        return subprocess.list2cmdline([str(launcher_python)])
+    return subprocess.list2cmdline([str(launcher_python), str(launcher)])
+
+
 def register_scheduled_task(*, bootstrap_id: str, launcher: Path, launcher_python: Path) -> None:
-    action = subprocess.list2cmdline([str(launcher_python), str(launcher)])
+    action = _scheduled_task_action(launcher=launcher, launcher_python=launcher_python)
     schtasks_args = (
         f"/Create /TN {bootstrap_id} /TR \"{action}\" /SC ONCE /ST 00:00 /RL HIGHEST /F /IT"
     )
@@ -69,6 +93,10 @@ def install_bootstrap(daemon_home: Path) -> Path:
         except Exception:
             manifest = None
         else:
+            daemon_entrypoint = _daemon_entrypoint()
+            if manifest.install.daemon_entrypoint != daemon_entrypoint:
+                manifest.install.daemon_entrypoint = daemon_entrypoint
+                save_manifest(path, manifest)
             Path(manifest.install.log_dir).mkdir(parents=True, exist_ok=True)
             token_file = Path(manifest.install.token_file)
             token_file.parent.mkdir(parents=True, exist_ok=True)
@@ -91,7 +119,7 @@ def install_bootstrap(daemon_home: Path) -> Path:
         install=InstallRecord(
             bootstrap_type="scheduled_task",
             bootstrap_id="traild-user",
-            daemon_entrypoint="trail.daemon.server:main",
+            daemon_entrypoint=_daemon_entrypoint(),
             manifest_version=1,
             protocol_version=PROTOCOL_VERSION,
             token_file=str(token_file),
