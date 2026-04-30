@@ -1,6 +1,7 @@
 import json
 import socket
 import threading
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1120,6 +1121,174 @@ def test_command_service_cw_portal_select_omits_blank_operation_guide_skill_info
 
     assert response["ok"] is True
     assert "skill_info" not in response["data"]
+
+
+def test_command_service_cw_portal_select_auto_collects_equipment_before_shop(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    events: list[str] = []
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": _complete_cw_guide_fixture(operation_guide="前期 先读图"),
+        "constraints": _complete_cw_constraints_fixture(),
+        "portal": {"cards": [{"card_idx": 1, "portal_title": "A"}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    service.save_session(session)
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional
+            return tmp_path / ".trail" / "shots" / f"{request_id}.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    monkeypatch.setattr("trail.daemon.cw_service.select_cw_portal", lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": "A"})
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
+    monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+    _patch_cw_portal_select_auto_collect_success(monkeypatch, events)
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=CwService(runtime_service=runtime_service))
+
+    response = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-portal-select-equipment",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.portal.select",
+            payload={"session_id": session.session_id, "card_idx": 1},
+        )
+    )
+
+    assert response["ok"] is True
+    assert events.index("slots.read") < events.index("equipment.read") < events.index("shop.open")
+    assert response["data"]["equipment"]["stale"] is False
+    assert response["data"]["equipment"]["items"][0]["name"] == "基础装甲"
+    persisted = service.load_session(session.session_id).scene_state["cw"]["equipment"]
+    assert persisted["stale"] is False
+    assert persisted["items"][0]["name"] == "基础装甲"
+
+
+def test_command_service_cw_portal_select_equipment_failure_is_soft_warning_and_stales_old_snapshot(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    events: list[str] = []
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": _complete_cw_guide_fixture(operation_guide=""),
+        "constraints": _complete_cw_constraints_fixture(),
+        "portal": {"cards": [{"card_idx": 1, "portal_title": "A"}], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+        "equipment": {"items": [{"pos": "equipment:1", "name": "旧装备"}], "stale": False},
+    }
+    service.save_session(session)
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional
+            return tmp_path / ".trail" / "shots" / f"{request_id}.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    def fail_equipment(session, runtime, workspace_root=None):
+        del session, runtime, workspace_root
+        events.append("equipment.read")
+        raise TrailError("CW_EQUIPMENT_LAYOUT_MISMATCH", "equipment grid requires canonical 1920x1080 screenshot")
+
+    monkeypatch.setattr("trail.daemon.cw_service.select_cw_portal", lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": "A"})
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
+    monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+    _patch_cw_portal_select_auto_collect_success(monkeypatch, events)
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_equipment_read", fail_equipment)
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=CwService(runtime_service=runtime_service))
+
+    response = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-portal-select-equipment-fail",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.portal.select",
+            payload={"session_id": session.session_id, "card_idx": 1},
+        )
+    )
+
+    assert response["ok"] is True
+    assert "equipment" not in response["data"]
+    assert "shop" in response["data"]
+    warning = next(warning for warning in response["warnings"] if warning["code"] == "CW_EQUIPMENT_AUTO_COLLECT_FAILED")
+    assert warning["message"] == "equipment grid requires canonical 1920x1080 screenshot"
+    assert warning["detail_code"] == "CW_EQUIPMENT_LAYOUT_MISMATCH"
+    assert events.index("equipment.read") < events.index("shop.open")
+    persisted = service.load_session(session.session_id).scene_state["cw"]["equipment"]
+    assert persisted["stale"] is True
+    assert persisted["items"] == [{"pos": "equipment:1", "name": "旧装备"}]
+
+
+def test_cw_portal_select_preserves_numeric_zero_equipment_freshness(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "guide": _complete_cw_guide_fixture(operation_guide=""),
+        "constraints": _complete_cw_constraints_fixture(),
+    }
+    service.save_session(session)
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional
+            return tmp_path / ".trail" / "shots" / f"{request_id}.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    def fake_select(session, *, runtime, card_idx: int, guide: dict, workspace_root: str | None = None):
+        del runtime, guide, workspace_root
+        snapshot = {"items": [{"pos": "equipment:1", "name": "基础装甲"}], "stale": 0}
+        session.scene_state.setdefault("cw", {})["equipment"] = deepcopy(snapshot)
+        return {"card_idx": card_idx, "portal_title": "A", "equipment": deepcopy(snapshot)}
+
+    monkeypatch.setattr("trail.daemon.cw_service._select_portal_and_apply_selected_guide", fake_select)
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
+    payload = CwService(runtime_service=runtime_service).handle_mutation(
+        method="cw.portal.select",
+        payload={"session_id": session.session_id, "card_idx": 1},
+        workspace_root=str(tmp_path),
+        session_service=service,
+        request_id="req-cw-portal-select-equipment-zero-stale",
+        verbose=False,
+    )
+
+    assert payload["ok"] is True
+    assert payload["data"]["equipment"]["stale"] == 0
+    persisted = service.load_session(session.session_id).scene_state["cw"]["equipment"]
+    assert persisted["stale"] == 0
+    assert persisted["items"] == [{"pos": "equipment:1", "name": "基础装甲"}]
 
 
 def test_command_service_start_run_returns_status_and_window_facts(tmp_path: Path):
@@ -4629,6 +4798,36 @@ def _patch_cw_portal_select_auto_collect_success(monkeypatch, events: list[str],
         }
         return session
 
+    def fake_apply_equipment(session, runtime, workspace_root=None):
+        del runtime
+        assert workspace_root is not None
+        events.append("equipment.read")
+        snapshot = {
+            "count": 1,
+            "uncertain": 0,
+            "empty": 59,
+            "backend": "vector",
+            "layout": "default",
+            "items": [{"pos": "equipment:1", "name": "基础装甲", "score": 0.9, "uncertain": False}],
+            "recommendations": {
+                "priority": [
+                    {
+                        "idx": 1,
+                        "name": "高周波电锯",
+                        "basics": [],
+                        "required_roles": ["希儿"],
+                        "acquired_roles": [],
+                        "missing_roles": ["希儿"],
+                    }
+                ],
+                "role_missing": [{"pos": "front:1", "role": "希儿", "equipment": "高周波电锯", "category": "优选"}],
+                "todos": [],
+            },
+            "stale": False,
+        }
+        session.scene_state.setdefault("cw", {})["equipment"] = deepcopy(snapshot)
+        return snapshot
+
     def fake_scan_shop(session, scanner, guide_config=None):
         assert scanner == "page-reader"
         assert guide_config == {"roles": [], "traits": []}
@@ -4667,6 +4866,7 @@ def _patch_cw_portal_select_auto_collect_success(monkeypatch, events: list[str],
         lambda runtime, **kwargs: events.append(f"slots.reader({kwargs})") or "slots-reader",
     )
     monkeypatch.setattr("trail.daemon.cw_service.read_cw_slots", fake_read_slots)
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_equipment_read", fake_apply_equipment)
     monkeypatch.setattr("trail.daemon.cw_service.open_cw_shop", lambda session, opener: events.append("shop.open") or session)
     monkeypatch.setattr("trail.daemon.cw_service.shop_page_snapshot_reader_factory", lambda runtime, **kwargs: "page-reader")
     monkeypatch.setattr("trail.daemon.cw_service.scan_cw_shop", fake_scan_shop)
@@ -4840,22 +5040,21 @@ def test_command_service_handles_cw_portal_select_and_auto_applies_selected_guid
     payload = command_service.handle(request)
 
     assert payload["ok"] is True
-    assert payload["data"] == {
-        "card_idx": 2,
-        "portal_title": "Beta",
-        "portal_description": "Desc",
-        "score": 0.88,
-        "skill_info": [{"name": "运营思路", "text": "前期按测试运营"}],
-        "crystals": {"last_crystal_collection": "done"},
-        "slots": {"front": [{"name": "希儿"}], "back": [], "hand": [], "stale": False},
-        "shop": {
-            "opened": True,
-            "stale": False,
-            "items": [{"slot": 1, "name": "银狼", "price": 20}],
-            "coins": 40,
-            "reserve_full": False,
-            "stage_status_stale": True,
-        },
+    data = payload["data"]
+    assert data["card_idx"] == 2
+    assert data["portal_title"] == "Beta"
+    assert data["portal_description"] == "Desc"
+    assert data["score"] == 0.88
+    assert data["skill_info"] == [{"name": "运营思路", "text": "前期按测试运营"}]
+    assert data["crystals"] == {"last_crystal_collection": "done"}
+    assert data["slots"] == {"front": [{"name": "希儿"}], "back": [], "hand": [], "stale": False}
+    assert data["shop"] == {
+        "opened": True,
+        "stale": False,
+        "items": [{"slot": 1, "name": "银狼", "price": 20}],
+        "coins": 40,
+        "reserve_full": False,
+        "stage_status_stale": True,
     }
     assert events[-2:] == ["shop.project", "shop.close"]
     assert payload["screenshot"] == ".trail/shots/req-cw-portal-select.png"
@@ -4973,6 +5172,20 @@ def test_cw_portal_select_preserves_auto_collect_response_diagnostics_and_promot
             },
         )
 
+    def fake_apply_equipment(session, runtime, workspace_root=None):
+        del runtime, workspace_root
+        snapshot = {
+            "count": 0,
+            "uncertain": 0,
+            "empty": 60,
+            "backend": "vector",
+            "layout": "default",
+            "items": [],
+            "stale": False,
+        }
+        session.scene_state.setdefault("cw", {})["equipment"] = deepcopy(snapshot)
+        return snapshot
+
     monkeypatch.setattr(
         "trail.daemon.cw_service.select_cw_portal",
         lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88},
@@ -4984,6 +5197,7 @@ def test_cw_portal_select_preserves_auto_collect_response_diagnostics_and_promot
     monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {"roles": [], "traits": []})
     monkeypatch.setattr("trail.daemon.cw_service.slots_reader_factory", lambda runtime, **kwargs: "slots-reader")
     monkeypatch.setattr("trail.daemon.cw_service.read_cw_slots", fake_read_slots)
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_equipment_read", fake_apply_equipment)
     monkeypatch.setattr("trail.daemon.cw_service.open_cw_shop", lambda session, opener: session)
     monkeypatch.setattr("trail.daemon.cw_service.shop_page_snapshot_reader_factory", lambda runtime, **kwargs: "page-reader")
     monkeypatch.setattr("trail.daemon.cw_service.scan_cw_shop", fake_scan_shop)

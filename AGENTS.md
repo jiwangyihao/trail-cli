@@ -20,8 +20,8 @@
 - 带截图的 success 结果在 `shot path=...` 之后必须紧跟 `info read_image_first=1`，提示 Agent 先读本次原始截图，再消费后续压缩文本。
 - envelope 顶层若带 `screenshot`，同步生成 `image_guidance.read_image_first=1`；该元数据只存在于 envelope 顶层，不下沉到命令 `data`。
 - 标题行不承载 must-keep 事实，不输出 `key=value`；所有业务事实仍必须落在既有 allowed prefixes 的实体行中。
-- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；当前新增固定标题包括 `# 装备优先级`、`# 角色装备需求`；新增标题必须同步更新 renderer、skills 与测试；只有影响普通安装、用户入口或公开定位时才更新根目录 `README.md`。
-- `# 装备优先级` 与 `# 角色装备需求` 只用于分组，不承载 must-keep 事实；相关事实仍必须落在 `guide`、`slot` 或 `info` 行中。
+- 首批固定标题为 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息`；当前新增固定标题包括 `# 装备信息`、`# 装备优先级`、`# 角色装备需求`；新增标题必须同步更新 renderer、skills 与测试；只有影响普通安装、用户入口或公开定位时才更新根目录 `README.md`。
+- `# 装备信息`、`# 装备优先级` 与 `# 角色装备需求` 只用于分组，不承载 must-keep 事实；装备背包事实仍必须落在 `item` 或 `info` 行中，装备推荐/需求事实仍必须落在 `guide`、`slot` 或 `info` 行中。
 - 失败结果只要带 `request_id`，就必须输出 `request id=<id>` 供恢复或排障使用。
 - 只有结果未知或当前失败显式可恢复时，才输出 `recover action=daemon.request_status request=<id>`。
 - 会影响下一步决策的 `0`、`false`、`count`、`more`、`tainted` 不能因为“看起来为空”而省略。
@@ -87,13 +87,15 @@
 - `cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`；`待收集` 必须统一编码为 `0/1`，即使为 `0` 也不能省略。
 - `cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`；`cw.start` / `cw.portal.*` 下挂攻略摘要继续复用 `guide.list.cw` 的中文条目与 `最终阵容` 语义。
 - `cw.portal.select` 若响应 `data.skill_info` 非空，默认正文使用 `info skill_info=运营思路 text=...`；该行属于 success entity/info 行，必须在 `warn`、`ref` 之前输出，不新增正文前缀、不属于 verbose/debug、不进入 YAML allowlist。
-- `cw.portal.select` 成功进入备战页后会自动收集 slots/shop 预备事实：收集水晶、关闭初始槽位面板、读取 slots、打开商店、等待商店稳定、扫描 shop、缓存 slots+shop 并关闭商店。
-- `cw.portal.select` 带截图 success 仍必须先显示 `shot path=...`，`shot path=...` 后必须紧跟 `info read_image_first=1`；Agent 必须先读本次原始截图，不要因为已有 slots/shop 文本就跳过截图。
-- `cw.portal.select` 自动收集后的正文标题顺序固定为按事实存在输出：`# 综合信息` -> `# 攻略提示` -> `# 角色信息` -> `# 羁绊信息` -> `# 商店信息`；标题只分组，不改变事实行前缀。
+- `cw.portal.select` 成功进入备战页后会自动收集 slots/equipment/shop 预备事实：收集水晶、关闭初始槽位面板、读取 slots、确认 slots fresh 后读取 equipment、打开商店、等待商店稳定、扫描 shop、缓存 slots+equipment+shop 并关闭商店。
+- `cw.portal.select` 带截图 success 仍必须先显示 `shot path=...`，`shot path=...` 后必须紧跟 `info read_image_first=1`；Agent 必须先读本次原始截图，不要因为已有 slots/equipment/shop 文本就跳过截图。
+- `cw.portal.select` 自动收集后的正文标题顺序固定为按事实存在输出：`# 综合信息` -> `# 攻略提示` -> `# 角色信息` -> `# 羁绊信息` -> `# 装备信息` -> `# 装备优先级` -> `# 角色装备需求` -> `# 商店信息`；标题只分组，不改变事实行前缀。
 - `cw.portal.select` 的 stage/status 事实固定在 `# 综合信息` 输出，包括 `info stage=... stale=...` 与 `info stage_level/stage_exp/stage_team_size/stage_status_stale`；不要去 `# 商店信息` 下找 stage facts。
 - `cw.portal.select` 若响应 `data.slots` 非空，默认正文在 `info skill_info=运营思路 text=...`（如有）之后复用 `cw.slots.read` 的 `slot` 行与羁绊 `info` 摘要。
+- `cw.portal.select` 若响应 `data.equipment` 非空，默认正文在 `# 装备信息` 下复用装备背包 `item` 与 summary `info`；`# 装备信息` 承载装备背包 `item` 与 summary `info`，装备推荐/需求继续落在 `# 装备优先级` 和 `# 角色装备需求` 下。
 - `cw.portal.select` 若响应 `data.shop` 非空，默认正文在 `# 商店信息` 下复用商店 `item` 行与 `info coins/reserve_full`；`# 商店信息` 只承载商店 `item` 与 `info coins/reserve_full`。
-- `cw.portal.select` 自动收集事实使用已有 `slot`、`item`、`info`、`warn`、`ref` 前缀，不新增正文前缀；`# 综合信息` 下的 stage/status `info`、`info skill_info`、`slot`、羁绊 `info`、商店 `item`、coins/reserve `info` 必须在 `warn`、`ref` 之前输出。
+- `cw.portal.select` 自动收集事实使用已有 `slot`、`item`、`guide`、`info`、`warn`、`ref` 前缀，不新增正文前缀；`# 综合信息` 下的 stage/status `info`、`info skill_info`、`slot`、羁绊 `info`、装备 `item`、装备 summary `info`、装备 `guide/slot/info`、商店 `item`、coins/reserve `info` 必须在 `warn`、`ref` 之前输出。
+- `cw.portal.select` 装备读取失败只作为 `warn code=CW_EQUIPMENT_AUTO_COLLECT_FAILED ...` soft warning，不阻止 shop 收集或 final handoff；若同次返回 fresh `data.equipment.stale=0/False`，renderer 会抑制残留的 auto collect failed warning；stale/无 equipment 时保留 warning。
 - `cw.portal.select` 的首行仍固定为 `ok cw.portal.select idx=... 投资环境=...`；自动收集得到的 shop `opened/stale` 不进入首行，也不作为 body 事实渲染，避免与最终已关闭商店的页面状态冲突。
 - `cw.portal.select` 命中 workflow handoff 时，success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`。
 - `cw.strategy.detect|refresh` success 首行固定为 `ok cw.strategy.<...> cards=<n>`。
@@ -142,7 +144,7 @@
 - `trail-cw-portal` 不是 direct-user 公共入口、不是 scene entry、也不是 owner；它负责 `portal detect/refresh/restart/select` 与环境优先逻辑，若攻略未定则切到 `trail-cw-guide` 的无人值守模式。
 - `trail-cw-prep` 是当前 active internal 的普通备战阶段 skill，只能由 `cw.portal.select` success 后的 workflow handoff 或上游内部阶段切入。
 - `trail-cw-prep` 不是 public scene entry、不是 direct-user、不是 owner；`cw.portal.select` success final handoff 固定指向 `trail-cw-prep`。
-- `trail-cw-prep` 接收 `cw.portal.select` handoff 时，应先读截图并消费该响应自动收集的 slots/shop/stage facts；只有事实缺失、stale 或页面已变化时才重跑 slots/shop 扫描。
+- `trail-cw-prep` 接收 `cw.portal.select` handoff 时，应先读截图并消费该响应自动收集的 stage/slots/equipment/shop facts；只有事实缺失、stale 或页面已变化时才重跑 slots/equipment/shop 扫描。
 - 只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口出现在 active 文档与测试中。
 - 当命令 success 输出 `info handoff_skill=... handoff_strength=strong ...` 时，Agent 应把它视为推荐的下一步 skill 切换信号；当前固定映射包括 `cw.enter -> trail-cw-entry` 与 `cw.portal.select -> trail-cw-prep`。
 - `AGENTS.md` 的 active 拓扑说明不得出现 archive skill 名称或 legacy 场景 skill 名称。

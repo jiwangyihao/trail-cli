@@ -112,6 +112,20 @@ def _append_warnings(lines: list[str], payload: dict[str, Any]) -> None:
         )
 
 
+def _without_warnings_code(payload: dict[str, Any], code: str) -> dict[str, Any]:
+    warnings = payload.get("warnings")
+    if not isinstance(warnings, list):
+        return payload
+    filtered_warnings = [
+        warning
+        for warning in warnings
+        if not (isinstance(warning, dict) and warning.get("code") == code)
+    ]
+    if len(filtered_warnings) == len(warnings):
+        return payload
+    return {**payload, "warnings": filtered_warnings}
+
+
 def _append_role_match_warning(lines: list[str], warning: dict[str, Any]) -> bool:
     code = warning.get("code")
     if code not in {"CW_ROLE_MATCH_LOW_CONFIDENCE", "CW_ROLE_MATCH_AMBIGUOUS", "CW_ROLE_MATCH_FUZZY"}:
@@ -847,8 +861,20 @@ def _render_cw_portal_select(command: str, payload: dict[str, Any]) -> list[str]
     _append_skill_info_section(lines, data)
     _append_cw_slot_section(lines, slots)
     _append_cw_trait_section(lines, slots)
+    equipment = _as_dict(data.get("equipment"))
+    _append_cw_equipment_section(lines, equipment)
     _append_cw_shop_section(lines, shop)
-    _append_warnings(lines, payload)
+    _append_cw_equipment_low_confidence_warning(lines, equipment)
+    equipment_stale = equipment.get("stale")
+    equipment_is_fresh = equipment_stale is False or (
+        type(equipment_stale) in (int, float) and equipment_stale == 0
+    )
+    warning_payload = (
+        _without_warnings_code(payload, "CW_EQUIPMENT_AUTO_COLLECT_FAILED")
+        if equipment_is_fresh
+        else payload
+    )
+    _append_warnings(lines, warning_payload)
     _append_references(lines, payload)
     return lines
 
@@ -1261,6 +1287,88 @@ def _append_cw_equipment_recommendation_lines(lines: list[str], data: dict[str, 
             _append_fact_line(lines, "info", ("todo", todo))
 
 
+def _append_cw_equipment_item_lines(lines: list[str], data: dict[str, Any]) -> None:
+    for item in _as_list(data.get("items")):
+        if not isinstance(item, dict):
+            continue
+        uncertain = _cw_equipment_item_uncertain(item)
+        line = "item"
+        head = _format_fact_sequence(("pos", item.get("pos")))
+        if head:
+            line += f" {head}"
+        center = _format_center(item.get("center"))
+        if center is not None:
+            line += f" center={center}"
+        facts = _format_fact_sequence(
+            ("name", item.get("name")),
+            ("score", _format_score_value(item.get("score"))),
+            ("uncertain", uncertain),
+        )
+        if facts:
+            line += f" {facts}"
+        if uncertain is True:
+            diagnostics = _format_fact_sequence(
+                ("gap", _format_score_value(item.get("gap"))),
+                ("alt", item.get("alt")),
+                ("alt_score", _format_score_value(item.get("alt_score"))),
+            )
+            if diagnostics:
+                line += f" {diagnostics}"
+        lines.append(line)
+
+
+def _append_cw_equipment_lines(lines: list[str], data: dict[str, Any], *, include_summary: bool = False) -> None:
+    _append_cw_equipment_item_lines(lines, data)
+    if include_summary:
+        _append_fact_line(
+            lines,
+            "info",
+            ("count", data.get("count") if "count" in data else 0),
+            ("uncertain", data.get("uncertain") if "uncertain" in data else 0),
+            ("empty", data.get("empty") if "empty" in data else 0),
+            ("backend", data.get("backend")),
+            ("layout", data.get("layout")),
+        )
+    else:
+        _append_fact_line(lines, "info", ("backend", data.get("backend")), ("layout", data.get("layout")))
+    _append_cw_equipment_recommendation_lines(lines, data)
+
+
+def _cw_equipment_item_uncertain(item: dict[str, Any]) -> bool | None:
+    if "uncertain" not in item:
+        return None
+    return bool(item.get("uncertain"))
+
+
+def _cw_equipment_uncertain_count(data: dict[str, Any]) -> int:
+    uncertain_count = _coerce_int(data.get("uncertain")) or 0
+    if uncertain_count > 0:
+        return uncertain_count
+    return sum(
+        1
+        for item in _as_list(data.get("items"))
+        if isinstance(item, dict) and _cw_equipment_item_uncertain(item) is True
+    )
+
+
+def _append_cw_equipment_low_confidence_warning(lines: list[str], data: dict[str, Any]) -> None:
+    uncertain_count = _cw_equipment_uncertain_count(data)
+    if uncertain_count <= 0:
+        return
+    lines.append(
+        "warn "
+        + _format_fact_sequence(("code", "LOW_CONFIDENCE"), ("count", uncertain_count))
+        + f" msg={_quote('装备图标低置信，请先看截图确认')}"
+    )
+
+
+def _append_cw_equipment_section(lines: list[str], data: dict[str, Any]) -> None:
+    if not data:
+        return
+    _append_section(lines, "装备信息")
+    _append_cw_equipment_lines(lines, data, include_summary=True)
+
+
 def _render_cw_equipment_read(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     lines = [
@@ -1274,41 +1382,8 @@ def _render_cw_equipment_read(command: str, payload: dict[str, Any]) -> list[str
         )
     ]
     _append_success_capture_block(lines, payload)
-    for item in _as_list(data.get("items")):
-        if not isinstance(item, dict):
-            continue
-        line = "item"
-        head = _format_fact_sequence(("pos", item.get("pos")))
-        if head:
-            line += f" {head}"
-        center = _format_center(item.get("center"))
-        if center is not None:
-            line += f" center={center}"
-        facts = _format_fact_sequence(
-            ("name", item.get("name")),
-            ("score", _format_score_value(item.get("score"))),
-            ("uncertain", bool(item.get("uncertain")) if "uncertain" in item else None),
-        )
-        if facts:
-            line += f" {facts}"
-        if item.get("uncertain") is True:
-            diagnostics = _format_fact_sequence(
-                ("gap", _format_score_value(item.get("gap"))),
-                ("alt", item.get("alt")),
-                ("alt_score", _format_score_value(item.get("alt_score"))),
-            )
-            if diagnostics:
-                line += f" {diagnostics}"
-        lines.append(line)
-    _append_fact_line(lines, "info", ("backend", data.get("backend")), ("layout", data.get("layout")))
-    _append_cw_equipment_recommendation_lines(lines, data)
-    uncertain_count = _coerce_int(data.get("uncertain")) or 0
-    if uncertain_count > 0:
-        lines.append(
-            "warn "
-            + _format_fact_sequence(("code", "LOW_CONFIDENCE"), ("count", uncertain_count))
-            + f" msg={_quote('装备图标低置信，请先看截图确认')}"
-        )
+    _append_cw_equipment_lines(lines, data)
+    _append_cw_equipment_low_confidence_warning(lines, data)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines

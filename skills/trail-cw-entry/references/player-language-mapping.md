@@ -9,7 +9,7 @@
 | 上分 | 以积分、晋升点为目标的标准博弈推进 | 确认后通常沿用“提升职级”这一行，再进入 `cw start` |
 | 周常/奖励 | 以更快完成积分奖励为目标的超频博弈 | 先把目标记成 `超频博弈 + lowest`，确认后进入 `cw enter` / `cw start`；需要桥接时再落到 `battle_mode=overclock` + `difficulty=lowest` |
 | 刷周常 / 刷奖励 | 以更快完成积分奖励为目标的超频博弈 | 确认后通常沿用“周常/奖励”这一行，再进入 `cw start` |
-| 羁绊/成就 | 以完成特定羁绊或成就为目标的标准博弈职级难度推进 | 先把目标记成 `标准博弈 + A5-1 + 攻略优先`，确认后优先切到 `trail-cw-guide`，至少先做 `guide.fetch.cw --select --session <id>` 记录当前已选攻略；返回开局链路后由 `cw.portal.select` 成功时自动应用当前已选攻略，`cw.guide.apply` 只作为手动兜底；需要桥接时再记录 `battle_mode=standard` + `difficulty=A5-1` |
+| 羁绊/成就 | 以完成特定羁绊或成就为目标的标准博弈职级难度推进 | 先把目标记成 `标准博弈 + A5-1 + 攻略优先`，确认后优先切到 `trail-cw-guide`，至少先做 `guide.fetch.cw --select --session <id>` 记录当前已选攻略；返回开局链路后由 `cw.portal.select` 成功时自动应用当前已选攻略，并自动收集 stage/slots/equipment/shop 后 handoff 到 `trail-cw-prep`，带截图 success 先读原始截图，`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行；`cw.guide.apply` 只作为手动兜底；需要桥接时再记录 `battle_mode=standard` + `difficulty=A5-1` |
 | 补羁绊 / 补成就 | 以完成特定羁绊或成就为目标的标准博弈推进 | 确认后通常沿用“羁绊/成就”这一行，再进入攻略选择流程；确认候选后同样先执行 `guide.fetch.cw --select --session <id>` |
 | 紫金1 | 紫金 1 层 | 确认后把精确职级难度桥接到 `difficulty=A5-1` |
 | 资本帝王3 | 资本帝王 3 层 | 确认后把精确职级难度桥接到 `difficulty=A7-3` |

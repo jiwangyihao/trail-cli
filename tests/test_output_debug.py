@@ -391,13 +391,13 @@ def test_project_agents_declares_renderer_contracts() -> None:
     assert "guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape" in agents
     assert "cw.portal.select` 若响应 `data.skill_info` 非空，默认正文使用 `info skill_info=运营思路 text=...`" in agents
     assert "必须在 `warn`、`ref` 之前输出" in agents
-    assert "cw.portal.select` 成功进入备战页后会自动收集 slots/shop 预备事实" in agents
+    assert "cw.portal.select` 成功进入备战页后会自动收集 slots/equipment/shop 预备事实" in agents
     assert "（如有）之后复用 `cw.slots.read` 的 `slot` 行与羁绊 `info` 摘要" in agents
     assert "cw.portal.select` 的 stage/status 事实固定在 `# 综合信息` 输出" in agents
     assert "`# 商店信息` 只承载商店 `item` 与 `info coins/reserve_full`" in agents
     assert "复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影" not in agents
     assert "自动收集得到的 shop `opened/stale` 不进入首行，也不作为 body 事实渲染" in agents
-    assert "不要因为已有 slots/shop 文本就跳过截图" in agents
+    assert "不要因为已有 slots/equipment/shop 文本就跳过截图" in agents
     assert "cw.portal.select` 命中 workflow handoff 时，success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`" in agents
     assert "cw.shop.buy_exp` 属于 shop action renderer family" in agents
     assert "team_size=null` 是 must-keep null fact" in agents

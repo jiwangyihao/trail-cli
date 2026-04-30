@@ -1452,50 +1452,81 @@ def test_active_cw_skills_document_prep_handoff_without_direct_user_prep() -> No
 def test_active_cw_skills_document_portal_select_auto_collect_prep_facts() -> None:
     entry_text = CW_ENTRY_SKILL.read_text(encoding="utf-8")
     portal_text = CW_PORTAL_SKILL.read_text(encoding="utf-8")
+    portal_command_text = CW_PORTAL_COMMAND_SURFACE.read_text(encoding="utf-8")
+    guide_text = CW_GUIDE_SKILL.read_text(encoding="utf-8")
+    guide_command_text = CW_GUIDE_COMMAND_SURFACE.read_text(encoding="utf-8")
+    guide_checklist_text = CW_GUIDE_CONFIRMATION_CHECKLIST.read_text(encoding="utf-8")
     prep_text = CW_PREP_SKILL.read_text(encoding="utf-8")
+    prep_command_text = CW_PREP_COMMAND_SURFACE.read_text(encoding="utf-8")
     scene_index_text = SCENE_ENTRY_INDEX.read_text(encoding="utf-8")
-    section_titles = ("# 综合信息", "# 攻略提示", "# 角色信息", "# 羁绊信息", "# 商店信息")
+    section_titles = (
+        "# 综合信息",
+        "# 攻略提示",
+        "# 角色信息",
+        "# 羁绊信息",
+        "# 装备信息",
+        "# 装备优先级",
+        "# 角色装备需求",
+        "# 商店信息",
+    )
+    portal_consumer_texts = (
+        entry_text,
+        portal_text,
+        portal_command_text,
+        guide_text,
+        guide_command_text,
+        guide_checklist_text,
+        prep_text,
+        prep_command_text,
+        scene_index_text,
+    )
 
     assert "不是整局 owner" in entry_text
-    assert "自动收集初始备战 slots/shop 信息" in entry_text
+    assert "自动收集初始备战 stage/slots/equipment/shop facts" in entry_text
     assert "不需要再立即重复扫描相同事实" in entry_text
 
     _assert_text_contains_in_order(
         portal_text,
         "`cw.portal.select` / `portal select --card-idx ...` 成功后",
-        "自动收集水晶、slots/shop/stage 预备事实并关闭商店",
-        "先读 screenshot",
-        "不要手动再跑 slots/shop 初始扫描",
+        "自动收集水晶、stage/slots/equipment/shop 预备事实并关闭商店",
+        "装备读取发生在 slots fresh 后、shop open 前",
+        "先读原始截图",
+        "不要手动再跑 slots/equipment/shop 初始扫描",
         "按 handoff 切到 `trail-cw-prep`",
     )
     assert "recover/taint" in portal_text
     assert "不要继续假设已进入 prep 并操作商店" in portal_text
+    assert "CW_EQUIPMENT_AUTO_COLLECT_FAILED" in portal_text
+    assert "soft warning" in portal_text
 
     _assert_text_contains_in_order(
         prep_text,
-        "若上一条 `cw.portal.select` success 输出含 `slot`、`item` 或 `info stage_` 事实",
+        "若上一条 `cw.portal.select` success 输出含 stage/slots/equipment/shop facts",
         "必须先读截图",
         "制定第一步备战动作",
         "只有事实缺失、stale 或页面已变化时",
-        "才主动调用 `trail cw slots read` 或 `trail cw shop scan`",
+        "才主动调用 `trail cw slots read`、`trail cw equipment read` 或 `trail cw shop scan`",
     )
 
-    assert "自动收集 slots/shop 初始快照" in scene_index_text
+    assert "自动收集 stage/slots/equipment/shop 初始快照" in scene_index_text
     assert "不会改变 `trail-cw-prep` 的 internal 身份" in scene_index_text
     assert "cw.portal.select -> trail-cw-prep" in scene_index_text
     assert "`# ` headings 只是默认文本分组" in scene_index_text
     assert "不参与路由/事实判断" in scene_index_text
 
-    for skill_text in (entry_text, portal_text, prep_text):
-        assert "先读截图" in skill_text
-        assert "`# ` 行只是板块标题" in skill_text
-        assert "不是事实行" in skill_text
-        assert "不要当作 action/prefix" in skill_text
-        assert "读完截图后，再消费这些标题下的事实" in skill_text
+    for skill_text in portal_consumer_texts:
+        assert "stage/slots/equipment/shop" in skill_text
+        assert "先读" in skill_text and "截图" in skill_text
+        assert "`# ` 行只是板块标题" in skill_text or "`# ` headings 只是默认文本分组" in skill_text
+        assert "action/prefix/fact" in skill_text or "不参与路由/事实判断" in skill_text
+        assert "Agent 只消费实体行" in skill_text or "不要把" in skill_text
+        assert "trail-cw-prep" in skill_text
         for title in section_titles:
             assert title in skill_text
 
     assert "接收 `cw.portal.select` handoff 时，优先复用该响应中标题下 facts" in prep_text
+    assert "优先复用同次 equipment facts" in prep_text
+    assert "缺失/stale/page changed 时才重跑 `cw.equipment.read`" in prep_text
     assert "只有缺失、stale 或页面变化才重扫" in prep_text
 
 

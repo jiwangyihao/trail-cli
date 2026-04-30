@@ -6,7 +6,7 @@ from time import sleep
 
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
-from trail.core.jsonable import format_exception_detail, to_jsonable
+from trail.core.jsonable import format_exception_detail, format_exception_message, to_jsonable
 from trail.daemon.command_timeouts import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS, resolve_command_execution_timeout
 from trail.daemon.command_service import PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
 from trail.output.capture import with_auto_capture, with_selective_capture
@@ -380,7 +380,8 @@ class CwService:
                 raise
 
             result, scene_warnings = _pop_scene_warnings(result)
-            _mark_cw_equipment_stale(session)
+            if not _has_fresh_portal_select_equipment(method, result):
+                _mark_cw_equipment_stale(session)
 
             try:
                 session_service.save_session(session)
@@ -713,6 +714,27 @@ def _mark_cw_equipment_stale(session) -> None:
         equipment["stale"] = True
 
 
+def _cw_equipment_auto_collect_warning(error: Exception) -> dict:
+    warning = {
+        "code": "CW_EQUIPMENT_AUTO_COLLECT_FAILED",
+        "message": format_exception_message(error),
+    }
+    detail_code = getattr(error, "code", None)
+    if isinstance(detail_code, str) and detail_code:
+        warning["detail_code"] = detail_code
+    return warning
+
+
+def _has_fresh_portal_select_equipment(method: str, result: object) -> bool:
+    if method != "cw.portal.select" or not isinstance(result, dict):
+        return False
+    equipment = result.get("equipment")
+    if not isinstance(equipment, dict):
+        return False
+    stale = equipment.get("stale")
+    return stale is False or (type(stale) in (int, float) and stale == 0)
+
+
 def _pop_scene_warnings(data: object) -> tuple[object, list[dict]]:
     if not isinstance(data, dict):
         return data, []
@@ -840,6 +862,14 @@ def _select_portal_and_apply_selected_guide(
     )
     slots_snapshot = _response_snapshot_or_fallback(slots_result, ensure_cw_state(session).get("slots") or {})
     slot_warnings = _pop_response_snapshot_warnings(slots_snapshot)
+    equipment_snapshot = None
+    equipment_warnings: list[dict] = []
+    try:
+        equipment_snapshot = deepcopy(
+            apply_cw_equipment_read(session, runtime, workspace_root=workspace_root)
+        )
+    except Exception as error:
+        equipment_warnings.append(_cw_equipment_auto_collect_warning(error))
     open_cw_shop(session, opener=shop_opener_factory(runtime))
     sleep(SHOP_SCAN_OPEN_SETTLE_SECONDS)
     shop_result = scan_cw_shop(
@@ -854,8 +884,10 @@ def _select_portal_and_apply_selected_guide(
     close_cw_shop(session, closer=shop_closer_factory(runtime))
     selected_data["crystals"] = deepcopy(ensure_cw_state(session).get("metrics") or {})
     selected_data["slots"] = slots_snapshot
+    if equipment_snapshot is not None:
+        selected_data["equipment"] = deepcopy(equipment_snapshot)
     selected_data["shop"] = shop_snapshot
-    response_warnings = [*slot_warnings, *shop_warnings]
+    response_warnings = [*slot_warnings, *equipment_warnings, *shop_warnings]
     if response_warnings:
         selected_data["warnings"] = [*deepcopy(selected_data.get("warnings") or []), *response_warnings]
     return selected_data

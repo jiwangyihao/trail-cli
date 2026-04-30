@@ -1915,6 +1915,11 @@ def test_cw_portal_select_help_mentions_selected_guide_auto_apply(cli_runner):
     assert "guide.fetch.cw --select" in normalized
     assert "未记录则会在点击前失败" in normalized
     assert "成功后会自动应用当前已选攻略" in normalized
+    assert "自动收集" in normalized
+    assert "stage/slots/equipment/shop" in normalized
+    assert "装备失败" in normalized
+    assert "soft warning" in normalized
+    assert "handoff" in normalized
     assert "手动兜底" not in normalized
 
 

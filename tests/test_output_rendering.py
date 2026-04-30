@@ -345,17 +345,26 @@ def test_agents_document_cw_portal_select_auto_collect_contract() -> None:
     _assert_text_contains_in_order(
         agents,
         "`cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`",
-        "`cw.portal.select` 成功进入备战页后会自动收集 slots/shop 预备事实",
+        "`cw.portal.select` 成功进入备战页后会自动收集 slots/equipment/shop 预备事实",
+        "读取 slots、确认 slots fresh 后读取 equipment、打开商店",
         "`shot path=...` 后必须紧跟 `info read_image_first=1`",
+        "`# 综合信息` -> `# 攻略提示` -> `# 角色信息` -> `# 羁绊信息` -> `# 装备信息` -> `# 装备优先级` -> `# 角色装备需求` -> `# 商店信息`",
         "stage/status 事实固定在 `# 综合信息` 输出",
         "`info skill_info=运营思路 text=...`",
         "（如有）之后复用 `cw.slots.read` 的 `slot` 行与羁绊 `info` 摘要",
+        "`# 装备信息` 承载装备背包 `item` 与 summary `info`",
+        "装备推荐/需求继续落在 `# 装备优先级` 和 `# 角色装备需求` 下",
         "`# 商店信息` 只承载商店 `item` 与 `info coins/reserve_full`",
         "`warn`、`ref` 之前输出",
         "success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`",
     )
     assert "自动收集得到的 shop `opened/stale` 不进入首行，也不作为 body 事实渲染" in agents
-    assert "不要因为已有 slots/shop 文本就跳过截图" in agents
+    assert "不要因为已有 slots/equipment/shop 文本就跳过截图" in agents
+    assert "warn code=CW_EQUIPMENT_AUTO_COLLECT_FAILED" in agents
+    assert "不阻止 shop 收集或 final handoff" in agents
+    assert "fresh `data.equipment.stale=0/False`" in agents
+    assert "抑制残留的 auto collect failed warning" in agents
+    assert "stale/无 equipment 时保留 warning" in agents
     assert "复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影" not in agents
 
 
@@ -3255,6 +3264,273 @@ def test_portal_select_renders_collected_slots_and_shop_before_warn_ref_and_hand
     ]
     assert lines[-1].startswith("info handoff_skill=trail-cw-prep ")
     assert not any(" opened=" in line or " stale=" in line for line in lines if not line.startswith("info stage="))
+
+
+def test_portal_select_renders_collected_equipment_between_traits_and_shop() -> None:
+    payload = {
+        "ok": True,
+        "screenshot": ".trail/shots/portal-prep.png",
+        "data": {
+            "card_idx": 1,
+            "portal_title": "击破概念股",
+            "slots": {
+                "front": [{"name": "希儿", "star": 1, "traits": ["巡猎"]}],
+                "back": [],
+                "hand": [],
+                "stage": "preparation",
+                "stage_stale": False,
+                "trait_summary": [
+                    {
+                        "trait": "巡猎",
+                        "tiers": [1, 2],
+                        "owned_roles": 1,
+                        "active_tier": 1,
+                        "total_tiers": 2,
+                        "ratio": 0.5,
+                    }
+                ],
+            },
+            "equipment": {
+                "stale": False,
+                "count": 1,
+                "uncertain": 0,
+                "empty": 59,
+                "backend": "vector",
+                "layout": "default",
+                "items": [
+                    {
+                        "pos": "equipment:1",
+                        "center": {"x": 100, "y": 200},
+                        "name": "基础装甲",
+                        "score": 0.9,
+                        "uncertain": False,
+                    }
+                ],
+                "recommendations": {
+                    "priority": [
+                        {
+                            "idx": 1,
+                            "name": "高周波电锯",
+                            "known": True,
+                            "basics": [
+                                {"name": "基础装甲", "have": 1, "need": 1},
+                                {"name": "光能电池", "have": 0, "need": 1},
+                            ],
+                            "required_roles": ["希儿"],
+                            "acquired_roles": [],
+                            "missing_roles": ["希儿"],
+                        }
+                    ],
+                    "role_missing": [
+                        {"pos": "front:1", "role": "希儿", "equipment": "高周波电锯", "category": "优选"}
+                    ],
+                    "todos": [],
+                },
+            },
+            "shop": {
+                "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                "coins": 40,
+                "reserve_full": False,
+                "stage_status": {"level": 3, "exp": "0/8", "team_size": "1/2", "stale": False},
+                "stage_status_stale": False,
+            },
+        },
+        "warnings": [],
+        "references": [],
+    }
+
+    assert render_output("cw.portal.select", payload).splitlines() == [
+        "ok cw.portal.select idx=1 投资环境=击破概念股",
+        "shot path=.trail/shots/portal-prep.png",
+        "info read_image_first=1",
+        "# 综合信息",
+        "info stage=preparation stale=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        "# 角色信息",
+        "slot pos=front:1 name=希儿 star=1 traits=巡猎",
+        "# 羁绊信息",
+        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+        "# 装备信息",
+        "item pos=equipment:1 center=100,200 name=基础装甲 score=0.90 uncertain=0",
+        "info count=1 uncertain=0 empty=59 backend=vector layout=default",
+        "# 装备优先级",
+        "guide idx=1 装备=高周波电锯 基础装备=基础装甲:1/1|光能电池:0/1 需求角色=希儿 已获取数=0 未获取数=1 未获取角色=希儿",
+        "# 角色装备需求",
+        "slot pos=front:1 name=希儿 装备=高周波电锯 分类=优选",
+        "# 商店信息",
+        "item idx=1 slot=1 name=银狼 cost=20",
+        "info coins=40 reserve_full=0",
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+
+
+def test_portal_select_equipment_auto_collect_soft_failure_renders_only_warning() -> None:
+    payload = {
+        "ok": True,
+        "data": {
+            "card_idx": 1,
+            "portal_title": "击破概念股",
+            "shop": {"items": [{"slot": 1, "name": "银狼", "price": 20}]},
+        },
+        "warnings": [
+            {"code": "CW_EQUIPMENT_AUTO_COLLECT_FAILED", "message": "equipment read failed"},
+        ],
+        "references": [],
+    }
+
+    lines = render_output("cw.portal.select", payload).splitlines()
+
+    assert lines == [
+        "ok cw.portal.select idx=1 投资环境=击破概念股",
+        "# 商店信息",
+        "item idx=1 slot=1 name=银狼 cost=20",
+        'warn code=CW_EQUIPMENT_AUTO_COLLECT_FAILED msg="equipment read failed"',
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+    assert "# 装备信息" not in lines
+    assert "# 装备优先级" not in lines
+    assert "# 角色装备需求" not in lines
+    assert lines[-1].startswith("info handoff_skill=trail-cw-prep ")
+
+
+def test_portal_select_collected_equipment_low_confidence_warns_without_auto_collect_failure() -> None:
+    payload = {
+        "ok": True,
+        "data": {
+            "card_idx": 1,
+            "portal_title": "击破概念股",
+            "equipment": {
+                "stale": False,
+                "count": 1,
+                "uncertain": 0,
+                "empty": 59,
+                "backend": "vector",
+                "layout": "default",
+                "items": [
+                    {
+                        "pos": "equipment:1",
+                        "center": {"x": 100, "y": 200},
+                        "name": "基础装甲",
+                        "score": 0.78,
+                        "uncertain": 1,
+                        "gap": 0.03,
+                        "alt": "光能电池",
+                        "alt_score": 0.75,
+                    }
+                ],
+            },
+        },
+        "warnings": [
+            {"code": "CW_EQUIPMENT_AUTO_COLLECT_FAILED", "message": "stale equipment warning"},
+            {"code": "W", "message": "keep this warning"},
+        ],
+        "references": [],
+    }
+
+    lines = render_output("cw.portal.select", payload).splitlines()
+
+    assert lines == [
+        "ok cw.portal.select idx=1 投资环境=击破概念股",
+        "# 装备信息",
+        "item pos=equipment:1 center=100,200 name=基础装甲 score=0.78 uncertain=1 gap=0.03 alt=光能电池 alt_score=0.75",
+        "info count=1 uncertain=0 empty=59 backend=vector layout=default",
+        'warn code=LOW_CONFIDENCE count=1 msg="装备图标低置信，请先看截图确认"',
+        'warn code=W msg="keep this warning"',
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+    assert not any("CW_EQUIPMENT_AUTO_COLLECT_FAILED" in line for line in lines)
+    assert lines[-1].startswith("info handoff_skill=trail-cw-prep ")
+
+
+def test_portal_select_numeric_fresh_equipment_suppresses_auto_collect_failed_warning() -> None:
+    payload = {
+        "ok": True,
+        "data": {
+            "card_idx": 1,
+            "portal_title": "击破概念股",
+            "equipment": {
+                "stale": 0,
+                "count": 1,
+                "uncertain": 0,
+                "empty": 59,
+                "backend": "vector",
+                "layout": "default",
+                "items": [
+                    {
+                        "pos": "equipment:1",
+                        "center": {"x": 100, "y": 200},
+                        "name": "基础装甲",
+                        "score": 0.78,
+                        "uncertain": 1,
+                        "gap": 0.03,
+                        "alt": "光能电池",
+                        "alt_score": 0.75,
+                    }
+                ],
+            },
+        },
+        "warnings": [
+            {"code": "CW_EQUIPMENT_AUTO_COLLECT_FAILED", "message": "stale equipment warning"},
+            {"code": "W", "message": "keep this warning"},
+        ],
+        "references": [],
+    }
+
+    lines = render_output("cw.portal.select", payload).splitlines()
+
+    assert lines == [
+        "ok cw.portal.select idx=1 投资环境=击破概念股",
+        "# 装备信息",
+        "item pos=equipment:1 center=100,200 name=基础装甲 score=0.78 uncertain=1 gap=0.03 alt=光能电池 alt_score=0.75",
+        "info count=1 uncertain=0 empty=59 backend=vector layout=default",
+        'warn code=LOW_CONFIDENCE count=1 msg="装备图标低置信，请先看截图确认"',
+        'warn code=W msg="keep this warning"',
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+    assert not any("CW_EQUIPMENT_AUTO_COLLECT_FAILED" in line for line in lines)
+
+
+def test_portal_select_stale_equipment_keeps_auto_collect_failed_warning() -> None:
+    payload = {
+        "ok": True,
+        "data": {
+            "card_idx": 1,
+            "portal_title": "击破概念股",
+            "equipment": {
+                "stale": True,
+                "count": 1,
+                "uncertain": 0,
+                "empty": 59,
+                "backend": "vector",
+                "layout": "default",
+                "items": [
+                    {
+                        "pos": "equipment:1",
+                        "center": {"x": 100, "y": 200},
+                        "name": "基础装甲",
+                        "score": 0.90,
+                        "uncertain": False,
+                    }
+                ],
+            },
+        },
+        "warnings": [
+            {"code": "CW_EQUIPMENT_AUTO_COLLECT_FAILED", "message": "equipment read failed"},
+        ],
+        "references": [],
+    }
+
+    lines = render_output("cw.portal.select", payload).splitlines()
+
+    assert lines == [
+        "ok cw.portal.select idx=1 投资环境=击破概念股",
+        "# 装备信息",
+        "item pos=equipment:1 center=100,200 name=基础装甲 score=0.90 uncertain=0",
+        "info count=1 uncertain=0 empty=59 backend=vector layout=default",
+        'warn code=CW_EQUIPMENT_AUTO_COLLECT_FAILED msg="equipment read failed"',
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+    assert lines[-1].startswith("info handoff_skill=trail-cw-prep ")
 
 
 def test_portal_select_status_projection_falls_back_to_slots_when_shop_status_stale() -> None:

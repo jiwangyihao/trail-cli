@@ -479,6 +479,12 @@ def test_new_skill_topology_is_documented_in_agents() -> None:
     assert "下一步 skill 切换信号" in text
     assert "在 `warn`、`ref` 之后追加一行尾行强提示" in text
     assert "该行必须是 success 输出最后一行" in text
+    assert "stage/slots/equipment/shop facts" in text
+    assert "`# 装备信息`" in text
+    assert "标题行不是正文前缀" in text
+    assert "不得被 Agent 当作 action/prefix 消费" in text
+    assert "trail-cw-prep` 接收 `cw.portal.select` handoff" in text
+    assert "equipment" in text and "只有事实缺失、stale 或页面已变化" in text
     assert "任何 active skill 都不得直接或间接调用 archive skill" in text
     _assert_expected_workflow_handoff_doc_smoke(text)
     _assert_no_legacy_cw_skill_mentions(text)

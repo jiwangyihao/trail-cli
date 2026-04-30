@@ -262,7 +262,26 @@ def test_cw_portal_select_renders_selected_card_summary(cli_runner, fake_daemon_
         {
             "cw.portal.select": build_success_response(
                 request_id="req-cw-portal-select",
-                data={"card_idx": 2, "portal_title": "Beta Portal", "portal_description": "Beta Desc", "score": 0.88},
+                data={
+                    "card_idx": 2,
+                    "portal_title": "Beta Portal",
+                    "portal_description": "Beta Desc",
+                    "score": 0.88,
+                    "equipment": {
+                        "count": 0,
+                        "uncertain": 0,
+                        "empty": 60,
+                        "backend": "vector",
+                        "layout": "default",
+                        "items": [],
+                        "stale": False,
+                    },
+                    "shop": {
+                        "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                        "coins": 40,
+                        "reserve_full": False,
+                    },
+                },
                 screenshot=".trail/shots/req-cw-portal-select.png",
             )
         }
@@ -275,12 +294,61 @@ def test_cw_portal_select_renders_selected_card_summary(cli_runner, fake_daemon_
         'ok cw.portal.select idx=2 投资环境="Beta Portal"',
         screenshot=".trail/shots/req-cw-portal-select.png",
         body=[
+            "# 装备信息",
+            "info count=0 uncertain=0 empty=60 backend=vector layout=default",
+            "# 商店信息",
+            "item idx=1 slot=1 name=银狼 cost=20",
+            "info coins=40 reserve_full=0",
             "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
         ],
     )
+    lines = result.stdout.splitlines()
+    assert "# 装备信息" in lines
+    assert "info count=0 uncertain=0 empty=60 backend=vector layout=default" in lines
+    assert lines.index("# 装备信息") < lines.index("# 商店信息")
     assert result.stdout.rstrip().endswith(
         "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered"
     )
+    _assert_single_call(client, method="cw.portal.select", payload={"card_idx": 2}, tmp_path=tmp_path)
+
+
+def test_cw_portal_select_renders_equipment_warning_shop_and_handoff_last(
+    cli_runner, fake_daemon_client, tmp_path
+):
+    response = build_success_response(
+        request_id="req-cw-portal-select",
+        data={
+            "card_idx": 2,
+            "portal_title": "Beta Portal",
+            "shop": {
+                "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                "coins": 40,
+                "reserve_full": False,
+            },
+        },
+        screenshot=".trail/shots/req-cw-portal-select.png",
+    )
+    response["warnings"] = [
+        {
+            "code": "CW_EQUIPMENT_AUTO_COLLECT_FAILED",
+            "message": "equipment grid requires canonical 1920x1080 screenshot",
+        }
+    ]
+    client = fake_daemon_client({"cw.portal.select": response})
+
+    result = cli_runner.invoke(app, ["cw", "portal", "select", "--session", SESSION_ID, "--card-idx", "2"])
+
+    assert result.exit_code == 0
+    lines = result.stdout.splitlines()
+    warning_line = 'warn code=CW_EQUIPMENT_AUTO_COLLECT_FAILED msg="equipment grid requires canonical 1920x1080 screenshot"'
+    handoff_line = "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered"
+    shop_title_index = lines.index("# 商店信息")
+    shop_item_index = lines.index("item idx=1 slot=1 name=银狼 cost=20")
+    warning_index = lines.index(warning_line)
+
+    assert shop_title_index < warning_index
+    assert shop_item_index < warning_index
+    assert lines[-2:] == [warning_line, handoff_line]
     _assert_single_call(client, method="cw.portal.select", payload={"card_idx": 2}, tmp_path=tmp_path)
 
 

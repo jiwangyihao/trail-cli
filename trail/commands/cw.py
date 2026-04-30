@@ -28,6 +28,8 @@ CW_PORTAL_HELP = (
     "投资环境页上的识别/选择/刷新/重开动作。"
     "detect 重新识别并保存当前三张卡；refresh 点击刷新后生成新的三张卡。"
     "投资环境卡片会输出 投资环境、说明、待收集、score，以及下挂攻略摘要。"
+    "select 成功后会自动应用当前已选攻略，并自动收集 stage/slots/equipment/shop 预备事实；"
+    "装备失败（装备读取失败）会作为 soft warning 返回，不改变 cw.portal.select -> trail-cw-prep handoff。"
 )
 CW_STRATEGY_HELP = (
     "局内投资策略页的识别/选择/单卡刷新动作。"
@@ -192,7 +194,12 @@ def cw_start(
 
 @portal_app.command(
     "select",
-    help="选择当前投资环境页上的一张卡；必须先用 guide.fetch.cw --select 记录当前已选攻略，未记录则会在点击前失败；成功后会自动应用当前已选攻略。",
+    help=(
+        "自动收集 stage/slots/equipment/shop 预备事实；装备失败作为 soft warning 返回。"
+        "选择当前投资环境页上的一张卡。"
+        "必须先用 guide.fetch.cw --select 记录当前已选攻略，未记录则会在点击前失败；"
+        "成功后会自动应用当前已选攻略。装备读取失败不改变 cw.portal.select -> trail-cw-prep handoff。"
+    ),
 )
 def cw_portal_select(
     session: str = typer.Option(..., "--session"),
