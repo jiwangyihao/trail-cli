@@ -4,7 +4,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
 
 
-ROOT = Path(SPECPATH).resolve().parent.parent
+ROOT = Path.cwd().resolve()
 datas = []
 binaries = []
 hiddenimports = []
