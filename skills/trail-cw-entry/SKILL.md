@@ -52,8 +52,8 @@ description: 当用户已经明确要进入《崩坏：星穹铁道》的货币�
 - 如果用户选择“环境优先”，或只是要先看这一局值不值得玩，则继续保留在本 skill，后续通过 `cw enter` / `cw start` 进入投资环境页，再把环境页决策交给 `trail-cw-portal`。
 - 是否允许刷开局只在 `攻略优先` 链路里确认；`环境优先` 链路把这件事留给投资环境页里的 `trail-cw-portal` 再决定。
 - 如果是从 `trail-cw-guide` 返回，说明当前 session 已经有当前攻略；默认继续 `cw enter` / `cw start` / `cw.portal.select` 这条开局链路，后续在投资环境页执行 `cw.portal.select` 成功后，会自动应用当前已选攻略，不要把 `cw guide apply` 当成默认第一步；只有自动应用失败或需要手动重试时，`cw guide apply` 才作为兜底。
-- `cw.portal.select` 成功进入普通备战后，会通过 handoff 进入 `trail-cw-prep`；该响应已经自动收集初始备战 slots/shop 信息，入口 skill 不需要再立即重复扫描相同事实。
-- 消费 `cw.portal.select` 带截图 success 时必须先读截图；`# ` 行只是板块标题，不是事实行，不要当作 action/prefix。读完截图后，再消费这些标题下的事实：`# 综合信息` 下看 stage/status，`# 攻略提示` 下看 skill_info，`# 角色信息` 下看 slot，`# 羁绊信息` 下看 trait summary，`# 商店信息` 下看 item/coins/reserve facts。
+- `cw.portal.select` 成功进入普通备战后，会通过 handoff 进入 `trail-cw-prep`；该响应已经自动收集初始备战 stage/slots/equipment/shop facts，入口 skill 不需要再立即重复扫描相同事实。
+- 消费 `cw.portal.select` 带截图 success 时必须先读原始截图；`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行。读完截图后，再消费这些标题下的事实：`# 综合信息` 下看 stage/status，`# 攻略提示` 下看 skill_info，`# 角色信息` 下看 slot，`# 羁绊信息` 下看 trait summary，`# 装备信息` 下看装备背包 item/summary info，`# 装备优先级` 下看装备推荐 guide，`# 角色装备需求` 下看角色装备需求 slot/info，`# 商店信息` 下看 item/coins/reserve facts。
 - 只有后续真的检测到未结束对局时，才补问继续还是结算，然后再决定 `cw start` 的走向。
 
 ## Reference Map

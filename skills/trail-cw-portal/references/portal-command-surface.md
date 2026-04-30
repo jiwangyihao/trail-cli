@@ -18,3 +18,7 @@
 
 - `detect` 负责看清现状，`refresh` 负责继续筛，`restart` 负责重开，`select` 负责定案。
 - 先判断这一页是不是已经有足够好的环境，再决定要不要 refresh、restart 或直接 select。
+
+## select 成功后的首帧事实
+
+- `cw.portal.select` / `portal select --card-idx ...` 成功后仍 handoff 到 `trail-cw-prep`，并自动收集 stage/slots/equipment/shop；装备读取发生在 slots fresh 后、shop open 前。带截图 success 必须先读原始截图；`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行。事实分组按 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 装备信息`、`# 装备优先级`、`# 角色装备需求`、`# 商店信息` 消费；装备失败只作为 `CW_EQUIPMENT_AUTO_COLLECT_FAILED` soft warning，不阻止 shop 收集或 final handoff。

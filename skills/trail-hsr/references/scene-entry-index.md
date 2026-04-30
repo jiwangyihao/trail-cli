@@ -8,5 +8,5 @@
 - 不要凭 archive、旧文档或历史习惯推断当前入口。
 - 部分命令 success 后会额外给出 workflow handoff 提示；`cw.enter -> trail-cw-entry` 是 scene entry handoff，`cw.portal.select -> trail-cw-prep` 是货币战争内部阶段 handoff。
 - `cw.portal.select -> trail-cw-prep` 不让 `trail-cw-prep` 成为 direct-user scene entry；它只是普通备战阶段的 active internal 跟进 skill。
-- `cw.portal.select -> trail-cw-prep` success 会自动收集 slots/shop 初始快照并把 stage facts 放入本次输出；这不会改变 `trail-cw-prep` 的 internal 身份，也不要求 `trail-cw-entry` 或 `trail-cw-portal` 立即重复扫描。
-- `cw.portal.select -> trail-cw-prep` handoff 不变；`# ` headings 只是默认文本分组，不参与路由/事实判断，也不要把 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 商店信息` 当成 scene entry 或 action。
+- `cw.portal.select -> trail-cw-prep` success 会自动收集 stage/slots/equipment/shop 初始快照；这不会改变 `trail-cw-prep` 的 internal 身份，也不要求 `trail-cw-entry` 或 `trail-cw-portal` 立即重复扫描。
+- `cw.portal.select -> trail-cw-prep` handoff 不变；带截图 success 仍先读原始截图，`# ` headings 只是默认文本分组，不参与路由/事实判断；`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行，不要把 `# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 装备信息`、`# 装备优先级`、`# 角色装备需求`、`# 商店信息` 当成 scene entry 或 action。

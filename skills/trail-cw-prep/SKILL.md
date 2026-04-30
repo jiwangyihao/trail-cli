@@ -26,11 +26,11 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 ## Required First Actions
 
 - 若上一条命令输出 `shot path=...` 和 `info read_image_first=1`，必须先读取原始截图。
-- 若上一条 `cw.portal.select` success 已经同时输出阶段、槽位、商店、羁绊等普通备战首帧结构化事实，先结合截图消费这些事实；不要为了“重新确认”而立刻重复运行 `stage` / `slots` / `shop` 读命令。
+- 若上一条 `cw.portal.select` success 已经同时输出阶段、槽位、装备、商店、羁绊等普通备战首帧结构化事实，先结合截图消费这些事实；不要为了“重新确认”而立刻重复运行 `stage` / `slots` / `equipment` / `shop` 读命令。
 - 若上一条 `cw.portal.select` success 输出含 `info skill_info=运营思路 text=...`，必须先把它读作当前攻略的动态提醒；它不是已解析策略，必须不发明默认优先级。
-- 若上一条 `cw.portal.select` success 输出含 `slot`、`item` 或 `info stage_` 事实，说明它可能已经提供最新 slots/shop/stage 快照；必须先读截图，再用这些文本事实制定第一步备战动作。
-- 接收 `cw.portal.select` handoff 时，优先复用该响应中标题下 facts；`# ` 行只是板块标题，不是事实行，不要当作 action/prefix。读完截图后，再消费这些标题下的事实：`# 综合信息` 下看 stage/status，`# 攻略提示` 下看 skill_info，`# 角色信息` 下看 slot，`# 羁绊信息` 下看 trait summary，`# 商店信息` 下看 item/coins/reserve facts；只有缺失、stale 或页面变化才重扫。
-- 只有事实缺失、stale 或页面已变化时，才主动调用 `trail cw slots read` 或 `trail cw shop scan` 刷新；不要在接收 handoff 后立刻重复扫描。
+- 若上一条 `cw.portal.select` success 输出含 stage/slots/equipment/shop facts，说明它可能已经提供最新首帧快照；必须先读截图，再用这些文本事实制定第一步备战动作。
+- 接收 `cw.portal.select` handoff 时，优先复用该响应中标题下 facts；`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行。读完截图后，再消费这些标题下的事实：`# 综合信息` 下看 stage/status，`# 攻略提示` 下看 skill_info，`# 角色信息` 下看 slot，`# 羁绊信息` 下看 trait summary，`# 装备信息` 下看装备背包 item/summary info，`# 装备优先级` 下看装备推荐 guide，`# 角色装备需求` 下看角色装备需求 slot/info，`# 商店信息` 下看 item/coins/reserve facts；只有缺失、stale 或页面变化才重扫。
+- 只有事实缺失、stale 或页面已变化时，才主动调用 `trail cw slots read`、`trail cw equipment read` 或 `trail cw shop scan` 刷新；不要在接收 handoff 后立刻重复扫描。优先复用同次 equipment facts；缺失/stale/page changed 时才重跑 `cw.equipment.read`。
 - 若 `slots.read` 或 `shop.scan` 输出 `match_kind=low_confidence`、`raw_name` 或低置信度 `warn`，必须先读截图确认，再接受 canonicalized 名称。
 - `cw.equipment.read` 返回截图时必须先读原始截图，再消费 `item pos=equipment:<idx> center=x,y ...` 行、`# 装备优先级` 的 `guide` 行，以及 `# 角色装备需求` 的 `slot` 行或 `info todo=slots`；这些装备推荐分块位于 `warn`、`ref` 之前。若看到 `info todo=slots`，先运行或刷新 `cw.slots.read`，不要用 stale slots 推断角色缺口。需要排查 `row/col` 时，使用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`。
 - 接收 `cw.portal.select` handoff 后，如果后续执行 `cw.equipment.read` 并看到装备推荐，仍要先读截图，再看 `# 装备优先级` 的基础装备 `have/need` 与需求角色，最后看 `# 角色装备需求` 的当前 canonical 角色缺口；不要为了低优先级装备过早消耗基础装备。

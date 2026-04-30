@@ -152,7 +152,7 @@
   - 右下主按钮是 `出战`，右下角还会出现 `商店`
   - 右侧靠中位置会出现可领取的晶球/奖励提示，这是判断当前局内准备页的重要信号之一
 - 对应命令语义：
-  - 这通常是 `trail cw portal.select --session <id> --card-idx <n>` 成功后的结果页
+  - 这通常是 `trail cw portal.select --session <id> --card-idx <n>` 成功后的结果页；该命令成功时会自动收集 stage/slots/equipment/shop 并 handoff 到 `trail-cw-prep`
   - 也是局内命令开始接管的阶段，例如：
     - `trail cw crystals collect --session <id>`
     - `trail cw slots ...`
@@ -161,7 +161,7 @@
 - 到达该页面后的推荐下一步：
   1. 如果右侧有可领的晶球/奖励，优先运行：
      - `trail cw crystals collect --session <id>`
-  2. 若要布阵、看卖牌参考、看商店，再按局内流程运行对应 `cw slots` / `cw hand sell-plan` / `cw shop` 命令；`sell-plan` 只提供参考，不会自动卖牌
+  2. 若 `cw.portal.select` 同次输出已有 fresh slots/equipment/shop facts，先复用这些事实；缺失、stale 或页面变化时，再按局内流程运行对应 `cw slots` / `cw equipment read` / `cw hand sell-plan` / `cw shop` 命令；`sell-plan` 只提供参考，不会自动卖牌
   3. 准备完成后再运行：
      - `trail cw battle run --session <id>`
   4. `trail cw battle start --session <id>` 仍保留为 advanced/manual fallback，只在需要手工拆 battle / settle 链时使用，不是默认主流程
