@@ -124,6 +124,7 @@ def _install_fake_shop_batch_ocr(monkeypatch, shop_module, *, events=None, items
     calls: list[dict[str, object]] = []
     items = [_rapidocr_piece("黑塔"), _rapidocr_piece("1")] if items is None else items
     coins = [_rapidocr_piece("62")] if coins is None else coins
+    monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
 
     def fake_run_batch_ocr(runtime, targets, *, trace_prefix):
         del runtime
@@ -2760,8 +2761,10 @@ def test_cw_shop_status_recovers_corrupted_cw_state_to_shop_only_projection(tmp_
 
 def test_cw_shop_scan_marks_applied_but_not_persisted_when_ocr_image_raises_after_open_click(
     tmp_path: Path,
+    monkeypatch,
 ):
     shop_module = load_cw_shop_module()
+    monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
     runtime = _build_cw_shop_scan_runtime(
         shop_module,
         ocr_image_error=RuntimeError("batch OCR boom"),
@@ -2865,8 +2868,10 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_save_fails_after_clic
 
 def test_cw_shop_scan_marks_applied_but_not_persisted_when_click_side_effect_raises_after_ui_action(
     tmp_path: Path,
+    monkeypatch,
 ):
     shop_module = load_cw_shop_module()
+    monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
     runtime = _build_cw_shop_scan_runtime(
         shop_module,
         click_error=RuntimeError("click after effect boom"),
@@ -2922,8 +2927,10 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_click_side_effect_rai
 
 def test_cw_shop_scan_keeps_failed_before_side_effect_when_click_fails_before_input(
     tmp_path: Path,
+    monkeypatch,
 ):
     shop_module = load_cw_shop_module()
+    monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
     runtime = _build_cw_shop_scan_runtime(
         shop_module,
         click_error=TrailError("INPUT_BACKEND_MISSING", "input backend missing"),
@@ -2977,8 +2984,10 @@ def test_cw_shop_scan_keeps_failed_before_side_effect_when_click_fails_before_in
 
 def test_cw_shop_scan_keeps_failed_before_side_effect_when_window_not_foreground_happens_before_input(
     tmp_path: Path,
+    monkeypatch,
 ):
     shop_module = load_cw_shop_module()
+    monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
     runtime = _build_cw_shop_scan_runtime(
         shop_module,
         click_error=TrailError("WINDOW_NOT_FOREGROUND", "窗口不在前台，无法执行输入"),
@@ -3033,8 +3042,10 @@ def test_cw_shop_scan_keeps_failed_before_side_effect_when_window_not_foreground
 
 def test_cw_shop_scan_marks_applied_but_not_persisted_when_click_reports_window_not_foreground_after_input(
     tmp_path: Path,
+    monkeypatch,
 ):
     shop_module = load_cw_shop_module()
+    monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
     error = TrailError("WINDOW_NOT_FOREGROUND", "窗口不在前台，无法执行输入")
     error.completed_after_side_effect = True
     runtime = _build_cw_shop_scan_runtime(
@@ -3198,6 +3209,7 @@ def test_cw_shop_buy_slot_marks_applied_but_not_persisted_when_confirmation_fail
         lambda runtime: lambda slot, expect: runtime.click_point(111, 222),
     )
     monkeypatch.setattr("trail.daemon.cw_service.shop_scanner_factory", lambda runtime: fake_shop_snapshot)
+    monkeypatch.setattr("trail.scenes.cw.shop.sleep", lambda seconds: None)
 
     envelope = _run_cw_mutation(
         command_service=command_service,

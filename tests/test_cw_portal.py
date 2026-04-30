@@ -2328,6 +2328,7 @@ def test_cw_start_entry_new_clicks_highest_when_button_visible(tmp_path: Path, m
 
 def test_cw_start_boss_preview_preserves_known_entry_truth_source(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    _stub_cw_start_fast_paths(monkeypatch)
     cards = _portal_cards()
     runtime = StartRuntime(
         locate_results={

@@ -416,6 +416,7 @@ def test_cw_event_read_services_return_options(tmp_path: Path, monkeypatch, meth
             lambda monkeypatch: (
                 monkeypatch.setattr("trail.daemon.cw_service.battle_starter_factory", lambda runtime: object()),
                 monkeypatch.setattr("trail.daemon.cw_service.start_cw_battle", lambda session, starter: _set_stage(session, {"stale": True})),
+                monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: None),
             ),
             {"stale": True},
         ),

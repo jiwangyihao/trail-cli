@@ -5726,6 +5726,7 @@ def test_command_service_cw_stage_mutations_use_request_scoped_capture(
         return session
 
     monkeypatch.setattr(f"trail.daemon.cw_service.{mutation_name}", fake_stage_mutation)
+    monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: None)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
         request_id=request_id,
