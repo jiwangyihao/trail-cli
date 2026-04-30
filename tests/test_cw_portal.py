@@ -47,6 +47,11 @@ def _box(alias: str, *, left: int, top: int, width: int = 40, height: int = 20) 
     return Box(left=left, top=top, width=width, height=height, source=_asset(alias))
 
 
+def _stub_cw_start_fast_paths(monkeypatch) -> None:
+    monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
+    monkeypatch.setattr("trail.daemon.cw_service._attach_guides_to_cards", lambda cards, **kwargs: cards)
+
+
 class StartRuntime:
     def __init__(
         self,
@@ -1258,6 +1263,7 @@ def test_restart_cw_portal_rejects_non_invest_page(tmp_path: Path, monkeypatch):
 def test_restart_cw_portal_selects_first_card_returns_home_and_restarts_into_invest(tmp_path: Path, monkeypatch):
     import trail.daemon.cw_service as cw_service_module
 
+    _stub_cw_start_fast_paths(monkeypatch)
     cards = _portal_cards()
     restarted_cards = [
         {"card_idx": 1, "portal_title": "New Alpha", "portal_description": "New Desc", "score": 0.91},
@@ -1396,7 +1402,7 @@ def test_restart_cw_portal_waits_for_in_game_before_returning_home(tmp_path: Pat
 
 def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
-    monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
+    _stub_cw_start_fast_paths(monkeypatch)
     start_box = _box("entry.start", left=100, top=200)
     entry_new_box = _box("entry.new", left=200, top=300)
     start_game_box = _box("entry.start_game", left=240, top=340)
@@ -1822,6 +1828,7 @@ def test_start_cw_consumes_unfinished_progress_flag_before_run_start_chain(
 
 def test_cw_start_entry_continue_still_advances_when_only_continue_progress_text_present(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    _stub_cw_start_fast_paths(monkeypatch)
     cards = _portal_cards()
     runtime = StartRuntime(
         locate_results={
@@ -1880,6 +1887,7 @@ def test_cw_start_entry_continue_still_advances_when_only_continue_progress_text
 
 def test_cw_start_entry_continue_keeps_recorded_exact_difficulty(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    _stub_cw_start_fast_paths(monkeypatch)
     cards = _portal_cards()
     runtime = StartRuntime(
         locate_results={
@@ -1941,7 +1949,7 @@ def test_cw_start_entry_continue_keeps_recorded_exact_difficulty(tmp_path: Path,
 
 def test_cw_start_continue_from_whole_run_settlement_chain_reaches_invest_and_persists_new_mode(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
-    monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
+    _stub_cw_start_fast_paths(monkeypatch)
     cards = _portal_cards()
     start_box = _box("entry.start", left=100, top=200)
     entry_new_box = _box("entry.new", left=140, top=180)
@@ -2147,6 +2155,7 @@ def test_cw_start_continues_pages_between_home_and_invest(
     expected_entry: dict[str, object],
 ):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    _stub_cw_start_fast_paths(monkeypatch)
     cards = _portal_cards()
     runtime = StartRuntime(locate_results=locate_results, wait_results=wait_results, ocr_result=[{"text": page}])
     monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
@@ -2186,6 +2195,7 @@ def test_cw_start_continues_pages_between_home_and_invest(
 
 def test_cw_start_entry_new_allows_highest_when_already_selected(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    _stub_cw_start_fast_paths(monkeypatch)
     cards = _portal_cards()
     entry_new_box = _box("entry.new", left=140, top=180)
     start_game_box = _box("entry.start_game", left=240, top=280)
@@ -2262,6 +2272,7 @@ def test_cw_start_entry_new_allows_highest_when_already_selected(tmp_path: Path,
 
 def test_cw_start_entry_new_clicks_highest_when_button_visible(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    _stub_cw_start_fast_paths(monkeypatch)
     cards = _portal_cards()
     entry_new_box = _box("entry.new", left=140, top=180)
     highest_box = _box("entry.difficulty.highest", left=190, top=220)

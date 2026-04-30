@@ -2677,10 +2677,11 @@ def test_cw_guide_current_service_does_not_recover_from_shop_summary_without_sel
     assert persisted.scene_state["cw"]["shop"]["guide_summary"] == {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 9}}
 
 
-def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit():
+def test_apply_cw_guide_via_ui_waits_for_apply_button_to_settle_before_exit(monkeypatch):
     guide_module = load_cw_guide_module()
     apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
     assert apply_cw_guide_via_ui is not None
+    monkeypatch.setattr(guide_module, "sleep", lambda seconds: None)
 
     apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
     confirm_template = str((CW_ASSET_ROOT / "ensure2.png").resolve())
@@ -2980,7 +2981,8 @@ def test_apply_cw_guide_via_ui_fails_when_apply_button_never_stabilizes(monkeypa
     guide_module = load_cw_guide_module()
     apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
     assert apply_cw_guide_via_ui is not None
-    monkeypatch.setattr(guide_module, "GUIDE_UI_WAIT_TIMEOUT", 1.0)
+    monkeypatch.setattr(guide_module, "GUIDE_UI_WAIT_TIMEOUT", 0.02)
+    monkeypatch.setattr(guide_module, "sleep", lambda seconds: None)
 
     apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
     first_box = Box(left=200, top=20, width=40, height=20, source=apply_template)
@@ -3105,10 +3107,12 @@ def test_apply_cw_guide_via_ui_post_apply_settle_test_rejects_zero_delay(monkeyp
         _exercise_apply_cw_guide_post_apply_settle(guide_module, monkeypatch)
 
 
-def test_apply_cw_guide_via_ui_fails_when_apply_button_does_not_clear():
+def test_apply_cw_guide_via_ui_fails_when_apply_button_does_not_clear(monkeypatch):
     guide_module = load_cw_guide_module()
     apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
     assert apply_cw_guide_via_ui is not None
+    monkeypatch.setattr(guide_module, "GUIDE_APPLY_SETTLE_TIMEOUT", 0.02)
+    monkeypatch.setattr(guide_module, "sleep", lambda seconds: None)
 
     apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())
     keys: list[tuple[str, int, float]] = []
@@ -3143,10 +3147,11 @@ def test_apply_cw_guide_via_ui_fails_when_apply_button_does_not_clear():
     assert keys == []
 
 
-def test_apply_cw_guide_via_ui_skips_strategy_click_when_guide_page_already_open():
+def test_apply_cw_guide_via_ui_skips_strategy_click_when_guide_page_already_open(monkeypatch):
     guide_module = load_cw_guide_module()
     apply_cw_guide_via_ui = getattr(guide_module, "apply_cw_guide_via_ui", None)
     assert apply_cw_guide_via_ui is not None
+    monkeypatch.setattr(guide_module, "sleep", lambda seconds: None)
 
     strategy_template = str((CW_ASSET_ROOT / "strategy.png").resolve())
     apply_template = str((CW_ASSET_ROOT / "apply_strategy.png").resolve())

@@ -3994,6 +3994,7 @@ def test_command_service_handles_cw_start_continue_from_whole_run_settlement_cha
 
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
     monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
+    monkeypatch.setattr("trail.daemon.cw_service._attach_guides_to_cards", lambda cards, **kwargs: cards)
 
     def asset(alias: str) -> str:
         return str(resolve_scene_asset("cw", alias))
