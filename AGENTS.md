@@ -72,6 +72,7 @@
 - 新命令至少要补 renderer 单测，以及受影响的 CLI stdout 测试或 RPC/契约测试增量。
 - 如果新增前缀词、冻结字段、恢复语义或 `--verbose` 事件类型，必须同步更新本文件、相关 skills 与契约测试。
 - 评审输出变更时，优先检查：renderer 家族是否明确、默认模式必出事实是否稳定、YAML allowlist 是否合理、skills 与测试是否已同步。
+- 禁止对 `docs/superpowers/specs` 或 `docs/superpowers/plans` 编写、保留或新增测试；spec/plan 是临时设计与执行记录，不作为契约来源。需要锁定行为时，测试源代码、renderer、CLI/RPC、active skills、registry 或本文件，不扫描 spec/plan。
 
 ## guide.fetch.cw 约束
 

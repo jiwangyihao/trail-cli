@@ -32,8 +32,6 @@ ROUTING_REVIEW = (
     / "reviews"
     / "2026-04-21-trail-skill-routing-review.md"
 )
-SUPERSEDE_LINE = "本文件已被 `docs/superpowers/specs/2026-04-21-trail-skill-system-redesign-design.md` 取代；仅供历史参考，不代表当前 active skill 拓扑。"
-SUPERSEDE_BANNER_LINE = f"> {SUPERSEDE_LINE}"
 LEGACY_DOC_PATTERNS = (
     r"skills/trail-cw/SKILL\.md\b",
     r"skills/trail-cw-battle-advanced\b",
@@ -48,12 +46,6 @@ LEGACY_DOC_PATTERNS = (
     r"trail-cw-shop\b",
     r"trail-cw-slots\b",
 )
-SUPERSEDE_EXEMPT_DOCS = {
-    "2026-04-21-trail-skill-system-redesign.md",
-    "2026-04-21-trail-skill-system-redesign-design.md",
-    "2026-04-26-cw-prep-skill-infrastructure.md",
-    "2026-04-26-cw-prep-skill-infrastructure-design.md",
-}
 ROUTING_REVIEW_HEADER = "| Prompt | 旧 skill 集合 winner | 新 skill 集合 winner | 预期 winner | 备注 |"
 ROUTING_REVIEW_PROMPTS = [
     "帮我继续玩星铁",
@@ -349,17 +341,6 @@ def _scene_entry_skill() -> str:
     return registry["entries"][0]["entry_skill"]
 
 
-def _iter_non_archive_specs_and_plans() -> list[Path]:
-    roots = [PROJECT_ROOT / "docs" / "superpowers" / "specs", PROJECT_ROOT / "docs" / "superpowers" / "plans"]
-    paths: list[Path] = []
-    for root in roots:
-        for path in root.rglob("*.md"):
-            if "archive" in path.parts or path.name in SUPERSEDE_EXEMPT_DOCS:
-                continue
-            paths.append(path)
-    return paths
-
-
 def _parse_routing_review_rows(text: str) -> list[list[str]]:
     lines = [line.strip() for line in text.splitlines()]
     header_index = lines.index(ROUTING_REVIEW_HEADER)
@@ -432,15 +413,6 @@ def test_workflow_handoff_registry_has_expected_scene_and_stage_mappings() -> No
     }
     assert "statuses" not in registry["commands"]["cw.enter"]
     assert "statuses" not in registry["commands"]["cw.portal.select"]
-
-
-def test_all_non_archive_legacy_docs_have_fixed_supersede_banner() -> None:
-    for path in _iter_non_archive_specs_and_plans():
-        text = path.read_text(encoding="utf-8")
-        if any(re.search(pattern, text) for pattern in LEGACY_DOC_PATTERNS):
-            lines = text.splitlines()
-            assert lines[0] == SUPERSEDE_BANNER_LINE, path
-            assert text.count(SUPERSEDE_BANNER_LINE) == 1, path
 
 
 def test_routing_review_keeps_auditable_methodology_and_complete_rows() -> None:
