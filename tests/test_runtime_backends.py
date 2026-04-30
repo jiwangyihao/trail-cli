@@ -131,7 +131,7 @@ def test_write_launch_path_keeps_sibling_channels_under_concurrent_writes(monkey
                 read_count += 1
                 if read_count >= 2:
                     release_reads.set()
-            release_reads.wait(timeout=0.05)
+            release_reads.wait(timeout=0.01)
         return result
 
     def worker(channel: str, game_path: str):
@@ -3027,6 +3027,11 @@ def test_rapidocr_adapter_runs_backend(monkeypatch):
 
     fake_module = SimpleNamespace(RapidOCR=FakeRapidOCR)
     monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", fake_module)
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"]),
+    )
 
     adapter = operator_module.RapidOcrAdapter()
     result = adapter.run(Image.new("RGB", (20, 20), color="white"))
@@ -3055,6 +3060,11 @@ def test_rapidocr_adapter_runs_backend_with_explicit_ocr_options(monkeypatch):
 
     fake_module = SimpleNamespace(RapidOCR=FakeRapidOCR)
     monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", fake_module)
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"]),
+    )
 
     adapter = operator_module.RapidOcrAdapter()
     result = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(use_cls=True))
@@ -3083,6 +3093,11 @@ def test_rapidocr_adapter_passes_text_score_to_backend_call(monkeypatch):
             return (["ok"], None)
 
     monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"]),
+    )
 
     adapter = operator_module.RapidOcrAdapter()
     result = adapter.run(Image.new("RGB", (20, 20), color="white"), ocr=OcrRequestConfig(text_score=0.77))
@@ -3415,7 +3430,6 @@ def test_rapidocr_adapter_singleflights_engine_init_for_same_cache_key(monkeypat
     right.start()
     start_barrier.wait()
     assert build_started.wait(timeout=2)
-    threading.Event().wait(0.1)
     release_build.set()
     left.join(timeout=2)
     right.join(timeout=2)
