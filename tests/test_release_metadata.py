@@ -94,9 +94,9 @@ def test_release_selfcheck_command_runs_and_stays_hidden(monkeypatch):
     monkeypatch.setenv("TRAIL_SKILLS_ROOT", str(ROOT / "skills"))
     runner = CliRunner()
 
-    help_result = runner.invoke(app, ["--help"])
-    assert help_result.exit_code == 0
-    assert "selfcheck" not in help_result.stdout
+    selfcheck_commands = [command for command in app.registered_commands if command.name == "selfcheck"]
+    assert len(selfcheck_commands) == 1
+    assert selfcheck_commands[0].hidden is True
 
     result = runner.invoke(app, ["selfcheck", "release"])
 

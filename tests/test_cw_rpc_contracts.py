@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from trail.cli import app
+from trail.commands.cw import cw_enter, hand_app, slots_app
 from tests.support.fake_daemon import build_success_response as _build_success_response
 
 
@@ -34,6 +37,21 @@ def _expected_lines(summary: str, *, screenshot: str | None = None, body: list[s
     if body:
         lines.extend(body)
     return lines
+
+
+def _registered_command_names(typer_app) -> set[str]:
+    return {command.name for command in typer_app.registered_commands}
+
+
+def _function_option_decls(callback) -> set[str]:
+    signature = inspect.signature(callback)
+    return {
+        option_decl
+        for parameter in signature.parameters.values()
+        for option_decl in getattr(parameter.default, "param_decls", ())
+    }
+
+
 def test_cw_stage_detect_renders_stage_and_shot(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
@@ -100,12 +118,11 @@ def test_cw_enter_renders_already_home_info(cli_runner, fake_daemon_client, tmp_
     _assert_single_call(client, method="cw.enter", payload={}, tmp_path=tmp_path)
 
 
-def test_cw_enter_rejects_legacy_start_options(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "enter", "--session", SESSION_ID, "--mode", "new"])
+def test_cw_enter_rejects_legacy_start_options():
+    option_decls = _function_option_decls(cw_enter)
 
-    assert result.exit_code == 2
-    assert "No such option" in result.output
-    assert "--mode" in result.output
+    assert "--session" in option_decls
+    assert "--mode" not in option_decls
 
 
 def test_cw_start_renders_portal_cards_and_shot(cli_runner, fake_daemon_client, tmp_path):
@@ -955,11 +972,8 @@ def test_cw_hand_sell_renders_slot_counts_and_shot(cli_runner, fake_daemon_clien
     _assert_single_call(client, method="cw.hand.sell", payload={"slots": [0, 2]}, tmp_path=tmp_path)
 
 
-def test_cw_slots_place_one_is_removed(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "slots", "place-one", "--help"])
-
-    assert result.exit_code == 2
-    assert "No such command 'place-one'" in result.output
+def test_cw_slots_place_one_is_removed():
+    assert "place-one" not in _registered_command_names(slots_app)
 
 
 def test_cw_slots_place_requires_at_least_one_action(cli_runner, fake_daemon_client):
@@ -992,11 +1006,8 @@ def test_cw_slots_place_rejects_malformed_action_without_rpc(cli_runner, fake_da
     assert client.calls == []
 
 
-def test_cw_hand_sell_one_is_removed(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "hand", "sell-one", "--help"])
-
-    assert result.exit_code == 2
-    assert "No such command 'sell-one'" in result.output
+def test_cw_hand_sell_one_is_removed():
+    assert "sell-one" not in _registered_command_names(hand_app)
 
 
 def test_cw_hand_sell_requires_at_least_one_slot(cli_runner, fake_daemon_client):

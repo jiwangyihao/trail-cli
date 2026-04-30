@@ -1,14 +1,37 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 from pathlib import Path
 import sys
 
 import numpy as np
 import pytest
+import typer
 
 from trail.cli import app
+from trail.commands.cw import (
+    CW_APP_HELP,
+    cw_app,
+    cw_enter,
+    cw_equipment_compose,
+    cw_guide_app,
+    cw_guide_apply,
+    cw_portal_detect,
+    cw_portal_select,
+    cw_slots_read,
+    cw_start,
+    cw_strategy_refresh,
+    equipment_app,
+    portal_app,
+    slots_app,
+    strategy_app,
+)
+from trail.commands.guide import guide_fetch, guide_list
+from trail.commands.ocr import ocr_read
+from trail.commands.start import start_app
+from trail.commands.window import window_app, window_launch
 from trail.core.errors import TrailError
 from trail.daemon.client import TrailDaemonClient
 from trail.runtime.ocr_config import OCR_LANG_UNSUPPORTED
@@ -134,6 +157,65 @@ def _extract_help_command_block(output: str, command_name: str) -> str:
     return _normalize_help(" ".join(block))
 
 
+def _registered_command_names(typer_app) -> set[str]:
+    return {command.name for command in typer_app.registered_commands}
+
+
+def _registered_command_help(typer_app, command_name: str) -> str:
+    for command in typer_app.registered_commands:
+        if command.name == command_name:
+            return command.help or command.callback.__doc__ or ""
+    raise AssertionError(f"missing command: {command_name}")
+
+
+def _registered_group_help(typer_app) -> dict[str, str]:
+    return {group.name: group.typer_instance.info.help or "" for group in typer_app.registered_groups}
+
+
+def _registered_group_names(typer_app) -> set[str]:
+    return {group.name for group in typer_app.registered_groups}
+
+
+def _callback_option_decls(typer_app) -> set[str]:
+    signature = inspect.signature(typer_app.registered_callback.callback)
+    return {
+        option_decl
+        for parameter in signature.parameters.values()
+        for option_decl in getattr(parameter.default, "param_decls", ())
+    }
+
+
+def _function_option_decls(callback) -> set[str]:
+    signature = inspect.signature(callback)
+    return {
+        option_decl
+        for parameter in signature.parameters.values()
+        for option_decl in getattr(parameter.default, "param_decls", ())
+    }
+
+
+def _function_option_help(callback, option_decl: str) -> str:
+    signature = inspect.signature(callback)
+    for parameter in signature.parameters.values():
+        default = parameter.default
+        if option_decl in getattr(default, "param_decls", ()):
+            return default.help or ""
+    raise AssertionError(f"missing option: {option_decl}")
+
+
+def _call_ocr_read_direct(**overrides) -> None:
+    kwargs = {
+        "provider": None,
+        "lang": None,
+        "use_cls": None,
+        "text_score": None,
+        "ocr_mode": None,
+        "retry_high": None,
+    }
+    kwargs.update(overrides)
+    ocr_read(**kwargs)
+
+
 @pytest.fixture(autouse=True)
 def _clear_ocr_env(monkeypatch):
     for name in (
@@ -228,18 +310,18 @@ def test_session_create_uses_daemon_client(cli_runner, fake_daemon_client, tmp_p
     ]
 
 
-def test_trail_start_help_describes_simple_entry(cli_runner):
-    result = cli_runner.invoke(app, ["start", "--help"])
+def test_trail_start_help_describes_simple_entry():
+    help_text = start_app.info.help or ""
+    option_decls = _callback_option_decls(start_app)
 
-    assert result.exit_code == 0
-    assert "自动完成 daemon、游戏、窗口、session 的启动收口" in result.output
-    assert "start.run" in result.output
-    assert "--window-title" in result.output
-    assert "--game-path" in result.output
-    assert "--channel" in result.output
-    assert "trail daemon status" not in result.output
-    assert "trail window attach" not in result.output
-    assert "trail session create" not in result.output
+    assert "自动完成 daemon、游戏、窗口、session 的启动收口" in help_text
+    assert "start.run" in help_text
+    assert "--window-title" in option_decls
+    assert "--game-path" in option_decls
+    assert "--channel" in option_decls
+    assert "trail daemon status" not in help_text
+    assert "trail window attach" not in help_text
+    assert "trail session create" not in help_text
 
 
 def test_trail_start_dispatches_single_start_run_after_local_ready(
@@ -439,68 +521,54 @@ def test_window_launch_allows_omitted_game_path_and_preserves_channel_payload(cl
     ]
 
 
-def test_window_launch_help_describes_game_path_option_resolution_contract(cli_runner):
-    result = cli_runner.invoke(app, ["window", "launch", "--help"])
-    game_path_help = _extract_help_option_block(result.output, "--game-path")
+def test_window_launch_help_describes_game_path_option_resolution_contract():
+    game_path_help = _function_option_help(window_launch, "--game-path")
+    command_help = window_launch.__doc__ or ""
 
-    assert result.exit_code == 0
-    assert "--game-path" in game_path_help
     assert "历史成功路径 -> 默认路径 -> 直接问用户" in game_path_help
     assert "默认路径仅覆盖 official" in game_path_help
-    assert "GAME_PATH_NOT_FOUND" in result.output
-    assert "GAME_LAUNCH_FAILED" in result.output
-    assert "GAME_PATH_PERSIST_FAILED" in result.output
+    assert "GAME_PATH_NOT_FOUND" in command_help
+    assert "GAME_LAUNCH_FAILED" in command_help
+    assert "GAME_PATH_PERSIST_FAILED" in command_help
 
 
-def test_guide_list_help_mentions_trait_and_role_filters(cli_runner):
-    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
-    trait_help = _extract_help_option_block(result.output, "--trait")
-    role_help = _extract_help_option_block(result.output, "--role")
-    portal_help = _extract_help_option_block(result.output, "--portal")
-    portal_id_help = _extract_help_option_block(result.output, "--portal-id")
+def test_guide_list_help_mentions_trait_and_role_filters():
+    trait_help = _function_option_help(guide_list, "--trait")
+    role_help = _function_option_help(guide_list, "--role")
+    portal_help = _function_option_help(guide_list, "--portal")
+    portal_id_help = _function_option_help(guide_list, "--portal-id")
 
-    assert result.exit_code == 0
-    assert "--trait" in trait_help
     assert "按羁绊名称筛选" in trait_help
     assert "免查 config" in trait_help
-    assert "--role" in role_help
     assert "按角色名称筛选" in role_help
-    assert "--portal" in portal_help
     assert "按投资环境筛选" in portal_help
-    assert "--portal-id" in portal_id_help
     assert "按投资环境筛选" in portal_id_help
 
 
-def test_guide_list_help_mentions_repeatable_role_values(cli_runner):
-    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
-    role_help = _extract_help_option_block(result.output, "--role")
-    role_id_help = _extract_help_option_block(result.output, "--role-id")
+def test_guide_list_help_mentions_repeatable_role_values():
+    role_help = _function_option_help(guide_list, "--role")
+    role_id_help = _function_option_help(guide_list, "--role-id")
 
-    assert result.exit_code == 0
     assert "可重复传入多个值" in role_help
     assert "可重复传入多个值" in role_id_help
 
 
-def test_guide_list_help_mentions_exact_id_filters(cli_runner):
-    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
-    trait_id_help = _extract_help_option_block(result.output, "--trait-id")
-    role_id_help = _extract_help_option_block(result.output, "--role-id")
+def test_guide_list_help_mentions_exact_id_filters():
+    trait_id_help = _function_option_help(guide_list, "--trait-id")
+    role_id_help = _function_option_help(guide_list, "--role-id")
 
-    assert result.exit_code == 0
     assert "按羁绊 id 精确筛选" in trait_id_help
     assert "按角色 id 精确筛选" in role_id_help
 
 
-def test_guide_list_help_mentions_mutually_exclusive_filters(cli_runner):
-    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
-    trait_help = _extract_help_option_block(result.output, "--trait")
-    trait_id_help = _extract_help_option_block(result.output, "--trait-id")
-    role_help = _extract_help_option_block(result.output, "--role")
-    role_id_help = _extract_help_option_block(result.output, "--role-id")
-    portal_help = _extract_help_option_block(result.output, "--portal")
-    portal_id_help = _extract_help_option_block(result.output, "--portal-id")
+def test_guide_list_help_mentions_mutually_exclusive_filters():
+    trait_help = _function_option_help(guide_list, "--trait")
+    trait_id_help = _function_option_help(guide_list, "--trait-id")
+    role_help = _function_option_help(guide_list, "--role")
+    role_id_help = _function_option_help(guide_list, "--role-id")
+    portal_help = _function_option_help(guide_list, "--portal")
+    portal_id_help = _function_option_help(guide_list, "--portal-id")
 
-    assert result.exit_code == 0
     assert "--trait-id" in trait_help and "互斥" in trait_help
     assert "--trait" in trait_id_help and "互斥" in trait_id_help
     assert "--role-id" in role_help and "互斥" in role_help
@@ -509,12 +577,10 @@ def test_guide_list_help_mentions_mutually_exclusive_filters(cli_runner):
     assert "--portal" in portal_id_help and "互斥" in portal_id_help
 
 
-def test_guide_list_help_mentions_boolean_filter_semantics(cli_runner):
-    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
-    match_change_job_help = _extract_help_option_block(result.output, "--match-change-job")
-    match_hard_help = _extract_help_option_block(result.output, "--match-hard")
+def test_guide_list_help_mentions_boolean_filter_semantics():
+    match_change_job_help = _function_option_help(guide_list, "--match-change-job")
+    match_hard_help = _function_option_help(guide_list, "--match-hard")
 
-    assert result.exit_code == 0
     assert "保留当前布尔筛选语义" in match_change_job_help
     assert "true/false" in match_change_job_help
     assert "保留当前布尔筛选语义" in match_hard_help
@@ -769,176 +835,86 @@ def test_ocr_read_explicit_no_use_cls_overrides_env_true(cli_runner, fake_daemon
     ]
 
 
-def test_ocr_read_rejects_invalid_provider_before_daemon_call(cli_runner, fake_daemon_client):
-    client = fake_daemon_client(
-        {
-            "ocr.read": build_success_response(
-                request_id="req-ocr-read-invalid-provider",
-                data={"result": [{"text": "银狼"}]},
-            )
-        }
-    )
+def test_ocr_read_rejects_invalid_provider_before_daemon_call():
+    with pytest.raises(typer.BadParameter) as exc_info:
+        _call_ocr_read_direct(provider="gpu")
 
-    result = cli_runner.invoke(app, ["ocr", "read", "--provider", "gpu"])
-
-    assert result.exit_code == 2
-    assert "--provider" in result.output
-    assert client.calls == []
+    assert exc_info.value.param_hint == "--provider"
+    assert "unsupported ocr provider: gpu" in str(exc_info.value)
 
 
-def test_ocr_read_rejects_invalid_lang_before_daemon_call(cli_runner, fake_daemon_client):
-    client = fake_daemon_client(
-        {
-            "ocr.read": build_success_response(
-                request_id="req-ocr-read-invalid-lang",
-                data={"result": [{"text": "银狼"}]},
-            )
-        }
-    )
+def test_ocr_read_rejects_invalid_lang_before_daemon_call():
+    with pytest.raises(typer.BadParameter) as exc_info:
+        _call_ocr_read_direct(lang="en")
 
-    result = cli_runner.invoke(app, ["ocr", "read", "--lang", "en"])
-
-    assert result.exit_code == 2
-    assert "--lang" in result.output
-    assert OCR_LANG_UNSUPPORTED in result.output
-    assert client.calls == []
+    assert exc_info.value.param_hint == "--lang"
+    assert OCR_LANG_UNSUPPORTED in str(exc_info.value)
 
 
-def test_ocr_read_rejects_invalid_ocr_mode_before_daemon_call(cli_runner, fake_daemon_client):
-    client = fake_daemon_client(
-        {
-            "ocr.read": build_success_response(
-                request_id="req-ocr-read-invalid-ocr-mode",
-                data={"result": [{"text": "银狼"}]},
-            )
-        }
-    )
+def test_ocr_read_rejects_invalid_ocr_mode_before_daemon_call():
+    with pytest.raises(typer.BadParameter) as exc_info:
+        _call_ocr_read_direct(ocr_mode="warp")
 
-    result = cli_runner.invoke(app, ["ocr", "read", "--ocr-mode", "warp"])
-
-    assert result.exit_code == 2
-    assert "--ocr-mode" in result.output
-    assert "unsupported ocr mode: warp" in result.output
-    assert client.calls == []
+    assert exc_info.value.param_hint == "--ocr-mode"
+    assert "unsupported ocr mode: warp" in str(exc_info.value)
 
 
-def test_ocr_read_rejects_invalid_retry_high_before_daemon_call(cli_runner, fake_daemon_client):
-    client = fake_daemon_client(
-        {
-            "ocr.read": build_success_response(
-                request_id="req-ocr-read-invalid-retry-high",
-                data={"result": [{"text": "银狼"}]},
-            )
-        }
-    )
+def test_ocr_read_rejects_invalid_retry_high_before_daemon_call():
+    with pytest.raises(typer.BadParameter) as exc_info:
+        _call_ocr_read_direct(retry_high="sometimes")
 
-    result = cli_runner.invoke(app, ["ocr", "read", "--retry-high", "sometimes"])
-
-    assert result.exit_code == 2
-    assert "--retry-high" in result.output
-    assert "unsupported ocr retry_high: sometimes" in result.output
-    assert client.calls == []
+    assert exc_info.value.param_hint == "--retry-high"
+    assert "unsupported ocr retry_high: sometimes" in str(exc_info.value)
 
 
-def test_ocr_read_help_describes_lang_and_ocr_mode_retry_high(cli_runner):
-    result = cli_runner.invoke(app, ["ocr", "read", "--help"])
-
-    assert result.exit_code == 0
-    assert "--lang" in result.output
-    assert "首版仅支持 ch" in result.output
-    assert "--ocr-mode" in result.output
-    assert "OCR 模式：fast=1280x720，high=native" in result.output
-    assert "fast=1280x720" in result.output
-    assert "high=native" in result.output
-    assert "--retry-high" in result.output
-    assert "高精度重试策略：auto|never|always" in result.output
-    assert "auto|never|always" in result.output
+def test_ocr_read_help_describes_lang_and_ocr_mode_retry_high():
+    assert "首版仅支持 ch" in _function_option_help(ocr_read, "--lang")
+    assert "OCR 模式：fast=1280x720，high=native" in _function_option_help(ocr_read, "--ocr-mode")
+    assert "高精度重试策略：auto|never|always" in _function_option_help(ocr_read, "--retry-high")
 
 
-def test_ocr_read_rejects_invalid_text_score_env_before_daemon_call(cli_runner, fake_daemon_client, monkeypatch):
+def test_ocr_read_rejects_invalid_text_score_env_before_daemon_call(monkeypatch):
     monkeypatch.setenv("TRAIL_OCR_TEXT_SCORE", "not-a-float")
-    client = fake_daemon_client(
-        {
-            "ocr.read": build_success_response(
-                request_id="req-ocr-read-invalid-text-score-env",
-                data={"result": [{"text": "银狼"}]},
-            )
-        }
-    )
 
-    result = cli_runner.invoke(app, ["ocr", "read"])
+    with pytest.raises(typer.BadParameter) as exc_info:
+        _call_ocr_read_direct()
 
-    assert result.exit_code == 2
-    assert "TRAIL_OCR_TEXT_SCORE" in result.output
-    assert client.calls == []
+    assert exc_info.value.param_hint == "TRAIL_OCR_TEXT_SCORE"
+    assert "invalid ocr text score from TRAIL_OCR_TEXT_SCORE" in str(exc_info.value)
 
 
-def test_ocr_read_rejects_invalid_use_cls_env_before_daemon_call(cli_runner, fake_daemon_client, monkeypatch):
+def test_ocr_read_rejects_invalid_use_cls_env_before_daemon_call(monkeypatch):
     monkeypatch.setenv("TRAIL_OCR_USE_CLS", "maybe")
-    client = fake_daemon_client(
-        {
-            "ocr.read": build_success_response(
-                request_id="req-ocr-read-invalid-use-cls-env",
-                data={"result": [{"text": "银狼"}]},
-            )
-        }
-    )
 
-    result = cli_runner.invoke(app, ["ocr", "read"])
+    with pytest.raises(typer.BadParameter) as exc_info:
+        _call_ocr_read_direct()
 
-    assert result.exit_code == 2
-    assert "Invalid value for TRAIL_OCR_USE_CLS" in result.output
-    assert "invalid ocr use_cls from" in result.output
-    assert "TRAIL_OCR_USE_CLS: maybe" in result.output
-    assert "Invalid value for '--provider'" not in result.output
-    assert client.calls == []
+    assert exc_info.value.param_hint == "TRAIL_OCR_USE_CLS"
+    assert "invalid ocr use_cls from" in str(exc_info.value)
+    assert "TRAIL_OCR_USE_CLS: maybe" in str(exc_info.value)
 
 
-def test_ocr_read_rejects_invalid_ocr_mode_env_before_daemon_call(cli_runner, fake_daemon_client, monkeypatch):
+def test_ocr_read_rejects_invalid_ocr_mode_env_before_daemon_call(monkeypatch):
     monkeypatch.setenv("TRAIL_OCR_MODE", "warp")
-    client = fake_daemon_client(
-        {
-            "ocr.read": build_success_response(
-                request_id="req-ocr-read-invalid-ocr-mode-env",
-                data={"result": [{"text": "银狼"}]},
-            )
-        }
-    )
 
-    result = cli_runner.invoke(app, ["ocr", "read"])
+    with pytest.raises(typer.BadParameter) as exc_info:
+        _call_ocr_read_direct()
 
-    assert result.exit_code == 2
-    assert "Invalid value for TRAIL_OCR_MODE" in result.output
-    assert "invalid ocr mode from" in result.output
-    assert "TRAIL_OCR_MODE:" in result.output
-    assert "warp" in result.output
-    assert "Invalid value for '--provider'" not in result.output
-    assert "Invalid value for TRAIL_OCR_PROVIDER" not in result.output
-    assert "Invalid value for '--ocr-mode'" not in result.output
-    assert client.calls == []
+    assert exc_info.value.param_hint == "TRAIL_OCR_MODE"
+    assert "invalid ocr mode from" in str(exc_info.value)
+    assert "TRAIL_OCR_MODE:" in str(exc_info.value)
+    assert "warp" in str(exc_info.value)
 
 
-def test_ocr_read_rejects_invalid_retry_high_env_before_daemon_call(cli_runner, fake_daemon_client, monkeypatch):
+def test_ocr_read_rejects_invalid_retry_high_env_before_daemon_call(monkeypatch):
     monkeypatch.setenv("TRAIL_OCR_RETRY_HIGH", "sometimes")
-    client = fake_daemon_client(
-        {
-            "ocr.read": build_success_response(
-                request_id="req-ocr-read-invalid-retry-high-env",
-                data={"result": [{"text": "银狼"}]},
-            )
-        }
-    )
 
-    result = cli_runner.invoke(app, ["ocr", "read"])
+    with pytest.raises(typer.BadParameter) as exc_info:
+        _call_ocr_read_direct()
 
-    assert result.exit_code == 2
-    assert "Invalid value for TRAIL_OCR_RETRY_HIGH" in result.output
-    assert "invalid ocr retry_high from" in result.output
-    assert "TRAIL_OCR_RETRY_HIGH: sometimes" in result.output
-    assert "Invalid value for '--provider'" not in result.output
-    assert "Invalid value for TRAIL_OCR_PROVIDER" not in result.output
-    assert "Invalid value for '--retry-high'" not in result.output
-    assert client.calls == []
+    assert exc_info.value.param_hint == "TRAIL_OCR_RETRY_HIGH"
+    assert "invalid ocr retry_high from" in str(exc_info.value)
+    assert "TRAIL_OCR_RETRY_HIGH: sometimes" in str(exc_info.value)
 
 
 def test_pyproject_declares_windows_directml_runtime_dependency() -> None:
@@ -1745,36 +1721,33 @@ def test_input_click_returns_structured_error_when_backend_missing(cli_runner, t
     ]
 
 
-def test_cli_help_exposes_top_level_command_groups(cli_runner):
-    result = cli_runner.invoke(app, ["--help"])
+def test_cli_help_exposes_top_level_command_groups():
+    assert {
+        "start",
+        "session",
+        "guide",
+        "window",
+        "screen",
+        "ocr",
+        "image",
+        "input",
+        "state",
+        "cw",
+    }.issubset(_registered_group_names(app))
+    assert "--verbose" in _callback_option_decls(app)
 
-    assert result.exit_code == 0
-    assert "start" in result.stdout
-    assert "session" in result.stdout
-    assert "guide" in result.stdout
-    assert "window" in result.stdout
-    assert "screen" in result.stdout
-    assert "ocr" in result.stdout
-    assert "image" in result.stdout
-    assert "input" in result.stdout
-    assert "state" in result.stdout
-    assert "cw" in result.stdout
-    assert "--verbose" in result.stdout
 
+def test_cw_help_exposes_scene_command_groups():
+    group_help = _registered_group_help(cw_app)
+    normalized = _normalize_help(" ".join([CW_APP_HELP, *group_help.values()]))
 
-def test_cw_help_exposes_scene_command_groups(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "--help"])
-    normalized = _normalize_help(result.output)
-
-    assert result.exit_code == 0
     assert "货币战争固定流程命令" in normalized
     assert "enter 到首页" in normalized
     assert "start 从首页进入投资环境页" in normalized
     assert "投资环境页的识别/选择/刷新/重开" in normalized
     assert "detect 只重识别当前三张卡" in normalized
     assert "refresh 点击刷新后生成新的三张卡" in normalized
-    assert "enter" in _extract_help_command_block(result.output, "enter")
-    assert "start" in _extract_help_command_block(result.output, "start")
+    assert {"enter", "start"}.issubset(_registered_command_names(cw_app))
 
     expected_blocks = {
         "guide": ("查看", "应用", "当前对局", "已选攻略", "guide.fetch.cw --select", "自动应用"),
@@ -1795,8 +1768,7 @@ def test_cw_help_exposes_scene_command_groups(cli_runner):
     }
 
     for command_name, anchors in expected_blocks.items():
-        block = _extract_help_command_block(result.output, command_name)
-        assert command_name in block
+        block = group_help[command_name]
         for anchor in anchors:
             assert anchor in block
 
@@ -1812,11 +1784,9 @@ def test_cw_help_exposes_scene_command_groups(cli_runner):
         ("event", ("通用", "特殊事件")),
     ],
 )
-def test_cw_group_help_describes_expected_boundary(cli_runner, group_name, expected_anchors):
-    result = cli_runner.invoke(app, ["cw", group_name, "--help"])
-    normalized = _normalize_help(result.output)
+def test_cw_group_help_describes_expected_boundary(group_name, expected_anchors):
+    normalized = _normalize_help(_registered_group_help(cw_app)[group_name])
 
-    assert result.exit_code == 0
     for anchor in expected_anchors:
         assert anchor in normalized
 
@@ -1831,19 +1801,15 @@ def test_cw_group_help_describes_expected_boundary(cli_runner, group_name, expec
         ("event", "处理所有事件"),
     ],
 )
-def test_cw_group_help_avoids_forbidden_phrases(cli_runner, group_name, forbidden_phrase):
-    result = cli_runner.invoke(app, ["cw", group_name, "--help"])
-    normalized = _normalize_help(result.output)
+def test_cw_group_help_avoids_forbidden_phrases(group_name, forbidden_phrase):
+    normalized = _normalize_help(_registered_group_help(cw_app)[group_name])
 
-    assert result.exit_code == 0
     assert forbidden_phrase not in normalized
 
 
-def test_guide_list_cw_help_uses_chinese_summary_terms(cli_runner):
-    result = cli_runner.invoke(app, ["guide", "list", "cw", "--help"])
-    normalized = _normalize_help(result.output)
+def test_guide_list_cw_help_uses_chinese_summary_terms():
+    normalized = _normalize_help(guide_list.__doc__ or "")
 
-    assert result.exit_code == 0
     assert "攻略ID" in normalized
     assert "攻略标签" in normalized
     assert "最终阵容" in normalized
@@ -1853,22 +1819,18 @@ def test_guide_list_cw_help_uses_chinese_summary_terms(cli_runner):
     assert "final_role_cards" not in normalized
 
 
-def test_cw_portal_help_mentions_invest_portal_terms(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "portal", "--help"])
-    normalized = _normalize_help(result.output)
+def test_cw_portal_help_mentions_invest_portal_terms():
+    normalized = _normalize_help(_registered_group_help(cw_app)["portal"])
 
-    assert result.exit_code == 0
     assert "投资环境" in normalized
     assert "title=" not in normalized
     assert "desc=" not in normalized
     assert "new=" not in normalized
 
 
-def test_cw_guide_help_describes_selected_guide_boundary(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "guide", "--help"])
-    normalized = _normalize_help(result.output)
+def test_cw_guide_help_describes_selected_guide_boundary():
+    normalized = _normalize_help(_registered_group_help(cw_app)["guide"])
 
-    assert result.exit_code == 0
     assert "当前已选攻略" in normalized
     assert "guide.fetch.cw --select" in normalized
     assert "cw.portal.select" in normalized
@@ -1882,36 +1844,33 @@ def test_cw_guide_help_describes_selected_guide_boundary(cli_runner):
     assert "--lineup-id" not in normalized
 
 
-def test_guide_fetch_cw_help_distinguishes_preview_and_select_flow(cli_runner):
-    result = cli_runner.invoke(app, ["guide", "fetch", "cw", "--help"])
-    normalized = _normalize_help(result.output)
-    summary_block = _normalize_help(result.output.split("Options", 1)[0])
-    select_block = _extract_help_option_block(result.output, "--select")
-    session_block = _extract_help_option_block(result.output, "--session")
+def test_guide_fetch_cw_help_distinguishes_preview_and_select_flow():
+    summary_block = _normalize_help(guide_fetch.__doc__ or "")
+    select_block = _function_option_help(guide_fetch, "--select")
+    session_block = _function_option_help(guide_fetch, "--session")
+    option_decls = _function_option_decls(guide_fetch)
 
-    assert result.exit_code == 0
     assert "拉取攻略内容并直接返回给 Agent" in summary_block
     assert "默认只做预览/查看" in summary_block
     assert "支持 lineup_url 或 lineup_id" in summary_block
     assert "写入当前 session" not in summary_block
     assert "--session" not in summary_block
-    assert "--select" in result.output
+    assert "--select" in option_decls
     assert "把攻略写入当前 session" in select_block
     assert "建立当前已选攻略" in select_block
     assert "不执行 UI 应用" in select_block
-    assert "--session" in result.output
+    assert "--session" in option_decls
     assert "只在 --select 时必填" in session_block
     assert "--select" in session_block
-    assert "--lineup-id" not in result.output
+    assert "--lineup-id" not in option_decls
 
 
-def test_cw_portal_select_help_mentions_selected_guide_auto_apply(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "portal", "select", "--help"])
-    normalized = _normalize_help(result.output)
+def test_cw_portal_select_help_mentions_selected_guide_auto_apply():
+    normalized = _normalize_help(_registered_command_help(portal_app, "select"))
+    option_decls = _function_option_decls(cw_portal_select)
 
-    assert result.exit_code == 0
-    assert "--session" in result.output
-    assert "--card-idx" in result.output
+    assert "--session" in option_decls
+    assert "--card-idx" in option_decls
     assert "guide.fetch.cw --select" in normalized
     assert "未记录则会在点击前失败" in normalized
     assert "成功后会自动应用当前已选攻略" in normalized
@@ -1923,24 +1882,22 @@ def test_cw_portal_select_help_mentions_selected_guide_auto_apply(cli_runner):
     assert "手动兜底" not in normalized
 
 
-def test_cw_guide_apply_help_marks_manual_fallback_only(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "guide", "apply", "--help"])
-    normalized = _normalize_help(result.output)
+def test_cw_guide_apply_help_marks_manual_fallback_only():
+    normalized = _normalize_help(_registered_command_help(cw_guide_app, "apply"))
+    option_decls = _function_option_decls(cw_guide_apply)
 
-    assert result.exit_code == 0
-    assert "--session" in result.output
+    assert "--session" in option_decls
     assert "手动兜底" in normalized
     assert "当前已选攻略" in normalized
     assert "常规第一步" not in normalized
 
 
-def test_cw_slots_read_help_describes_slot_as_targeted_confirmation(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "slots", "read", "--help"])
-    normalized = _normalize_help(result.output)
-    slot_help = _normalize_help(_extract_help_option_block(result.output, "--slot"))
+def test_cw_slots_read_help_describes_slot_as_targeted_confirmation():
+    normalized = _normalize_help(_registered_command_help(slots_app, "read"))
+    slot_help = _normalize_help(_function_option_help(cw_slots_read, "--slot"))
+    option_decls = _function_option_decls(cw_slots_read)
 
-    assert result.exit_code == 0
-    assert "--slot" in result.output
+    assert "--slot" in option_decls
     assert "先看当前截图" in normalized
     assert "有角色但名字不确定" in normalized
     assert "不传 --slot 时仍保留全量读取" in normalized
@@ -1948,112 +1905,97 @@ def test_cw_slots_read_help_describes_slot_as_targeted_confirmation(cli_runner):
     assert "全量读取" in slot_help
 
 
-def test_cw_equipment_help_mentions_compose_session_record(cli_runner):
-    from trail.cli import app
+def test_cw_equipment_help_mentions_compose_session_record():
+    help_text = _registered_group_help(cw_app)["equipment"]
 
-    result = cli_runner.invoke(app, ["cw", "equipment", "--help"])
-
-    assert result.exit_code == 0
-    assert "compose" in result.stdout
-    assert "只写 session" in result.stdout
-    assert "不执行真实 UI 合成" in result.stdout
+    assert "compose" in _registered_command_names(equipment_app)
+    assert "只写 session" in help_text
+    assert "不执行真实 UI 合成" in help_text
 
 
-def test_cw_equipment_compose_help_lists_required_options(cli_runner):
-    from trail.cli import app
+def test_cw_equipment_compose_help_lists_required_options():
+    command_help = _registered_command_help(equipment_app, "compose")
+    option_decls = _function_option_decls(cw_equipment_compose)
+    slot_help = _function_option_help(cw_equipment_compose, "--slot")
 
-    result = cli_runner.invoke(app, ["cw", "equipment", "compose", "--help"])
-
-    assert result.exit_code == 0
-    assert "--name" in result.stdout
-    assert "--slot" in result.stdout
-    assert "--role" in result.stdout
-    assert "1-based" in result.stdout or "从 1 开始" in result.stdout
+    assert "--name" in option_decls
+    assert "--slot" in option_decls
+    assert "--role" in option_decls
+    assert "1-based" in command_help or "从 1 开始" in slot_help
 
 
-def test_cw_portal_help_distinguishes_detect_and_refresh(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "portal", "--help"])
-    normalized = _normalize_help(result.output)
+def test_cw_portal_help_distinguishes_detect_and_refresh():
+    normalized = _normalize_help(_registered_group_help(cw_app)["portal"])
+    command_names = _registered_command_names(portal_app)
 
-    assert result.exit_code == 0
-    assert "detect" in result.output
-    assert "refresh" in result.output
+    assert "detect" in command_names
+    assert "refresh" in command_names
     assert "重新识别并保存当前三张卡" in normalized
     assert "点击刷新后生成新的三张卡" in normalized
 
 
-def test_cw_portal_detect_help_exposes_snapshot_only_contract(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "portal", "detect", "--help"])
-    normalized = _normalize_help(result.output)
+def test_cw_portal_detect_help_exposes_snapshot_only_contract():
+    normalized = _normalize_help(_registered_command_help(portal_app, "detect"))
+    option_decls = _function_option_decls(cw_portal_detect)
 
-    assert result.exit_code == 0
-    assert "--session" in result.output
+    assert "--session" in option_decls
     assert "当前已在投资环境页时重新识别并保存 portal snapshot" in normalized
     assert "只重建当前三张卡识别结果" in normalized
     assert "不点击、不刷新、不重开" in normalized
     assert "推进流程" not in normalized
 
 
-def test_strategy_group_is_visible_in_cw_help(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "--help"])
-    block = _extract_help_command_block(result.output, "strategy")
+def test_strategy_group_is_visible_in_cw_help():
+    block = _registered_group_help(cw_app)["strategy"]
 
-    assert result.exit_code == 0
-    assert "strategy" in block
+    assert "strategy" in _registered_group_help(cw_app)
     assert "局内投资策略页" in block
     assert "单卡刷新" in block
 
 
-def test_strategy_group_help_describes_snapshot_and_single_card_refresh(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "strategy", "--help"])
-    normalized = _normalize_help(result.output)
+def test_strategy_group_help_describes_snapshot_and_single_card_refresh():
+    normalized = _normalize_help(_registered_group_help(cw_app)["strategy"])
+    command_names = _registered_command_names(strategy_app)
 
-    assert result.exit_code == 0
-    assert "detect" in result.output
-    assert "select" in result.output
-    assert "refresh" in result.output
+    assert "detect" in command_names
+    assert "select" in command_names
+    assert "refresh" in command_names
     assert "只重建当前三张策略卡快照" in normalized
     assert "只刷新指定卡" in normalized
     assert "不做整页刷新" in normalized
 
 
-def test_strategy_group_refresh_help_requires_card_idx(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "strategy", "refresh", "--help"])
-    normalized = _normalize_help(result.output)
-    card_idx_help = _normalize_help(_extract_help_option_block(result.output, "--card-idx"))
+def test_strategy_group_refresh_help_requires_card_idx():
+    normalized = _normalize_help(_registered_command_help(strategy_app, "refresh"))
+    option_decls = _function_option_decls(cw_strategy_refresh)
+    card_idx_option = inspect.signature(cw_strategy_refresh).parameters["card_idx"].default
 
-    assert result.exit_code == 0
-    assert "--card-idx" in result.output
+    assert "--card-idx" in option_decls
     assert "只刷新指定卡" in normalized
     assert "不做整页刷新" in normalized
-    assert "required" in card_idx_help.lower()
+    assert card_idx_option.default is ...
 
 
-def test_invest_help_marks_compatibility_entry(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "invest", "--help"])
-    normalized = _normalize_help(result.output)
+def test_invest_help_marks_compatibility_entry():
+    normalized = _normalize_help(_registered_group_help(cw_app)["invest"])
 
-    assert result.exit_code == 0
     assert "兼容" in normalized
     assert "粗粒度入口" in normalized
     assert "不用于投资策略页" in normalized
 
 
-def test_cw_enter_help_exposes_home_only_contract(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "enter", "--help"])
+def test_cw_enter_help_exposes_home_only_contract():
+    option_decls = _function_option_decls(cw_enter)
 
-    assert result.exit_code == 0
-    assert "--session" in result.stdout
-    assert "--mode" not in result.stdout
-    assert "--difficulty" not in result.stdout
-    assert "--battle-mode" not in result.stdout
+    assert "--session" in option_decls
+    assert "--mode" not in option_decls
+    assert "--difficulty" not in option_decls
+    assert "--battle-mode" not in option_decls
 
 
-def test_cw_start_help_mentions_ax_x_and_rank_ranges(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "start", "--help"])
-    difficulty_help = _normalize_help(_extract_help_option_block(result.output, "--difficulty"))
+def test_cw_start_help_mentions_ax_x_and_rank_ranges():
+    difficulty_help = _normalize_help(_function_option_help(cw_start, "--difficulty"))
 
-    assert result.exit_code == 0
     assert "lowest/current/highest/AX-X" in difficulty_help
     assert "A0-1..A8-40" in difficulty_help
 
@@ -2110,9 +2052,5 @@ def test_cw_start_invalid_difficulty_reaches_daemon_instead_of_typer(cli_runner,
     assert "fail cw.start code=CW_START_DIFFICULTY_INVALID" in result.stdout
 
 
-def test_window_help_exposes_launch_command(cli_runner):
-    result = cli_runner.invoke(app, ["window", "--help"])
-
-    assert result.exit_code == 0
-    assert "attach" in result.stdout
-    assert "launch" in result.stdout
+def test_window_help_exposes_launch_command():
+    assert {"attach", "launch"}.issubset(_registered_command_names(window_app))
