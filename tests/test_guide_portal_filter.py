@@ -11,8 +11,14 @@ def load_guide_module():
     return importlib.import_module("trail.scenes.cw.guide")
 
 
-def test_fetch_cw_guide_list_rejects_portal_and_portal_id_together():
+def test_fetch_cw_guide_list_rejects_portal_and_portal_id_together(monkeypatch):
     guide_module = load_guide_module()
+    monkeypatch.setattr(
+        guide_module,
+        "_get_cw_config_data",
+        lambda **kwargs: pytest.fail("mutually exclusive portal filters should be rejected before config fetch"),
+        raising=False,
+    )
 
     with pytest.raises(guide_module.TrailError) as exc_info:
         guide_module.fetch_cw_guide_list(

@@ -131,7 +131,7 @@ def test_write_launch_path_keeps_sibling_channels_under_concurrent_writes(monkey
                 read_count += 1
                 if read_count >= 2:
                     release_reads.set()
-            release_reads.wait(timeout=1.0)
+            release_reads.wait(timeout=0.05)
         return result
 
     def worker(channel: str, game_path: str):

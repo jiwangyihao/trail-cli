@@ -1510,6 +1510,12 @@ def fetch_cw_guide_list(
             "GUIDE_PORTAL_PAGINATION_UNSUPPORTED",
             "guide portal filter only supports first page without next_page_token",
         )
+    if (
+        has_portal_filter
+        and _normalize_portal_values(portal)
+        and _normalize_portal_values(portal_id)
+    ):
+        raise TrailError("GUIDE_INPUT_INVALID", "guide options '--portal' and '--portal-id' are mutually exclusive")
 
     raw_config: dict[str, object] | None = None
     needs_config = has_portal_filter or trait is not None or role is not None

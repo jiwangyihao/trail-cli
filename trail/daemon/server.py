@@ -27,6 +27,9 @@ from trail.daemon.session_service import SessionServiceRegistry
 from trail.output.envelope import command_failure
 
 
+DAEMON_SERVER_POLL_INTERVAL = 0.05
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -181,7 +184,7 @@ class TrailDaemonServer:
             listener.trail_daemon_server = self  # type: ignore[attr-defined]
             self._listener = listener
             self._write_ready_manifest(listener)
-            listener.serve_forever()
+            listener.serve_forever(poll_interval=DAEMON_SERVER_POLL_INTERVAL)
 
     def shutdown(self) -> None:
         if self._listener is None:

@@ -341,21 +341,17 @@ def test_daemon_state_ready_not_degraded(monkeypatch, tmp_path: Path):
 
 def test_daemon_start_restarts_stale_ready_runtime(cli_runner, monkeypatch, tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
-    listener = socket.create_server(("127.0.0.1", 0))
-    endpoint = f"127.0.0.1:{listener.getsockname()[1]}"
-    try:
-        write_ready_manifest(daemon_home, endpoint=endpoint, token_value="token-live")
-        started: list[Path] = []
-        monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
-        monkeypatch.setattr("trail.commands.daemon.start_bootstrap", lambda home: started.append(home) or True)
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-live")
+    started: list[Path] = []
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_traild", lambda **kwargs: False)
+    monkeypatch.setattr("trail.commands.daemon.start_bootstrap", lambda home: started.append(home) or True)
 
-        result = cli_runner.invoke(app, ["daemon", "start"])
+    result = cli_runner.invoke(app, ["daemon", "start"])
 
-        assert result.exit_code == 0
-        assert result.stdout.splitlines() == ["ok daemon.start started=1 already_running=0"]
-        assert started == [daemon_home]
-    finally:
-        listener.close()
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["ok daemon.start started=1 already_running=0"]
+    assert started == [daemon_home]
 
 
 def test_daemon_logs_returns_log_dir(cli_runner, monkeypatch, tmp_path: Path):
@@ -419,27 +415,23 @@ def test_daemon_stop_returns_failure_when_process_termination_fails(cli_runner, 
 
 def test_daemon_stop_clears_stale_runtime_without_killing_unverified_pid(cli_runner, monkeypatch, tmp_path: Path):
     daemon_home = tmp_path / "daemon-home"
-    listener = socket.create_server(("127.0.0.1", 0))
-    endpoint = f"127.0.0.1:{listener.getsockname()[1]}"
-    try:
-        write_ready_manifest(daemon_home, endpoint=endpoint, token_value="token-stale")
-        terminated: list[int] = []
-        token_path = daemon_home / "daemon-token.txt"
-        monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
-        monkeypatch.setattr("trail.commands.daemon.terminate_daemon_process", lambda pid: terminated.append(pid))
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-stale")
+    terminated: list[int] = []
+    token_path = daemon_home / "daemon-token.txt"
+    monkeypatch.setattr("trail.commands.daemon.resolve_daemon_home", lambda: daemon_home)
+    monkeypatch.setattr("trail.commands.daemon.runtime_endpoint_is_traild", lambda **kwargs: False)
+    monkeypatch.setattr("trail.commands.daemon.terminate_daemon_process", lambda pid: terminated.append(pid))
 
-        result = cli_runner.invoke(app, ["daemon", "stop"])
+    result = cli_runner.invoke(app, ["daemon", "stop"])
 
-        assert result.exit_code == 0
-        manifest = load_manifest(manifest_path_for_user(daemon_home))
-        assert result.stdout.splitlines() == ["ok daemon.stop stopped=1"]
-        assert terminated == []
-        assert manifest.runtime.state == "stopped"
-        assert manifest.runtime.endpoint is None
-        assert manifest.runtime.pid is None
-        assert token_path.read_text(encoding="utf-8") == ""
-    finally:
-        listener.close()
+    assert result.exit_code == 0
+    manifest = load_manifest(manifest_path_for_user(daemon_home))
+    assert result.stdout.splitlines() == ["ok daemon.stop stopped=1"]
+    assert terminated == []
+    assert manifest.runtime.state == "stopped"
+    assert manifest.runtime.endpoint is None
+    assert manifest.runtime.pid is None
+    assert token_path.read_text(encoding="utf-8") == ""
 
 
 def test_daemon_restart_stops_then_starts_sequentially(cli_runner, monkeypatch, tmp_path: Path):
@@ -566,9 +558,9 @@ def test_wait_until_runtime_ready_returns_runtime_snapshot(tmp_path: Path):
     def promote_runtime() -> None:
         write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
 
-    thread = threading.Timer(0.1, promote_runtime)
+    thread = threading.Timer(0.01, promote_runtime)
     thread.start()
-    runtime = wait_until_runtime_ready(daemon_home, timeout_seconds=2.0, interval_seconds=0.05)
+    runtime = wait_until_runtime_ready(daemon_home, timeout_seconds=2.0, interval_seconds=0.005)
     thread.join()
 
     assert runtime["state"] == "ready"
@@ -645,6 +637,37 @@ def test_runtime_service_caches_runtime_and_delegates_window_ops(monkeypatch, tm
     assert attached_window == {"title": "Demo Window", "hwnd": 1}
     assert launched == [{"game_path": tmp_path / "StarRail.exe", "channel": "official"}]
     assert launched_game == {"started": True}
+
+
+def test_traild_server_uses_short_poll_interval_for_responsive_shutdown(monkeypatch, tmp_path: Path):
+    import trail.daemon.server as server_module
+
+    daemon_home = tmp_path / "daemon-home"
+    write_installed_manifest(daemon_home, runtime_state="starting")
+    monkeypatch.setattr(server_module, "resolve_daemon_home", lambda: daemon_home)
+    recorded: dict[str, object] = {}
+
+    class FakeListener:
+        server_address = ("127.0.0.1", 12345)
+
+        def __init__(self, address, handler):
+            recorded["address"] = address
+            recorded["handler"] = handler
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def serve_forever(self, poll_interval: float = 0.5) -> None:
+            recorded["poll_interval"] = poll_interval
+
+    monkeypatch.setattr(server_module, "_DaemonTcpServer", FakeListener)
+
+    server_module.TrailDaemonServer(command_service=SimpleNamespace()).serve_forever()
+
+    assert recorded["poll_interval"] <= 0.1
 
 
 def test_pyproject_exposes_traild_script() -> None:
