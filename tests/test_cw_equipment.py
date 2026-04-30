@@ -175,6 +175,175 @@ def test_prepare_equipment_icon_cache_requires_safe_big_version(tmp_path):
     assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_VERSION_MISSING"
 
 
+def test_prepare_equipment_icon_cache_rejects_cache_root_symlink_escape(tmp_path):
+    resources = load_equipment_resources_module()
+    external_cache = tmp_path / "external-cache"
+    external_cache.mkdir()
+    cache_parent = tmp_path / ".trail" / "cache"
+    cache_parent.mkdir(parents=True)
+    cache_link = cache_parent / "cw-equipment-icons"
+    try:
+        cache_link.symlink_to(external_cache, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink unsupported: {exc}")
+    catalog = resources.build_cw_equipment_catalog(
+        {
+            "rpg_game_big_version": "3.2",
+            "equipment_list": [{"id": "e1", "name": "幸运星", "icon": "https://act-webstatic.mihoyo.com/e1.png"}],
+        }
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        resources.prepare_equipment_icon_cache(
+            catalog,
+            workspace_root=tmp_path,
+            fetcher=lambda url, timeout, max_bytes: _png_bytes(),
+        )
+
+    assert getattr(exc_info.value, "code", None) == "CW_RESOURCE_BUNDLE_INVALID"
+    assert not (external_cache / "3.2").exists()
+
+
+@pytest.mark.parametrize("link_parts", [("3.2",), ("3.2", "icons")])
+def test_prepare_equipment_icon_cache_rejects_nested_cache_symlink_escape(tmp_path, link_parts):
+    resources = load_equipment_resources_module()
+    external_cache = tmp_path / "external-cache"
+    external_cache.mkdir()
+    cache_root = tmp_path / ".trail" / "cache" / "cw-equipment-icons"
+    link_path = cache_root.joinpath(*link_parts)
+    link_path.parent.mkdir(parents=True)
+    try:
+        link_path.symlink_to(external_cache, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink unsupported: {exc}")
+    catalog = resources.build_cw_equipment_catalog(
+        {
+            "rpg_game_big_version": "3.2",
+            "equipment_list": [{"id": "e1", "name": "幸运星", "icon": "https://act-webstatic.mihoyo.com/e1.png"}],
+        }
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        resources.prepare_equipment_icon_cache(
+            catalog,
+            workspace_root=tmp_path,
+            fetcher=lambda url, timeout, max_bytes: _png_bytes(),
+        )
+
+    assert getattr(exc_info.value, "code", None) == "CW_RESOURCE_BUNDLE_INVALID"
+    assert not any(external_cache.iterdir())
+
+
+def test_prepare_equipment_icon_cache_rejects_icon_file_symlink_escape(tmp_path):
+    resources = load_equipment_resources_module()
+    external_icon = tmp_path / "external.png"
+    external_icon.write_bytes(_png_bytes())
+    icon_path = tmp_path / ".trail" / "cache" / "cw-equipment-icons" / "3.2" / "icons" / "advanced-e1.png"
+    icon_path.parent.mkdir(parents=True)
+    try:
+        icon_path.symlink_to(external_icon)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink unsupported: {exc}")
+    catalog = resources.build_cw_equipment_catalog(
+        {
+            "rpg_game_big_version": "3.2",
+            "equipment_list": [{"id": "e1", "name": "幸运星", "icon": "https://act-webstatic.mihoyo.com/e1.png"}],
+        }
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        resources.prepare_equipment_icon_cache(
+            catalog,
+            workspace_root=tmp_path,
+            fetcher=lambda url, timeout, max_bytes: _png_bytes("blue"),
+        )
+
+    assert getattr(exc_info.value, "code", None) == "CW_RESOURCE_BUNDLE_INVALID"
+    assert external_icon.read_bytes() == _png_bytes()
+
+
+def test_prepare_equipment_icon_cache_rejects_manifest_file_symlink_escape(tmp_path):
+    resources = load_equipment_resources_module()
+    external_manifest = tmp_path / "external-manifest.json"
+    external_manifest.write_text('{"items": []}', encoding="utf-8")
+    manifest_path = tmp_path / ".trail" / "cache" / "cw-equipment-icons" / "3.2" / "manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    try:
+        manifest_path.symlink_to(external_manifest)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink unsupported: {exc}")
+    catalog = resources.build_cw_equipment_catalog(
+        {
+            "rpg_game_big_version": "3.2",
+            "equipment_list": [{"id": "e1", "name": "幸运星", "icon": "https://act-webstatic.mihoyo.com/e1.png"}],
+        }
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        resources.prepare_equipment_icon_cache(
+            catalog,
+            workspace_root=tmp_path,
+            fetcher=lambda url, timeout, max_bytes: _png_bytes(),
+        )
+
+    assert getattr(exc_info.value, "code", None) == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_prepare_equipment_icon_cache_rejects_icon_temp_symlink_escape(tmp_path):
+    resources = load_equipment_resources_module()
+    external_icon = tmp_path / "external.png"
+    external_icon.write_bytes(_png_bytes("green"))
+    tmp_icon_path = tmp_path / ".trail" / "cache" / "cw-equipment-icons" / "3.2" / "icons" / "advanced-e1.png.tmp"
+    tmp_icon_path.parent.mkdir(parents=True)
+    try:
+        tmp_icon_path.symlink_to(external_icon)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink unsupported: {exc}")
+    catalog = resources.build_cw_equipment_catalog(
+        {
+            "rpg_game_big_version": "3.2",
+            "equipment_list": [{"id": "e1", "name": "幸运星", "icon": "https://act-webstatic.mihoyo.com/e1.png"}],
+        }
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        resources.prepare_equipment_icon_cache(
+            catalog,
+            workspace_root=tmp_path,
+            fetcher=lambda url, timeout, max_bytes: _png_bytes("blue"),
+        )
+
+    assert getattr(exc_info.value, "code", None) == "CW_RESOURCE_BUNDLE_INVALID"
+    assert external_icon.read_bytes() == _png_bytes("green")
+
+
+def test_prepare_equipment_icon_cache_rejects_manifest_temp_symlink_escape(tmp_path):
+    resources = load_equipment_resources_module()
+    external_manifest = tmp_path / "external-manifest.json"
+    external_manifest.write_text('{"items": []}', encoding="utf-8")
+    tmp_manifest_path = tmp_path / ".trail" / "cache" / "cw-equipment-icons" / "3.2" / "manifest.json.tmp"
+    tmp_manifest_path.parent.mkdir(parents=True)
+    try:
+        tmp_manifest_path.symlink_to(external_manifest)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink unsupported: {exc}")
+    catalog = resources.build_cw_equipment_catalog(
+        {
+            "rpg_game_big_version": "3.2",
+            "equipment_list": [{"id": "e1", "name": "幸运星", "icon": "https://act-webstatic.mihoyo.com/e1.png"}],
+        }
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        resources.prepare_equipment_icon_cache(
+            catalog,
+            workspace_root=tmp_path,
+            fetcher=lambda url, timeout, max_bytes: _png_bytes(),
+        )
+
+    assert getattr(exc_info.value, "code", None) == "CW_RESOURCE_BUNDLE_INVALID"
+
+
 def test_prepare_equipment_icon_cache_refresh_redownloads_changed_url_only_with_refresh(tmp_path):
     resources = load_equipment_resources_module()
     first_catalog = resources.build_cw_equipment_catalog(
@@ -266,6 +435,90 @@ def test_prepare_equipment_icon_cache_no_refresh_reuses_previous_url_when_change
     assert manifest["items"][0]["icon_url"] == "https://act-webstatic.mihoyo.com/a.png"
 
 
+def test_read_cw_equipment_with_prebuilt_recognizer_skips_icon_cache(monkeypatch, tmp_path):
+    scene = importlib.import_module("trail.scenes.cw.equipment")
+
+    monkeypatch.setattr(
+        scene,
+        "fetch_cw_raw_guide_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("config network must not be called")),
+    )
+    monkeypatch.setattr(
+        scene,
+        "prepare_equipment_icon_cache",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("icon cache must not be prepared")),
+    )
+    monkeypatch.setattr(
+        scene,
+        "load_cached_equipment_icons",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("icon cache must not be loaded")),
+    )
+    monkeypatch.setattr(scene, "iter_equipment_grid_cells", lambda *args, **kwargs: [])
+
+    class Runtime:
+        def capture_image(self, **kwargs):
+            del kwargs
+            return Image.new("RGBA", (1920, 1080), "black")
+
+    result = scene.read_cw_equipment(
+        Runtime(),
+        workspace_root=tmp_path,
+        raw_config={"rpg_game_big_version": "3.2", "equipment_list": []},
+        recognizer=object(),
+    )
+
+    assert result == {
+        "count": 0,
+        "uncertain": 0,
+        "empty": 0,
+        "items": [],
+        "backend": "vector",
+        "layout": "default",
+        "columns": 10,
+        "rows": 6,
+        "stale": False,
+    }
+
+
+def test_read_cw_equipment_with_injected_recognizer_does_not_prepare_or_load_icons(monkeypatch, tmp_path):
+    scene = importlib.import_module("trail.scenes.cw.equipment")
+    recognition = importlib.import_module("trail.scenes.cw.equipment_recognition")
+
+    class Runtime:
+        def capture_image(self, **kwargs):
+            del kwargs
+            return Image.new("RGBA", (1920, 1080), "black")
+
+    class Recognizer:
+        def recognize(self, image):
+            del image
+            return recognition.EquipmentRecognitionResult(
+                candidates=[],
+                score=None,
+                gap=None,
+                uncertain=False,
+                empty=True,
+            )
+
+    monkeypatch.setattr(
+        scene,
+        "prepare_equipment_icon_cache",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("prepare must not be called")),
+    )
+    monkeypatch.setattr(
+        scene,
+        "load_cached_equipment_icons",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("load icons must not be called")),
+    )
+    monkeypatch.setattr(
+        scene,
+        "fetch_cw_raw_guide_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw config must not be fetched")),
+    )
+
+    result = scene.read_cw_equipment(Runtime(), workspace_root=tmp_path, recognizer=Recognizer())
+
+    assert result["count"] == 0
 def test_safe_segment_rejects_windows_reserved_names_with_extensions():
     resources = load_equipment_resources_module()
 
@@ -448,6 +701,122 @@ def test_vector_equipment_recognizer_picks_best_candidate_with_gap():
     assert result.candidates[0].name == "红装"
     assert result.candidates[0].score > 0.95
     assert result.gap > 0.1
+
+
+def test_vector_recognizer_from_precomputed_features_matches_png_constructor():
+    recognition = load_equipment_recognition_module()
+    resources = load_equipment_resources_module()
+    entry = resources.EquipmentCatalogEntry(
+        "advanced-red", "red", "红装", "advanced", "4", "进阶", "https://act-webstatic.mihoyo.com/red.png", "3.2"
+    )
+    alt_entry = resources.EquipmentCatalogEntry(
+        "advanced-ruby", "ruby", "红宝", "advanced", "4", "进阶", "https://act-webstatic.mihoyo.com/ruby.png", "3.2"
+    )
+    icon = Image.new("RGBA", (128, 128), (224, 20, 18, 255))
+    alt_icon = Image.new("RGBA", (128, 128), (180, 22, 24, 255))
+    query = Image.new("RGBA", (70, 70), (220, 20, 18, 255))
+
+    expected = recognition.VectorEquipmentIconRecognizer([(entry, icon), (alt_entry, alt_icon)]).recognize(query)
+    payload = recognition.build_precomputed_equipment_features([(entry, icon), (alt_entry, alt_icon)])
+    actual = recognition.VectorEquipmentIconRecognizer.from_precomputed_features(payload).recognize(query)
+
+    assert payload["equipment_feature_schema_version"] == 1
+    assert payload["recognizer_algorithm_version"] == "vector-mask-v1"
+    assert payload["feature_size"] == [32, 32]
+    assert payload["match_size"] == [64, 64]
+    assert payload["min_score"] == recognition.DEFAULT_MIN_SCORE
+    assert payload["min_gap"] == recognition.DEFAULT_MIN_GAP
+    assert len(payload["items"]) == 2
+    assert set(payload["items"][0]) >= {
+        "cache_key",
+        "id",
+        "name",
+        "kind",
+        "category",
+        "category_name",
+        "icon_url",
+        "big_version",
+        "feature_rgba",
+        "match_rgba",
+        "feature_mask",
+        "match_mask",
+    }
+    assert payload["items"][0]["feature_rgba"]["mode"] == "RGBA"
+    assert payload["items"][0]["match_rgba"]["size"] == [64, 64]
+    assert payload["items"][0]["feature_mask"]["mode"] == "L"
+    assert payload["items"][0]["match_mask"]["size"] == [64, 64]
+    assert [(candidate.cache_key, candidate.score) for candidate in actual.candidates] == [
+        (candidate.cache_key, candidate.score) for candidate in expected.candidates
+    ]
+    assert actual.score == expected.score
+    assert actual.gap == expected.gap
+    assert actual.uncertain is expected.uncertain
+    assert actual.empty is expected.empty
+
+
+def _sample_precomputed_feature_payload():
+    recognition = load_equipment_recognition_module()
+    resources = load_equipment_resources_module()
+    entry = resources.EquipmentCatalogEntry(
+        "advanced-red", "red", "红装", "advanced", None, None, "https://act-webstatic.mihoyo.com/red.png", "3.2"
+    )
+    return recognition, recognition.build_precomputed_equipment_features([(entry, Image.new("RGBA", (128, 128), "red"))])
+
+
+def _replace_payload_value(payload, path, value):
+    target = payload
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = value
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "match"),
+    [
+        pytest.param(("min_score",), float("nan"), "min_score", id="min-score-nan"),
+        pytest.param(("min_gap",), float("inf"), "min_gap", id="min-gap-inf"),
+        pytest.param(("min_score",), "bad", "min_score", id="threshold-non-numeric"),
+        pytest.param(("items",), {"cache_key": "advanced-red"}, "items", id="items-not-list"),
+        pytest.param(("feature_size",), [31, 32], "sizes", id="top-level-feature-size"),
+        pytest.param(("match_size",), [64, 63], "sizes", id="top-level-match-size"),
+        pytest.param(("items", 0, "feature_rgba", "mode"), "RGB", "feature_rgba", id="payload-mode"),
+        pytest.param(("items", 0, "feature_rgba", "size"), [1, 1], "feature_rgba", id="payload-size"),
+        pytest.param(("items", 0, "feature_rgba", "data"), [0], "feature_rgba", id="payload-data-length"),
+        pytest.param(("items", 0, "feature_rgba", "data"), [999] * (32 * 32 * 4), "feature_rgba", id="payload-data-element"),
+    ],
+)
+def test_vector_recognizer_from_precomputed_features_rejects_invalid_payloads(path, value, match):
+    recognition, payload = _sample_precomputed_feature_payload()
+    _replace_payload_value(payload, path, value)
+
+    with pytest.raises(ValueError, match=match):
+        recognition.VectorEquipmentIconRecognizer.from_precomputed_features(payload)
+
+
+def test_vector_recognizer_from_precomputed_features_rejects_bad_algorithm():
+    recognition = load_equipment_recognition_module()
+    resources = load_equipment_resources_module()
+    entry = resources.EquipmentCatalogEntry(
+        "advanced-red", "red", "红装", "advanced", None, None, "https://act-webstatic.mihoyo.com/red.png", "3.2"
+    )
+    payload = recognition.build_precomputed_equipment_features([(entry, Image.new("RGBA", (128, 128), "red"))])
+    payload["recognizer_algorithm_version"] = "vector-mask-v0"
+
+    with pytest.raises(ValueError, match="algorithm"):
+        recognition.VectorEquipmentIconRecognizer.from_precomputed_features(payload)
+
+
+def test_vector_recognizer_from_precomputed_features_rejects_wrong_payload_size():
+    recognition = load_equipment_recognition_module()
+    resources = load_equipment_resources_module()
+    entry = resources.EquipmentCatalogEntry(
+        "advanced-red", "red", "红装", "advanced", None, None, "https://act-webstatic.mihoyo.com/red.png", "3.2"
+    )
+    payload = recognition.build_precomputed_equipment_features([(entry, Image.new("RGBA", (128, 128), "red"))])
+    payload["items"][0]["feature_rgba"] = {"mode": "RGBA", "size": [1, 1], "data": [255, 0, 0, 255]}
+
+    with pytest.raises(ValueError, match="feature_rgba"):
+        recognition.VectorEquipmentIconRecognizer.from_precomputed_features(payload)
 
 
 def test_vector_equipment_recognizer_marks_low_gap_uncertain():

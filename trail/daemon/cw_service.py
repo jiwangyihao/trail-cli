@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from inspect import Parameter, signature
 from pathlib import Path
 from time import sleep
 
@@ -90,6 +91,7 @@ from trail.scenes.cw.slots import (
     swap_cw_slots,
 )
 from trail.scenes.cw.stage import build_cw_stage_detector, detect_cw_stage, wait_cw_stage
+from trail.scenes.cw.static_resources import load_default_cw_resource_bundle
 from trail.scenes.cw.strategy import detect_cw_strategy, refresh_cw_strategy, select_cw_strategy
 
 
@@ -159,6 +161,83 @@ def _capture_delay_seconds_for_method(method: str) -> float:
     return 0.0
 
 
+def _call_with_supported_keywords(fn, *args, **kwargs):
+    try:
+        parameters = signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return fn(*args, **kwargs)
+    accepted: set[str] = set()
+    accepts_any = False
+    for parameter in parameters:
+        if parameter.kind is Parameter.VAR_KEYWORD:
+            accepts_any = True
+            break
+        if parameter.kind in {Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY}:
+            accepted.add(parameter.name)
+    if accepts_any:
+        return fn(*args, **kwargs)
+    return fn(*args, **{key: value for key, value in kwargs.items() if key in accepted})
+
+
+def _apply_cw_equipment_read_with_resources(
+    session,
+    runtime,
+    *,
+    workspace_root: str | None,
+    cw_resource_service=None,
+    request_id: str | None = None,
+) -> dict:
+    if cw_resource_service is None:
+        if request_id is None:
+            return apply_cw_equipment_read(session, runtime, workspace_root=workspace_root)
+        return apply_cw_equipment_read(session, runtime, workspace_root=workspace_root, request_id=request_id)
+    raw_config, recognizer = cw_resource_service.equipment_read_resources(workspace_root=workspace_root)
+    if request_id is None:
+        return apply_cw_equipment_read(
+            session,
+            runtime,
+            workspace_root=workspace_root,
+            raw_config=raw_config,
+            recognizer=recognizer,
+        )
+    return apply_cw_equipment_read(
+        session,
+        runtime,
+        workspace_root=workspace_root,
+        raw_config=raw_config,
+        recognizer=recognizer,
+        request_id=request_id,
+    )
+
+
+def _equipment_prepare_summary_from_bundle(*, workspace_root: str) -> dict:
+    bundle = load_default_cw_resource_bundle(workspace_root=workspace_root)
+    items = bundle.equipment_manifest.get("items") if isinstance(bundle.equipment_manifest, dict) else []
+    count = len(items) if isinstance(items, list) else 0
+    return {"big_version": bundle.big_version, "count": count, "cached": count, "downloaded": 0, "refreshed": False}
+
+
+def _cached_cw_guide_config(
+    *, workspace_root: str | None, cw_resource_service=None, enrich_traits: bool = False
+) -> dict:
+    if cw_resource_service is None or not hasattr(cw_resource_service, "bundle"):
+        return _call_with_supported_keywords(
+            fetch_cw_guide_config,
+            workspace_root=workspace_root,
+            enrich_traits=enrich_traits,
+        )
+    bundle = cw_resource_service.bundle(workspace_root=workspace_root)
+    config = bundle.guide_config_enriched if enrich_traits else bundle.guide_config
+    return deepcopy(config) if isinstance(config, dict) else {}
+
+
+def _cached_cw_raw_config(*, workspace_root: str | None, cw_resource_service=None) -> dict | None:
+    if cw_resource_service is None or not hasattr(cw_resource_service, "bundle"):
+        return None
+    bundle = cw_resource_service.bundle(workspace_root=workspace_root)
+    return bundle.raw_config if isinstance(bundle.raw_config, dict) else None
+
+
 def _begin_runtime_scope(runtime) -> None:
     begin_capture_scope = getattr(runtime, "begin_capture_scope", None)
     if callable(begin_capture_scope):
@@ -222,8 +301,16 @@ class _RequestScopedCaptureRuntime:
 
 
 class CwService:
-    def __init__(self, *, runtime_service):
+    def __init__(self, *, runtime_service, cw_resource_service=None):
         self.runtime_service = runtime_service
+        self.cw_resource_service = cw_resource_service
+
+    def guide_config(self, *, workspace_root: str | None, enrich_traits: bool = False) -> dict:
+        return _cached_cw_guide_config(
+            workspace_root=workspace_root,
+            cw_resource_service=self.cw_resource_service,
+            enrich_traits=enrich_traits,
+        )
 
     def handle(self, *, method: str, payload: dict, workspace_root: str, session_service) -> dict | None:
         session, _, _, handlers, _, _, _ = self._context(
@@ -252,6 +339,7 @@ class CwService:
             payload=payload,
             workspace_root=workspace_root,
             session_service=session_service,
+            request_id=request_id,
         )
 
         capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id)
@@ -422,6 +510,7 @@ class CwService:
         payload: dict,
         workspace_root: str,
         session_service,
+        request_id: str | None = None,
         track_side_effects: bool = False,
         shared_capture_scope: bool = False,
     ):
@@ -459,6 +548,13 @@ class CwService:
         def runtime_if_started():
             return runtime_holder.get("runtime")
 
+        def guide_config(*, enrich_traits: bool = False) -> dict:
+            return _cached_cw_guide_config(
+                workspace_root=workspace_root,
+                cw_resource_service=self.cw_resource_service,
+                enrich_traits=enrich_traits,
+            )
+
         def validated_enter_payload() -> dict:
             if any(key in payload for key in ("mode", "difficulty", "battle_mode")):
                 raise TrailError(
@@ -469,13 +565,15 @@ class CwService:
 
         def run_start() -> dict:
             mode, difficulty, battle_mode = _validated_start_payload(payload)
-            return _start_cw(
+            return _call_with_supported_keywords(
+                _start_cw,
                 session,
                 runtime=runtime(),
                 mode=mode,
                 difficulty=difficulty,
                 battle_mode=battle_mode,
                 workspace_root=workspace_root,
+                cw_resource_service=self.cw_resource_service,
             )
 
         def run_portal_select() -> dict:
@@ -486,6 +584,7 @@ class CwService:
                 card_idx=payload["card_idx"],
                 guide=guide,
                 workspace_root=workspace_root,
+                cw_resource_service=self.cw_resource_service,
             )
 
         def run_guide_apply() -> dict:
@@ -494,13 +593,13 @@ class CwService:
             return _apply_selected_guide_via_ui(session, runtime=runtime(), guide=guide)
 
         def run_shop_scan() -> dict:
-            base_config = fetch_cw_guide_config(workspace_root=workspace_root)
+            base_config = guide_config()
             applied = scan_cw_shop(
                 session,
                 scanner=_build_shop_snapshot_reader(runtime()),
                 guide_config=base_config,
             )
-            trait_config = _fetch_shop_field_trait_config(session, workspace_root=workspace_root)
+            trait_config = guide_config(enrich_traits=True) if _shop_has_fresh_slots(session) else None
             return project_cw_shop_snapshot(
                 applied.session,
                 guide_config=trait_config,
@@ -509,7 +608,7 @@ class CwService:
             )
 
         def run_shop_buy_slot() -> dict:
-            base_config = fetch_cw_guide_config(workspace_root=workspace_root)
+            base_config = guide_config()
             return buy_cw_shop_slot(
                 session,
                 slot=payload["slot"],
@@ -520,13 +619,29 @@ class CwService:
             ).response_snapshot
 
         def run_shop_buy_exp() -> dict:
-            base_config = fetch_cw_guide_config(workspace_root=workspace_root)
+            base_config = guide_config()
             return buy_cw_shop_exp(
                 session,
                 buyer=shop_exp_buyer_factory(runtime()),
                 scanner=_build_shop_snapshot_reader(runtime(), read_stage_status=True),
                 guide_config=base_config,
             ).response_snapshot
+
+        def run_equipment_read() -> dict:
+            return _apply_cw_equipment_read_with_resources(
+                session,
+                runtime(),
+                workspace_root=workspace_root,
+                cw_resource_service=self.cw_resource_service,
+                request_id=request_id,
+            )
+
+        def run_equipment_prepare() -> dict:
+            if bool(payload.get("refresh")) and self.cw_resource_service is not None:
+                return self.cw_resource_service.refresh_equipment_workspace_override(workspace_root=workspace_root)
+            if self.cw_resource_service is not None:
+                return self.cw_resource_service.equipment_prepare_summary(workspace_root=workspace_root)
+            return _equipment_prepare_summary_from_bundle(workspace_root=workspace_root)
 
         handlers = {
             "cw.enter": lambda: validated_enter_payload() and enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
@@ -537,7 +652,7 @@ class CwService:
                 detect_cw_portal(
                     session,
                     runtime=runtime(),
-                    portal_list=fetch_cw_guide_config(workspace_root=workspace_root).get("portal_list", []),
+                    portal_list=guide_config().get("portal_list", []),
                 ),
                 workspace_root=workspace_root,
             ),
@@ -546,15 +661,21 @@ class CwService:
                 refresh_cw_portal(
                     session,
                     runtime=runtime(),
-                    portal_list=fetch_cw_guide_config(workspace_root=workspace_root).get("portal_list", []),
+                    portal_list=guide_config().get("portal_list", []),
                 ),
                 workspace_root=workspace_root,
             ),
-            "cw.portal.restart": lambda: _restart_cw(session, runtime=runtime()),
+            "cw.portal.restart": lambda: _call_with_supported_keywords(
+                _restart_cw,
+                session,
+                runtime=runtime(),
+                workspace_root=workspace_root,
+                cw_resource_service=self.cw_resource_service,
+            ),
             "cw.strategy.detect": lambda: detect_cw_strategy(
                 session,
                 runtime=runtime(),
-                strategy_list=fetch_cw_guide_config(workspace_root=workspace_root).get("strategy_list", []),
+                strategy_list=guide_config().get("strategy_list", []),
             ),
             "cw.strategy.select": lambda: select_cw_strategy(
                 session,
@@ -565,7 +686,7 @@ class CwService:
                 session,
                 card_idx=payload["card_idx"],
                 runtime=runtime(),
-                strategy_list=fetch_cw_guide_config(workspace_root=workspace_root).get("strategy_list", []),
+                strategy_list=guide_config().get("strategy_list", []),
             ),
             "cw.stage.detect": lambda: detect_cw_stage(
                 session,
@@ -578,23 +699,25 @@ class CwService:
             ).scene_state["cw"]["stage"],
             "cw.guide.apply": run_guide_apply,
             "cw.guide.current": lambda: _current_guide(session, artifact_store=artifact_store),
-            "cw.equipment.prepare": lambda: prepare_cw_equipment(
-                workspace_root=workspace_root,
-                refresh=bool(payload.get("refresh")),
-            ),
-            "cw.equipment.read": lambda: apply_cw_equipment_read(session, runtime(), workspace_root=workspace_root),
-            "cw.equipment.compose": lambda: record_cw_equipment_compose(
+            "cw.equipment.prepare": run_equipment_prepare,
+            "cw.equipment.read": run_equipment_read,
+            "cw.equipment.compose": lambda: _call_with_supported_keywords(
+                record_cw_equipment_compose,
                 session,
                 name=payload["name"],
                 slot=payload["slot"],
                 role=payload["role"],
                 workspace_root=workspace_root,
+                raw_config=_cached_cw_raw_config(
+                    workspace_root=workspace_root,
+                    cw_resource_service=self.cw_resource_service,
+                ),
             ),
             "cw.slots.read": lambda: read_cw_slots(
                 session,
                 reader=slots_reader_factory(runtime(), targets=payload.get("slot")),
                 targets=payload.get("slot"),
-                guide_config=fetch_cw_guide_config(workspace_root=workspace_root, enrich_traits=True),
+                guide_config=guide_config(enrich_traits=True),
             ).response_snapshot,
             "cw.slots.swap": lambda: swap_cw_slots(
                 session,
@@ -622,7 +745,12 @@ class CwService:
                 session,
                 closer=shop_closer_factory(runtime()),
             ).scene_state["cw"]["shop"],
-            "cw.shop.status": lambda: _shop_status(session, artifact_store=artifact_store, workspace_root=workspace_root),
+            "cw.shop.status": lambda: _shop_status(
+                session,
+                artifact_store=artifact_store,
+                workspace_root=workspace_root,
+                cw_resource_service=self.cw_resource_service,
+            ),
             "cw.crystals.collect": lambda: collect_cw_crystals(
                 session,
                 collector=crystal_collector_factory(runtime()),
@@ -785,15 +913,17 @@ def _shop_has_fresh_slots(session) -> bool:
     return isinstance(slots.get("front"), list) or isinstance(slots.get("back"), list)
 
 
-def _fetch_shop_field_trait_config(session, *, workspace_root: str) -> dict | None:
-    if not _shop_has_fresh_slots(session):
-        return None
-    return fetch_cw_guide_config(workspace_root=workspace_root, enrich_traits=True)
-
-
-def _shop_status(session, *, artifact_store: ArtifactStore, workspace_root: str) -> dict:
+def _shop_status(session, *, artifact_store: ArtifactStore, workspace_root: str, cw_resource_service=None) -> dict:
     del artifact_store
-    trait_config = _fetch_shop_field_trait_config(session, workspace_root=workspace_root)
+    trait_config = (
+        _cached_cw_guide_config(
+            workspace_root=workspace_root,
+            cw_resource_service=cw_resource_service,
+            enrich_traits=True,
+        )
+        if _shop_has_fresh_slots(session)
+        else None
+    )
     payload = shop_cw_status(
         session,
         guide_config=trait_config,
@@ -840,6 +970,7 @@ def _select_portal_and_apply_selected_guide(
     card_idx: int,
     guide: dict | None = None,
     workspace_root: str | None = None,
+    cw_resource_service=None,
 ) -> dict:
     selected_guide = guide if guide is not None else _require_selected_guide(session)
     selected = select_cw_portal(session, card_idx=card_idx, runtime=runtime)
@@ -854,7 +985,7 @@ def _select_portal_and_apply_selected_guide(
         selected_data["skill_info"] = skill_info
     collect_cw_crystals(session, collector=crystal_collector_factory(runtime))
     dismiss_cw_slots_overlay(runtime)
-    guide_config = fetch_cw_guide_config(workspace_root=workspace_root)
+    guide_config = _cached_cw_guide_config(workspace_root=workspace_root, cw_resource_service=cw_resource_service)
     slots_result = read_cw_slots(
         session,
         reader=slots_reader_factory(runtime, dismiss_initial_overlay=False),
@@ -866,7 +997,12 @@ def _select_portal_and_apply_selected_guide(
     equipment_warnings: list[dict] = []
     try:
         equipment_snapshot = deepcopy(
-            apply_cw_equipment_read(session, runtime, workspace_root=workspace_root)
+            _apply_cw_equipment_read_with_resources(
+                session,
+                runtime,
+                workspace_root=workspace_root,
+                cw_resource_service=cw_resource_service,
+            )
         )
     except Exception as error:
         equipment_warnings.append(_cw_equipment_auto_collect_warning(error))
@@ -893,7 +1029,16 @@ def _select_portal_and_apply_selected_guide(
     return selected_data
 
 
-def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None) -> dict:
+def _start_cw(
+    session,
+    *,
+    runtime,
+    mode: str,
+    difficulty: str,
+    battle_mode: str,
+    workspace_root: str | None = None,
+    cw_resource_service=None,
+) -> dict:
     refreshed = start_cw(
         session,
         mode=mode,
@@ -904,7 +1049,9 @@ def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str,
     entry_state = ensure_cw_state(refreshed).get("entry")
     cards = summarize_portal_cards(
         runtime.ocr(),
-        fetch_cw_guide_config(workspace_root=workspace_root).get("portal_list", []),
+        _cached_cw_guide_config(workspace_root=workspace_root, cw_resource_service=cw_resource_service).get(
+            "portal_list", []
+        ),
         collection_matches=detect_portal_collection_matches(runtime),
     )
     portal_snapshot = {
@@ -918,7 +1065,7 @@ def _start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str,
     return portal_snapshot
 
 
-def _restart_cw(session, *, runtime) -> dict:
+def _restart_cw(session, *, runtime, workspace_root: str | None = None, cw_resource_service=None) -> dict:
     entry_state = ensure_cw_state(session).get("entry") if isinstance(ensure_cw_state(session).get("entry"), dict) else {}
     portal_state = ensure_cw_state(session).get("portal") if isinstance(ensure_cw_state(session).get("portal"), dict) else {}
     mode = entry_state.get("mode") if entry_state.get("mode") is not None else portal_state.get("mode")
@@ -930,10 +1077,27 @@ def _restart_cw(session, *, runtime) -> dict:
     select_cw_portal(session, card_idx=1, runtime=runtime)
     wait_cw_portal_in_game(session, runtime=runtime)
     restart_cw_portal_to_settlement_entry(session, runtime=runtime)
-    return _start_cw(session, runtime=runtime, mode="continue", difficulty=difficulty, battle_mode=battle_mode, workspace_root=None)
+    return _start_cw(
+        session,
+        runtime=runtime,
+        mode="continue",
+        difficulty=difficulty,
+        battle_mode=battle_mode,
+        workspace_root=workspace_root,
+        cw_resource_service=cw_resource_service,
+    )
 
 
-def _attach_guides_to_cards(cards: list[dict[str, object]], *, timeout: int = 10, workspace_root: str | None = None) -> list[dict[str, object]]:
+def _attach_guides_to_cards(
+    cards: list[dict[str, object]],
+    *,
+    timeout: int = 10,
+    workspace_root: str | None = None,
+    allow_network: bool = False,
+) -> list[dict[str, object]]:
+    if not allow_network:
+        return cards
+
     portal_titles: list[str] = []
     seen_titles: set[str] = set()
     for card in cards:
@@ -989,10 +1153,22 @@ def _attach_guides_to_cards(cards: list[dict[str, object]], *, timeout: int = 10
     return enriched
 
 
-def _attach_guides_to_portal_snapshot(session, snapshot: dict[str, object], *, timeout: int = 10, workspace_root: str | None = None) -> dict[str, object]:
+def _attach_guides_to_portal_snapshot(
+    session,
+    snapshot: dict[str, object],
+    *,
+    timeout: int = 10,
+    workspace_root: str | None = None,
+    allow_network: bool = False,
+) -> dict[str, object]:
     enriched = {
         **snapshot,
-        "cards": _attach_guides_to_cards(snapshot.get("cards", []), timeout=timeout, workspace_root=workspace_root),
+        "cards": _attach_guides_to_cards(
+            snapshot.get("cards", []),
+            timeout=timeout,
+            workspace_root=workspace_root,
+            allow_network=allow_network,
+        ),
     }
     ensure_cw_state(session)["portal"] = enriched
     return enriched

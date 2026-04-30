@@ -13,6 +13,7 @@ try {
   New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 
   uv run python scripts\generate-third-party-notices.py
+  uv run python scripts\build-cw-resource-bundle.py
   uv run python -m build
   uv run pyinstaller packaging\trail.spec --noconfirm
 
@@ -43,6 +44,7 @@ try {
 
   Compress-Archive -Path (Join-Path $Package '*') -DestinationPath $Zip -Force
   Copy-Item (Join-Path $Root 'scripts\agent-install.ps1') (Join-Path $Dist 'agent-install.ps1') -Force
+  uv run python scripts\verify-cw-resource-bundle-artifacts.py dist
 
   $artifacts = @()
   $artifacts += Get-Item $Zip

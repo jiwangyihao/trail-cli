@@ -23,6 +23,11 @@ def fake_fetcher(url: str):
     return {"share_code": "##demo##", "on_field": {"希儿": 9}, "off_field": {"佩拉": 3}}
 
 
+def write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def fake_lineup_url(lineup_id: str = "70472857") -> str:
     return f"https://act.miyoushe.com/sr/event/e20241220rpg-3Tii9M/index.html#/lineup/{lineup_id}"
 
@@ -333,6 +338,30 @@ def load_cw_guide_module():
         return importlib.import_module("trail.scenes.cw.guide")
     except ModuleNotFoundError as exc:
         pytest.fail(f"missing trail.scenes.cw.guide: {exc}")
+
+
+def force_missing_cw_resource_bundle(monkeypatch, guide_module):
+    calls = {"count": 0}
+
+    def missing_bundle(*, workspace_root=None):
+        del workspace_root
+        calls["count"] += 1
+        raise TrailError("CW_RESOURCE_BUNDLE_MISSING", "missing")
+
+    monkeypatch.setattr(guide_module, "load_default_cw_resource_bundle", missing_bundle)
+    return calls
+
+
+def force_cw_resource_bundle_raw_config(monkeypatch, guide_module, raw_config: dict):
+    bundle = SimpleNamespace(raw_config=raw_config)
+    monkeypatch.setattr(guide_module, "load_default_cw_resource_bundle", lambda workspace_root=None: bundle)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_config_data",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("config network must not be called")),
+        raising=False,
+    )
+    return bundle
 
 
 def test_apply_guide_populates_cw_scene_state(tmp_path):
@@ -657,8 +686,181 @@ def test_fetch_cw_guide_payload_accepts_raw_lineup_id(monkeypatch):
     assert payload["source_url"] == fake_lineup_url("69c9014f24546dfbd2b26227")
 
 
-def test_fetch_cw_guide_config_returns_minimal_catalog(monkeypatch):
+def test_normalize_cw_guide_config_data_matches_fetch_config_shape(tmp_path):
+    from trail.scenes.cw import guide as guide_module
+
+    raw = {
+        "season_id": "s1",
+        "sub_season_id": "sub1",
+        "rpg_game_big_version": "3.2",
+        "rpg_game_lineup_tourn_filter": "filter1",
+        "label_list": [{"id": "7", "text": "7级搜牌"}],
+        "trait_info_list": [{"id": "t1", "name": "贝洛伯格", "type": "faction"}],
+        "role_list": [{"id": "r1", "name": "希儿", "front_back_type": 1, "trait_ids": ["t1"]}],
+        "portal_list": [{"portal_id": "p1", "title": "机械城", "description": "desc"}],
+        "fight_augment_list": [{"id": "a1", "name": "快攻", "desc": "说明"}],
+    }
+
+    config = guide_module.normalize_cw_guide_config_data(raw, enrich_traits=False, workspace_root=tmp_path)
+
+    assert config["meta"] == {
+        "game": "hkrpg",
+        "season_id": "s1",
+        "sub_season_id": "sub1",
+        "big_version": "3.2",
+        "lineup_filter_version": "filter1",
+    }
+    assert config["lineup_levels"] == [{"id": "7", "name": "7级搜牌"}]
+    assert config["traits"] == [{"id": "t1", "name": "贝洛伯格", "type": "faction"}]
+    assert config["roles"][0]["name"] == "希儿"
+    assert config["portal_list"] == [{"portal_id": "p1", "title": "机械城", "description": "desc"}]
+    assert config["strategy_list"][0]["title"] == "快攻"
+
+
+def test_fetch_cw_guide_config_uses_resource_bundle_without_network(monkeypatch, tmp_path):
+    from trail.scenes.cw import guide as guide_module
+
+    bundle = {
+        "raw_config": {"rpg_game_big_version": "3.2"},
+        "guide_config": {"meta": {"big_version": "3.2"}, "traits": []},
+        "guide_config_enriched": {
+            "meta": {"big_version": "3.2"},
+            "traits": [{"id": "t1", "name": "贝洛伯格", "layers": [2, 4, 6]}],
+        },
+    }
+
+    class Bundle:
+        raw_config = bundle["raw_config"]
+        guide_config = bundle["guide_config"]
+        guide_config_enriched = bundle["guide_config_enriched"]
+
+    monkeypatch.setattr(guide_module, "load_default_cw_resource_bundle", lambda workspace_root=None: Bundle())
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_config_data",
+        lambda timeout=10: (_ for _ in ()).throw(AssertionError("network must not be called")),
+    )
+
+    assert guide_module.fetch_cw_raw_guide_config(workspace_root=tmp_path) == {"rpg_game_big_version": "3.2"}
+    assert guide_module.fetch_cw_guide_config(workspace_root=tmp_path)["meta"]["big_version"] == "3.2"
+    assert guide_module.fetch_cw_guide_config(workspace_root=tmp_path, enrich_traits=True)["traits"][0]["layers"] == [
+        2,
+        4,
+        6,
+    ]
+
+
+def test_fetch_cw_guide_config_bundle_missing_does_not_network_without_dev_fallback(monkeypatch, tmp_path):
+    from trail.core.errors import TrailError
+    from trail.scenes.cw import guide as guide_module
+
+    monkeypatch.setattr(guide_module, "allow_cw_resource_dev_fallback", lambda: False)
+    monkeypatch.setattr(
+        guide_module,
+        "load_default_cw_resource_bundle",
+        lambda workspace_root=None: (_ for _ in ()).throw(TrailError("CW_RESOURCE_BUNDLE_MISSING", "missing")),
+    )
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_config_data",
+        lambda timeout=10: (_ for _ in ()).throw(AssertionError("network must not be called")),
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        guide_module.fetch_cw_guide_config(workspace_root=tmp_path)
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_MISSING"
+
+
+def test_fetch_cw_guide_config_invalid_bundle_does_not_dev_fallback(monkeypatch, tmp_path):
     guide_module = load_cw_guide_module()
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
+    monkeypatch.setattr(
+        guide_module,
+        "load_default_cw_resource_bundle",
+        lambda workspace_root=None: (_ for _ in ()).throw(TrailError("CW_RESOURCE_BUNDLE_INVALID", "bad")),
+    )
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_config_data",
+        lambda timeout=10: (_ for _ in ()).throw(AssertionError("network must not be called")),
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        guide_module.fetch_cw_guide_config(workspace_root=tmp_path)
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_load_default_cw_resource_bundle_rejects_ambiguous_generated_versions(monkeypatch, tmp_path):
+    from trail.scenes.cw import static_resources
+
+    generated_root = tmp_path / "trail" / "scenes" / "cw" / "generated"
+    (generated_root / "3.2").mkdir(parents=True)
+    (generated_root / "3.3").mkdir()
+    fake_module_path = tmp_path / "trail" / "scenes" / "cw" / "static_resources.py"
+    monkeypatch.setattr(static_resources, "Path", lambda value: fake_module_path)
+
+    with pytest.raises(TrailError) as exc_info:
+        static_resources.load_default_cw_resource_bundle()
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_load_default_cw_resource_bundle_rejects_missing_manifest_in_version_dir(monkeypatch, tmp_path):
+    from trail.scenes.cw import static_resources
+
+    generated_root = tmp_path / "trail" / "scenes" / "cw" / "generated"
+    (generated_root / "3.2").mkdir(parents=True)
+    fake_module_path = tmp_path / "trail" / "scenes" / "cw" / "static_resources.py"
+    monkeypatch.setattr(static_resources, "__file__", str(fake_module_path))
+
+    with pytest.raises(TrailError) as exc_info:
+        static_resources.load_default_cw_resource_bundle()
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_fetch_cw_guide_config_incomplete_bundle_does_not_dev_fallback(monkeypatch, tmp_path):
+    from trail.scenes.cw import guide as guide_module
+    from trail.scenes.cw import static_resources
+
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
+    bundle_root = tmp_path / "trail" / "scenes" / "cw" / "generated" / "3.2"
+    bundle_root.mkdir(parents=True)
+    write_json(
+        bundle_root / "manifest.json",
+        {
+            "bundle_schema_version": static_resources.CW_RESOURCE_BUNDLE_SCHEMA_VERSION,
+            "files": [
+                {"path": "raw_config.json", "sha256": "0" * 64, "size": 1},
+                {"path": "guide_config.json", "sha256": "0" * 64, "size": 1},
+                {"path": "guide_config_enriched.json", "sha256": "0" * 64, "size": 1},
+                {"path": "indexes.json", "sha256": "0" * 64, "size": 1},
+                {"path": "equipment/manifest.json", "sha256": "0" * 64, "size": 1},
+                {"path": "equipment/features.json", "sha256": "0" * 64, "size": 1},
+            ],
+        },
+    )
+    fake_module_path = tmp_path / "trail" / "scenes" / "cw" / "static_resources.py"
+    monkeypatch.setattr(static_resources, "__file__", str(fake_module_path))
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_config_data",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("config network must not be called")),
+        raising=False,
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        guide_module.fetch_cw_guide_config(workspace_root=tmp_path)
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_fetch_cw_guide_config_returns_minimal_catalog(monkeypatch):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
+    guide_module = load_cw_guide_module()
+    bundle_calls = force_missing_cw_resource_bundle(monkeypatch, guide_module)
     fetch_cw_guide_config = getattr(guide_module, "fetch_cw_guide_config", None)
     assert fetch_cw_guide_config is not None
 
@@ -674,6 +876,7 @@ def test_fetch_cw_guide_config_returns_minimal_catalog(monkeypatch):
 
     payload = fetch_cw_guide_config()
 
+    assert bundle_calls["count"] == 1
     assert captured_request == {
         "url": "https://act-api-takumi.miyoushe.com/event/rpgcurrencywar/game/config?game=hkrpg",
         "timeout": 10,
@@ -714,7 +917,9 @@ def test_fetch_cw_guide_config_returns_minimal_catalog(monkeypatch):
 
 
 def test_fetch_cw_guide_config_includes_strategy_list_without_changing_existing_shape(monkeypatch):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
     guide_module = load_cw_guide_module()
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
 
     def fake_urlopen(request, timeout=10):
         del request, timeout
@@ -740,7 +945,9 @@ def test_fetch_cw_guide_config_includes_strategy_list_without_changing_existing_
 
 
 def test_fetch_cw_guide_config_writes_and_reuses_workspace_cache(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
     guide_module = load_cw_guide_module()
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
 
     calls = {"count": 0}
 
@@ -761,7 +968,9 @@ def test_fetch_cw_guide_config_writes_and_reuses_workspace_cache(monkeypatch, tm
 
 
 def test_fetch_cw_guide_config_enriches_trait_layers_from_raw_lineup_list(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
     guide_module = load_cw_guide_module()
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
     payload = fake_cw_config_response()
     payload["data"]["trait_info_list"] = [
         {"trait_id": "1004", "trait_name": "公司", "layers": []},
@@ -830,7 +1039,9 @@ def test_fetch_cw_guide_config_enriches_trait_layers_from_raw_lineup_list(monkey
 
 
 def test_fetch_cw_guide_config_default_does_not_request_guide_list(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
     guide_module = load_cw_guide_module()
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
     monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda **kwargs: fake_cw_config_response()["data"])
     monkeypatch.setattr(
         guide_module,
@@ -844,7 +1055,9 @@ def test_fetch_cw_guide_config_default_does_not_request_guide_list(monkeypatch, 
 
 
 def test_fetch_cw_guide_config_enriched_cache_hit_avoids_guide_list(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
     guide_module = load_cw_guide_module()
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
     cache_path = tmp_path / ".trail" / "cache" / "cw-guide-config-enriched.json"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cached_traits = [
@@ -882,7 +1095,9 @@ def test_fetch_cw_guide_config_enriched_cache_hit_avoids_guide_list(monkeypatch,
 
 
 def test_fetch_cw_guide_config_enrichment_failure_without_cache_returns_base_traits(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
     guide_module = load_cw_guide_module()
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
     payload = fake_cw_config_response()
     payload["data"]["trait_info_list"] = [
         {"trait_id": "1004", "trait_name": "公司", "layers": []},
@@ -901,7 +1116,9 @@ def test_fetch_cw_guide_config_enrichment_failure_without_cache_returns_base_tra
 
 
 def test_fetch_cw_guide_config_writes_complete_cache_with_missing_trait_ids(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
     guide_module = load_cw_guide_module()
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
     payload = fake_cw_config_response()
     payload["data"]["trait_info_list"] = [
         {"trait_id": "1004", "trait_name": "公司", "layers": []},
@@ -948,7 +1165,9 @@ def test_fetch_cw_guide_config_writes_complete_cache_with_missing_trait_ids(monk
 
 
 def test_fetch_cw_guide_config_enrichment_reads_beyond_thirty_pages(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
     guide_module = load_cw_guide_module()
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
     payload = fake_cw_config_response()
     payload["data"]["trait_info_list"] = [
         {"trait_id": "1004", "trait_name": "公司", "layers": []},
@@ -990,7 +1209,9 @@ def test_fetch_cw_guide_config_enrichment_reads_beyond_thirty_pages(monkeypatch,
 
 
 def test_fetch_cw_guide_config_enrichment_stops_on_repeated_next_page_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
     guide_module = load_cw_guide_module()
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
     payload = fake_cw_config_response()
     payload["data"]["trait_info_list"] = [
         {"trait_id": "1004", "trait_name": "公司", "layers": []},
@@ -1019,7 +1240,9 @@ def test_fetch_cw_guide_config_enrichment_stops_on_repeated_next_page_token(monk
 
 
 def test_fetch_cw_guide_config_enrichment_merges_name_only_raw_trait_with_base_id(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
     guide_module = load_cw_guide_module()
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
     payload = fake_cw_config_response()
     payload["data"]["trait_info_list"] = [
         {"trait_id": "1004", "trait_name": "公司", "layers": []},
@@ -1051,7 +1274,9 @@ def test_fetch_cw_guide_config_enrichment_merges_name_only_raw_trait_with_base_i
 
 
 def test_fetch_cw_guide_config_enrichment_keeps_result_when_cache_write_fails(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
     guide_module = load_cw_guide_module()
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
     payload = fake_cw_config_response()
     payload["data"]["trait_info_list"] = [
         {"trait_id": "1004", "trait_name": "公司", "layers": []},
@@ -1125,11 +1350,11 @@ def test_guide_config_yaml_uses_enriched_config(monkeypatch, tmp_path: Path):
     from trail.output.rendering import render_output
 
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
-    del registry, service, session, cw_service
+    del registry, service, session
     captured_kwargs = {}
 
-    def fake_fetch_config(**kwargs):
-        captured_kwargs.update(kwargs)
+    def fake_fetch_config(*, workspace_root=None, enrich_traits: bool = False):
+        captured_kwargs.update({"workspace_root": workspace_root, "enrich_traits": enrich_traits})
         return {
             "meta": {"season_id": 12, "sub_season_id": 3, "big_version": "3.2"},
             "lineup_levels": [],
@@ -1140,7 +1365,7 @@ def test_guide_config_yaml_uses_enriched_config(monkeypatch, tmp_path: Path):
             "strategy_list": [],
         }
 
-    monkeypatch.setattr("trail.scenes.cw.guide.fetch_cw_guide_config", fake_fetch_config)
+    monkeypatch.setattr(cw_service, "guide_config", fake_fetch_config)
 
     envelope = command_service.handle(
         DaemonRequest(
@@ -1168,6 +1393,8 @@ def test_guide_config_yaml_uses_enriched_config(monkeypatch, tmp_path: Path):
 def test_fetch_cw_raw_guide_config_returns_cached_raw_data(monkeypatch, tmp_path):
     from trail.scenes.cw import guide
 
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
+    force_missing_cw_resource_bundle(monkeypatch, guide)
     monkeypatch.setattr(
         guide,
         "_get_cw_config_data",
@@ -1180,8 +1407,47 @@ def test_fetch_cw_raw_guide_config_returns_cached_raw_data(monkeypatch, tmp_path
     }
 
 
+def test_fetch_cw_guide_list_filter_resolution_uses_bundle_config_without_config_network(monkeypatch, tmp_path):
+    guide_module = load_cw_guide_module()
+    raw_config = fake_cw_config_response()["data"]
+    bundle = SimpleNamespace(raw_config=raw_config)
+    captured_list_request: dict[str, object] = {}
+
+    monkeypatch.setattr(guide_module, "load_default_cw_resource_bundle", lambda workspace_root=None: bundle)
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_config_data",
+        lambda timeout=10: (_ for _ in ()).throw(AssertionError("config network must not be called")),
+        raising=False,
+    )
+
+    def fake_fetch_guide_list_data(**kwargs):
+        captured_list_request.update(kwargs)
+        return {
+            "list": [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["购物区"])],
+            "next_page_token": None,
+        }
+
+    monkeypatch.setattr(guide_module, "_fetch_cw_guide_list_data", fake_fetch_guide_list_data, raising=False)
+
+    payload = guide_module.fetch_cw_guide_list(
+        page=1,
+        limit=10,
+        trait="巡猎",
+        role="希儿",
+        portal="购物区",
+        workspace_root=tmp_path,
+    )
+
+    assert captured_list_request["trait_id"] == 2001
+    assert captured_list_request["role_ids"] == ["1001"]
+    assert payload["list"][0]["id"] == "lineup-shop"
+
+
 def test_fetch_cw_guide_list_uses_cached_workspace_config_for_trait_resolution(monkeypatch, tmp_path):
     guide_module = load_cw_guide_module()
+    monkeypatch.setenv("TRAIL_CW_RESOURCE_DEV_FALLBACK", "1")
+    force_missing_cw_resource_bundle(monkeypatch, guide_module)
 
     cache_path = tmp_path / ".trail" / "cache" / "cw-guide-config.json"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1311,7 +1577,7 @@ def test_fetch_cw_guide_list_resolves_trait_name_to_single_trait_id(monkeypatch)
     guide_module = load_cw_guide_module()
     captured_list_request: dict[str, object] = {}
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+    force_cw_resource_bundle_raw_config(monkeypatch, guide_module, fake_cw_config_response()["data"])
     monkeypatch.setattr(
         guide_module,
         "_fetch_cw_guide_list_data",
@@ -1338,7 +1604,7 @@ def test_fetch_cw_guide_list_resolves_trait_name_to_single_trait_id(monkeypatch)
 def test_fetch_cw_guide_list_trait_name_miss_raises_GuideTraitLookupError(monkeypatch):
     guide_module = load_cw_guide_module()
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: trait_lookup_config_response()["data"], raising=False)
+    force_cw_resource_bundle_raw_config(monkeypatch, guide_module, trait_lookup_config_response()["data"])
     monkeypatch.setattr(
         guide_module,
         "_fetch_cw_guide_list_data",
@@ -1369,7 +1635,7 @@ def test_fetch_cw_guide_list_role_name_miss_returns_role_candidates_and_warning(
     guide_module = load_cw_guide_module()
     captured_list_request: dict[str, object] = {}
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fuzzy_role_config_response()["data"], raising=False)
+    force_cw_resource_bundle_raw_config(monkeypatch, guide_module, fuzzy_role_config_response()["data"])
     monkeypatch.setattr(
         guide_module,
         "_fetch_cw_guide_list_data",
@@ -1477,7 +1743,7 @@ def test_fetch_cw_guide_list_role_exact_match_keeps_ambiguous_candidates(monkeyp
     guide_module = load_cw_guide_module()
     captured_list_request: dict[str, object] = {}
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fuzzy_role_config_response()["data"], raising=False)
+    force_cw_resource_bundle_raw_config(monkeypatch, guide_module, fuzzy_role_config_response()["data"])
     monkeypatch.setattr(
         guide_module,
         "_fetch_cw_guide_list_data",
@@ -1542,7 +1808,7 @@ def test_fetch_cw_guide_list_multi_role_queries_keep_blocks_when_resolved_role_r
     guide_module = load_cw_guide_module()
     captured_list_request: dict[str, object] = {}
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fuzzy_role_config_response()["data"], raising=False)
+    force_cw_resource_bundle_raw_config(monkeypatch, guide_module, fuzzy_role_config_response()["data"])
     monkeypatch.setattr(
         guide_module,
         "_fetch_cw_guide_list_data",
@@ -1600,7 +1866,7 @@ def test_fetch_cw_guide_list_role_fuzzy_resolution_prefers_highest_similarity_ov
         ]
         return payload
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: regression_role_config_response()["data"], raising=False)
+    force_cw_resource_bundle_raw_config(monkeypatch, guide_module, regression_role_config_response()["data"])
     monkeypatch.setattr(
         guide_module,
         "_fetch_cw_guide_list_data",
@@ -1674,7 +1940,7 @@ def test_fetch_cw_guide_list_filters_by_portal_id_using_list_item_detail(monkeyp
     ]
     captured_list_request: dict[str, object] = {}
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+    force_cw_resource_bundle_raw_config(monkeypatch, guide_module, fake_cw_config_response()["data"])
 
     def fake_fetch_list_data(**kwargs):
         captured_list_request.update(kwargs)
@@ -1744,7 +2010,7 @@ def test_fetch_cw_guide_list_portal_filter_reuses_resolved_role_ids(monkeypatch)
     raw_items = [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["购物区"])]
     captured_list_request: dict[str, object] = {}
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fuzzy_role_config_response()["data"], raising=False)
+    force_cw_resource_bundle_raw_config(monkeypatch, guide_module, fuzzy_role_config_response()["data"])
     monkeypatch.setattr(
         guide_module,
         "_fetch_cw_guide_list_data",
@@ -1782,7 +2048,7 @@ def test_fetch_cw_guide_list_portal_filter_reuses_resolved_trait_id(monkeypatch)
     raw_items = [fake_lineup_index_item(lineup_id="lineup-shop", title="购物阵容", summary_portals=["购物区"])]
     captured_list_request: dict[str, object] = {}
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+    force_cw_resource_bundle_raw_config(monkeypatch, guide_module, fake_cw_config_response()["data"])
     monkeypatch.setattr(
         guide_module,
         "_fetch_cw_guide_list_data",

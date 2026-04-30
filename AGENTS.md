@@ -94,7 +94,7 @@
 - `guide.list.cw` 非分组条目字段冻结为 `攻略ID/攻略标题/版本/主C/攻略标签/点赞/收藏`；第二行固定使用 `guide ... 最终阵容=...`，不能回退成 `final_role_cards` 或布尔技术位直出。
 - `guide.list.cw` 分组视图固定使用 `guide 投资环境=... count=... more=...`；只有分组行允许携带 `next=...`，顶层 grouped 首行不带 `next`。
 - `cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`；`待收集` 必须统一编码为 `0/1`，即使为 `0` 也不能省略。
-- `cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`；`cw.start` / `cw.portal.*` 下挂攻略摘要继续复用 `guide.list.cw` 的中文条目与 `最终阵容` 语义。
+- `cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`；`cw.start` / `cw.portal.*` 默认输出不自动附加动态攻略摘要，不调用 `guide.list.cw` / `guide.fetch.cw` 获取热度、版本或互动数据；需要动态攻略信息时显式使用 `guide.list.cw` / `guide.fetch.cw`，或依赖当前已选攻略。
 - `cw.portal.select` 若响应 `data.skill_info` 非空，默认正文使用 `info skill_info=运营思路 text=...`；该行属于 success entity/info 行，必须在 `warn`、`ref` 之前输出，不新增正文前缀、不属于 verbose/debug、不进入 YAML allowlist。
 - `cw.portal.select` 成功进入备战页后会自动收集 slots/equipment/shop 预备事实：收集水晶、关闭初始槽位面板、读取 slots、确认 slots fresh 后读取 equipment、打开商店、等待商店稳定、扫描 shop、缓存 slots+equipment+shop 并关闭商店。
 - `cw.portal.select` 带截图 success 仍必须先显示 `shot path=...`，`shot path=...` 后必须紧跟 `info read_image_first=1`；Agent 必须先读本次原始截图，不要因为已有 slots/equipment/shop 文本就跳过截图。
@@ -117,11 +117,12 @@
 - `cw.equipment.read` 默认文本不输出 `idx/row/col/box`；`row/col` 只保留在结构化 `data`、`trail --format yaml cw equipment read --session <id>` 与 `trail --format yaml state dump --session <id>` 的 `cw_state.equipment` 中，供诊断使用。
 - `cw.equipment.read` 单格低置信不失败；当 `uncertain>0` 时默认文本输出 `warn code=LOW_CONFIDENCE count=... msg=...`。
 - `cw.equipment.read` 成功写入 `cw_state.equipment` 最近快照，并加入 YAML allowlist；除 `cw.equipment.prepare` 外，成功进入 CW mutation 处理的命令应保留最近装备 items 并将该快照标记为 `stale=True`。
+- `cw.equipment.read` daemon 默认热路径使用 bundle recognizer 与预计算特征，不调用 `prepare_equipment_icon_cache`、下载图标或 `load_cached_equipment_icons`；需要刷新装备资源时先显式运行 `cw.equipment.prepare --refresh`。
 - `cw.equipment.compose` 归入检测/状态摘要 renderer 家族；canonical command 固定为 `cw.equipment.compose`；success 首行固定为 `ok cw.equipment.compose pos=<agent-visible-slot> name=<角色名> 装备=<装备名> count=<n>`，字段顺序固定为 `pos/name/装备/count`，其中 `count` 是写入后该角色已记录装备数量。
 - `cw.equipment.compose` 只写 session，不截图，不执行真实 UI 合成，不加入 YAML allowlist；`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`。
 - `cw.equipment.compose` 的 `slot` 与 `role` 必须基于 fresh session slots 校验，Agent 可见 slot 使用 1-based，例如 `front:1`、`back:1`、`hand:1`；daemon/RPC/session internal 仍保持 0-based。
 - `cw.equipment.prepare` 归入检测/状态摘要 renderer 家族；canonical command 固定为 `cw.equipment.prepare`，不产截图，success 首行固定为 `ok cw.equipment.prepare big_version=<version> count=<n> cached=<n> downloaded=<n> refreshed=0|1`，这些事实即使为 `0` 也必须保留。
-- `cw.equipment.prepare --refresh` 才处理同一 `rpg_game_big_version` 下 `cache_key` 的 `icon_url` 变化；普通 prepare/read 只补齐缺失或损坏图标。`cw.equipment.prepare` 不加入 YAML allowlist。
+- `cw.equipment.prepare` 默认只验证/汇总 bundle 装备资源，不下载图标、不写 workspace override；只有 `cw.equipment.prepare --refresh` 写 workspace equipment override、刷新图标/特征，并处理同一 `rpg_game_big_version` 下 `cache_key` 的 `icon_url` 变化。`cw.equipment.prepare` 不加入 YAML allowlist。
 - `cw.shop.buy_exp` 属于 shop action renderer family；canonical command 是 `cw.shop.buy_exp`，success 首行固定为 `ok cw.shop.buy_exp opened=1 stale=0 count=<n>`，正文使用 `# 商店信息` 输出 `item` 与 `coins/reserve_full`，再用 `# 综合信息` 输出 `level/exp/team_size`。
 - `cw.shop.buy_exp` 的 `team_size=null` 是 must-keep null fact；`cw.shop.buy_exp` 不在 YAML allowlist，`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`。
 - `cw.battle.run` 属于检测/状态摘要 renderer 家族；success 首行固定使用 `ok cw.battle.run status=... result=... stage=... stale=... in_battle=...` 的顺序，缺失语义值按默认省略规则处理。
@@ -149,8 +150,10 @@
 - `trail-cw-entry` 现在是当前 active public 的货币战争 scene entry，不是整局 owner。
 - `trail-cw-guide` 是当前 active public 的攻略选择 skill，可 direct-user 命中，也可以由 `trail-cw-entry` 在“攻略优先 / 先定攻略”场景下推荐切入。
 - `trail-cw-guide` 不是 scene entry、不是默认 owner、也不是整局 owner；真正进入开局流程仍要回到 `trail-cw-entry`。
+- `trail-cw-guide` 无人值守模式不能假设 portal 卡片自带热度、版本或互动数据；需要这些动态信号时先显式调用 `guide.list.cw` / `guide.fetch.cw`。
 - `trail-cw-portal` 是当前 active internal 的投资环境页 skill，主要在 `trail cw start` 或 `trail cw portal refresh` 成功停留在投资环境页后由 scene entry 内部切入。
 - `trail-cw-portal` 不是 direct-user 公共入口、不是 scene entry、也不是 owner；它负责 `portal detect/refresh/restart/select` 与环境优先逻辑，若攻略未定则切到 `trail-cw-guide` 的无人值守模式。
+- `trail-cw-portal` 默认 portal 输出无动态攻略摘要时，不得使用攻略互动数据作为刷新条件；需要互动数据时先显式获取攻略列表或详情。
 - `trail-cw-prep` 是当前 active internal 的普通备战阶段 skill，只能由 `cw.portal.select` success 后的 workflow handoff 或上游内部阶段切入。
 - `trail-cw-prep` 不是 public scene entry、不是 direct-user、不是 owner；`cw.portal.select` success final handoff 固定指向 `trail-cw-prep`。
 - `trail-cw-prep` 接收 `cw.portal.select` handoff 时，应先读截图并消费该响应自动收集的 stage/slots/equipment/shop facts；只有事实缺失、stale 或页面已变化时才重跑 slots/equipment/shop 扫描。

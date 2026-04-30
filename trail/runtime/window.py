@@ -706,3 +706,8 @@ class WindowsWindowController:
         image = Image.open(BytesIO(self.capture())).convert("RGB")
         image.save(path, format="JPEG", quality=90, optimize=True)
         return path
+
+    def save_capture_image_to_workspace(self, image, request_id: str | None = None) -> Path:
+        path = self.workspace / f"{_safe_capture_request_id(request_id)}.jpg"
+        image.convert("RGB").save(path, format="JPEG", quality=90, optimize=True)
+        return path

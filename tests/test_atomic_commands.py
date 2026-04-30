@@ -1504,6 +1504,10 @@ def test_state_dump_yaml_includes_cw_equipment_snapshot(cli_runner, fake_daemon_
                                         "row": 1,
                                         "col": 1,
                                         "name": "生命之花",
+                                        "gap": 0.01,
+                                        "alt": "光能电池",
+                                        "alt_score": 0.69,
+                                        "candidates": [{"name": "生命之花", "score": 0.7}],
                                     }
                                 ],
                                 "stale": False,
@@ -1523,6 +1527,10 @@ def test_state_dump_yaml_includes_cw_equipment_snapshot(cli_runner, fake_daemon_
     assert "center:" in result.stdout
     assert "row: 1" in result.stdout
     assert "col: 1" in result.stdout
+    assert "gap: 0.01" in result.stdout
+    assert "alt: 光能电池" in result.stdout
+    assert "alt_score: 0.69" in result.stdout
+    assert "candidates:" in result.stdout
     assert "box:" not in result.stdout
     assert client.calls == [
         {
@@ -1859,9 +1867,23 @@ def test_cw_portal_help_mentions_invest_portal_terms(cli_runner):
 
     assert result.exit_code == 0
     assert "投资环境" in normalized
+    assert "默认不自动附加动态攻略摘要" in normalized
+    assert "显式 guide.list.cw / guide.fetch.cw" in normalized
+    assert "下挂攻略摘要" not in normalized
     assert "title=" not in normalized
     assert "desc=" not in normalized
     assert "new=" not in normalized
+
+
+def test_cw_equipment_help_describes_bundle_prepare_contract(cli_runner):
+    result = cli_runner.invoke(app, ["cw", "equipment", "--help"])
+    normalized = _normalize_help(result.output)
+
+    assert result.exit_code == 0
+    assert "prepare 默认只汇总 bundle 装备资源" in normalized
+    assert "--refresh 写 workspace override" in normalized
+    assert "read 默认使用 bundle recognizer" in normalized
+    assert "prepare 只准备资源缓存" not in normalized
 
 
 def test_cw_guide_help_describes_selected_guide_boundary(cli_runner):

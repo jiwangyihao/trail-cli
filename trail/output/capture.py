@@ -30,6 +30,13 @@ def _capture_optional_screenshot(runtime):
     return _capture_screenshot(runtime, optional=True)
 
 
+def _pop_precaptured_screenshot(data):
+    if isinstance(data, dict):
+        screenshot = data.pop("_screenshot", None)
+        return data, screenshot
+    return data, None
+
+
 def _format_unexpected_exception(exc: Exception) -> str:
     return format_exception_detail(exc)
 
@@ -204,7 +211,9 @@ def with_selective_capture(runtime, fn: Callable[[], dict], *, verbose: bool | N
                 **metadata,
             )
 
-        screenshot = _capture_screenshot(resolved_runtime, optional=False)
+        data, screenshot = _pop_precaptured_screenshot(data)
+        if screenshot is None:
+            screenshot = _capture_screenshot(resolved_runtime, optional=False)
         metadata = _safe_collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
         return command_success(
             data=data,

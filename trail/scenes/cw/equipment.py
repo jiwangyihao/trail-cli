@@ -63,6 +63,17 @@ def _runtime_image(runtime) -> Image.Image:
     return image.convert("RGBA")
 
 
+def _save_reused_screenshot(runtime, image: Image.Image, *, request_id: str | None = None) -> str | None:
+    save = getattr(runtime, "save_capture_image_to_workspace", None)
+    if not callable(save):
+        return None
+    try:
+        path = save(image, request_id=request_id)
+    except Exception:
+        return None
+    return str(path) if path is not None else None
+
+
 def _item_from_result(crop, result: EquipmentRecognitionResult) -> dict[str, Any] | None:
     if result.empty:
         return None
@@ -385,12 +396,16 @@ def read_cw_equipment(
     *,
     workspace_root: str | Path | None = None,
     raw_config: dict[str, Any] | None = None,
+    recognizer=None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
-    resolved_raw_config = raw_config if raw_config is not None else fetch_cw_raw_guide_config(workspace_root=workspace_root)
-    catalog = build_cw_equipment_catalog(resolved_raw_config)
-    prepare_equipment_icon_cache(catalog, workspace_root=workspace_root, refresh=False)
-    recognizer = VectorEquipmentIconRecognizer(load_cached_equipment_icons(catalog, workspace_root=workspace_root))
+    if recognizer is None:
+        resolved_raw_config = raw_config if raw_config is not None else fetch_cw_raw_guide_config(workspace_root=workspace_root)
+        catalog = build_cw_equipment_catalog(resolved_raw_config)
+        prepare_equipment_icon_cache(catalog, workspace_root=workspace_root, refresh=False)
+        recognizer = VectorEquipmentIconRecognizer(load_cached_equipment_icons(catalog, workspace_root=workspace_root))
     image = _runtime_image(runtime)
+    screenshot = _save_reused_screenshot(runtime, image, request_id=request_id) if request_id is not None else None
     cells = list(iter_equipment_grid_cells(DEFAULT_EQUIPMENT_GRID_PROFILE, columns=10, rows=6))
     best_by_idx: dict[int, dict[str, Any]] = {}
 
@@ -407,7 +422,7 @@ def read_cw_equipment(
             best_by_idx[crop.cell.idx] = item
 
     items = _filter_isolated_equipment_items([best_by_idx[idx] for idx in sorted(best_by_idx)])
-    return {
+    snapshot = {
         "count": len(items),
         "uncertain": sum(1 for item in items if item.get("uncertain")),
         "empty": len(cells) - len(items),
@@ -418,6 +433,9 @@ def read_cw_equipment(
         "rows": 6,
         "stale": False,
     }
+    if screenshot is not None:
+        snapshot["_screenshot"] = screenshot
+    return snapshot
 
 
 def apply_cw_equipment_read(
@@ -425,11 +443,23 @@ def apply_cw_equipment_read(
     runtime,
     *,
     workspace_root: str | Path | None = None,
+    raw_config: dict[str, Any] | None = None,
+    recognizer=None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
-    raw_config = fetch_cw_raw_guide_config(workspace_root=workspace_root)
-    snapshot = read_cw_equipment(runtime, workspace_root=workspace_root, raw_config=raw_config)
-    recommendations = build_cw_equipment_recommendations(session, snapshot=snapshot, raw_config=raw_config)
+    resolved_raw_config = raw_config if raw_config is not None else fetch_cw_raw_guide_config(workspace_root=workspace_root)
+    snapshot = read_cw_equipment(
+        runtime,
+        workspace_root=workspace_root,
+        raw_config=resolved_raw_config,
+        recognizer=recognizer,
+        request_id=request_id,
+    )
+    screenshot = snapshot.pop("_screenshot", None)
+    recommendations = build_cw_equipment_recommendations(session, snapshot=snapshot, raw_config=resolved_raw_config)
     if recommendations is not None:
         snapshot["recommendations"] = recommendations
     ensure_cw_state(session)["equipment"] = deepcopy(snapshot)
+    if screenshot is not None:
+        return {**deepcopy(snapshot), "_screenshot": screenshot}
     return snapshot

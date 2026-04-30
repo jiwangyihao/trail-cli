@@ -1177,6 +1177,94 @@ def test_render_output_cw_equipment_read_orders_shot_items_info_warn_ref():
     ]
 
 
+def test_render_cw_equipment_read_keeps_default_fields_and_low_confidence_warn():
+    payload = {
+        "ok": True,
+        "request_id": "r1",
+        "screenshot": ".trail/shots/r1.jpg",
+        "data": {
+            "count": 1,
+            "uncertain": 1,
+            "empty": 59,
+            "items": [
+                {
+                    "pos": "equipment:1",
+                    "idx": 1,
+                    "row": 1,
+                    "col": 1,
+                    "center": {"x": 1855, "y": 275},
+                    "name": "幸运星",
+                    "score": 0.7,
+                    "gap": 0.01,
+                    "uncertain": True,
+                    "alt": "光能电池",
+                    "alt_score": 0.69,
+                    "candidates": [],
+                }
+            ],
+            "backend": "vector",
+            "layout": "default",
+            "columns": 10,
+            "rows": 6,
+            "stale": False,
+        },
+        "warnings": [],
+        "references": [],
+        "error": None,
+    }
+
+    output = "\n".join(render_output("cw.equipment.read", payload).splitlines())
+
+    assert "ok cw.equipment.read count=1 uncertain=1 empty=59" in output
+    assert "shot path=.trail/shots/r1.jpg" in output
+    assert "info read_image_first=1" in output
+    assert (
+        "item pos=equipment:1 center=1855,275 name=幸运星 score=0.70 uncertain=1 "
+        "gap=0.01 alt=光能电池 alt_score=0.69"
+    ) in output
+    assert "warn code=LOW_CONFIDENCE count=1" in output
+    assert output.count("warn code=LOW_CONFIDENCE") == 1
+    assert "idx=" not in output
+    assert "row=" not in output
+    assert "col=" not in output
+    assert "box=" not in output
+
+
+def test_render_cw_equipment_read_does_not_duplicate_existing_low_confidence_warn():
+    payload = {
+        "ok": True,
+        "request_id": "r1",
+        "screenshot": ".trail/shots/r1.jpg",
+        "data": {
+            "count": 1,
+            "uncertain": 1,
+            "empty": 59,
+            "items": [
+                {
+                    "pos": "equipment:1",
+                    "center": {"x": 1855, "y": 275},
+                    "name": "幸运星",
+                    "score": 0.7,
+                    "gap": 0.01,
+                    "uncertain": True,
+                    "alt": "光能电池",
+                    "alt_score": 0.69,
+                }
+            ],
+            "backend": "vector",
+            "layout": "default",
+        },
+        "warnings": [{"code": "LOW_CONFIDENCE", "message": "already warned", "count": 1}],
+        "references": [],
+        "error": None,
+    }
+
+    output = "\n".join(render_output("cw.equipment.read", payload).splitlines())
+
+    assert output.count("warn code=LOW_CONFIDENCE") == 1
+    assert "warn code=LOW_CONFIDENCE count=1" in output
+
+
 def test_render_output_cw_equipment_read_appends_recommendation_sections_before_warn_ref():
     payload = {
         "ok": True,

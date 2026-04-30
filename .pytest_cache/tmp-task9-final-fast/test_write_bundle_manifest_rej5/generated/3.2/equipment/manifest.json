@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "cache_key": "icon-a",
+      "name": "Icon A",
+      "kind": "basic",
+      "icon_url": "https://example.test/icon-a.png",
+      "big_version": "3.2",
+      "local_path": "equipment/icons/icon-a.png",
+      "sha256": "bad",
+      "size": 6
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,8 +12,23 @@ def load_guide_module():
     return importlib.import_module("trail.scenes.cw.guide")
 
 
-def test_fetch_cw_guide_list_rejects_portal_and_portal_id_together():
+def patch_bundle_raw_config(monkeypatch, guide_module):
+    monkeypatch.setattr(
+        guide_module,
+        "load_default_cw_resource_bundle",
+        lambda workspace_root=None: SimpleNamespace(raw_config=fake_cw_config_response()["data"]),
+    )
+    monkeypatch.setattr(
+        guide_module,
+        "_fetch_cw_config_data",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("config network must not be called")),
+        raising=False,
+    )
+
+
+def test_fetch_cw_guide_list_rejects_portal_and_portal_id_together(monkeypatch):
     guide_module = load_guide_module()
+    patch_bundle_raw_config(monkeypatch, guide_module)
 
     with pytest.raises(guide_module.TrailError) as exc_info:
         guide_module.fetch_cw_guide_list(
@@ -66,7 +82,7 @@ def test_fetch_cw_guide_list_rejects_pagination_in_portal_mode(monkeypatch, page
 
 def test_fetch_cw_guide_list_rejects_unknown_portal_with_top3_candidates(monkeypatch):
     guide_module = load_guide_module()
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+    patch_bundle_raw_config(monkeypatch, guide_module)
 
     with pytest.raises(guide_module.GuidePortalLookupError) as exc_info:
         guide_module.fetch_cw_guide_list(
@@ -91,7 +107,7 @@ def test_fetch_cw_guide_list_portal_filter_uses_list_item_detail_without_fanout(
     guide_module = load_guide_module()
     captured_list_request: dict[str, object] = {}
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+    patch_bundle_raw_config(monkeypatch, guide_module)
 
     def fake_fetch_list_data(**kwargs):
         captured_list_request.update(kwargs)
@@ -141,7 +157,7 @@ def test_fetch_cw_guide_list_portal_filter_uses_list_item_detail_without_fanout(
 def test_fetch_cw_guide_list_portal_filter_matches_list_portal_without_id(monkeypatch):
     guide_module = load_guide_module()
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+    patch_bundle_raw_config(monkeypatch, guide_module)
     monkeypatch.setattr(
         guide_module,
         "_fetch_cw_guide_list_data",
@@ -176,7 +192,7 @@ def test_fetch_cw_guide_list_portal_filter_paginates_until_limit(monkeypatch):
     guide_module = load_guide_module()
     requests: list[dict[str, object]] = []
 
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+    patch_bundle_raw_config(monkeypatch, guide_module)
 
     responses = iter(
         [
@@ -249,7 +265,7 @@ def test_fetch_cw_guide_list_portal_filter_paginates_until_limit(monkeypatch):
 
 def test_fetch_cw_guide_list_multi_portal_groups_results(monkeypatch):
     guide_module = load_guide_module()
-    monkeypatch.setattr(guide_module, "_fetch_cw_config_data", lambda timeout=10: fake_cw_config_response()["data"], raising=False)
+    patch_bundle_raw_config(monkeypatch, guide_module)
     monkeypatch.setattr(
         guide_module,
         "_fetch_cw_guide_list_data",

@@ -84,13 +84,44 @@ def _safe_segment(value: str) -> str:
     return cleaned
 
 
+def safe_equipment_cache_segment(value: str) -> str:
+    return _safe_segment(value)
+
+
+def _is_path_link(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)
+    return path.is_symlink() or (callable(is_junction) and is_junction())
+
+
+def _ensure_cache_path_inside_workspace(workspace_root: str | Path | None, path: Path) -> None:
+    root = Path.cwd() if workspace_root is None else Path(workspace_root)
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment icon cache path escapes workspace: {path}") from exc
+    candidate = root
+    for part in relative.parts:
+        candidate = candidate / part
+        if _is_path_link(candidate):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment icon cache path must not be symlink: {candidate}")
+    try:
+        if not path.resolve(strict=False).is_relative_to(root.resolve()):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment icon cache path escapes workspace: {path}")
+    except ValueError as exc:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment icon cache path escapes workspace: {path}") from exc
+
+
 def _cache_root(workspace_root: str | Path | None) -> Path:
     root = Path.cwd() if workspace_root is None else Path(workspace_root)
-    return root / EQUIPMENT_ICON_CACHE_RELATIVE
+    cache_root = root / EQUIPMENT_ICON_CACHE_RELATIVE
+    _ensure_cache_path_inside_workspace(workspace_root, cache_root)
+    return cache_root
 
 
 def _version_dir(big_version: str, *, workspace_root: str | Path | None) -> Path:
-    return _cache_root(workspace_root) / _safe_segment(big_version)
+    version_dir = _cache_root(workspace_root) / _safe_segment(big_version)
+    _ensure_cache_path_inside_workspace(workspace_root, version_dir)
+    return version_dir
 
 
 def _validate_https_url(url: str) -> None:
@@ -109,6 +140,15 @@ def _download_icon(url: str, *, timeout: float, max_bytes: int) -> bytes:
     return data
 
 
+def download_equipment_icon_bytes(url: str, *, timeout: float, max_bytes: int) -> bytes:
+    try:
+        return _download_icon(url, timeout=timeout, max_bytes=max_bytes)
+    except TrailError:
+        raise
+    except Exception as exc:
+        raise TrailError("CW_EQUIPMENT_ICON_DOWNLOAD_FAILED", f"failed to download equipment icon: {url}") from exc
+
+
 def _open_verified_png(path: Path) -> bool:
     try:
         with Image.open(path) as image:
@@ -121,8 +161,12 @@ def _open_verified_png(path: Path) -> bool:
 
 
 def _write_verified_icon(path: Path, data: bytes) -> None:
+    if _is_path_link(path):
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment icon cache file must not be symlink: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
+    if _is_path_link(tmp_path):
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment icon cache temp file must not be symlink: {tmp_path}")
     try:
         with Image.open(BytesIO(data)) as image:
             image.convert("RGBA").save(tmp_path, format="PNG")
@@ -139,6 +183,10 @@ def _write_verified_icon(path: Path, data: bytes) -> None:
     except OSError:
         tmp_path.unlink(missing_ok=True)
         raise
+
+
+def write_verified_equipment_icon(path: Path, data: bytes) -> None:
+    _write_verified_icon(path, data)
 
 
 def _fetch_icon_bytes(fetcher, url: str) -> bytes:
@@ -306,8 +354,13 @@ def _manifest_path(version_dir: Path) -> Path:
     return version_dir / "manifest.json"
 
 
+def _workspace_root_from_version_dir(version_dir: Path) -> Path:
+    return version_dir.parents[3]
+
+
 def _load_manifest(version_dir: Path) -> dict[str, Any]:
     path = _manifest_path(version_dir)
+    _ensure_cache_path_inside_workspace(_workspace_root_from_version_dir(version_dir), path)
     if not path.is_file():
         return {"items": []}
     try:
@@ -318,7 +371,10 @@ def _load_manifest(version_dir: Path) -> dict[str, Any]:
 
 
 def _write_manifest(version_dir: Path, manifest: dict[str, Any]) -> None:
+    _ensure_cache_path_inside_workspace(_workspace_root_from_version_dir(version_dir), _manifest_path(version_dir))
     tmp_path = _manifest_path(version_dir).with_suffix(".json.tmp")
+    if _is_path_link(_manifest_path(version_dir)) or _is_path_link(tmp_path):
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment icon cache manifest must not be symlink: {version_dir}")
     tmp_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp_path, _manifest_path(version_dir))
 
@@ -343,6 +399,22 @@ def _manifest_entry(entry: EquipmentCatalogEntry, *, local_path: str) -> dict[st
     }
 
 
+def equipment_bundle_manifest_entry(
+    entry: EquipmentCatalogEntry,
+    *,
+    local_path: str,
+    sha256: str | None = None,
+    size: int | None = None,
+) -> dict[str, Any]:
+    payload = _manifest_entry(entry, local_path=local_path)
+    payload["big_version"] = entry.big_version
+    if sha256 is not None:
+        payload["sha256"] = sha256
+    if size is not None:
+        payload["size"] = size
+    return payload
+
+
 def prepare_equipment_icon_cache(
     catalog: list[EquipmentCatalogEntry],
     *,
@@ -364,6 +436,8 @@ def prepare_equipment_icon_cache(
             safe_key = _safe_segment(entry.cache_key)
             local_rel = f"icons/{safe_key}.png"
             local_path = version_dir / "icons" / f"{safe_key}.png"
+            _ensure_cache_path_inside_workspace(workspace_root, local_path.parent)
+            _ensure_cache_path_inside_workspace(workspace_root, local_path)
             previous = previous_by_key.get(entry.cache_key)
             url_changed = bool(previous and previous.get("icon_url") != entry.icon_url)
             locked_to_previous = bool(previous and url_changed and not refresh)
@@ -397,6 +471,8 @@ def load_cached_equipment_icons(
     loaded: list[tuple[EquipmentCatalogEntry, Image.Image]] = []
     for entry in catalog:
         path = version_dir / "icons" / f"{_safe_segment(entry.cache_key)}.png"
+        _ensure_cache_path_inside_workspace(workspace_root, path.parent)
+        _ensure_cache_path_inside_workspace(workspace_root, path)
         if not path.is_file() or not _open_verified_png(path):
             raise TrailError("CW_EQUIPMENT_ICON_CACHE_INCOMPLETE", f"equipment icon cache incomplete: {entry.cache_key}")
         with Image.open(path) as image:

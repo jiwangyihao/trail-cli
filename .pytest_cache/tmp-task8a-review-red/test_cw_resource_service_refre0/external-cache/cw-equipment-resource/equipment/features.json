@@ -1,0 +1,15 @@
+{
+  "equipment_feature_schema_version": 1,
+  "recognizer_algorithm_version": "vector-mask-v1",
+  "feature_size": [
+    32,
+    32
+  ],
+  "match_size": [
+    64,
+    64
+  ],
+  "min_score": 0.72,
+  "min_gap": 0.05,
+  "items": []
+}

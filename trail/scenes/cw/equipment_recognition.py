@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+import math
 from typing import Protocol
 
 from PIL import Image, ImageChops, ImageStat
@@ -14,6 +15,8 @@ MATCH_SIZE = (64, 64)
 DEFAULT_TOP_K = 8
 DEFAULT_MIN_SCORE = 0.72
 DEFAULT_MIN_GAP = 0.05
+FEATURE_SCHEMA_VERSION = 1
+RECOGNIZER_ALGORITHM_VERSION = "vector-mask-v1"
 
 
 @dataclass(frozen=True)
@@ -56,6 +59,73 @@ def _normalized_rgba(image: Image.Image, size: tuple[int, int]) -> Image.Image:
 
 def _alpha_mask(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     return image.convert("RGBA").getchannel("A").resize(size, Image.Resampling.LANCZOS)
+
+
+def _pixel_payload(image: Image.Image, mode: str) -> dict:
+    normalized = image.convert(mode)
+    return {"mode": mode, "size": list(normalized.size), "data": list(normalized.tobytes())}
+
+
+def _image_payload(image: Image.Image) -> dict:
+    return _pixel_payload(image, "RGBA")
+
+
+def _mask_payload(image: Image.Image) -> dict:
+    return _pixel_payload(image, "L")
+
+
+def _image_payload_size(payload: dict) -> tuple[int, int]:
+    size = payload.get("size") if isinstance(payload, dict) else None
+    if not isinstance(size, list) or len(size) != 2:
+        raise ValueError("image payload size must be a two-item list")
+    width, height = size
+    if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
+        raise ValueError("image payload size must contain positive integers")
+    return width, height
+
+
+def _image_from_pixel_payload(payload: dict, mode: str, channels: int) -> Image.Image:
+    if not isinstance(payload, dict) or payload.get("mode") != mode:
+        raise ValueError(f"image payload mode must be {mode}")
+    width, height = _image_payload_size(payload)
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise ValueError("image payload data must be a list")
+    try:
+        raw = bytes(data)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("image payload data must contain bytes") from exc
+    if len(raw) != width * height * channels:
+        raise ValueError("image payload data length does not match size")
+    return Image.frombytes(mode, (width, height), raw)
+
+
+def _image_from_payload(payload: dict) -> Image.Image:
+    return _image_from_pixel_payload(payload, "RGBA", 4)
+
+
+def _mask_from_payload(payload: dict) -> Image.Image:
+    return _image_from_pixel_payload(payload, "L", 1)
+
+
+def _finite_float_from_payload(payload: dict, key: str) -> float:
+    try:
+        value = float(payload[key])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"{key} must be a finite float") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{key} must be a finite float")
+    return value
+
+
+def _expected_image_from_payload(payload: dict, key: str, mode: str, channels: int, size: tuple[int, int]) -> Image.Image:
+    try:
+        image = _image_from_pixel_payload(payload.get(key), mode, channels)
+    except ValueError as exc:
+        raise ValueError(f"{key} payload invalid: {exc}") from exc
+    if image.size != size:
+        raise ValueError(f"{key} payload size must be {list(size)}")
+    return image
 
 
 def _image_data(image: Image.Image):
@@ -103,6 +173,40 @@ def _is_empty_roi(image: Image.Image) -> bool:
     return brightness < 12.0 and spread < 8.0
 
 
+def build_precomputed_equipment_features(icons: Iterable[tuple[EquipmentCatalogEntry, Image.Image]]) -> dict:
+    items = []
+    for entry, icon in icons:
+        feature = _normalized_rgba(icon, FEATURE_SIZE)
+        match_image = _normalized_rgba(icon, MATCH_SIZE)
+        feature_mask = _alpha_mask(icon, FEATURE_SIZE)
+        match_mask = _alpha_mask(icon, MATCH_SIZE)
+        items.append(
+            {
+                "cache_key": entry.cache_key,
+                "id": entry.id,
+                "name": entry.name,
+                "kind": entry.kind,
+                "category": entry.category,
+                "category_name": entry.category_name,
+                "icon_url": entry.icon_url,
+                "big_version": entry.big_version,
+                "feature_rgba": _image_payload(feature),
+                "match_rgba": _image_payload(match_image),
+                "feature_mask": _mask_payload(feature_mask),
+                "match_mask": _mask_payload(match_mask),
+            }
+        )
+    return {
+        "equipment_feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "recognizer_algorithm_version": RECOGNIZER_ALGORITHM_VERSION,
+        "feature_size": list(FEATURE_SIZE),
+        "match_size": list(MATCH_SIZE),
+        "min_score": DEFAULT_MIN_SCORE,
+        "min_gap": DEFAULT_MIN_GAP,
+        "items": items,
+    }
+
+
 class VectorEquipmentIconRecognizer:
     def __init__(
         self,
@@ -125,6 +229,53 @@ class VectorEquipmentIconRecognizer:
             )
             for entry, icon in icons
         ]
+
+    @classmethod
+    def from_precomputed_features(cls, payload: dict, *, top_k: int = DEFAULT_TOP_K) -> "VectorEquipmentIconRecognizer":
+        if not isinstance(payload, dict):
+            raise ValueError("equipment feature payload must be an object")
+        if payload.get("equipment_feature_schema_version") != FEATURE_SCHEMA_VERSION:
+            raise ValueError("unsupported equipment feature schema version")
+        if payload.get("recognizer_algorithm_version") != RECOGNIZER_ALGORITHM_VERSION:
+            raise ValueError("unsupported equipment recognizer algorithm version")
+        if payload.get("feature_size") != list(FEATURE_SIZE) or payload.get("match_size") != list(MATCH_SIZE):
+            raise ValueError("unsupported equipment feature payload sizes")
+        min_score = _finite_float_from_payload(payload, "min_score")
+        min_gap = _finite_float_from_payload(payload, "min_gap")
+        items = payload.get("items")
+        if not isinstance(items, list):
+            raise ValueError("equipment feature items must be a list")
+        recognizer = cls(
+            [],
+            top_k=top_k,
+            min_score=min_score,
+            min_gap=min_gap,
+        )
+        indexed = []
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError("equipment feature item must be an object")
+            entry = EquipmentCatalogEntry(
+                cache_key=str(item.get("cache_key") or ""),
+                id=None if item.get("id") is None else str(item.get("id")),
+                name=str(item.get("name") or ""),
+                kind=str(item.get("kind") or ""),
+                category=None if item.get("category") is None else str(item.get("category")),
+                category_name=None if item.get("category_name") is None else str(item.get("category_name")),
+                icon_url=str(item.get("icon_url") or ""),
+                big_version=str(item.get("big_version") or ""),
+            )
+            indexed.append(
+                _IndexedIcon(
+                    entry=entry,
+                    feature=_expected_image_from_payload(item, "feature_rgba", "RGBA", 4, FEATURE_SIZE),
+                    match_image=_expected_image_from_payload(item, "match_rgba", "RGBA", 4, MATCH_SIZE),
+                    feature_mask=_expected_image_from_payload(item, "feature_mask", "L", 1, FEATURE_SIZE),
+                    match_mask=_expected_image_from_payload(item, "match_mask", "L", 1, MATCH_SIZE),
+                )
+            )
+        recognizer._icons = indexed
+        return recognizer
 
     def recognize(self, image: Image.Image) -> EquipmentRecognitionResult:
         if _is_empty_roi(image):

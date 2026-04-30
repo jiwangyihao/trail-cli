@@ -18,6 +18,7 @@ from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.catalog import clean_cw_trait_entry, merge_cw_trait_entries
 from trail.scenes.cw.models import CwSceneState, ensure_cw_state
 from trail.scenes.cw.stage import _replace_stage_fields
+from trail.scenes.cw.static_resources import allow_cw_resource_dev_fallback, load_default_cw_resource_bundle
 from trail.session.models import SessionModel
 
 
@@ -47,6 +48,7 @@ CW_GUIDE_ENRICHMENT_MAX_PAGES = 1000
 GUIDE_ROLE_HIGH_RISK_SIMILARITY_THRESHOLD = 0.75
 CW_GUIDE_CONFIG_CACHE_RELATIVE = Path(".trail") / "cache" / "cw-guide-config.json"
 CW_GUIDE_CONFIG_ENRICHED_CACHE_RELATIVE = Path(".trail") / "cache" / "cw-guide-config-enriched.json"
+CW_RESOURCE_BUNDLE_FALLBACK_CODES = {"CW_RESOURCE_BUNDLE_MISSING"}
 
 CW_WIDTH = 1920
 CW_HEIGHT = 1080
@@ -363,6 +365,10 @@ def _fetch_cw_config_data(*, timeout: int = 10) -> dict:
     if payload.get("retcode") != 0 or not isinstance(data, Mapping):
         raise TrailError("GUIDE_FETCH_FAILED", f"guide fetch failed: {payload.get('message', 'unknown error')}")
     return dict(data)
+
+
+def download_cw_guide_config_data(*, timeout: int = 10) -> dict:
+    return _fetch_cw_config_data(timeout=timeout)
 
 
 def _cw_guide_config_cache_path(*, workspace_root: str | Path | None = None) -> Path:
@@ -1448,17 +1454,27 @@ def _normalize_lineup_summary(lineup: object) -> dict[str, object]:
     }
 
 
+def _allow_cw_config_network_fallback(exc: TrailError) -> bool:
+    return exc.code in CW_RESOURCE_BUNDLE_FALLBACK_CODES and allow_cw_resource_dev_fallback()
+
+
 def fetch_cw_raw_guide_config(*, timeout: int = 10, workspace_root: str | Path | None = None) -> dict:
-    return _get_cw_config_data(timeout=timeout, workspace_root=workspace_root)
+    try:
+        bundle = load_default_cw_resource_bundle(workspace_root=workspace_root)
+    except TrailError as exc:
+        if not _allow_cw_config_network_fallback(exc):
+            raise
+        return _get_cw_config_data(timeout=timeout, workspace_root=workspace_root)
+    return deepcopy(bundle.raw_config)
 
 
-def fetch_cw_guide_config(
+def normalize_cw_guide_config_data(
+    data: Mapping[str, object],
     *,
     timeout: int = 10,
     workspace_root: str | Path | None = None,
     enrich_traits: bool = False,
 ) -> dict:
-    data = _get_cw_config_data(timeout=timeout, workspace_root=workspace_root)
     strategy_source = data.get("fight_augment_list")
     if not isinstance(strategy_source, list):
         strategy_source = data.get("strategy_list")
@@ -1485,6 +1501,29 @@ def fetch_cw_guide_config(
             workspace_root=workspace_root,
         )
     return config
+
+
+def fetch_cw_guide_config(
+    *,
+    timeout: int = 10,
+    workspace_root: str | Path | None = None,
+    enrich_traits: bool = False,
+) -> dict:
+    try:
+        bundle = load_default_cw_resource_bundle(workspace_root=workspace_root)
+    except TrailError as exc:
+        if not _allow_cw_config_network_fallback(exc):
+            raise
+    else:
+        return deepcopy(bundle.guide_config_enriched if enrich_traits else bundle.guide_config)
+
+    data = _get_cw_config_data(timeout=timeout, workspace_root=workspace_root)
+    return normalize_cw_guide_config_data(
+        data,
+        timeout=timeout,
+        workspace_root=workspace_root,
+        enrich_traits=enrich_traits,
+    )
 
 
 def fetch_cw_guide_list(
@@ -1514,7 +1553,7 @@ def fetch_cw_guide_list(
     raw_config: dict[str, object] | None = None
     needs_config = has_portal_filter or trait is not None or role is not None
     if needs_config:
-        raw_config = _get_cw_config_data(timeout=timeout, workspace_root=workspace_root)
+        raw_config = fetch_cw_raw_guide_config(timeout=timeout, workspace_root=workspace_root)
 
     resolved_trait_id = trait_id
     if trait is not None and raw_config is not None:

@@ -36,3 +36,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["trail"]
+
+[tool.hatch.build.targets.sdist.force-include]
+"trail/scenes/cw/generated" = "trail/scenes/cw/generated"

@@ -1,0 +1,31 @@
+{
+  "session_id": "d22791b6f4864136b41771569f5f3177",
+  "workspace": ".",
+  "window_binding": {
+    "title": "崩坏：星穹铁道"
+  },
+  "created_at": "2026-04-30T12:44:19.435136+00:00",
+  "updated_at": "2026-04-30T12:44:19.441222+00:00",
+  "scene_state": {
+    "cw": {
+      "stage": {
+        "stale": true,
+        "error": {
+          "code": "STAGE_AMBIGUOUS",
+          "message": "当前资源无法区分阶段: shop, replenish"
+        }
+      }
+    }
+  },
+  "last_result": {
+    "command": "cw.stage.detect",
+    "ok": false,
+    "data": {},
+    "error": {
+      "code": "STAGE_AMBIGUOUS",
+      "message": "当前资源无法区分阶段: shop, replenish"
+    }
+  },
+  "last_screenshot": "after-fail.png",
+  "last_stage": null
+}
