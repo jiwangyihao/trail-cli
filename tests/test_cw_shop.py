@@ -2141,6 +2141,12 @@ def test_cw_portal_select_collects_prep_facts_and_closes_shop(tmp_path: Path, mo
         }
         return session
 
+    def fake_apply_equipment(session, resolved_runtime, workspace_root=None):
+        assert resolved_runtime is runtime
+        del workspace_root
+        session.scene_state.setdefault("cw", {})["equipment"] = {"items": [], "stale": False}
+        return {"items": [], "stale": False}
+
     def fake_project_shop(session):
         events.append("shop.project")
         return {
@@ -2169,6 +2175,7 @@ def test_cw_portal_select_collects_prep_facts_and_closes_shop(tmp_path: Path, mo
     monkeypatch.setattr(cw_service, "collect_cw_crystals", fake_collect)
     monkeypatch.setattr(cw_service, "dismiss_cw_slots_overlay", fake_dismiss, raising=False)
     monkeypatch.setattr(cw_service, "read_cw_slots", fake_read_slots)
+    monkeypatch.setattr(cw_service, "apply_cw_equipment_read", fake_apply_equipment)
     monkeypatch.setattr(cw_service, "open_cw_shop", fake_open_shop)
     monkeypatch.setattr(cw_service, "scan_cw_shop", fake_scan_shop)
     monkeypatch.setattr(cw_service, "project_cw_shop_snapshot", fake_project_shop)

@@ -59,6 +59,14 @@ def test_workflow_handoffs_path_prefers_trail_skills_root(tmp_path, monkeypatch)
     assert rendering.workflow_handoffs_path() == expected
 
 
+def test_workflow_handoffs_path_falls_back_when_trail_skills_root_is_stale(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRAIL_SKILLS_ROOT", str(tmp_path / "missing-skills"))
+    monkeypatch.setattr(rendering.sys, "frozen", False, raising=False)
+    expected = Path(__file__).resolve().parents[1] / "skills" / "registry" / "workflow-handoffs.yaml"
+
+    assert rendering.workflow_handoffs_path() == expected
+
+
 def test_workflow_handoffs_path_uses_release_layout_when_frozen(tmp_path, monkeypatch):
     root = tmp_path / "release"
     fake_exe = root / "trail" / "bin" / "trail.exe"

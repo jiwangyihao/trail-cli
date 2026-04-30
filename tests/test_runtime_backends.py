@@ -2116,6 +2116,7 @@ def test_with_auto_capture_ocr_failure_keeps_ocr_trace_on_real_runtime_failure(t
     assert ocr_event["retry_reason"] == "none"
 
 
+@pytest.mark.slow
 def test_runtime_operator_fast_mode_quality_gate_on_dense_notice_fixture():
     metrics = benchmark_ocr_mode_against_native(
         FAST_DENSE_NOTICE_FIXTURE,
@@ -2129,12 +2130,14 @@ def test_runtime_operator_fast_mode_quality_gate_on_dense_notice_fixture():
     assert metrics.median_iou >= 0.85
 
 
+@pytest.mark.slow
 def test_runtime_operator_fast_mode_dense_notice_absolute_anchor_hits():
     hits = fixture_anchor_hits(FAST_DENSE_NOTICE_FIXTURE, ocr_mode="fast")
 
     assert set(FAST_DENSE_NOTICE_ABSOLUTE_ANCHORS).issubset(hits)
 
 
+@pytest.mark.slow
 def test_runtime_operator_fast_mode_quality_gate_on_sparse_login_fixture():
     metrics = benchmark_ocr_mode_against_native(
         FAST_SPARSE_LOGIN_FIXTURE,
@@ -2149,6 +2152,7 @@ def test_runtime_operator_fast_mode_quality_gate_on_sparse_login_fixture():
     assert metrics.median_iou >= 0.85
 
 
+@pytest.mark.slow
 def test_runtime_operator_fast_mode_sparse_login_absolute_anchor_hits():
     hits = fixture_anchor_hits(FAST_SPARSE_LOGIN_FIXTURE, ocr_mode="fast")
 

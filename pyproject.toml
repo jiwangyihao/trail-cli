@@ -21,7 +21,10 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.0", "build>=1.2", "pyinstaller>=6.11"]
+dev = ["pytest>=8.0", "pytest-xdist>=3.6", "build>=1.2", "pyinstaller>=6.11"]
+
+[tool.pytest.ini_options]
+addopts = ["--basetemp=.pytest-tmp"]
 
 [project.scripts]
 trail = "trail.cli:app"

@@ -1,5 +1,13 @@
 # 项目输出协议约束
 
+## 测试分层与运行入口
+
+- 默认快速回归命令使用 `uv run pytest`；pytest 配置固定 `--basetemp=.pytest-tmp`，避免 Windows 用户临时目录权限/扫描问题拖慢或阻塞测试。
+- 慢速真实集成测试必须标记 `@pytest.mark.slow`，默认跳过；需要完整真实后端/安装器回归时显式运行 `uv run pytest --run-slow`。
+- 推荐本地并行快速回归使用 `uv run pytest -n auto`；新增测试应保持 tmp/session/fixture 隔离，避免依赖执行顺序或共享用户环境，确保可被 `pytest-xdist` 分发。
+- 真实 PowerShell 安装器、真实 OCR 图片质量门禁、联网或下载资源的回归默认归入 slow；普通单测必须 stub 外部 I/O、网络、长 sleep 和用户级环境写入。
+- 调整测试分层时，同步维护 `pyproject.toml`、`tests/conftest.py` 的 marker/选项与本说明；不要通过临时命令行习惯隐藏慢测依赖。
+
 ## renderer 家族
 
 - 新命令必须先归类到已有 renderer 家族，再决定首行事实与正文前缀；不要把每个命令都做成独立的随意格式。

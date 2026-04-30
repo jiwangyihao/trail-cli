@@ -110,8 +110,15 @@ def _build_cw_harness(tmp_path: Path, *, runtime):
     return registry, service, session, command_service
 
 
-def _patch_portal_select_auto_collect(monkeypatch, *, slots_snapshot: dict | None = None, shop_snapshot: dict | None = None) -> None:
+def _patch_portal_select_auto_collect(
+    monkeypatch,
+    *,
+    slots_snapshot: dict | None = None,
+    equipment_snapshot: dict | None = None,
+    shop_snapshot: dict | None = None,
+) -> None:
     slots_snapshot = slots_snapshot or {"front": [], "back": [], "hand": [], "stale": True}
+    equipment_snapshot = equipment_snapshot or {"items": [], "stale": False}
     shop_snapshot = shop_snapshot or {"items": [], "stale": True, "reserve_full": False}
 
     def collect(session, collector):
@@ -126,6 +133,12 @@ def _patch_portal_select_auto_collect(monkeypatch, *, slots_snapshot: dict | Non
         del scanner, guide_config
         session.scene_state.setdefault("cw", {})["shop"] = dict(shop_snapshot)
 
+    def read_equipment(session, runtime, workspace_root=None):
+        del runtime, workspace_root
+        snapshot = dict(equipment_snapshot)
+        session.scene_state.setdefault("cw", {})["equipment"] = snapshot
+        return snapshot
+
     def close_shop(session, closer):
         del closer
         session.scene_state.setdefault("cw", {}).setdefault("shop", {}).setdefault("stale", True)
@@ -133,6 +146,7 @@ def _patch_portal_select_auto_collect(monkeypatch, *, slots_snapshot: dict | Non
     monkeypatch.setattr("trail.daemon.cw_service.collect_cw_crystals", collect)
     monkeypatch.setattr("trail.daemon.cw_service.dismiss_cw_slots_overlay", lambda runtime: None)
     monkeypatch.setattr("trail.daemon.cw_service.read_cw_slots", read_slots)
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_equipment_read", read_equipment)
     monkeypatch.setattr("trail.daemon.cw_service.open_cw_shop", lambda session, opener: None)
     monkeypatch.setattr("trail.daemon.cw_service.scan_cw_shop", scan_shop)
     monkeypatch.setattr("trail.daemon.cw_service.project_cw_shop_snapshot", lambda session: dict(shop_snapshot))
@@ -233,6 +247,7 @@ def _stub_portal_select_auto_collect(monkeypatch) -> None:
     monkeypatch.setattr("trail.daemon.cw_service.dismiss_cw_slots_overlay", lambda runtime: None)
     monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {})
     monkeypatch.setattr("trail.daemon.cw_service.read_cw_slots", lambda session, **kwargs: session)
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_equipment_read", lambda session, runtime, **kwargs: {"items": [], "stale": False})
     monkeypatch.setattr("trail.daemon.cw_service.open_cw_shop", lambda session, **kwargs: session)
     monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: None)
     monkeypatch.setattr("trail.daemon.cw_service.scan_cw_shop", lambda session, **kwargs: session)

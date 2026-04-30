@@ -21,13 +21,19 @@ _OUTPUT_OPTIONS = {"format": OutputFormat.TEXT, "verbose": False}
 YAML_ALLOWLIST = {"daemon.status", "state.dump", "guide.fetch.cw", "guide.config.cw", "cw.equipment.read"}
 
 
-def workflow_handoffs_path() -> Path:
-    skills_root = os.environ.get("TRAIL_SKILLS_ROOT")
-    if skills_root:
-        return Path(skills_root) / "registry" / "workflow-handoffs.yaml"
+def _bundled_workflow_handoffs_path() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parents[2] / "skills" / "registry" / "workflow-handoffs.yaml"
     return Path(__file__).resolve().parents[2] / "skills" / "registry" / "workflow-handoffs.yaml"
+
+
+def workflow_handoffs_path() -> Path:
+    skills_root = os.environ.get("TRAIL_SKILLS_ROOT")
+    if skills_root:
+        env_path = Path(skills_root) / "registry" / "workflow-handoffs.yaml"
+        if env_path.exists():
+            return env_path
+    return _bundled_workflow_handoffs_path()
 
 
 WORKFLOW_HANDOFFS_PATH = workflow_handoffs_path()
