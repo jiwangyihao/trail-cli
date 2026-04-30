@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from functools import lru_cache
 from io import BytesIO
 
 import pytest
@@ -130,6 +131,7 @@ def test_build_equipment_catalog_uses_stable_noid_key_for_missing_id():
     assert catalog[0].id is None
 
 
+@lru_cache(maxsize=None)
 def _png_bytes(color: str = "red") -> bytes:
     output = BytesIO()
     Image.new("RGBA", (16, 16), color=color).save(output, format="PNG")

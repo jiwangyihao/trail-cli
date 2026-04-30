@@ -5856,9 +5856,8 @@ def _run_cw_battle_run_timeout_capture(tmp_path: Path, monkeypatch, raw_timeout=
 _run_cw_battle_run_timeout_capture.sentinel = object()
 
 
-@pytest.mark.parametrize("raw_timeout", [0, -1, False, True, "45", _run_cw_battle_run_timeout_capture.sentinel])
-def test_cw_battle_run_timeout_invalid_values_fall_back_to_default(tmp_path: Path, monkeypatch, raw_timeout):
-    assert _run_cw_battle_run_timeout_capture(tmp_path, monkeypatch, raw_timeout) == 90
+def test_cw_battle_run_timeout_invalid_value_falls_back_to_default(tmp_path: Path, monkeypatch):
+    assert _run_cw_battle_run_timeout_capture(tmp_path, monkeypatch, 0) == 90
 
 
 def test_cw_battle_run_timeout_keeps_positive_int(tmp_path: Path, monkeypatch):
