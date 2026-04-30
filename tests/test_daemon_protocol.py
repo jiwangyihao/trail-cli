@@ -2,6 +2,7 @@ import json
 import socket
 import threading
 from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +18,7 @@ from trail.daemon.protocol import PROTOCOL_VERSION
 from trail.daemon.server import TrailDaemonServer
 from trail.daemon.session_service import SessionServiceRegistry
 from trail.output.envelope import command_failure
+from trail.runtime.resources import resolve_scene_asset
 from tests.support.fake_daemon import (
     FakeDaemonClient,
     build_success_response,
@@ -25,6 +27,11 @@ from tests.support.fake_daemon import (
     write_installed_manifest,
     write_ready_manifest,
 )
+
+
+@lru_cache(maxsize=None)
+def _cw_asset(alias: str) -> str:
+    return str(resolve_scene_asset("cw", alias))
 
 
 class ProtocolRuntime:
@@ -2564,12 +2571,10 @@ def test_cw_equipment_methods_are_classified_for_command_routing():
 
 def test_command_service_handles_cw_enter_world_to_home(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
-    from trail.runtime.resources import resolve_scene_asset
 
     monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
 
-    def asset(alias: str) -> str:
-        return str(resolve_scene_asset("cw", alias))
+    asset = _cw_asset
 
     class Runtime:
         def __init__(self):
@@ -2644,10 +2649,8 @@ def test_command_service_handles_cw_enter_world_to_home(tmp_path: Path, monkeypa
 
 def test_command_service_handles_cw_enter_rejects_pages_past_home(tmp_path: Path):
     from trail.daemon.cw_service import CwService
-    from trail.runtime.resources import resolve_scene_asset
 
-    def asset(alias: str) -> str:
-        return str(resolve_scene_asset("cw", alias))
+    asset = _cw_asset
 
     class Runtime:
         def __init__(self):
@@ -2688,10 +2691,8 @@ def test_command_service_handles_cw_enter_rejects_pages_past_home(tmp_path: Path
 
 def test_command_service_handles_cw_enter_rejects_settle_screen_before_home(tmp_path: Path):
     from trail.daemon.cw_service import CwService
-    from trail.runtime.resources import resolve_scene_asset
 
-    def asset(alias: str) -> str:
-        return str(resolve_scene_asset("cw", alias))
+    asset = _cw_asset
 
     class Runtime:
         def __init__(self):
@@ -2736,10 +2737,8 @@ def test_command_service_handles_cw_enter_rejects_settle_screen_before_home(tmp_
 
 def test_command_service_handles_cw_enter_rejects_recorded_game_over_before_home(tmp_path: Path):
     from trail.daemon.cw_service import CwService
-    from trail.runtime.resources import resolve_scene_asset
 
-    def asset(alias: str) -> str:
-        return str(resolve_scene_asset("cw", alias))
+    asset = _cw_asset
 
     class Runtime:
         def __init__(self):
@@ -2957,12 +2956,10 @@ def test_command_service_handles_cw_start_rejects_home_with_unfinished_progress(
     monkeypatch,
 ):
     from trail.daemon.cw_service import CwService
-    from trail.runtime.resources import resolve_scene_asset
 
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
 
-    def asset(alias: str) -> str:
-        return str(resolve_scene_asset("cw", alias))
+    asset = _cw_asset
 
     class Runtime:
         def __init__(self):
@@ -3048,12 +3045,10 @@ def test_command_service_handles_cw_start_reports_completed_known_failure_when_p
     monkeypatch,
 ):
     from trail.daemon.cw_service import CwService
-    from trail.runtime.resources import resolve_scene_asset
 
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
 
-    def asset(alias: str) -> str:
-        return str(resolve_scene_asset("cw", alias))
+    asset = _cw_asset
 
     class Runtime:
         def __init__(self):
@@ -3924,12 +3919,10 @@ def test_command_service_handles_cw_start_consumes_unfinished_progress_flag_befo
 
 def test_command_service_handles_cw_start_rejects_continue_mode_on_clean_home(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
-    from trail.runtime.resources import resolve_scene_asset
 
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
 
-    def asset(alias: str) -> str:
-        return str(resolve_scene_asset("cw", alias))
+    asset = _cw_asset
 
     class Runtime:
         def __init__(self):
@@ -3995,14 +3988,12 @@ def test_command_service_handles_cw_start_rejects_continue_mode_on_clean_home(tm
 
 def test_command_service_handles_cw_start_continue_from_whole_run_settlement_chain(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
-    from trail.runtime.resources import resolve_scene_asset
 
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
     monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
     monkeypatch.setattr("trail.daemon.cw_service._attach_guides_to_cards", lambda cards, **kwargs: cards)
 
-    def asset(alias: str) -> str:
-        return str(resolve_scene_asset("cw", alias))
+    asset = _cw_asset
 
     class Runtime:
         def __init__(self):
@@ -4300,14 +4291,12 @@ def test_command_service_handles_cw_hand_sell_plan_runtime_failure_after_save_as
 
 def test_command_service_handles_cw_start_valid_ax_x_does_not_leak_public_invalid_codes(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
-    from trail.runtime.resources import resolve_scene_asset
 
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
     monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
     monkeypatch.setattr("trail.daemon.cw_service._attach_guides_to_cards", lambda cards, **kwargs: cards)
 
-    def asset(alias: str) -> str:
-        return str(resolve_scene_asset("cw", alias))
+    asset = _cw_asset
 
     class Runtime:
         def __init__(self):

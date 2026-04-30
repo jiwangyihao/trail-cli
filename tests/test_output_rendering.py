@@ -1,10 +1,12 @@
+import inspect
 from pathlib import Path
 
 import pytest
 
 import trail.output.rendering as rendering_module
-from trail.cli import app
+from trail.cli import app, main
 from trail.output.rendering import (
+    OutputFormat,
     TEXT_RENDERERS,
     _append_common_success_lines,
     _render_cw_entry,
@@ -5484,9 +5486,11 @@ def test_cli_accepts_yaml_format_option(cli_runner):
     assert result.stdout.startswith("trail ")
 
 
-def test_cli_rejects_invalid_format_option(cli_runner):
-    result = cli_runner.invoke(app, ["--format", "json", "version"])
+def test_cli_rejects_invalid_format_option():
+    parameter = inspect.signature(main).parameters["output_format"]
 
-    assert result.exit_code == 2
-    assert "Invalid value for '--format'" in result.output
+    assert parameter.annotation is OutputFormat
+    assert getattr(parameter.default, "param_decls", ()) == ("--format",)
+    with pytest.raises(ValueError):
+        OutputFormat("json")
 

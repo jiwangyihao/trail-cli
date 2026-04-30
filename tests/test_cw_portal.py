@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,6 +40,7 @@ def _tuple_piece(text: str, left: int, top: int, width: int = 80, height: int = 
     return [polygon, text, 0.99]
 
 
+@lru_cache(maxsize=None)
 def _asset(alias: str) -> str:
     return str(resolve_scene_asset("cw", alias))
 

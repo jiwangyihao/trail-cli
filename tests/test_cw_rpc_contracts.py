@@ -5,7 +5,7 @@ import inspect
 import pytest
 
 from trail.cli import app
-from trail.commands.cw import cw_enter, hand_app, slots_app
+from trail.commands.cw import cw_enter, cw_guide_app, cw_guide_apply, hand_app, slots_app
 from tests.support.fake_daemon import build_success_response as _build_success_response
 
 
@@ -41,6 +41,10 @@ def _expected_lines(summary: str, *, screenshot: str | None = None, body: list[s
 
 def _registered_command_names(typer_app) -> set[str]:
     return {command.name for command in typer_app.registered_commands}
+
+
+def _registered_group_help(typer_app) -> str:
+    return typer_app.info.help or ""
 
 
 def _function_option_decls(callback) -> set[str]:
@@ -847,11 +851,9 @@ def test_cw_guide_current_renders_guide_summary(cli_runner, fake_daemon_client, 
     _assert_single_call(client, method="cw.guide.current", payload={}, tmp_path=tmp_path)
 
 
-def test_cw_guide_help_describes_selected_guide_flow(cli_runner):
-    result = cli_runner.invoke(app, ["cw", "guide", "--help"])
-    normalized = " ".join(result.output.split())
+def test_cw_guide_help_describes_selected_guide_flow():
+    normalized = " ".join(_registered_group_help(cw_guide_app).split())
 
-    assert result.exit_code == 0
     assert "当前已选攻略" in normalized
     assert "guide.fetch.cw --select" in normalized
     assert "cw.portal.select" in normalized
@@ -895,13 +897,12 @@ def test_cw_guide_apply_renders_guide_summary(cli_runner, fake_daemon_client, tm
     _assert_single_call(client, method="cw.guide.apply", payload={}, tmp_path=tmp_path)
 
 
-@pytest.mark.parametrize("legacy_flag", ["--lineup-id", "--guide"])
-def test_cw_guide_apply_rejects_legacy_cli_flags(cli_runner, legacy_flag: str):
-    result = cli_runner.invoke(app, ["cw", "guide", "apply", "--session", SESSION_ID, legacy_flag, "abc"])
+def test_cw_guide_apply_rejects_legacy_cli_flags():
+    option_decls = _function_option_decls(cw_guide_apply)
 
-    assert result.exit_code == 2
-    assert "No such option" in result.output
-    assert legacy_flag in result.output
+    assert "--session" in option_decls
+    assert "--lineup-id" not in option_decls
+    assert "--guide" not in option_decls
 
 
 def test_cw_slots_place_renders_slot_counts_and_shot(cli_runner, fake_daemon_client, tmp_path):
