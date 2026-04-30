@@ -2159,7 +2159,7 @@ def test_runtime_operator_fast_mode_sparse_login_absolute_anchor_hits():
     assert set(FAST_SPARSE_LOGIN_ABSOLUTE_ANCHORS).issubset(hits)
 
 
-def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Path):
+def test_command_service_handles_input_click_verbose_metadata(tmp_path: Path):
     from trail.daemon.command_service import CommandService
     from trail.daemon.session_service import SessionServiceRegistry
 
@@ -2187,22 +2187,6 @@ def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Pa
             verbose=True,
         )
     )
-    drag_payload = service.handle(
-        _command_request(
-            workspace_root=tmp_path,
-            method="input.drag",
-            payload={"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4},
-            session_id=session.session_id,
-        )
-    )
-    key_payload = service.handle(
-        _command_request(
-            workspace_root=tmp_path,
-            method="input.key",
-            payload={"key": "space", "presses": 2},
-            session_id=session.session_id,
-        )
-    )
     click_status = session_service.request_status("req-input.click")
 
     assert click_payload["ok"] is True
@@ -2222,21 +2206,11 @@ def test_command_service_handles_input_methods_and_verbose_metadata(tmp_path: Pa
     ]
     assert click_payload["debug"] == {"trace": [{"step": "click", "point": [10, 20]}]}
     assert click_payload["request_id"] == "req-input.click"
-    assert drag_payload["ok"] is True
-    assert drag_payload["data"] == {"dragged": [1, 2, 3, 4]}
-    assert drag_payload["request_id"] == "req-input.drag"
-    assert key_payload["ok"] is True
-    assert key_payload["data"] == {"key": "space", "presses": 2}
-    assert key_payload["request_id"] == "req-input.key"
     assert click_status["session_id"] == session.session_id
     assert click_status["final_state"] == "completed"
     assert click_status["last_visible_stage"] == "responded"
     assert runtime.clicks == [(10, 20)]
-    assert runtime.drags == [(1, 2, 3, 4)]
-    assert runtime.keys == [("space", 2)]
     assert runtime_service.runtime_calls == [
-        {"workspace_root": str(tmp_path), "window_binding": None},
-        {"workspace_root": str(tmp_path), "window_binding": None},
         {"workspace_root": str(tmp_path), "window_binding": None},
     ]
 

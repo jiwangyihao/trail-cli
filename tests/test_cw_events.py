@@ -163,6 +163,32 @@ def test_build_cw_battle_starter_cancels_team_count_confirm_dialog(monkeypatch, 
     assert ocr_calls
 
 
+def test_cw_event_handle_flows_through_command_service_journal(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    del registry, cw_service
+    monkeypatch.setattr("trail.daemon.cw_service.event_handler_factory", lambda runtime: object())
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.handle_cw_event",
+        lambda session, handler: _set_event_result(session, {"event_type": "special", "handled_action": "confirm"}),
+    )
+
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-event-handle-1",
+        method="cw.event.handle",
+        payload={},
+    )
+    status = service.request_status("req-event-handle-1")
+    persisted = service.load_session(session.session_id)
+
+    assert envelope["ok"] is True
+    assert envelope["data"] == {"event_type": "special", "handled_action": "confirm"}
+    assert status["final_state"] == "completed"
+    assert persisted.scene_state["cw"]["stage"] == {"stale": True}
+
+
 @pytest.mark.parametrize(
     ("builder_name", "expected_wait_calls", "expected_locate_calls", "ocr_text", "expected_click"),
     [
@@ -442,7 +468,7 @@ def test_cw_event_read_services_return_options(tmp_path: Path, monkeypatch, meth
         ),
     ],
 )
-def test_cw_event_mutations_flow_through_command_service_journal(
+def test_cw_event_mutation_services_return_expected_data(
     tmp_path: Path,
     monkeypatch,
     method: str,
@@ -452,20 +478,16 @@ def test_cw_event_mutations_flow_through_command_service_journal(
     expected_data: dict,
 ):
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    del registry, command_service, request_id
     setup_patches(monkeypatch)
 
-    envelope = _run_cw_mutation(
-        command_service=command_service,
-        session=session,
-        workspace_root=tmp_path,
-        request_id=request_id,
+    result = cw_service.handle(
         method=method,
-        payload=payload,
+        payload={"session_id": session.session_id, **payload},
+        workspace_root=str(tmp_path),
+        session_service=service,
     )
-    status = service.request_status(request_id)
     persisted = service.load_session(session.session_id)
 
-    assert envelope["ok"] is True
-    assert envelope["data"] == expected_data
-    assert status["final_state"] == "completed"
-    assert persisted.scene_state["cw"]["stage"] == ({"stale": True} if method != "cw.event.handle" else {"stale": True})
+    assert result == expected_data
+    assert persisted.scene_state["cw"]["stage"] == {"stale": True}
