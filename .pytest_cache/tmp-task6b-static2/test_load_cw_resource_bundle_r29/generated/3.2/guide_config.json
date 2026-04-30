@@ -1,0 +1,34 @@
+{
+  "meta": {
+    "big_version": "3.2"
+  },
+  "lineup_levels": [
+    {
+      "id": "7",
+      "name": "Level 7"
+    }
+  ],
+  "traits": [
+    {
+      "id": "t1",
+      "name": "Trait A"
+    }
+  ],
+  "roles": [],
+  "role_tags": [
+    "damage"
+  ],
+  "portal_list": [
+    {
+      "portal_id": "p1",
+      "title": "Portal A",
+      "description": "desc"
+    }
+  ],
+  "strategy_list": [
+    {
+      "id": "a1",
+      "title": "Strategy A"
+    }
+  ]
+}

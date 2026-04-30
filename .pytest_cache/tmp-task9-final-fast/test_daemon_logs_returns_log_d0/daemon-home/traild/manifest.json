@@ -1,0 +1,22 @@
+{
+  "install": {
+    "bootstrap_type": "scheduled_task",
+    "bootstrap_id": "traild-user",
+    "daemon_entrypoint": "trail.daemon.server:main",
+    "manifest_version": 1,
+    "protocol_version": 1,
+    "token_file": "C:\\Users\\34404\\source\\repos\\trail-cli\\.worktrees\\cw-static-resource-bundle\\.pytest_cache\\tmp-task9-final-fast\\test_daemon_logs_returns_log_d0\\daemon-home\\daemon-token.txt",
+    "log_dir": "C:\\Users\\34404\\source\\repos\\trail-cli\\.worktrees\\cw-static-resource-bundle\\.pytest_cache\\tmp-task9-final-fast\\test_daemon_logs_returns_log_d0\\daemon-home\\logs",
+    "workspace_strategy": "per-request"
+  },
+  "runtime": {
+    "instance_id": null,
+    "pid": null,
+    "state": "ready",
+    "endpoint": null,
+    "token_generation": null,
+    "updated_at": null,
+    "last_transition_at": null,
+    "last_start_error": null
+  }
+}

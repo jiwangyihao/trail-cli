@@ -1,0 +1,42 @@
+{
+  "bundle_schema_version": 1,
+  "generator_schema_version": 1,
+  "resource_version": "test",
+  "season_id": "s1",
+  "sub_season_id": "sub1",
+  "rpg_game_big_version": "3.2",
+  "rpg_game_lineup_tourn_filter": "filter1",
+  "files": [
+    {
+      "path": "raw_config.json",
+      "sha256": "8a22b0b197f1d26743a68b49e352bea165944ae71be577dc7073bef3ed9e8555",
+      "size": 105
+    },
+    {
+      "path": "guide_config.json",
+      "sha256": "0d460c5ba147772538c24cce83b67f137b6f71040ea38c8e1fe6afed458130c8",
+      "size": 127
+    },
+    {
+      "path": "guide_config_enriched.json",
+      "sha256": "0d460c5ba147772538c24cce83b67f137b6f71040ea38c8e1fe6afed458130c8",
+      "size": 127
+    },
+    {
+      "path": "indexes.json",
+      "sha256": "24e9b1de1ccd0c87d2ae6aa90bf38bb47967f932af187db68d59aaf2eccf6ec5",
+      "size": 142
+    },
+    {
+      "path": "equipment/manifest.json",
+      "sha256": "8b04685f9aa082fb693dc2c04bb566ad81a117be365d4e4e4d2f2c10f19a6a05",
+      "size": 19
+    },
+    {
+      "path": "equipment/features.json",
+      "sha256": "aeb16f4145712d50662f41bf8e9d91d33b6f4637224db8333aeed0349d7c5bdc",
+      "size": 242
+    }
+  ],
+  "content_digest": "fa2147e6125e3dd47b3b8afe2b0b68574ee0e587a1f376bf3630562f39182e29"
+}

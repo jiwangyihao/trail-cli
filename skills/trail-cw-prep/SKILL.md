@@ -33,6 +33,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 - 只有事实缺失、stale 或页面已变化时，才主动调用 `trail cw slots read`、`trail cw equipment read` 或 `trail cw shop scan` 刷新；不要在接收 handoff 后立刻重复扫描。优先复用同次 equipment facts；缺失/stale/page changed 时才重跑 `cw.equipment.read`。
 - 若 `slots.read` 或 `shop.scan` 输出 `match_kind=low_confidence`、`raw_name` 或低置信度 `warn`，必须先读截图确认，再接受 canonicalized 名称。
 - `cw.equipment.read` 返回截图时必须先读原始截图，再消费 `item pos=equipment:<idx> center=x,y ...` 行、`# 装备优先级` 的 `guide` 行，以及 `# 角色装备需求` 的 `slot` 行或 `info todo=slots`；这些装备推荐分块位于 `warn`、`ref` 之前。若看到 `info todo=slots`，先运行或刷新 `cw.slots.read`，不要用 stale slots 推断角色缺口。需要排查 `row/col` 时，使用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`。
+- `cw.equipment.read` daemon 默认热路径使用 bundle recognizer，不调用 prepare/download/load icon cache；不要为普通装备读取先跑 `cw.equipment.prepare`。
 - 接收 `cw.portal.select` handoff 后，如果后续执行 `cw.equipment.read` 并看到装备推荐，仍要先读截图，再看 `# 装备优先级` 的基础装备 `have/need` 与需求角色，最后看 `# 角色装备需求` 的当前 canonical 角色缺口；不要为了低优先级装备过早消耗基础装备。
 - `cw.equipment.compose` / `trail cw equipment compose` 是只写 session 的记录命令，不执行真实 UI 合成。只有已决定合成并装备某个进阶装备时，才用 `--name`、`--slot`、`--role` 记录；slot 使用 `front:1`、`back:1`、`hand:1` 这种从 1 开始的位置，成功首行为 `ok cw.equipment.compose pos=... name=... 装备=... count=...`。
 - 读完截图后，先判断本轮是否存在可收集晶矿奖励；这个信息不能只依赖结构化文本。
@@ -46,7 +47,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 - `trail cw shop scan|status|buy-slot|buy-exp|refresh|close`：读取和执行商店动作；`shop.scan` 有截图，`shop.status` 无截图。
 - `trail cw equipment read --session <id>`：读取当前装备背包图标；返回截图时必须先读原始截图，再消费背包 `item`、`# 装备优先级` 的 `guide` 行、`# 角色装备需求` 的 `slot` 行或 `info todo=slots`。若看到 `info todo=slots`，先运行或刷新 `cw.slots.read`；这些分块位于 `warn`、`ref` 之前。需要诊断 `row/col` 时用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`。
 - `trail cw equipment compose --session <id> --name <进阶装备名> --slot front:1 --role <角色名>`：canonical command 为 `cw.equipment.compose`；只写 session，不执行真实 UI 合成，slot 使用 Agent 可见 1-based。
-- `trail cw equipment prepare --session <id> [--refresh]`：准备装备图标缓存；只有明确要刷新同版本 URL 变化时才使用 `--refresh`。
+- `trail cw equipment prepare --session <id> [--refresh]`：默认只验证/汇总 bundle 装备资源，不下载图标；只有明确要刷新同版本 URL 变化或重建 workspace equipment override 时才使用 `--refresh`。
 - `trail cw crystals collect`：截图确认本轮有可收晶矿时执行；收取后根据新截图判断手牌区是否变化。
 - `trail cw hand sell-plan|sell`：读取或执行卖牌动作。
 - `trail cw battle run --timeout 570`：出战前检查完成后执行出战和战斗链。

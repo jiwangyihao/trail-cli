@@ -639,6 +639,11 @@ class CommandService:
 
     def _handle_guide_config(self, request):
         self._guide_scene(request.method, "guide.config.")
+        if self.cw_service is not None and hasattr(self.cw_service, "guide_config"):
+            return success(
+                to_jsonable(self.cw_service.guide_config(workspace_root=request.workspace_root, enrich_traits=True)),
+                request_id=request.request_id,
+            )
         from trail.scenes.cw.guide import fetch_cw_guide_config
 
         return success(

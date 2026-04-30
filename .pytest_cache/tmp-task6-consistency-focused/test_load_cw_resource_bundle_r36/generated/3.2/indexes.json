@@ -1,0 +1,27 @@
+{
+  "traits_by_name": {
+    "Trait A": {
+      "id": "t1",
+      "name": "Trait A"
+    }
+  },
+  "roles_by_name": {
+    "Role A": {
+      "id": "r1",
+      "name": "Role A"
+    }
+  },
+  "portals_by_title": [],
+  "strategies_by_title": {
+    "Strategy A": {
+      "id": "a1",
+      "title": "Strategy A"
+    }
+  },
+  "equipment_by_cache_key": {
+    "icon-a": {
+      "cache_key": "icon-a",
+      "name": "Icon A"
+    }
+  }
+}

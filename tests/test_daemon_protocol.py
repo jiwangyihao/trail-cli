@@ -288,6 +288,57 @@ class StartRuntimeServiceStub:
                     raise
 
 
+def test_cw_resource_service_caches_equipment_recognizer(monkeypatch, tmp_path):
+    from trail.daemon.cw_resource_service import CwResourceService
+
+    del monkeypatch
+    calls = {"load": 0, "recognizer": 0}
+
+    class Bundle:
+        big_version = "3.2"
+        identity = "id1"
+        equipment_features = {
+            "items": [],
+            "equipment_feature_schema_version": 1,
+            "recognizer_algorithm_version": "vector-mask-v1",
+            "feature_size": [32, 32],
+            "match_size": [64, 64],
+            "min_score": 0.72,
+            "min_gap": 0.05,
+        }
+        equipment_manifest = {"items": []}
+        raw_config = {"rpg_game_big_version": "3.2", "equipment_list": []}
+        root = tmp_path
+        source_kind = "package"
+        manifest = {"bundle_schema_version": 1, "resource_version": "3.2"}
+        manifest_path = tmp_path / "manifest.json"
+        manifest_mtime = 1.0
+
+    def load_bundle(workspace_root=None):
+        del workspace_root
+        calls["load"] += 1
+        return Bundle()
+
+    class Recognizer:
+        @classmethod
+        def from_precomputed_features(cls, payload):
+            assert payload == Bundle.equipment_features
+            calls["recognizer"] += 1
+            return cls()
+
+    service = CwResourceService(
+        bundle_loader=load_bundle,
+        recognizer_cls=Recognizer,
+        source_signature=lambda workspace_root=None: ("test", workspace_root),
+    )
+
+    first = service.equipment_recognizer(workspace_root=str(tmp_path))
+    second = service.equipment_recognizer(workspace_root=str(tmp_path))
+
+    assert first is second
+    assert calls == {"load": 1, "recognizer": 1}
+
+
 class StartRunDetectionRuntime:
     def __init__(self, *, ocr_results: list[list[object]]):
         self._ocr_results = [list(result) for result in ocr_results]
@@ -1161,8 +1212,45 @@ def test_command_service_cw_portal_select_auto_collects_equipment_before_shop(tm
     monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
     monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
     _patch_cw_portal_select_auto_collect_success(monkeypatch, events)
+    expected_raw_config = {"rpg_game_big_version": "3.2", "equipment_list": []}
+    expected_recognizer = object()
+
+    class ResourceService:
+        def equipment_read_resources(self, *, workspace_root):
+            assert workspace_root == str(tmp_path)
+            events.append("equipment.resources")
+            return expected_raw_config, expected_recognizer
+
+    def fake_apply_equipment(session, runtime, *, workspace_root=None, raw_config=None, recognizer=None):
+        del runtime
+        assert workspace_root == str(tmp_path)
+        assert raw_config is expected_raw_config
+        assert recognizer is expected_recognizer
+        events.append("equipment.read")
+        snapshot = {
+            "count": 1,
+            "uncertain": 0,
+            "empty": 59,
+            "backend": "vector",
+            "layout": "default",
+            "items": [{"pos": "equipment:1", "name": "基础装甲", "score": 0.9, "uncertain": False}],
+            "recommendations": {
+                "priority": [{"idx": 1, "name": "高周波电锯", "basics": [], "required_roles": ["希儿"], "acquired_roles": [], "missing_roles": ["希儿"]}],
+                "role_missing": [{"pos": "front:1", "role": "希儿", "equipment": "高周波电锯", "category": "优选"}],
+                "todos": [],
+            },
+            "stale": False,
+        }
+        session.scene_state.setdefault("cw", {})["equipment"] = deepcopy(snapshot)
+        return snapshot
+
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_equipment_read", fake_apply_equipment)
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
-    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=CwService(runtime_service=runtime_service))
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service, cw_resource_service=ResourceService()),
+    )
 
     response = command_service.handle(
         DaemonRequest(
@@ -1177,7 +1265,7 @@ def test_command_service_cw_portal_select_auto_collects_equipment_before_shop(tm
     )
 
     assert response["ok"] is True
-    assert events.index("slots.read") < events.index("equipment.read") < events.index("shop.open")
+    assert events.index("slots.read") < events.index("equipment.resources") < events.index("equipment.read") < events.index("shop.open")
     assert response["data"]["equipment"]["stale"] is False
     assert response["data"]["equipment"]["items"][0]["name"] == "基础装甲"
     persisted = service.load_session(session.session_id).scene_state["cw"]["equipment"]
@@ -1274,8 +1362,8 @@ def test_cw_portal_select_preserves_numeric_zero_equipment_freshness(tmp_path: P
             del screenshot_path, limit
             return []
 
-    def fake_select(session, *, runtime, card_idx: int, guide: dict, workspace_root: str | None = None):
-        del runtime, guide, workspace_root
+    def fake_select(session, *, runtime, card_idx: int, guide: dict, workspace_root: str | None = None, cw_resource_service=None):
+        del runtime, guide, workspace_root, cw_resource_service
         snapshot = {"items": [{"pos": "equipment:1", "name": "基础装甲"}], "stale": 0}
         session.scene_state.setdefault("cw", {})["equipment"] = deepcopy(snapshot)
         return {"card_idx": card_idx, "portal_title": "A", "equipment": deepcopy(snapshot)}
@@ -2471,6 +2559,12 @@ def test_command_service_routes_cw_equipment_read_through_capture(tmp_path: Path
         calls.append("read")
         return snapshot
 
+    def fake_apply_equipment(session, runtime, workspace_root=None, request_id=None):
+        assert request_id == "req-equipment-read"
+        applied = fake_read_equipment(runtime, workspace_root=workspace_root)
+        session.scene_state.setdefault("cw", {})["equipment"] = deepcopy(applied)
+        return applied
+
     monkeypatch.setattr("trail.scenes.cw.equipment.read_cw_equipment", fake_read_equipment)
     monkeypatch.setattr(
         "trail.scenes.cw.equipment.fetch_cw_raw_guide_config",
@@ -2480,6 +2574,10 @@ def test_command_service_routes_cw_equipment_read_through_capture(tmp_path: Path
         "trail.daemon.cw_service.read_cw_equipment",
         fake_read_equipment,
         raising=False,
+    )
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.apply_cw_equipment_read",
+        fake_apply_equipment,
     )
     command_service = CommandService(
         runtime_service=runtime_service,
@@ -2507,6 +2605,568 @@ def test_command_service_routes_cw_equipment_read_through_capture(tmp_path: Path
     assert persisted["stale"] is False
     assert persisted["items"][0]["pos"] == "equipment:1"
     assert persisted["items"][0]["center"] == {"x": 1855, "y": 275}
+
+
+def test_command_service_cw_equipment_read_uses_resource_service_without_prepare(tmp_path: Path, monkeypatch):
+    from trail.daemon import cw_service as cw_service_module
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = SimpleNamespace()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    expected_raw_config = {"rpg_game_big_version": "3.2", "equipment_list": []}
+    expected_recognizer = object()
+    calls: list[tuple[object, object]] = []
+
+    class ResourceService:
+        def equipment_read_resources(self, *, workspace_root):
+            assert workspace_root == str(tmp_path)
+            calls.append((expected_raw_config, expected_recognizer))
+            return expected_raw_config, expected_recognizer
+
+    snapshot = {"count": 0, "uncertain": 0, "empty": 60, "items": [], "stale": False}
+
+    def fake_apply_equipment(session, runtime_arg, *, workspace_root=None, raw_config=None, recognizer=None, request_id=None):
+        assert runtime_arg is runtime
+        assert workspace_root == str(tmp_path)
+        assert raw_config is expected_raw_config
+        assert recognizer is expected_recognizer
+        assert request_id == "req-equipment-read-resource-service"
+        session.scene_state.setdefault("cw", {})["equipment"] = deepcopy(snapshot)
+        return deepcopy(snapshot)
+
+    monkeypatch.setattr(cw_service_module, "apply_cw_equipment_read", fake_apply_equipment)
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service, cw_resource_service=ResourceService()),
+    )
+
+    response = command_service.handle(
+        DaemonRequest(
+            request_id="req-equipment-read-resource-service",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.equipment.read",
+            payload={},
+        )
+    )
+
+    assert response["ok"] is True
+    assert response["data"] == snapshot
+    assert calls == [(expected_raw_config, expected_recognizer)]
+
+
+def test_command_service_cw_equipment_read_resource_service_path_does_not_prepare_or_load_icons(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from PIL import Image
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw.equipment_recognition import EquipmentRecognitionResult
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+
+    class Runtime:
+        def capture_image(self, **kwargs):
+            del kwargs
+            return Image.new("RGBA", (1920, 1080), "black")
+
+        def capture_after_action(self, optional=False, request_id=None):
+            del optional, request_id
+            return tmp_path / "equipment.jpg"
+
+    class Recognizer:
+        def recognize(self, image):
+            del image
+            return EquipmentRecognitionResult(candidates=[], score=None, gap=None, uncertain=False, empty=True)
+
+    class ResourceService:
+        def equipment_read_resources(self, *, workspace_root):
+            assert workspace_root == str(tmp_path)
+            return {"rpg_game_big_version": "3.2", "equipment_list": []}, Recognizer()
+
+    monkeypatch.setattr(
+        "trail.scenes.cw.equipment.fetch_cw_raw_guide_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw config must not be fetched")),
+    )
+    monkeypatch.setattr(
+        "trail.scenes.cw.equipment.prepare_equipment_icon_cache",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("prepare must not be called")),
+    )
+    monkeypatch.setattr(
+        "trail.scenes.cw.equipment.load_cached_equipment_icons",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("load icons must not be called")),
+    )
+    cw_service = CwService(
+        runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: Runtime()),
+        cw_resource_service=ResourceService(),
+    )
+
+    response = cw_service.handle_with_capture(
+        method="cw.equipment.read",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+        request_id="req-equipment-read-no-network",
+    )
+
+    assert response["ok"] is True
+    assert response["data"]["count"] == 0
+    assert response["screenshot"].endswith("equipment.jpg")
+
+
+def test_command_service_uses_resource_service_for_portal_config_without_fetch(tmp_path: Path, monkeypatch):
+    from trail.daemon import cw_service as cw_service_module
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = SimpleNamespace()
+    expected_portals = [{"id": "p1", "name": "公司时刻"}]
+
+    class ResourceService:
+        def bundle(self, *, workspace_root):
+            assert workspace_root == str(tmp_path)
+            return SimpleNamespace(
+                guide_config={"portal_list": expected_portals, "strategy_list": []},
+                guide_config_enriched={"portal_list": expected_portals, "strategy_list": [], "traits": []},
+            )
+
+    def fake_detect_portal(session_arg, *, runtime, portal_list):
+        assert session_arg.session_id == session.session_id
+        assert portal_list == expected_portals
+        return {"cards": [], "stale": False}
+
+    monkeypatch.setattr(
+        cw_service_module,
+        "fetch_cw_guide_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("guide config fetch must not be called")),
+    )
+    monkeypatch.setattr(cw_service_module, "detect_cw_portal", fake_detect_portal)
+    cw_service = CwService(
+        runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: runtime),
+        cw_resource_service=ResourceService(),
+    )
+
+    response = cw_service.handle_with_capture(
+        method="cw.portal.detect",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+        request_id="req-portal-config-cache",
+    )
+
+    assert response["ok"] is True
+
+
+def test_command_service_uses_resource_service_for_equipment_compose_config(tmp_path: Path, monkeypatch):
+    from trail.daemon import cw_service as cw_service_module
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    expected_raw_config = {"rpg_game_big_version": "4.2", "equipment_list": [{"name": "高周波电锯"}]}
+
+    class ResourceService:
+        def bundle(self, *, workspace_root):
+            assert workspace_root == str(tmp_path)
+            return SimpleNamespace(raw_config=expected_raw_config)
+
+    def fake_compose(session_arg, *, name, slot, role, workspace_root=None, raw_config=None):
+        assert session_arg.session_id == session.session_id
+        assert name == "高周波电锯"
+        assert slot == "front:1"
+        assert role == "希儿"
+        assert workspace_root == str(tmp_path)
+        assert raw_config is expected_raw_config
+        return {"pos": "front:1", "name": role, "equipment": name, "count": 1}
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return None
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    monkeypatch.setattr(
+        "trail.scenes.cw.equipment.fetch_cw_raw_guide_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw guide config fetch must not be called")),
+    )
+    monkeypatch.setattr(cw_service_module, "record_cw_equipment_compose", fake_compose)
+    cw_service = CwService(
+        runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: Runtime()),
+        cw_resource_service=ResourceService(),
+    )
+
+    response = cw_service.handle_mutation(
+        method="cw.equipment.compose",
+        payload={"session_id": session.session_id, "name": "高周波电锯", "slot": "front:1", "role": "希儿"},
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+        request_id="req-equipment-compose-config-cache",
+        verbose=False,
+    )
+
+    assert response["ok"] is True
+    assert response["data"] == {"pos": "front:1", "name": "希儿", "equipment": "高周波电锯", "count": 1}
+
+
+def test_command_service_uses_cw_service_for_guide_config(tmp_path: Path, monkeypatch):
+    expected_config = {"season": "test", "roles": [], "traits": []}
+    calls: list[tuple[str, bool]] = []
+
+    class CwService:
+        def guide_config(self, *, workspace_root, enrich_traits: bool = False):
+            calls.append((workspace_root, enrich_traits))
+            return expected_config
+
+    monkeypatch.setattr(
+        "trail.scenes.cw.guide.fetch_cw_guide_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("guide config fetch must not be called")),
+    )
+    command_service = CommandService(
+        runtime_service=SimpleNamespace(),
+        session_service=SessionServiceRegistry(),
+        cw_service=CwService(),
+    )
+
+    response = command_service.handle(
+        DaemonRequest(
+            request_id="req-guide-config-cached",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="guide.config.cw",
+            payload={},
+        )
+    )
+
+    assert response["ok"] is True
+    assert response["data"] == expected_config
+    assert calls == [(str(tmp_path), True)]
+
+
+def test_cw_equipment_read_reuses_recognition_screenshot(monkeypatch, tmp_path):
+    from PIL import Image
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_after_action_calls = 0
+
+        def capture_image(self, **kwargs):
+            return Image.new("RGBA", (1920, 1080), "black")
+
+        def save_capture_image_to_workspace(self, image, request_id=None):
+            path = tmp_path / f"{request_id}.jpg"
+            image.convert("RGB").save(path)
+            return path
+
+        def capture_after_action(self, optional=False, request_id=None):
+            self.capture_after_action_calls += 1
+            return tmp_path / "unexpected.jpg"
+
+    runtime = Runtime()
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    cw_service = CwService(runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: runtime))
+
+    monkeypatch.setattr(
+        "trail.scenes.cw.equipment.fetch_cw_raw_guide_config",
+        lambda workspace_root=None: {"rpg_game_big_version": "3.2", "equipment_list": []},
+    )
+    monkeypatch.setattr(
+        "trail.scenes.cw.equipment.read_cw_equipment",
+        lambda runtime, workspace_root=None, raw_config=None, recognizer=None, request_id=None: {
+            "count": 0,
+            "uncertain": 0,
+            "empty": 60,
+            "items": [],
+            "backend": "vector",
+            "layout": "default",
+            "columns": 10,
+            "rows": 6,
+            "stale": False,
+            "_screenshot": str(tmp_path / "r1.jpg"),
+        },
+    )
+
+    response = cw_service.handle_with_capture(
+        method="cw.equipment.read",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+        request_id="r1",
+    )
+
+    assert response["ok"] is True
+    assert response["screenshot"].endswith("r1.jpg")
+    assert "_screenshot" not in response["data"]
+    saved_session = session_service.load_session(session.session_id)
+    assert "_screenshot" not in saved_session.scene_state["cw"]["equipment"]
+    assert runtime.capture_after_action_calls == 0
+
+
+def test_cw_equipment_read_falls_back_to_capture_after_action_when_reuse_save_fails(monkeypatch, tmp_path):
+    from PIL import Image
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_after_action_calls = 0
+
+        def capture_image(self, **kwargs):
+            return Image.new("RGBA", (1920, 1080), "black")
+
+        def save_capture_image_to_workspace(self, image, request_id=None):
+            raise OSError("disk full")
+
+        def capture_after_action(self, optional=False, request_id=None):
+            self.capture_after_action_calls += 1
+            return tmp_path / "fallback.jpg"
+
+    class Recognizer:
+        def recognize(self, image):
+            from trail.scenes.cw.equipment_recognition import EquipmentRecognitionResult
+
+            return EquipmentRecognitionResult(candidates=[], score=None, gap=None, uncertain=False, empty=True)
+
+    runtime = Runtime()
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    cw_service = CwService(
+        runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: runtime),
+        cw_resource_service=SimpleNamespace(
+            equipment_read_resources=lambda workspace_root: ({"rpg_game_big_version": "3.2", "equipment_list": []}, Recognizer())
+        ),
+    )
+
+    response = cw_service.handle_with_capture(
+        method="cw.equipment.read",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+        request_id="r1",
+    )
+
+    assert response["ok"] is True
+    assert response["screenshot"].endswith("fallback.jpg")
+    assert runtime.capture_after_action_calls == 1
+
+
+def test_cw_equipment_prepare_refresh_invalidates_and_switches_to_workspace_override(monkeypatch, tmp_path):
+    from trail.daemon.cw_service import CwService
+
+    del monkeypatch
+    calls = []
+
+    class ResourceService:
+        def refresh_equipment_workspace_override(self, *, workspace_root):
+            calls.append(("refresh", workspace_root))
+            return {"big_version": "3.2", "count": 1, "cached": 0, "downloaded": 1, "refreshed": True}
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service = CwService(runtime_service=SimpleNamespace(), cw_resource_service=ResourceService())
+
+    result = service.handle(
+        method="cw.equipment.prepare",
+        payload={"session_id": session.session_id, "refresh": True},
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+    )
+
+    assert result == {"big_version": "3.2", "count": 1, "cached": 0, "downloaded": 1, "refreshed": True}
+    assert calls == [("refresh", str(tmp_path))]
+
+
+def test_cw_equipment_prepare_default_uses_bundle_summary_without_downloading(monkeypatch, tmp_path):
+    from trail.daemon import cw_service as cw_service_module
+    from trail.daemon.cw_service import CwService
+
+    class ResourceService:
+        def equipment_prepare_summary(self, *, workspace_root):
+            assert workspace_root == str(tmp_path)
+            return {"big_version": "3.2", "count": 2, "cached": 2, "downloaded": 0, "refreshed": False}
+
+    monkeypatch.setattr(
+        cw_service_module,
+        "prepare_cw_equipment",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("default prepare must not download or prepare cache")),
+    )
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service = CwService(runtime_service=SimpleNamespace(), cw_resource_service=ResourceService())
+
+    result = service.handle(
+        method="cw.equipment.prepare",
+        payload={"session_id": session.session_id, "refresh": False},
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+    )
+
+    assert result == {"big_version": "3.2", "count": 2, "cached": 2, "downloaded": 0, "refreshed": False}
+
+
+def test_cw_equipment_prepare_default_without_resource_service_uses_bundle_summary(monkeypatch, tmp_path):
+    from trail.daemon import cw_service as cw_service_module
+    from trail.daemon.cw_service import CwService
+
+    class Bundle:
+        big_version = "3.2"
+        equipment_manifest = {"items": [{"name": "幸运星"}]}
+
+    monkeypatch.setattr(cw_service_module, "load_default_cw_resource_bundle", lambda workspace_root=None: Bundle())
+    monkeypatch.setattr(
+        cw_service_module,
+        "prepare_cw_equipment",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("default prepare must not download or prepare cache")),
+    )
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service = CwService(runtime_service=SimpleNamespace(), cw_resource_service=None)
+
+    result = service.handle(
+        method="cw.equipment.prepare",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+    )
+
+    assert result == {"big_version": "3.2", "count": 1, "cached": 1, "downloaded": 0, "refreshed": False}
+
+
+def test_cw_resource_service_refresh_rejects_workspace_cache_symlink_escape(tmp_path: Path):
+    from trail.daemon.cw_resource_service import CwResourceService
+
+    external_cache = tmp_path / "external-cache"
+    external_cache.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    trail_dir = workspace / ".trail"
+    trail_dir.mkdir()
+    cache_link = trail_dir / "cache"
+    try:
+        cache_link.symlink_to(external_cache, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink unsupported: {exc}")
+
+    class Bundle:
+        big_version = "3.2"
+        identity = "base"
+        source_kind = "package"
+        manifest = {"resource_version": "3.2"}
+        equipment_manifest = {"items": []}
+
+    service = CwResourceService(
+        bundle_loader=lambda workspace_root=None: Bundle(),
+        package_bundle_loader=lambda: Bundle(),
+        source_signature=lambda workspace_root=None: ("sig",),
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        service.refresh_equipment_workspace_override(workspace_root=workspace)
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+    assert not (external_cache / "cw-equipment-resource.tmp").exists()
+
+
+def test_cw_resource_service_refresh_can_replace_damaged_workspace_override(monkeypatch, tmp_path: Path):
+    from PIL import Image
+    from trail.daemon import cw_resource_service as resource_module
+    from trail.daemon.cw_resource_service import CwResourceService
+    from trail.scenes.cw.equipment_resources import EquipmentCatalogEntry
+
+    workspace = tmp_path / "workspace"
+    damaged_override = workspace / ".trail" / "cache" / "cw-equipment-resource"
+    damaged_override.mkdir(parents=True)
+    (damaged_override / "manifest.json").write_text('{"broken": true}', encoding="utf-8")
+    entry = EquipmentCatalogEntry(
+        cache_key="icon-a",
+        id="e1",
+        name="Icon A",
+        kind="basic",
+        category=None,
+        category_name=None,
+        icon_url="https://act-webstatic.mihoyo.com/icon-a.png",
+        big_version="3.2",
+    )
+
+    class Bundle:
+        big_version = "3.2"
+        identity = "base"
+        source_kind = "package"
+        manifest = {"resource_version": "3.2"}
+        equipment_manifest = {
+            "items": [
+                {
+                    "cache_key": entry.cache_key,
+                    "id": entry.id,
+                    "name": entry.name,
+                    "kind": entry.kind,
+                    "category": entry.category,
+                    "category_name": entry.category_name,
+                    "icon_url": entry.icon_url,
+                    "big_version": entry.big_version,
+                    "local_path": "equipment/icons/icon-a.png",
+                    "sha256": "unused",
+                    "size": 1,
+                }
+            ]
+        }
+
+    stale_loader_calls = []
+
+    def stale_loader(workspace_root=None):
+        stale_loader_calls.append(workspace_root)
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "damaged override")
+
+    def fake_prepare(catalog, workspace_root=None, refresh=False):
+        icon_path = Path(workspace_root) / ".trail" / "cache" / "cw-equipment-icons" / "3.2" / "icons" / "icon-a.png"
+        icon_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGBA", (16, 16), "red").save(icon_path)
+        return {"big_version": "3.2", "count": 1, "cached": 0, "downloaded": 1, "refreshed": True}
+
+    monkeypatch.setattr(resource_module, "prepare_equipment_icon_cache", fake_prepare)
+    monkeypatch.setattr(
+        resource_module,
+        "load_cached_equipment_icons",
+        lambda catalog, workspace_root=None: [(entry, Image.new("RGBA", (128, 128), "red"))],
+    )
+
+    service = CwResourceService(
+        bundle_loader=stale_loader,
+        package_bundle_loader=lambda workspace_root=None: Bundle(),
+        source_signature=lambda workspace_root=None: ("sig",),
+    )
+
+    result = service.refresh_equipment_workspace_override(workspace_root=workspace)
+
+    assert result == {"big_version": "3.2", "count": 1, "cached": 0, "downloaded": 1, "refreshed": True}
+    assert stale_loader_calls == []
+    assert (damaged_override / "equipment" / "manifest.json").is_file()
 
 
 def test_command_service_marks_cw_equipment_snapshot_stale_after_mutation(tmp_path: Path, monkeypatch):
@@ -2896,25 +3556,7 @@ def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path:
 
     assert payload["ok"] is True
     assert payload["data"] == {
-        "cards": [
-            {
-                **cards[0],
-                "guides": [
-                    {
-                        "lineup_id": "alpha-guide",
-                        "title": "Alpha攻略",
-                        "carry_roles": ["希儿"],
-                        "support_hard": True,
-                        "has_change_equip": False,
-                        "has_expert": True,
-                        "like": 123,
-                        "favour": 45,
-                    }
-                ],
-            },
-            cards[1],
-            cards[2],
-        ],
+        "cards": cards,
         "mode": "new",
         "difficulty": "highest",
         "battle_mode": "overclock",
@@ -2933,20 +3575,7 @@ def test_command_service_handles_cw_start_and_persists_portal_snapshot(tmp_path:
     }
     assert persisted.scene_state["cw"]["portal"] == payload["data"]
     assert service.request_status("req-cw-start")["final_state"] == "completed"
-    assert guide_calls == [
-        {
-            "page": 1,
-            "limit": 3,
-            "trait_id": None,
-            "order": None,
-            "next_page_token": None,
-            "match_change_job": None,
-            "match_hard": None,
-            "portal": ["Alpha Portal", "Beta Portal", "Gamma Portal"],
-            "timeout": 10,
-            "workspace_root": str(tmp_path),
-        }
-    ]
+    assert guide_calls == []
 
 
 @pytest.mark.parametrize("requested_mode", ["new", "continue"])
@@ -4510,33 +5139,12 @@ def test_command_service_handles_cw_portal_detect_and_updates_snapshot(tmp_path:
 
     assert payload["ok"] is True
     assert payload["screenshot"] == ".trail/shots/req-cw-portal-detect.png"
-    assert payload["data"] == {
-        **snapshot,
-        "cards": [
-            {
-                **snapshot["cards"][0],
-                "guides": [
-                    {
-                        "lineup_id": "alpha-guide",
-                        "title": "Alpha攻略",
-                        "carry_roles": ["希儿"],
-                        "support_hard": True,
-                        "has_change_equip": False,
-                        "has_expert": True,
-                        "like": 123,
-                        "favour": 45,
-                    }
-                ],
-            },
-            snapshot["cards"][1],
-            snapshot["cards"][2],
-        ],
-    }
+    assert payload["data"] == snapshot
     assert runtime.capture_requests == [(False, "req-cw-portal-detect")]
     assert service.load_session(session.session_id).scene_state["cw"]["portal"] == payload["data"]
 
 
-def test_command_service_cw_portal_detect_guide_lookup_failure_returns_raw_cards(tmp_path: Path, monkeypatch):
+def test_command_service_cw_portal_detect_skips_guide_lookup_by_default_and_returns_raw_cards(tmp_path: Path, monkeypatch):
     snapshot = {
         "cards": _portal_cards(),
         "mode": None,
@@ -4548,7 +5156,7 @@ def test_command_service_cw_portal_detect_guide_lookup_failure_returns_raw_cards
         tmp_path,
         monkeypatch,
         detect_impl=lambda session, runtime, portal_list: session.scene_state.setdefault("cw", {}).__setitem__("portal", snapshot) or snapshot,
-        guide_fetcher=lambda **kwargs: (_ for _ in ()).throw(TrailError("GUIDE_FETCH_FAILED", "boom")),
+        guide_fetcher=lambda **kwargs: (_ for _ in ()).throw(AssertionError("guide list must not be called")),
     )
 
     payload = command_service.handle(request)
@@ -4558,6 +5166,114 @@ def test_command_service_cw_portal_detect_guide_lookup_failure_returns_raw_cards
     assert payload["screenshot"] == ".trail/shots/req-cw-portal-detect.png"
     assert runtime.capture_requests == [(False, "req-cw-portal-detect")]
     assert service.load_session(session.session_id).scene_state["cw"]["portal"] == snapshot
+
+
+def test_cw_portal_detect_does_not_fetch_guide_list_by_default(monkeypatch, tmp_path: Path):
+    from trail.daemon import cw_service as cw_service_module
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return tmp_path / ".trail" / "shots" / "portal.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    runtime = Runtime()
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service = CwService(runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: runtime))
+
+    monkeypatch.setattr(cw_service_module, "fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
+    monkeypatch.setattr(
+        cw_service_module,
+        "fetch_cw_guide_list",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("guide list must not be called")),
+    )
+    monkeypatch.setattr(
+        cw_service_module,
+        "detect_cw_portal",
+        lambda session, runtime, portal_list: {"cards": [{"idx": 1, "portal_title": "机械城"}], "stale": False},
+    )
+
+    result = service.handle_with_capture(
+        method="cw.portal.detect",
+        payload={"session_id": session.session_id},
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+        request_id="req-cw-portal-no-network",
+    )
+
+    assert result["ok"] is True
+    assert "guides" not in result["data"]["cards"][0]
+
+
+@pytest.mark.parametrize("method", ["cw.start", "cw.portal.refresh", "cw.portal.restart"])
+def test_cw_portal_family_does_not_fetch_guide_list_by_default(monkeypatch, tmp_path: Path, method: str):
+    from trail.daemon import cw_service as cw_service_module
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def ocr(self, **kwargs):
+            del kwargs
+            return []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return tmp_path / ".trail" / "shots" / "portal.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "portal": {"cards": [], "mode": "continue", "difficulty": "current", "battle_mode": "standard", "stale": False},
+    }
+    session_service.save_session(session)
+    service = CwService(runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: Runtime()))
+
+    monkeypatch.setattr(cw_service_module, "fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
+    monkeypatch.setattr(
+        cw_service_module,
+        "fetch_cw_guide_list",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("guide list must not be called")),
+    )
+    monkeypatch.setattr(cw_service_module, "start_cw", lambda session, **kwargs: session)
+    monkeypatch.setattr(cw_service_module, "summarize_portal_cards", lambda *args, **kwargs: [{"idx": 1, "portal_title": "机械城"}])
+    monkeypatch.setattr(cw_service_module, "detect_portal_collection_matches", lambda runtime: [])
+    monkeypatch.setattr(cw_service_module, "refresh_cw_portal", lambda *args, **kwargs: {"cards": [{"idx": 1, "portal_title": "机械城"}], "stale": False})
+    monkeypatch.setattr(cw_service_module, "select_cw_portal", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cw_service_module, "wait_cw_portal_in_game", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cw_service_module, "restart_cw_portal_to_settlement_entry", lambda *args, **kwargs: None)
+
+    payload = {"session_id": session.session_id}
+    if method == "cw.start":
+        payload.update({"mode": "continue", "difficulty": "current", "battle_mode": "standard"})
+
+    result = service.handle_with_capture(
+        method=method,
+        payload=payload,
+        workspace_root=str(tmp_path),
+        session_service=session_service,
+        request_id=f"req-{method.replace('.', '-')}-no-network",
+    )
+
+    assert result["ok"] is True
+    if result["data"].get("cards"):
+        assert "guides" not in result["data"]["cards"][0]
 
 
 def test_command_service_cw_portal_detect_failure_returns_capture_envelope(tmp_path: Path, monkeypatch):
@@ -5606,6 +6322,7 @@ def test_command_service_handles_cw_portal_refresh_and_updates_snapshot(tmp_path
     runtime = Runtime()
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
     cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"portal_list": []})
     monkeypatch.setattr(
         "trail.daemon.cw_service.fetch_cw_guide_list",
         lambda **kwargs: {
@@ -5648,26 +6365,7 @@ def test_command_service_handles_cw_portal_refresh_and_updates_snapshot(tmp_path
     payload = command_service.handle(request)
 
     assert payload["ok"] is True
-    assert payload["data"] == {
-        **snapshot,
-        "cards": [
-            {
-                **snapshot["cards"][0],
-                "guides": [
-                    {
-                        "lineup_id": "alpha-guide",
-                        "title": "Alpha攻略",
-                        "carry_roles": ["希儿"],
-                        "support_hard": True,
-                        "has_change_equip": False,
-                        "has_expert": True,
-                        "like": 123,
-                        "favour": 45,
-                    }
-                ],
-            }
-        ],
-    }
+    assert payload["data"] == snapshot
     assert payload["screenshot"] == ".trail/shots/req-cw-portal-refresh.png"
     assert service.load_session(session.session_id).scene_state["cw"]["portal"] == payload["data"]
     assert service.request_status("req-cw-portal-refresh")["final_state"] == "completed"
@@ -6203,7 +6901,7 @@ def test_command_service_routes_cw_shop_buy_slot_through_mutation_journal(tmp_pa
     session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
     cw_service = CwService(runtime_service=runtime_service)
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {})
     monkeypatch.setattr("trail.daemon.cw_service.shop_buyer_factory", lambda runtime: object())
     monkeypatch.setattr("trail.daemon.cw_service.shop_scanner_factory", lambda runtime: object())
     monkeypatch.setattr(
@@ -6293,6 +6991,7 @@ def test_command_service_handles_cw_shop_buy_exp_through_mutation_journal(tmp_pa
     monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {})
     monkeypatch.setattr("trail.daemon.cw_service.shop_exp_buyer_factory", fake_buyer_factory)
     monkeypatch.setattr("trail.daemon.cw_service.shop_scan_snapshot_reader_factory", fake_scanner_factory)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {})
     monkeypatch.setattr("trail.daemon.cw_service.buy_cw_shop_exp", fake_buy_exp)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
@@ -6359,6 +7058,7 @@ def test_command_service_marks_cw_shop_buy_exp_post_click_failure_recoverable(tm
 
     monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {})
     monkeypatch.setattr("trail.daemon.cw_service.shop_exp_buyer_factory", fake_buyer_factory)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {})
     monkeypatch.setattr("trail.daemon.cw_service.buy_cw_shop_exp", fake_buy_exp)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
@@ -6380,6 +7080,8 @@ def test_command_service_marks_cw_shop_buy_exp_post_click_failure_recoverable(tm
 
 
 def test_server_main_injects_session_service_registry(monkeypatch):
+    from trail.daemon.cw_resource_service import CwResourceService
+
     captured: dict[str, object] = {}
     runtime_service = object()
 
@@ -6407,6 +7109,7 @@ def test_server_main_injects_session_service_registry(monkeypatch):
     assert isinstance(captured["session_service"], SessionServiceRegistry)
     assert captured["cw_service"] is not None
     assert getattr(captured["cw_service"], "runtime_service") is runtime_service
+    assert isinstance(getattr(captured["cw_service"], "cw_resource_service"), CwResourceService)
     assert captured["served"] is True
 
 

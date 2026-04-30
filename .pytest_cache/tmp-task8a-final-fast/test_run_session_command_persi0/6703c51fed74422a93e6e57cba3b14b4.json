@@ -1,0 +1,20 @@
+{
+  "session_id": "6703c51fed74422a93e6e57cba3b14b4",
+  "workspace": ".",
+  "window_binding": {
+    "title": "崩坏：星穹铁道"
+  },
+  "created_at": "2026-04-30T13:52:19.494639+00:00",
+  "updated_at": "2026-04-30T13:52:19.500610+00:00",
+  "scene_state": {},
+  "last_result": {
+    "command": "session.inspect",
+    "ok": true,
+    "data": {
+      "session_id": "6703c51fed74422a93e6e57cba3b14b4"
+    },
+    "error": null
+  },
+  "last_screenshot": "after.png",
+  "last_stage": null
+}

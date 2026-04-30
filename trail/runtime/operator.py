@@ -27,6 +27,7 @@ OCR_LOW_CONFIDENCE_THRESHOLD = 0.92
 class WindowController(Protocol):
     def capture(self, *, from_x=None, from_y=None, to_x=None, to_y=None): ...
     def capture_to_workspace(self, request_id: str | None = None) -> Path: ...
+    def save_capture_image_to_workspace(self, image, request_id: str | None = None) -> Path: ...
     def prepare_input(self) -> None: ...
     def is_foreground(self) -> bool: ...
     def client_region(self): ...
@@ -395,6 +396,12 @@ class RuntimeOperator:
         if not callable(capture_image):
             raise TrailError("SCREENSHOT_FAILED", "window controller does not support capture_image")
         return capture_image(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y, normalize=normalize)
+
+    def save_capture_image_to_workspace(self, image, request_id: str | None = None):
+        save = getattr(self.window, "save_capture_image_to_workspace", None)
+        if not callable(save):
+            raise TrailError("SCREENSHOT_FAILED", "window controller does not support saving captured image")
+        return save(image, request_id=request_id)
 
     @staticmethod
     def _decode_ocr_image(image):

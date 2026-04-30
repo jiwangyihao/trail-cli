@@ -1,0 +1,28 @@
+{
+  "session_id": "7f41bf35c75d40db9d34c9b4da5b37f4",
+  "workspace": ".",
+  "window_binding": {
+    "title": "崩坏：星穹铁道"
+  },
+  "created_at": "2026-04-30T14:48:44.023357+00:00",
+  "updated_at": "2026-04-30T14:48:44.054611+00:00",
+  "scene_state": {
+    "cw": {
+      "coins": 5
+    }
+  },
+  "last_result": {
+    "command": "session.inspect",
+    "ok": false,
+    "data": {},
+    "error": {
+      "code": "WINDOW_NOT_FOUND",
+      "message": "7f41bf35c75d40db9d34c9b4da5b37f4"
+    }
+  },
+  "last_screenshot": "after-fail.png",
+  "last_stage": {
+    "scene": "cw",
+    "value": "shop"
+  }
+}

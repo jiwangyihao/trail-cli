@@ -1,0 +1,2829 @@
+{
+  "meta": {
+    "game": "hkrpg",
+    "season_id": "1",
+    "sub_season_id": "3",
+    "big_version": "4.2",
+    "lineup_filter_version": "3.7"
+  },
+  "lineup_levels": [
+    {
+      "id": "0",
+      "name": "5级搜牌"
+    },
+    {
+      "id": "1",
+      "name": "6级搜牌"
+    },
+    {
+      "id": "2",
+      "name": "7级搜牌"
+    },
+    {
+      "id": "3",
+      "name": "速升8级"
+    },
+    {
+      "id": "4",
+      "name": "速升9级"
+    }
+  ],
+  "traits": [
+    {
+      "id": "1001",
+      "name": "列车同行",
+      "type": 0
+    },
+    {
+      "id": "1002",
+      "name": "星核猎手",
+      "type": 0
+    },
+    {
+      "id": "1003",
+      "name": "银河学者",
+      "type": 0
+    },
+    {
+      "id": "1004",
+      "name": "公司",
+      "type": 0
+    },
+    {
+      "id": "1005",
+      "name": "贝洛伯格",
+      "type": 0
+    },
+    {
+      "id": "1006",
+      "name": "星间旅人",
+      "type": 0
+    },
+    {
+      "id": "1007",
+      "name": "仙舟",
+      "type": 0
+    },
+    {
+      "id": "1008",
+      "name": "狼狩",
+      "type": 0
+    },
+    {
+      "id": "1009",
+      "name": "巡海游侠",
+      "type": 0
+    },
+    {
+      "id": "1010",
+      "name": "盛会之星",
+      "type": 0
+    },
+    {
+      "id": "1011",
+      "name": "昼之半神",
+      "type": 0
+    },
+    {
+      "id": "1012",
+      "name": "夜之半神",
+      "type": 0
+    },
+    {
+      "id": "2001",
+      "name": "追击",
+      "type": 1
+    },
+    {
+      "id": "2002",
+      "name": "击破",
+      "type": 1
+    },
+    {
+      "id": "2003",
+      "name": "群攻",
+      "type": 1
+    },
+    {
+      "id": "2004",
+      "name": "能量",
+      "type": 1
+    },
+    {
+      "id": "2005",
+      "name": "治疗",
+      "type": 1
+    },
+    {
+      "id": "2006",
+      "name": "燃血",
+      "type": 1
+    },
+    {
+      "id": "2007",
+      "name": "减益",
+      "type": 1
+    },
+    {
+      "id": "2008",
+      "name": "持续伤害",
+      "type": 1
+    },
+    {
+      "id": "2009",
+      "name": "量子同频",
+      "type": 1
+    },
+    {
+      "id": "2010",
+      "name": "护盾",
+      "type": 1
+    },
+    {
+      "id": "2011",
+      "name": "战技点",
+      "type": 1
+    },
+    {
+      "id": "2012",
+      "name": "欢愉",
+      "type": 1
+    },
+    {
+      "id": "3001",
+      "name": "大守护者",
+      "type": 2
+    },
+    {
+      "id": "3002",
+      "name": "命运卜者",
+      "type": 2
+    },
+    {
+      "id": "3003",
+      "name": "魔术师",
+      "type": 2
+    },
+    {
+      "id": "3004",
+      "name": "挚爱之人",
+      "type": 2
+    },
+    {
+      "id": "3005",
+      "name": "救世主",
+      "type": 2
+    },
+    {
+      "id": "3006",
+      "name": "头号玩家",
+      "type": 2
+    }
+  ],
+  "roles": [
+    {
+      "id": "1502",
+      "name": "爻光",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1007",
+        "2011",
+        "2012"
+      ]
+    },
+    {
+      "id": "1406",
+      "name": "赛飞儿",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1012",
+        "2001",
+        "2007"
+      ]
+    },
+    {
+      "id": "1402",
+      "name": "阿格莱雅",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1011",
+        "2004"
+      ]
+    },
+    {
+      "id": "1321",
+      "name": "大丽花",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1010",
+        "2002"
+      ]
+    },
+    {
+      "id": "1317",
+      "name": "乱破",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1009",
+        "2002"
+      ]
+    },
+    {
+      "id": "1314",
+      "name": "翡翠",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1004",
+        "2003"
+      ]
+    },
+    {
+      "id": "1301",
+      "name": "加拉赫",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1010",
+        "2002",
+        "2005"
+      ]
+    },
+    {
+      "id": "1223",
+      "name": "貊泽",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1008",
+        "2001"
+      ]
+    },
+    {
+      "id": "1220",
+      "name": "飞霄",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1008",
+        "2001"
+      ]
+    },
+    {
+      "id": "1218",
+      "name": "椒丘",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1008",
+        "2005",
+        "2007"
+      ]
+    },
+    {
+      "id": "1217",
+      "name": "藿藿",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1007",
+        "2004",
+        "2005"
+      ]
+    },
+    {
+      "id": "1205",
+      "name": "刃",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1002",
+        "2006"
+      ]
+    },
+    {
+      "id": "1202",
+      "name": "停云",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1007",
+        "2004"
+      ]
+    },
+    {
+      "id": "1201",
+      "name": "青雀",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1007",
+        "2011"
+      ]
+    },
+    {
+      "id": "1108",
+      "name": "桑博",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1005",
+        "1006",
+        "2008"
+      ]
+    },
+    {
+      "id": "1013",
+      "name": "黑塔",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1003",
+        "2003"
+      ]
+    },
+    {
+      "id": "1009",
+      "name": "艾丝妲",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1003",
+        "2008"
+      ]
+    },
+    {
+      "id": "1001",
+      "name": "三月七",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1001",
+        "2010"
+      ]
+    },
+    {
+      "id": "1505",
+      "name": "绯英",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1006",
+        "2012"
+      ]
+    },
+    {
+      "id": "1504",
+      "name": "不死途",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1009",
+        "2001"
+      ]
+    },
+    {
+      "id": "1414",
+      "name": "丹恒•腾荒",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1012",
+        "2010"
+      ]
+    },
+    {
+      "id": "1409",
+      "name": "风堇",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1011",
+        "2005",
+        "2006"
+      ]
+    },
+    {
+      "id": "1404",
+      "name": "万敌",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1012",
+        "2006"
+      ]
+    },
+    {
+      "id": "1403",
+      "name": "缇宝",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1011",
+        "2003",
+        "2009"
+      ]
+    },
+    {
+      "id": "1306",
+      "name": "花火",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1010",
+        "2009",
+        "2011"
+      ]
+    },
+    {
+      "id": "1304",
+      "name": "砂金",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1004",
+        "2001",
+        "2010"
+      ]
+    },
+    {
+      "id": "1303",
+      "name": "阮•梅",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1003",
+        "2002"
+      ]
+    },
+    {
+      "id": "1302",
+      "name": "银枝",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1006",
+        "2003",
+        "2004"
+      ]
+    },
+    {
+      "id": "1222",
+      "name": "灵砂",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1008",
+        "2002",
+        "2005"
+      ]
+    },
+    {
+      "id": "1213",
+      "name": "丹恒•饮月",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1001",
+        "1007",
+        "2011"
+      ]
+    },
+    {
+      "id": "1106",
+      "name": "佩拉",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1005",
+        "2007"
+      ]
+    },
+    {
+      "id": "1005",
+      "name": "卡芙卡",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1002",
+        "2008"
+      ]
+    },
+    {
+      "id": "15061",
+      "name": "银狼LV.999",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1002",
+        "2012",
+        "3006"
+      ]
+    },
+    {
+      "id": "1412",
+      "name": "刻律德菈",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1012",
+        "2011"
+      ]
+    },
+    {
+      "id": "1408",
+      "name": "白厄",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "3005"
+      ]
+    },
+    {
+      "id": "1405",
+      "name": "那刻夏",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1011",
+        "2003"
+      ]
+    },
+    {
+      "id": "1313",
+      "name": "星期日",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1001",
+        "1010",
+        "2004"
+      ]
+    },
+    {
+      "id": "1308",
+      "name": "黄泉",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1009",
+        "2007"
+      ]
+    },
+    {
+      "id": "1305",
+      "name": "真理医生",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1003",
+        "1006",
+        "2001"
+      ]
+    },
+    {
+      "id": "1225",
+      "name": "忘归人",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1007",
+        "2002"
+      ]
+    },
+    {
+      "id": "1212",
+      "name": "镜流",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1008",
+        "2006"
+      ]
+    },
+    {
+      "id": "1105",
+      "name": "娜塔莎",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1005",
+        "2005"
+      ]
+    },
+    {
+      "id": "1102",
+      "name": "希儿",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1005",
+        "2009"
+      ]
+    },
+    {
+      "id": "1014",
+      "name": "Saber",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1006",
+        "2004"
+      ]
+    },
+    {
+      "id": "1003",
+      "name": "姬子",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1001",
+        "2002"
+      ]
+    },
+    {
+      "id": "15062",
+      "name": "银狼LV.999",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1002",
+        "2012",
+        "3006"
+      ]
+    },
+    {
+      "id": "8009",
+      "name": "开拓者",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1001",
+        "2004",
+        "2012"
+      ]
+    },
+    {
+      "id": "8007",
+      "name": "开拓者",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1001",
+        "2004",
+        "2012"
+      ]
+    },
+    {
+      "id": "1501",
+      "name": "火花",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1006",
+        "2011",
+        "2012"
+      ]
+    },
+    {
+      "id": "1413",
+      "name": "长夜月",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1012",
+        "2006"
+      ]
+    },
+    {
+      "id": "1410",
+      "name": "海瑟音",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1011",
+        "2008"
+      ]
+    },
+    {
+      "id": "1407",
+      "name": "遐蝶",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1012",
+        "2006"
+      ]
+    },
+    {
+      "id": "1401",
+      "name": "大黑塔",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1003",
+        "2003"
+      ]
+    },
+    {
+      "id": "1315",
+      "name": "波提欧",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1009",
+        "2002"
+      ]
+    },
+    {
+      "id": "1309",
+      "name": "知更鸟",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1010",
+        "2001"
+      ]
+    },
+    {
+      "id": "1209",
+      "name": "彦卿",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1007",
+        "1008",
+        "2007"
+      ]
+    },
+    {
+      "id": "1208",
+      "name": "符玄",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1007",
+        "2005",
+        "2009"
+      ]
+    },
+    {
+      "id": "1203",
+      "name": "罗刹",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1006",
+        "2005"
+      ]
+    },
+    {
+      "id": "1104",
+      "name": "杰帕德",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1005",
+        "2010"
+      ]
+    },
+    {
+      "id": "1006",
+      "name": "银狼",
+      "front_back_type": "Common",
+      "trait_ids": [
+        "1002",
+        "2009"
+      ]
+    },
+    {
+      "id": "15063",
+      "name": "银狼LV.999",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1002",
+        "2012",
+        "3006"
+      ]
+    },
+    {
+      "id": "11012",
+      "name": "布洛妮娅",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "2006",
+        "3001"
+      ]
+    },
+    {
+      "id": "11011",
+      "name": "布洛妮娅",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1005",
+        "3001"
+      ]
+    },
+    {
+      "id": "1415",
+      "name": "昔涟",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1011",
+        "1012",
+        "3004"
+      ]
+    },
+    {
+      "id": "1310",
+      "name": "流萤",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1002",
+        "2002"
+      ]
+    },
+    {
+      "id": "1307",
+      "name": "黑天鹅",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1010",
+        "2008",
+        "3002"
+      ]
+    },
+    {
+      "id": "1221",
+      "name": "云璃",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1008",
+        "2004"
+      ]
+    },
+    {
+      "id": "1204",
+      "name": "景元",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1007",
+        "2003"
+      ]
+    },
+    {
+      "id": "1112",
+      "name": "托帕&账账",
+      "front_back_type": "Back",
+      "trait_ids": [
+        "1004",
+        "2001"
+      ]
+    },
+    {
+      "id": "1015",
+      "name": "Archer",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1006",
+        "2011",
+        "3003"
+      ]
+    },
+    {
+      "id": "1004",
+      "name": "瓦尔特",
+      "front_back_type": "Front",
+      "trait_ids": [
+        "1001",
+        "2007"
+      ]
+    }
+  ],
+  "role_tags": [],
+  "portal_list": [
+    {
+      "portal_id": "101",
+      "title": "火药味",
+      "description": "开局时获得2个简易武装箱。"
+    },
+    {
+      "portal_id": "102",
+      "title": "特权阶级",
+      "description": "第二位面开始时，获得1个特权武装箱。"
+    },
+    {
+      "portal_id": "103",
+      "title": "增发货币",
+      "description": "第一/二/三位面开始时，获得一个6/8/12金币的晶矿。"
+    },
+    {
+      "portal_id": "104",
+      "title": "深井角斗场",
+      "description": "本局首次达成5连胜时，获得【财富宝钻】。"
+    },
+    {
+      "portal_id": "105",
+      "title": "经济过热",
+      "description": "本局的全部奖励节点替换为次元扑满主题，次元扑满会掉落更多战利品。"
+    },
+    {
+      "portal_id": "106",
+      "title": "二手市场",
+      "description": "商店刷新20次后，获得30金币和【员工投影仪】。"
+    },
+    {
+      "portal_id": "107",
+      "title": "人身意外险",
+      "description": "所有首领节点前都加入一个额外补给阶段。"
+    },
+    {
+      "portal_id": "108",
+      "title": "过剩经费",
+      "description": "补给阶段中，角色会携带两件装备。"
+    },
+    {
+      "portal_id": "109",
+      "title": "人才引进",
+      "description": "开局拥有1个随机<color=#927fe7>4费角色</color>。"
+    },
+    {
+      "portal_id": "110",
+      "title": "彩虹时代",
+      "description": "这局的投资策略均为棱彩品质。"
+    },
+    {
+      "portal_id": "111",
+      "title": "黄金时代",
+      "description": "这局的投资策略均为黄金品质。"
+    },
+    {
+      "portal_id": "112",
+      "title": "白银时代",
+      "description": "这局的投资策略均为白银品质，因此敌人难度不会由于选择高品质投资策略而提高。"
+    },
+    {
+      "portal_id": "113",
+      "title": "蓝海",
+      "description": "进入到一个随机投资环境中，开局额外获得6金币。"
+    },
+    {
+      "portal_id": "114",
+      "title": "轮岗",
+      "description": "备战阶段开始时，使一个随机费用的刷新概率翻倍，每个备战阶段重新随机。"
+    },
+    {
+      "portal_id": "115",
+      "title": "三星佩佩",
+      "description": "获得一个穿戴三个随机星徽的佩佩。"
+    },
+    {
+      "portal_id": "116",
+      "title": "粗星佩佩",
+      "description": "获得一个穿戴三个随机星徽的佩佩，粗心的佩佩有时候会把星徽落在你的物品栏。"
+    },
+    {
+      "portal_id": "117",
+      "title": "战争边疆",
+      "description": "第三位面的所有战斗节点都替换为遭遇节点。"
+    },
+    {
+      "portal_id": "118",
+      "title": "劳务派遣合同",
+      "description": "获得随机星徽，每次进入首领节点时，获得对应羁绊的随机角色。"
+    },
+    {
+      "portal_id": "119",
+      "title": "经济严重过热",
+      "description": "本局的全部奖励节点替换为超级次元扑满主题！超级次元扑满会掉落超多战利品！！但它们跑得超快！！！"
+    },
+    {
+      "portal_id": "120",
+      "title": "长线利好",
+      "description": "花费金币进行30次刷新后，获得20金币，之后在本局游戏中，只需要1金币就能刷新。"
+    },
+    {
+      "portal_id": "121",
+      "title": "人才下沉",
+      "description": "商店中有概率出现2星角色。"
+    },
+    {
+      "portal_id": "122",
+      "title": "联席决策",
+      "description": "在2-6节点进行一次额外的投资策略三选一。"
+    },
+    {
+      "portal_id": "123",
+      "title": "头彩",
+      "description": "第一个投资策略是棱彩品质。"
+    },
+    {
+      "portal_id": "124",
+      "title": "尾彩",
+      "description": "第三个投资策略是棱彩品质。"
+    },
+    {
+      "portal_id": "125",
+      "title": "量子同频契约",
+      "description": "花火和缇宝升星时，随机获得<color=#927fe7>【符玄】</color>或<color=#7196ff>【希儿】</color>。"
+    },
+    {
+      "portal_id": "126",
+      "title": "公司契约",
+      "description": "获得<color=#b4b4b4>【翡翠】</color>和<color=#6cce9f>【砂金】</color>，累计获得40利息后，获得<color=#ffd471>【托帕&账账】</color>。"
+    },
+    {
+      "portal_id": "127",
+      "title": "持续伤害契约",
+      "description": "获得<color=#b4b4b4>【桑博】</color>和<color=#6cce9f>【卡芙卡】</color>。敌人被消灭时，每陷入一个不同的持续伤害状态，获得1点计数。计数达到180时，获得<color=#ffd471>【黑天鹅】</color>。"
+    },
+    {
+      "portal_id": "128",
+      "title": "战技点契约",
+      "description": "获得<color=#6cce9f>【丹恒•饮月】</color>和<color=#6cce9f>【花火】</color>。打开20个晶矿后，获得<color=#927fe7>【火花】</color>和1个随机战技点羁绊角色；之后每打开10个晶矿，都可重复获得一次角色奖励。"
+    },
+    {
+      "portal_id": "129",
+      "title": "星核猎手契约",
+      "description": "获得<color=#6cce9f>【卡芙卡】</color>。当<color=#b4b4b4>【刃】</color>、<color=#6cce9f>【卡芙卡】</color>、<color=#7196ff>【银狼LV.999】</color>或<color=#927fe7>【银狼】</color>一起参与一次战斗后，获得<color=#ffd471>【流萤】</color>，在2个节点后才能将其上场。"
+    },
+    {
+      "portal_id": "131",
+      "title": "红钻贵族",
+      "description": "开局时拥有【红钻】和一个【简易武装箱】。"
+    },
+    {
+      "portal_id": "132",
+      "title": "蓝钻贵族",
+      "description": "开局时拥有【蓝钻】和一个【简易武装箱】。"
+    },
+    {
+      "portal_id": "133",
+      "title": "英雄登场",
+      "description": "获得1个2星<color=#ffd471>5费角色</color>，19个节点后才能将其上场。战斗完胜后，上场节点额外提前1点。"
+    },
+    {
+      "portal_id": "134",
+      "title": "命运礼物",
+      "description": "立刻获得一个【惊喜盒】，倒计时12个节点后礼盒打开，战斗完胜后，倒计时额外减少1点。"
+    },
+    {
+      "portal_id": "135",
+      "title": "银•金•彩",
+      "description": "本局在固定节点进行投资策略选择时，左、中、右的选项分别为银金彩品质，并且投资策略刷新次数+2。"
+    },
+    {
+      "portal_id": "136",
+      "title": "战力提升",
+      "description": "获得1个随机2星1费的输出角色，进入新节点时，这位角色永久获得随机属性加成。"
+    },
+    {
+      "portal_id": "137",
+      "title": "战力飙升",
+      "description": "获得1个随机2星<color=#6cce9f>2费角色</color>，进入新节点时，这位角色永久获得随机属性加成。"
+    },
+    {
+      "portal_id": "138",
+      "title": "成功经验",
+      "description": "在你升到8级后，进入接下来3个节点时，获得12经验。"
+    },
+    {
+      "portal_id": "139",
+      "title": "专家研讨会",
+      "description": "获得1个【专家邀请函】和1个【简易武装箱】。"
+    },
+    {
+      "portal_id": "141",
+      "title": "特邀专家：停云",
+      "description": "获得专家顾问<color=#b4b4b4>【停云】</color>，并使其在本局游戏中加入商店。停云施放终结技时，使目标队员获得等同于停云60%后台强度的前台强度，该效果仅对最新目标队员生效。"
+    },
+    {
+      "portal_id": "142",
+      "title": "特邀专家：加拉赫",
+      "description": "获得专家顾问<color=#b4b4b4>【加拉赫】</color>，并使其在本局游戏中加入商店。激活2/4/6/8击破羁绊时，获得1件【以太钻头】。"
+    },
+    {
+      "portal_id": "143",
+      "title": "特邀专家：银狼",
+      "description": "当你首次获得<color=#7196ff>【银狼LV.999】</color>时，获得专家顾问<color=#927fe7>【银狼】</color>，并使其在本局游戏中加入商店。"
+    },
+    {
+      "portal_id": "144",
+      "title": "人才储备",
+      "description": "开局补给替换为3个随机<color=#7196ff>3费角色</color>。<color=#7196ff>3费角色</color>升至2/3星时，获得11%/33%速度增幅、22%/66%伤害增幅。"
+    },
+    {
+      "portal_id": "145",
+      "title": "进化算法",
+      "description": "进入新节点时，所有场上角色获得4%前后台强度和2%伤害减免，该效果可叠加。"
+    },
+    {
+      "portal_id": "146",
+      "title": "敌后破坏",
+      "description": "开局时，使一个已生成的敌人词缀失效。"
+    },
+    {
+      "portal_id": "147",
+      "title": "策略大师",
+      "description": "获取投资策略时，获得（2*已拥有投资策略数）的金币。在3-5节点额外获得一个投资策略。"
+    },
+    {
+      "portal_id": "1001",
+      "title": "追击概念股",
+      "description": "开局时获得【追击】角色和初始简易装备，【追击】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1002",
+      "title": "燃血概念股",
+      "description": "开局时获得【燃血】角色和初始简易装备，【燃血】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1003",
+      "title": "能量概念股",
+      "description": "开局时获得【能量】角色和初始简易装备，【能量】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1004",
+      "title": "列车同行概念股",
+      "description": "开局时获得【列车同行】角色和初始简易装备，【列车同行】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1005",
+      "title": "银河学者概念股",
+      "description": "开局时获得【银河学者】角色和初始简易装备，【银河学者】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1006",
+      "title": "贝洛伯格概念股",
+      "description": "开局时获得【贝洛伯格】角色和初始简易装备，【贝洛伯格】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1007",
+      "title": "星间旅人概念股",
+      "description": "开局时获得【星间旅人】角色和初始简易装备，【星间旅人】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1008",
+      "title": "仙舟概念股",
+      "description": "开局时获得【仙舟】角色和初始简易装备，【仙舟】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1009",
+      "title": "狼狩概念股",
+      "description": "开局时获得【狼狩】角色和初始简易装备，【狼狩】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1010",
+      "title": "昼之半神概念股",
+      "description": "开局时获得【昼之半神】角色和初始简易装备，【昼之半神】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1011",
+      "title": "夜之半神概念股",
+      "description": "开局时获得【夜之半神】角色和初始简易装备，【夜之半神】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1012",
+      "title": "击破概念股",
+      "description": "开局时获得【击破】角色和初始简易装备，【击破】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1013",
+      "title": "群攻概念股",
+      "description": "开局时获得【群攻】角色和初始简易装备，【群攻】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1014",
+      "title": "减益概念股",
+      "description": "开局时获得【减益】角色和初始简易装备，【减益】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1016",
+      "title": "战技点概念股",
+      "description": "开局时获得【战技点】角色和初始简易装备，【战技点】角色的刷新概率提高。"
+    },
+    {
+      "portal_id": "1101",
+      "title": "列车同行邀请",
+      "description": "获得一个【列车同行星徽】。"
+    },
+    {
+      "portal_id": "1102",
+      "title": "银河学者邀请",
+      "description": "获得一个【银河学者星徽】。"
+    },
+    {
+      "portal_id": "1103",
+      "title": "贝洛伯格邀请",
+      "description": "获得一个【贝洛伯格星徽】。"
+    },
+    {
+      "portal_id": "1104",
+      "title": "星间旅人邀请",
+      "description": "获得一个【星间旅人星徽】。"
+    },
+    {
+      "portal_id": "1105",
+      "title": "仙舟邀请",
+      "description": "获得一个【仙舟星徽】。"
+    },
+    {
+      "portal_id": "1106",
+      "title": "狼狩邀请",
+      "description": "获得一个【狼狩星徽】。"
+    },
+    {
+      "portal_id": "1107",
+      "title": "盛会之星邀请",
+      "description": "获得一个【盛会之星星徽】。"
+    },
+    {
+      "portal_id": "1108",
+      "title": "昼之半神邀请",
+      "description": "获得一个【昼之半神星徽】。"
+    },
+    {
+      "portal_id": "1109",
+      "title": "夜之半神邀请",
+      "description": "获得一个【夜之半神星徽】。"
+    },
+    {
+      "portal_id": "1110",
+      "title": "追击邀请",
+      "description": "获得一个【追击星徽】。"
+    },
+    {
+      "portal_id": "1111",
+      "title": "击破邀请",
+      "description": "获得一个【击破星徽】。"
+    },
+    {
+      "portal_id": "1112",
+      "title": "群攻邀请",
+      "description": "获得一个【群攻星徽】。"
+    },
+    {
+      "portal_id": "1113",
+      "title": "能量邀请",
+      "description": "获得一个【能量星徽】。"
+    },
+    {
+      "portal_id": "1114",
+      "title": "燃血邀请",
+      "description": "获得一个【燃血星徽】。"
+    },
+    {
+      "portal_id": "1115",
+      "title": "减益邀请",
+      "description": "获得一个【减益星徽】。"
+    },
+    {
+      "portal_id": "1116",
+      "title": "持续伤害邀请",
+      "description": "获得一个【持续伤害星徽】。"
+    },
+    {
+      "portal_id": "1117",
+      "title": "量子同频邀请",
+      "description": "获得一个【量子同频星徽】。"
+    },
+    {
+      "portal_id": "1118",
+      "title": "战技点邀请",
+      "description": "获得一个【战技点星徽】。"
+    },
+    {
+      "portal_id": "1119",
+      "title": "欢愉邀请",
+      "description": "获得一个【欢愉星徽】。"
+    },
+    {
+      "portal_id": "1201",
+      "title": "欢愉契约",
+      "description": "获得【银狼LV.999】，她每次触发独立羁绊【头号玩家】选项时，获得<color=#927fe7>【火花】</color>或<color=#927fe7>【开拓者•欢愉】</color>。"
+    }
+  ],
+  "strategy_list": [
+    {
+      "strategy_id": "100101",
+      "title": "特战资金",
+      "description": "进入首领节点时，获得7枚金币。"
+    },
+    {
+      "strategy_id": "100102",
+      "title": "特战资金+",
+      "description": "进入首领节点时，获得11枚金币。"
+    },
+    {
+      "strategy_id": "100201",
+      "title": "经验到账",
+      "description": "获得10经验值。"
+    },
+    {
+      "strategy_id": "100301",
+      "title": "免费午餐",
+      "description": "获得11次免费刷新。"
+    },
+    {
+      "strategy_id": "100401",
+      "title": "二费援军",
+      "description": "获得4个随机<color=#6cce9f>2费角色</color>。"
+    },
+    {
+      "strategy_id": "100402",
+      "title": "三费援军",
+      "description": "获得4个随机<color=#7196ff>3费角色</color>。"
+    },
+    {
+      "strategy_id": "100403",
+      "title": "四费援军",
+      "description": "获得4个随机<color=#927fe7>4费角色</color>。"
+    },
+    {
+      "strategy_id": "100501",
+      "title": "存款回报",
+      "description": "每次进入新节点时，如果在上个节点没有花费金币，则获得2次免费刷新。"
+    },
+    {
+      "strategy_id": "100601",
+      "title": "尾款交付",
+      "description": "进入最后一个补给阶段后，获得30金币。"
+    },
+    {
+      "strategy_id": "100701",
+      "title": "打捞人才库",
+      "description": "每次进入补给阶段后，随机获得一个未被选择的角色及其携带的装备。"
+    },
+    {
+      "strategy_id": "100702",
+      "title": "打捞人才库+",
+      "description": "每次进入补给阶段后，随机获得一个未被选择的角色及其携带的装备。获得1个随机简易装备和4金币。"
+    },
+    {
+      "strategy_id": "100901",
+      "title": "胜利，还是胜利",
+      "description": "使当前连胜数变为4。获得4金币。"
+    },
+    {
+      "strategy_id": "101001",
+      "title": "全队的希望",
+      "description": "处在前台1号位的我方角色获得15%伤害增幅和15%生命增幅。"
+    },
+    {
+      "strategy_id": "101101",
+      "title": "黄金期货",
+      "description": "5个节点后，进行一次不能刷新的黄金投资策略三选一。"
+    },
+    {
+      "strategy_id": "101102",
+      "title": "黄金期货+",
+      "description": "4个节点后，进行一次不能刷新的黄金投资策略三选一。"
+    },
+    {
+      "strategy_id": "101201",
+      "title": "返利",
+      "description": "每购买3个<color=#ffd471>5费角色</color>，获得3金币。"
+    },
+    {
+      "strategy_id": "101202",
+      "title": "返利+",
+      "description": "每购买3个<color=#ffd471>5费角色</color>，获得3金币。立刻获得6金币。"
+    },
+    {
+      "strategy_id": "101301",
+      "title": "规模效应",
+      "description": "首次拥有8个一样的角色时，获得1个【完美投影仪】。"
+    },
+    {
+      "strategy_id": "101401",
+      "title": "军火贸易",
+      "description": "获得1个【简易武装箱】，获得4金币。"
+    },
+    {
+      "strategy_id": "101402",
+      "title": "军火贸易+",
+      "description": "获得1个【简易武装箱】，获得8金币。"
+    },
+    {
+      "strategy_id": "101501",
+      "title": "以战养战",
+      "description": "在遭遇节点战斗后，获得1个【简易武装箱】。获得6金币。"
+    },
+    {
+      "strategy_id": "101601",
+      "title": "人才激励",
+      "description": "获得1个【员工投影仪】，4个节点后，获得1个【员工投影仪】。"
+    },
+    {
+      "strategy_id": "101602",
+      "title": "人才激励+",
+      "description": "获得1个【员工投影仪】，3个节点后，获得1个【员工投影仪】。"
+    },
+    {
+      "strategy_id": "101701",
+      "title": "成长基金",
+      "description": "在你到达9级时，提供40金币。"
+    },
+    {
+      "strategy_id": "101801",
+      "title": "武力刷新",
+      "description": "合成装备时，获得2次刷新。"
+    },
+    {
+      "strategy_id": "101901",
+      "title": "节省工位",
+      "description": "在接下来3个节点只有3个备战席位置。随后，获得3件简易装备。"
+    },
+    {
+      "strategy_id": "102001",
+      "title": "躺平",
+      "description": "你无法在商店购买角色和刷新，持续3个节点。在此之后，获得20金币。"
+    },
+    {
+      "strategy_id": "102101",
+      "title": "公司人才流动",
+      "description": "每次进入新节点时，处在备战席最右侧3个位置的角色变为随机的同费用角色。获得2金币。"
+    },
+    {
+      "strategy_id": "102201",
+      "title": "市场干预",
+      "description": "下一次和每4次商店刷新都将是全<color=#7196ff>3费角色</color>。获得5次刷新。"
+    },
+    {
+      "strategy_id": "102301",
+      "title": "恢复生机",
+      "description": "最终首领战结束时，回复40点小队生命值。"
+    },
+    {
+      "strategy_id": "102401",
+      "title": "扩充团队",
+      "description": "获得2个<color=#b4b4b4>1费角色</color>，2个<color=#6cce9f>2费角色</color>和1个<color=#7196ff>3费角色</color>。"
+    },
+    {
+      "strategy_id": "102501",
+      "title": "武装支援",
+      "description": "获得1件随机简易装备和2个随机<color=#7196ff>3费角色</color>。"
+    },
+    {
+      "strategy_id": "102502",
+      "title": "武装支援+",
+      "description": "获得1件随机简易装备和1个随机<color=#927fe7>4费角色</color>，获得6金币。"
+    },
+    {
+      "strategy_id": "102601",
+      "title": "爆晶矿•银",
+      "description": "我方小队消灭敌方目标时，有20%概率获得一个战利品晶矿。"
+    },
+    {
+      "strategy_id": "102701",
+      "title": "全员晋升",
+      "description": "场上的所有角色会永久升级成比自身高1费的随机角色(最大5费)。获得2个【拆装扳手】。"
+    },
+    {
+      "strategy_id": "102801",
+      "title": "人力重组",
+      "description": "出售场上和备战席的所有角色。获得1个随机的2星<color=#7196ff>3费角色</color>、2个2星<color=#6cce9f>2费角色</color>和2个2星<color=#b4b4b4>1费角色</color>。"
+    },
+    {
+      "strategy_id": "102901",
+      "title": "合并同类项",
+      "description": "刷新商店时，若刷新的角色中出现2个相同的角色，获得1金币。获得4次免费刷新。"
+    },
+    {
+      "strategy_id": "103001",
+      "title": "无伤通关",
+      "description": "战斗结束时，若此次战斗中没有角色陷入过无法战斗状态，获得1金币。立即获得1个【生命之花】。"
+    },
+    {
+      "strategy_id": "103101",
+      "title": "招聘资金",
+      "description": "获得2张<color=#7196ff>3费聘用书</color>，获得4金币。"
+    },
+    {
+      "strategy_id": "103102",
+      "title": "招聘资金+",
+      "description": "获得2张<color=#927fe7>4费聘用书</color>，获得5金币。"
+    },
+    {
+      "strategy_id": "103201",
+      "title": "气氛组",
+      "description": "战斗结束时，每有2名伤害统计中造成伤害为0的角色，获得1经验。"
+    },
+    {
+      "strategy_id": "103202",
+      "title": "气氛组+",
+      "description": "战斗结束时，每有2名伤害统计中造成伤害为0的角色，获得1经验。获得8经验。"
+    },
+    {
+      "strategy_id": "103301",
+      "title": "健康充值",
+      "description": "获得30点小队生命和30点小队生命上限。"
+    },
+    {
+      "strategy_id": "103401",
+      "title": "溜佩佩",
+      "description": "获得9金币，什么都没带的佩佩会在你的后排逛街，让小队获得1%前/后台强度。"
+    },
+    {
+      "strategy_id": "103402",
+      "title": "溜佩佩+",
+      "description": "获得15金币，什么都没带的佩佩会在你的后排逛街，让小队获得1%前/后台强度。"
+    },
+    {
+      "strategy_id": "103501",
+      "title": "招财狗",
+      "description": "获得一个佩佩。战斗胜利后，若未损失小队生命值，则每有一个佩佩就会为你提供1金币。"
+    },
+    {
+      "strategy_id": "103601",
+      "title": "经验就是财富",
+      "description": "获得经验时，改为获取等量金币（购买经验除外）。获得4金币。"
+    },
+    {
+      "strategy_id": "103701",
+      "title": "成长的快乐",
+      "description": "升到8级后，你购买经验所需的金币降低1金币。立刻获得4经验。"
+    },
+    {
+      "strategy_id": "103802",
+      "title": "二极管",
+      "description": "本场对局中，你的遭遇节点只有最低和最高两个难度；获得10小队生命值和生命上限，获得6金币。"
+    },
+    {
+      "strategy_id": "103901",
+      "title": "免费升舱",
+      "description": "本场对局中，你的遭遇奖励提高1级（遭遇4也能获得额外奖励）。立刻获得4金币。"
+    },
+    {
+      "strategy_id": "110101",
+      "title": "买彩票",
+      "description": "获得1个随机星徽。"
+    },
+    {
+      "strategy_id": "110102",
+      "title": "买彩票+",
+      "description": "获得1个随机星徽和1个【冶金炉】。"
+    },
+    {
+      "strategy_id": "130101",
+      "title": "公司军火更新•银",
+      "description": "每次进入新节点时，你物品栏里的装备变为同品质的其他装备。获得1件随机简易装备。"
+    },
+    {
+      "strategy_id": "130201",
+      "title": "许诺特权",
+      "description": "在进入7个节点后，获得1个【特权武装箱】。"
+    },
+    {
+      "strategy_id": "130301",
+      "title": "赌神•银",
+      "description": "获得一个【随便骰子】。"
+    },
+    {
+      "strategy_id": "130401",
+      "title": "钻石商人",
+      "description": "升到9级时，获得【财富宝钻】。"
+    },
+    {
+      "strategy_id": "130501",
+      "title": "保险",
+      "description": "每损失20点小队生命值，获得5金币和1个随机简易装备。"
+    },
+    {
+      "strategy_id": "130601",
+      "title": "自由市场",
+      "description": "每当你将要获得一件简易装备时，改为获得1个【简易武装箱】。获得1个随机的简易装备。"
+    },
+    {
+      "strategy_id": "130701",
+      "title": "先亏后盈",
+      "description": "损失20点小队生命值，4个节点后获得2个【简易武装箱】。"
+    },
+    {
+      "strategy_id": "130801",
+      "title": "精密拆装·银",
+      "description": "获得1个【精密拆装扳手】。获得1个随机简易武装。"
+    },
+    {
+      "strategy_id": "130901",
+      "title": "好运令牌·银",
+      "description": "进入3个节点后，获得1个【好运令牌】。"
+    },
+    {
+      "strategy_id": "131001",
+      "title": "全都要•银",
+      "description": "本局游戏中，补给阶段的可选项减少2个。下1个补给阶段选择后，额外获得所有未选择的角色及装备。"
+    },
+    {
+      "strategy_id": "131101",
+      "title": "是钻石总会发光",
+      "description": "2个节点后，获得【红钻】或【蓝钻】。"
+    },
+    {
+      "strategy_id": "131201",
+      "title": "无害垃圾",
+      "description": "获得一个【垃圾袋】并获得8金币。"
+    },
+    {
+      "strategy_id": "150101",
+      "title": "团队力量•银",
+      "description": "每有一个已激活的非独立羁绊，小队就会获得3%前/后台强度。"
+    },
+    {
+      "strategy_id": "150201",
+      "title": "应援团",
+      "description": "进入战斗时，如果后排至少有4个角色，我方小队速度增幅提高15%。"
+    },
+    {
+      "strategy_id": "150301",
+      "title": "正能量",
+      "description": "进入战斗时，我方小队恢复等同于能量上限20%的能量。"
+    },
+    {
+      "strategy_id": "150501",
+      "title": "完美开局",
+      "description": "战斗中，关卡进度小于40%时，我方小队前/后台强度提高40%。"
+    },
+    {
+      "strategy_id": "150601",
+      "title": "效率员工奖",
+      "description": "进入战斗时，速度最高的三名角色及其忆灵速度增幅提高10%。"
+    },
+    {
+      "strategy_id": "150701",
+      "title": "基层贡献",
+      "description": "你的场上每有一个<color=#b4b4b4>1费角色</color>，我方小队获得3%速度增幅和2%伤害减免。3星1费改为提供3倍。"
+    },
+    {
+      "strategy_id": "150801",
+      "title": "榜样的力量•银",
+      "description": "战斗中，伤害统计排名第一的队员成为【榜样】，前/后台强度提高25%。"
+    },
+    {
+      "strategy_id": "150901",
+      "title": "当头一棒",
+      "description": "每个波次开始时，对生命上限最高的敌方目标造成1000%基础伤害，并使其陷入【脆弱】：受到的伤害提高30%。"
+    },
+    {
+      "strategy_id": "151001",
+      "title": "简单模式",
+      "description": "敌人难度降低3，最多降低至0。"
+    },
+    {
+      "strategy_id": "151101",
+      "title": "难度修改器",
+      "description": "遭遇和首领节点的敌人难度降低4，最多降低至0。"
+    },
+    {
+      "strategy_id": "151201",
+      "title": "幸运喷雾",
+      "description": "我方小队的幸运一击伤害提高25%。"
+    },
+    {
+      "strategy_id": "151301",
+      "title": "免战牌",
+      "description": "进入战斗节点时，直接跳过战斗并进入下一个节点，可生效2次。获得30点经验。"
+    },
+    {
+      "strategy_id": "200101",
+      "title": "定期福利",
+      "description": "立刻获得4个金币，并且在每次进入新节点时，获得2金币。"
+    },
+    {
+      "strategy_id": "200201",
+      "title": "孪生素数",
+      "description": "获得本投资策略后，首次购买1/2/3/4/5费角色时，获得2/3/5/7/11点经验值。"
+    },
+    {
+      "strategy_id": "200301",
+      "title": "加油站",
+      "description": "现在及每次进入新节点时获得1次免费刷新，立刻获得8金币。"
+    },
+    {
+      "strategy_id": "200401",
+      "title": "价值投资•金",
+      "description": "获得1个随机的2星<color=#b4b4b4>1费角色</color>。每次进入新节点时，获得1星的该角色，补给后额外获得2个，持续至本局游戏结束。"
+    },
+    {
+      "strategy_id": "200501",
+      "title": "枪在手",
+      "description": "立刻获得1件随机简易装备，首领战后，获得1件随机简易装备。"
+    },
+    {
+      "strategy_id": "200502",
+      "title": "枪在手+",
+      "description": "立刻获得2件随机简易装备，首领战后，获得1件随机简易装备。"
+    },
+    {
+      "strategy_id": "200601",
+      "title": "小复制",
+      "description": "获得2个【员工投影仪】。获得7金币。"
+    },
+    {
+      "strategy_id": "200602",
+      "title": "小复制+",
+      "description": "获得2个【员工投影仪】。获得13金币。"
+    },
+    {
+      "strategy_id": "200701",
+      "title": "延迟收益",
+      "description": "在战斗开始100行动值后，我方小队伤害增幅提高40%。"
+    },
+    {
+      "strategy_id": "200801",
+      "title": "市场活力",
+      "description": "商店中有概率出现2星的1费或<color=#6cce9f>2费角色</color>，出现概率随等级提升。"
+    },
+    {
+      "strategy_id": "200901",
+      "title": "不要小看我们的羁绊",
+      "description": "当你激活8个羁绊并完成一场战斗后，进入节点时获得5个随机星徽。"
+    },
+    {
+      "strategy_id": "201001",
+      "title": "星级压制",
+      "description": "我方小队获得10%速度增幅，攻击星级低于自身的敌人后，额外造成1次等同于原伤害20%的真实伤害。"
+    },
+    {
+      "strategy_id": "201101",
+      "title": "彩虹期货",
+      "description": "5个节点后，进行一次不能刷新的棱彩投资策略三选一。"
+    },
+    {
+      "strategy_id": "201102",
+      "title": "彩虹期货+",
+      "description": "4个节点后，进行一次不能刷新的棱彩投资策略三选一。"
+    },
+    {
+      "strategy_id": "201201",
+      "title": "采购专员•金",
+      "description": "每7次刷新，商店会刷出5张费用相同的角色，费用为你备战席最左侧角色的费用。"
+    },
+    {
+      "strategy_id": "201301",
+      "title": "长期主义",
+      "description": "现在及接下来3次进入新节点时，每次获得7金币。"
+    },
+    {
+      "strategy_id": "201302",
+      "title": "长期主义+",
+      "description": "现在及接下来3次进入新节点时，每次获得9金币。"
+    },
+    {
+      "strategy_id": "201501",
+      "title": "砂里淘金",
+      "description": "合成2星<color=#6cce9f>2费角色</color>时，获得1张<color=#6cce9f>【砂金】</color>。"
+    },
+    {
+      "strategy_id": "201601",
+      "title": "星变",
+      "description": "战斗开始时，使一个随机1费角色变为3星。"
+    },
+    {
+      "strategy_id": "201701",
+      "title": "嘴硬",
+      "description": "战斗失败时，受到的小队生命值伤害提高5点，但能维持原来的连胜数。获得6金币。"
+    },
+    {
+      "strategy_id": "201801",
+      "title": "固定理财",
+      "description": "现在以及每个位面开始时，获得4经验值和2次免费刷新。"
+    },
+    {
+      "strategy_id": "201802",
+      "title": "固定理财+",
+      "description": "现在以及每个位面开始时，获得6经验值和3次免费刷新。"
+    },
+    {
+      "strategy_id": "201901",
+      "title": "市场混乱",
+      "description": "在奖励节点的备战阶段，你的商店每4秒进行一次强制刷新，持续7次。"
+    },
+    {
+      "strategy_id": "202001",
+      "title": "爆晶矿•金",
+      "description": "我方小队消灭敌方目标时，有30%概率获得一个战利品晶矿。"
+    },
+    {
+      "strategy_id": "202101",
+      "title": "大裁员",
+      "description": "出售场上和备战席的所有角色，获得双倍价格的金币。获得6次免费刷新。"
+    },
+    {
+      "strategy_id": "202201",
+      "title": "四费晋升",
+      "description": "你购买的下1个<color=#927fe7>4费角色</color>将立刻升到2星。获得12金币。"
+    },
+    {
+      "strategy_id": "202301",
+      "title": "降本增效",
+      "description": "出售场上和备战席的所有角色，获得双倍价格的金币。你接下来6次购买角色是免费的。"
+    },
+    {
+      "strategy_id": "202401",
+      "title": "空仓",
+      "description": "获得1件随机的简易装备。进入新节点时，如果物品栏和备战席没有任何装备(消耗品除外)，则获得2经验值。"
+    },
+    {
+      "strategy_id": "202402",
+      "title": "空仓+",
+      "description": "获得1件随机的简易装备和10经验值。进入新节点时，如果物品栏和备战席没有任何装备(消耗品除外)，则获得2经验值。"
+    },
+    {
+      "strategy_id": "202501",
+      "title": "超发货币",
+      "description": "失去你现在所有的金币，并在5个节点后，获得该金币数+70的总金币。"
+    },
+    {
+      "strategy_id": "202601",
+      "title": "人才空洞",
+      "description": "节点开始时，如果备战席角色小于等于4名，则获得3经验。"
+    },
+    {
+      "strategy_id": "202701",
+      "title": "人才济济",
+      "description": "节点开始时，如果备战席角色大于等于8名，则获得3经验。"
+    },
+    {
+      "strategy_id": "202801",
+      "title": "剩余价值",
+      "description": "战斗结束时，你每剩余30行动值，就会在结算时获得1金币。最多获得4金币。"
+    },
+    {
+      "strategy_id": "202901",
+      "title": "成本控制",
+      "description": "战斗结束时，你每剩余10行动值，就会在结算时回复1点小队生命值。最多获得8小队生命值。立即获得8金币、15点小队生命值和15点生命上限。"
+    },
+    {
+      "strategy_id": "203001",
+      "title": "五百强",
+      "description": "首次有我方队员在战斗中达到500前台或后台强度时，获得30金币。立即获得【折叠小刀】、【和平手枪】。"
+    },
+    {
+      "strategy_id": "203101",
+      "title": "大扩招",
+      "description": "扣除你的金币，每损失4金币，获得一个随机<color=#927fe7>4费角色</color>，最多扣除40金币。获得1个【完美投影仪】和16金币。"
+    },
+    {
+      "strategy_id": "203201",
+      "title": "白银投资",
+      "description": "立刻进行一次白银投资策略三选一，选择有3次刷新机会。3个节点后，再获得一个。"
+    },
+    {
+      "strategy_id": "203301",
+      "title": "专家招募",
+      "description": "获得2个<color=#ffd471>5费聘用书</color>，获得4金币。"
+    },
+    {
+      "strategy_id": "203302",
+      "title": "专家招募+",
+      "description": "获得2个<color=#ffd471>5费聘用书</color>，获得12金币。"
+    },
+    {
+      "strategy_id": "203401",
+      "title": "按劳分配",
+      "description": "战斗中每消耗10个战技点，结算时获得1金币，每场战斗通过该策略最多获得1金币。激活2/4/6/8战技点羁绊时，最多获得2/3/4/6金币。"
+    },
+    {
+      "strategy_id": "203501",
+      "title": "全都要•金",
+      "description": "本局游戏中，补给阶段的可选项减少2个。下2个补给阶段选择后，额外获得所有未选择的角色及装备。"
+    },
+    {
+      "strategy_id": "203601",
+      "title": "广聚天下英才",
+      "description": "获得所有2费角色各一个。"
+    },
+    {
+      "strategy_id": "203701",
+      "title": "欢愉星徽",
+      "description": "获得1个【欢愉星徽】，和1个<color=#6cce9f>【绯英】</color>。"
+    },
+    {
+      "strategy_id": "210101",
+      "title": "列车同行星徽",
+      "description": "获得1个【列车同行星徽】，和1个<color=#6cce9f>【丹恒•饮月】</color>。"
+    },
+    {
+      "strategy_id": "210301",
+      "title": "银河学者星徽",
+      "description": "获得1个【银河学者星徽】，和1个<color=#b4b4b4>【艾丝妲】</color>。"
+    },
+    {
+      "strategy_id": "210501",
+      "title": "贝洛伯格星徽",
+      "description": "获得1个【贝洛伯格星徽】，和1个<color=#6cce9f>【佩拉】</color>。"
+    },
+    {
+      "strategy_id": "210601",
+      "title": "星间旅人星徽",
+      "description": "获得1个【星间旅人星徽】，和1个<color=#6cce9f>【银枝】</color>。"
+    },
+    {
+      "strategy_id": "210701",
+      "title": "仙舟星徽",
+      "description": "获得1个【仙舟星徽】，和1个<color=#b4b4b4>【藿藿】</color>。"
+    },
+    {
+      "strategy_id": "210801",
+      "title": "狼狩星徽",
+      "description": "获得1个【狼狩星徽】，和1个<color=#b4b4b4>【椒丘】</color>。"
+    },
+    {
+      "strategy_id": "211001",
+      "title": "盛会之星星徽",
+      "description": "获得1个【盛会之星星徽】，和1个<color=#6cce9f>【花火】</color>。"
+    },
+    {
+      "strategy_id": "211101",
+      "title": "昼之半神星徽",
+      "description": "获得1个【昼之半神星徽】，和1个<color=#6cce9f>【风堇】</color>。"
+    },
+    {
+      "strategy_id": "211201",
+      "title": "夜之半神星徽",
+      "description": "获得1个【夜之半神星徽】，和1个<color=#6cce9f>【万敌】</color>。"
+    },
+    {
+      "strategy_id": "211301",
+      "title": "阿哈大悦",
+      "description": "【欢愉】羁绊激活时，阿哈获得40%伤害增幅。从4件简易装备中为阿哈选择1件，祂的羁绊简易装备全部变为该简易装备，获得1个【简易武装箱】。\\n\\n<color=#b4b4b4><i>阿哈已合成的进阶装备会被拆散，你提供的那件简易装备会回到你的装备栏。</i></color>"
+    },
+    {
+      "strategy_id": "220101",
+      "title": "追击星徽",
+      "description": "获得1个【追击星徽】，和1个<color=#b4b4b4>【飞霄】</color>。"
+    },
+    {
+      "strategy_id": "220201",
+      "title": "击破星徽",
+      "description": "获得1个【击破星徽】，和1个<color=#6cce9f>【阮•梅】</color>。"
+    },
+    {
+      "strategy_id": "220301",
+      "title": "群攻星徽",
+      "description": "获得1个【群攻星徽】，和1个<color=#b4b4b4>【翡翠】</color>。"
+    },
+    {
+      "strategy_id": "220401",
+      "title": "能量星徽",
+      "description": "获得1个【能量星徽】，和1个<color=#7196ff>【星期日】</color>。"
+    },
+    {
+      "strategy_id": "220501",
+      "title": "治疗星徽",
+      "description": "获得1个【治疗星徽】，和1个<color=#6cce9f>【风堇】</color>。"
+    },
+    {
+      "strategy_id": "220601",
+      "title": "燃血星徽",
+      "description": "获得1个【燃血星徽】，和1个<color=#6cce9f>【万敌】</color>。"
+    },
+    {
+      "strategy_id": "220701",
+      "title": "减益星徽",
+      "description": "获得1个【减益星徽】，和1个<color=#7196ff>【黄泉】</color>。"
+    },
+    {
+      "strategy_id": "220801",
+      "title": "持续伤害星徽",
+      "description": "获得1个【持续伤害星徽】，和1个<color=#6cce9f>【卡芙卡】</color>。"
+    },
+    {
+      "strategy_id": "220901",
+      "title": "量子同频星徽",
+      "description": "获得1个【量子同频星徽】，和1个<color=#7196ff>【希儿】</color>。"
+    },
+    {
+      "strategy_id": "221001",
+      "title": "护盾星徽",
+      "description": "获得1个【护盾星徽】，和1个<color=#6cce9f>【砂金】</color>。"
+    },
+    {
+      "strategy_id": "221101",
+      "title": "战技点星徽",
+      "description": "获得1个【战技点星徽】，和1个<color=#6cce9f>【丹恒•饮月】</color>。"
+    },
+    {
+      "strategy_id": "230101",
+      "title": "幸运星祝福",
+      "description": "获得1个【幸运星】。我方小队获得15%幸运一击率和5%速度增幅。"
+    },
+    {
+      "strategy_id": "230201",
+      "title": "折叠小刀祝福",
+      "description": "获得1个【折叠小刀】。我方小队获得30%前台强度和5%伤害增幅。"
+    },
+    {
+      "strategy_id": "230301",
+      "title": "和平手枪祝福",
+      "description": "获得1个【和平手枪】。我方小队获得30%后台强度和15初始能量。"
+    },
+    {
+      "strategy_id": "230401",
+      "title": "生命之花祝福",
+      "description": "获得1个【生命之花】。我方小队获得15%生命增幅和5%治疗强度。"
+    },
+    {
+      "strategy_id": "230501",
+      "title": "量产型装甲祝福",
+      "description": "获得1个【量产型装甲】。我方小队获得15%伤害减免和5%护盾强度。"
+    },
+    {
+      "strategy_id": "230601",
+      "title": "公司军火更新•金",
+      "description": "每次进入新节点时，你物品栏里的装备变为同品质的其他装备。获得2件随机简易装备。"
+    },
+    {
+      "strategy_id": "230701",
+      "title": "回收计划",
+      "description": "出售角色时，会将进阶装备拆分成简易装备。获得1件进阶装备，并在5个节点后获得1件随机简易装备。"
+    },
+    {
+      "strategy_id": "230702",
+      "title": "回收计划+",
+      "description": "出售角色时，会将进阶装备拆分成简易装备。获得1件进阶装备，并在4个节点后获得1件随机简易装备。"
+    },
+    {
+      "strategy_id": "230801",
+      "title": "升级锅炉",
+      "description": "对简易装备使用冶金炉会使其变为随机进阶装备，获得2个【冶金炉】。"
+    },
+    {
+      "strategy_id": "230901",
+      "title": "秘密典籍",
+      "description": "获得1个【星徽秘典】，获得8金币。"
+    },
+    {
+      "strategy_id": "230902",
+      "title": "秘密典籍+",
+      "description": "获得1个【星徽秘典】，获得12金币。"
+    },
+    {
+      "strategy_id": "231001",
+      "title": "全武行",
+      "description": "获得1个【武器大师】，【武器大师】额外提供5%幸运一击率，5%幸运一击伤害，5%速度增幅。"
+    },
+    {
+      "strategy_id": "231101",
+      "title": "这么大的钻石",
+      "description": "佩佩携带【财富宝钻】出现，这么大的钻石，送给你！"
+    },
+    {
+      "strategy_id": "231201",
+      "title": "红钻闪耀",
+      "description": "获得1个【红钻】。进入3个节点后，获得【简易武装箱】。"
+    },
+    {
+      "strategy_id": "231301",
+      "title": "蓝钻闪耀",
+      "description": "获得1个【蓝钻】。进入3个节点后，获得【简易武装箱】。"
+    },
+    {
+      "strategy_id": "231401",
+      "title": "精密拆装·金",
+      "description": "获得1个【精密拆装扳手】，1个【冶金炉】和2个随机简易武装。"
+    },
+    {
+      "strategy_id": "231501",
+      "title": "好运令牌·金",
+      "description": "获得1个【好运令牌】和1件随机简易装备。"
+    },
+    {
+      "strategy_id": "231601",
+      "title": "好运来",
+      "description": "合成与获得进阶装备时，改为获得一个【好运令牌】。获得2件随机简易装备。"
+    },
+    {
+      "strategy_id": "231701",
+      "title": "黄金垃圾",
+      "description": "获得一个【金垃圾袋】，它提供大量属性和15金币。"
+    },
+    {
+      "strategy_id": "250101",
+      "title": "人海战术",
+      "description": "我方小队的前/后台强度提高10%。战斗中，我方小队在场的角色与忆灵数量之和大于8时，我方小队的前/后台强度提高20%。"
+    },
+    {
+      "strategy_id": "250201",
+      "title": "打通上下游•金",
+      "description": "我方小队速度增幅提高10%。每个节点开始时，速度增幅额外提高1%。"
+    },
+    {
+      "strategy_id": "250301",
+      "title": "现金为王",
+      "description": "出售场上和备战席的所有角色，之后每场进入战斗时，为我方前台提供护盾，护盾量等同于该次出售角色所获得总金币数*1000。"
+    },
+    {
+      "strategy_id": "250401",
+      "title": "独狼",
+      "description": "若角色不具有已激活的非独立羁绊，使其获得120%前/后台强度和36%伤害减免。"
+    },
+    {
+      "strategy_id": "250501",
+      "title": "中产阶级",
+      "description": "我方小队里每有1位2星角色，使小队获得5%伤害减免和15%前/后台强度。"
+    },
+    {
+      "strategy_id": "250601",
+      "title": "前段发力",
+      "description": "我方小队在进入战斗时行动提前40%，前/后台强度提高60%，每经过1行动值，降低1%，最多降低至0。"
+    },
+    {
+      "strategy_id": "250701",
+      "title": "三三三",
+      "description": "3星/<color=#7196ff>3费</color>/穿戴3件装备的角色，获得10%速度增幅和20%前/后台强度，满足不同条件的效果可叠加。"
+    },
+    {
+      "strategy_id": "250801",
+      "title": "创伤小组",
+      "description": "我方小队伤害增幅提高15%，进入战斗时，生命上限降低30%，受到致命攻击时，行动值惩罚减少20点。"
+    },
+    {
+      "strategy_id": "250901",
+      "title": "绕口令",
+      "description": "进入战斗时，前台一号位角色及其忆灵获得等同于后台一号位角色30%后台强度的前台强度，后台一号位角色及其忆灵获得等同于前台一号位角色30%前台强度的后台强度。"
+    },
+    {
+      "strategy_id": "251001",
+      "title": "风暴骑士",
+      "description": "前台一号位角色获得150%速度增幅。进入战斗时，该角色回合开始时，受到等同于生命上限70%固定数值的风属性附加伤害。"
+    },
+    {
+      "strategy_id": "251101",
+      "title": "幸运中的幸运",
+      "description": "进入战斗时，我方队员幸运一击率若大于20%，则降低至20%，每通过该方式降低1%幸运一击率，使幸运一击伤害提高2%。"
+    },
+    {
+      "strategy_id": "251201",
+      "title": "榜样的力量•金",
+      "description": "战斗中，伤害统计排名第一的队员成为【榜样】，前/后台强度提高40%。其他队员前/后台强度提高10%。"
+    },
+    {
+      "strategy_id": "251301",
+      "title": "OOTD•金",
+      "description": "我方小队每穿戴一件不同的装备，获得3%生命提高，6%前/后台强度。"
+    },
+    {
+      "strategy_id": "251401",
+      "title": "打人就打脸•金",
+      "description": "我方小队幸运一击率提高10%，造成幸运一击伤害后使受击目标陷入【脆弱】：受到的伤害提高30%，持续1回合。"
+    },
+    {
+      "strategy_id": "251501",
+      "title": "团队力量•金",
+      "description": "每有一个已激活的羁绊，小队就会获得6%前/后台强度和4%生命增幅。"
+    },
+    {
+      "strategy_id": "251601",
+      "title": "钻石恒永久",
+      "description": "获得1个【红钻】，角色每携带1件钻石或由钻石合成的装备，在进入新节点时会永久获得3%伤害增幅。"
+    },
+    {
+      "strategy_id": "251801",
+      "title": "双人舞",
+      "description": "上阵的星核猎手数量为2时，激活【猎星人】效果所需攻击数减少1，被激活的攻击造成200%原伤害。获得<color=#b4b4b4>【刃】</color>和<color=#6cce9f>【卡芙卡】</color>。"
+    },
+    {
+      "strategy_id": "251901",
+      "title": "读博深造",
+      "description": "战斗开始时，若银河学者羁绊处于激活状态，一名随机的1费或2费银河学者变成3星。获得<color=#b4b4b4>【艾丝妲】</color>和<color=#6cce9f>【阮•梅】</color>。"
+    },
+    {
+      "strategy_id": "252001",
+      "title": "钢铁美学",
+      "description": "【造物引擎】造成400%原伤害，但是无法消灭目标。获得<color=#7196ff>【希儿】</color>。"
+    },
+    {
+      "strategy_id": "252101",
+      "title": "人在旅途",
+      "description": "星间旅人若只有3名及以下登场，登场角色额外提供200%的星间旅人属性加成。获得<color=#b4b4b4>【桑博】</color>和<color=#6cce9f>【银枝】</color>。"
+    },
+    {
+      "strategy_id": "252201",
+      "title": "装备党",
+      "description": "激活狼狩羁绊时，狼狩角色们每穿戴一件装备，就获得4%伤害增幅和2%速度增幅。获得<color=#b4b4b4>【椒丘】</color>和<color=#b4b4b4>【飞霄】</color>。"
+    },
+    {
+      "strategy_id": "252301",
+      "title": "梦境大舞台",
+      "description": "盛会之星羁绊激活时，战斗中首次激活3/7/10个不同的非独立羁绊后，获得【盛会之星星徽】。获得<color=#6cce9f>【花火】</color>。"
+    },
+    {
+      "strategy_id": "252401",
+      "title": "赞美太阳",
+      "description": "每拥有一件【白昼装备】以及其原型装备，在进入新节点时就获得1点经验。角色每穿戴一件【白昼装备】，幸运一击率提高10%。获得<color=#7196ff>【那刻夏】</color>。"
+    },
+    {
+      "strategy_id": "252501",
+      "title": "月光宝盒",
+      "description": "完美通关时，夜之半神获得的【月光精华】提高100%，领取夜之半神奖励时，也会获得一名夜之半神角色，【月色】层数越高，越可能领取到高费角色。获得<color=#b4b4b4>【赛飞儿】</color>和<color=#6cce9f>【万敌】</color>。"
+    },
+    {
+      "strategy_id": "252601",
+      "title": "借力打力",
+      "description": "敌方目标被消灭后，【借力球】的伤害分摊比例永久提高0.15%。获得<color=#b4b4b4>【黑塔】</color>和<color=#6cce9f>【缇宝】</color>。"
+    },
+    {
+      "strategy_id": "252701",
+      "title": "超充站",
+      "description": "能量地块上的单位获得【超级电池】，施放终结技后消耗【超级电池】充满能量。激活3/5/7/10羁绊时，分别获得1/1/2/3层【超级电池】。获得<color=#b4b4b4>【阿格莱雅】</color>和<color=#b4b4b4>【藿藿】</color>。"
+    },
+    {
+      "strategy_id": "252801",
+      "title": "燃起来了",
+      "description": "【燃血角斗场】以80%上限开始战斗，且保留的充能提高20%。获得<color=#6cce9f>【万敌】</color>和<color=#b4b4b4>【刃】</color>。"
+    },
+    {
+      "strategy_id": "252901",
+      "title": "量子力学",
+      "description": "【量子同频】角色累计星数达3/6/9时，额外获得1/2/3层【同频】。获得<color=#7196ff>【希儿】</color>。"
+    },
+    {
+      "strategy_id": "253101",
+      "title": "星魂升华",
+      "description": "本局游戏中，我方前台角色的星魂提高1阶"
+    },
+    {
+      "strategy_id": "253201",
+      "title": "如有神助",
+      "description": "【仙舟】羁绊召唤的【神君】造成120%原伤害。轮次开始时、倒计时归零时，【神君】伤害段数增加10并立即行动。"
+    },
+    {
+      "strategy_id": "253301",
+      "title": "爆仓",
+      "description": "我方小队攻击敌方目标后，若其生命值百分比少于16%，将其【斩杀】。"
+    },
+    {
+      "strategy_id": "253401",
+      "title": "骇客专家：银狼",
+      "description": "获得专家顾问<color=#927fe7>【银狼】</color>，并使其在本局游戏中加入商店。获得1个随机4费骇客改件。"
+    },
+    {
+      "strategy_id": "253501",
+      "title": "潜行专家：貊泽",
+      "description": "获得专家顾问<color=#b4b4b4>【貊泽】</color>，并使其在本局游戏中加入商店。他上场时不占用团队规模，赋能【雷霆一击】额外造成600%基础伤害。"
+    },
+    {
+      "strategy_id": "253601",
+      "title": "迷之旅人",
+      "description": "激活4【巡海游侠】时，其中3位巡海游侠会发生一次讨论，之后，你获得一个携带着【星间旅人星徽】的2星<color=#7196ff>【黄泉】</color>。进入下一个奖励节点时，获得<color=#927fe7>【波提欧】</color>。"
+    },
+    {
+      "strategy_id": "260101",
+      "title": "摸个鱼吧 I",
+      "description": "获得专家顾问<color=#b4b4b4>【青雀】</color>，并使其在本局游戏中加入商店。获得6金币。深思熟虑5个节点后，青雀会想出黄金投资策略！"
+    },
+    {
+      "strategy_id": "260201",
+      "title": "摸个鱼吧 II",
+      "description": "获得2个<color=#b4b4b4>【青雀】</color>和6金币。深思熟虑5个节点后，青雀会想出棱彩投资策略！"
+    },
+    {
+      "strategy_id": "260301",
+      "title": "加拉赫顾问",
+      "description": "获得专家顾问<color=#b4b4b4>【加拉赫】</color>，并使其在本局游戏中加入商店。获得【生命之花】和4金币。"
+    },
+    {
+      "strategy_id": "260401",
+      "title": "快请专家•金",
+      "description": "获得1个【<gridfightinfo type=item id=99990>】，4个节点后，获得2个【员工投影仪】。"
+    },
+    {
+      "strategy_id": "260501",
+      "title": "停云顾问",
+      "description": "获得专家顾问<color=#b4b4b4>【停云】</color>，并使其在本局游戏中加入商店。获得【光能电池】和4金币。"
+    },
+    {
+      "strategy_id": "260601",
+      "title": "退化",
+      "description": "使最右侧的敌人词缀失效，并使敌人难度-5。获得8金币。"
+    },
+    {
+      "strategy_id": "260701",
+      "title": "愚者恶作剧",
+      "description": "商店中出现的的2/4费卡有20%的概率变为<color=#6cce9f>【花火】</color>/<color=#927fe7>【火花】</color>，进入新节点时，备战席的1星<color=#6cce9f>【花火】</color>/<color=#927fe7>【火花】</color>会留下2/4金币并去别处找乐子。"
+    },
+    {
+      "strategy_id": "300101",
+      "title": "开源节流",
+      "description": "获得10金币，利息上限提升至9。进入新节点时，如果上个节点你没有花费金币，则可获得最大利息的金币数。"
+    },
+    {
+      "strategy_id": "300201",
+      "title": "商业间谍",
+      "description": "购买经验的花费减1，升级时刷新商店，并偷取其中最贵的3个角色。"
+    },
+    {
+      "strategy_id": "300401",
+      "title": "概率事件",
+      "description": "刷新时有45%概率获得一次免费刷新。"
+    },
+    {
+      "strategy_id": "300501",
+      "title": "天降救兵",
+      "description": "获得一个随机3星<color=#b4b4b4>1费角色</color>，获得1个【简易武装箱】。"
+    },
+    {
+      "strategy_id": "300601",
+      "title": "被动收入",
+      "description": "每次进入新节点时获得经验，数值等同于你备战席最左侧角色的基础费用。"
+    },
+    {
+      "strategy_id": "300701",
+      "title": "及时雨",
+      "description": "获得3个随机2星<color=#927fe7>4费角色</color>和1个【完美投影仪】，获得4次免费刷新。"
+    },
+    {
+      "strategy_id": "300801",
+      "title": "利息上调",
+      "description": "获得25金币。你的最大利息提升至10金币。"
+    },
+    {
+      "strategy_id": "300901",
+      "title": "买断制",
+      "description": "你不再获得利息。即刻获得15金币。每次进入新节点时，获得4经验。"
+    },
+    {
+      "strategy_id": "301001",
+      "title": "本金充裕",
+      "description": "获得26金币。每次进入新节点时，若拥有超过50金币，每额外10金币就会获得1次免费刷新(最多3次)。"
+    },
+    {
+      "strategy_id": "301002",
+      "title": "本金充裕+",
+      "description": "获得45金币。每次进入新节点时，若拥有超过50金币，每额外10金币就会获得1次免费刷新(最多3次)。"
+    },
+    {
+      "strategy_id": "301101",
+      "title": "节节高升",
+      "description": "在你每次升级时获得1个2星角色和1金币。这个角色的费用是你的等级减4(最小值：1费)。"
+    },
+    {
+      "strategy_id": "301201",
+      "title": "彩虹矿",
+      "description": "在下个奖励节点额外获取一个棱彩晶矿，里面装满了丰厚的战利品。"
+    },
+    {
+      "strategy_id": "301202",
+      "title": "彩虹矿+",
+      "description": "在下个奖励节点额外获取一个棱彩晶矿，里面装满了丰厚的战利品。"
+    },
+    {
+      "strategy_id": "301301",
+      "title": "晋升名额",
+      "description": "购买经验时，使商店中的一个随机角色变为高1费的另一个随机角色。"
+    },
+    {
+      "strategy_id": "301401",
+      "title": "公司严选",
+      "description": "现在及每个位面开始时，开启一个由5个独特<color=#927fe7>4费角色</color>组成的商店，并获得3金币。"
+    },
+    {
+      "strategy_id": "301501",
+      "title": "爆晶矿•彩",
+      "description": "我方小队消灭敌方目标时，有45%概率获得一个战利品晶矿。"
+    },
+    {
+      "strategy_id": "301601",
+      "title": "淘金客",
+      "description": "你每次消耗金币刷新商店，都会获得2经验值。"
+    },
+    {
+      "strategy_id": "301701",
+      "title": "高效决策",
+      "description": "获得9999次免费刷新，但是只持续45s。持续时间结束时，移除你所有的免费刷新。"
+    },
+    {
+      "strategy_id": "301801",
+      "title": "奋斗协议",
+      "description": "购买经验值消耗6点小队生命值而非金币。首领战斗结束时回复50点小队生命值。"
+    },
+    {
+      "strategy_id": "301901",
+      "title": "临时工合约",
+      "description": "获得8个【员工投影仪】，进入下个节点时，所有未使用的【员工投影仪】都会消失。"
+    },
+    {
+      "strategy_id": "302001",
+      "title": "武装突入",
+      "description": "遭遇节点的奖励变为2倍。获得2个【简易武装箱】。"
+    },
+    {
+      "strategy_id": "302101",
+      "title": "黄晶矿工",
+      "description": "开启晶矿时，有50%概率获得一个低一档的晶矿，有极低概率获得棱彩晶矿。立刻获得一个黄金晶矿。"
+    },
+    {
+      "strategy_id": "302201",
+      "title": "黄金投资",
+      "description": "立刻进行一次黄金品质投资策略三选一，选择有3次刷新机会。3个节点后，再获得一个。"
+    },
+    {
+      "strategy_id": "302301",
+      "title": "决议：娱乐星球",
+      "description": "你受到的伤害加倍，进入战斗时，若拥有180枚金币，将本局游戏剩余的非首领节点替换为奖励节点。获得50金币。"
+    },
+    {
+      "strategy_id": "302401",
+      "title": "伟大征服",
+      "description": "连胜奖励变为3倍，敌人难度+N，N为你的当前连胜数。获得12经验。"
+    },
+    {
+      "strategy_id": "302501",
+      "title": "孪生姵姵",
+      "description": "获得一个姵姵，它看起来和你的佩佩一模一样！"
+    },
+    {
+      "strategy_id": "302601",
+      "title": "价值投资•彩",
+      "description": "获得1个随机的2星<color=#6cce9f>2费角色</color>。每次进入新节点时，获得1星的该角色，补给后额外获得2个，持续至本局游戏结束。"
+    },
+    {
+      "strategy_id": "302701",
+      "title": "节假日礼盒",
+      "description": "获得随机的大笔奖励。"
+    },
+    {
+      "strategy_id": "302801",
+      "title": "藏一手",
+      "description": "我方小队生命值将降低至0时，免疫这次伤害并将生命值变为40点，并获得30点经验和80金币。"
+    },
+    {
+      "strategy_id": "302901",
+      "title": "控制规模",
+      "description": "最大等级变为7级，获得【财富宝钻】和40金币。"
+    },
+    {
+      "strategy_id": "303001",
+      "title": "星际和平保险",
+      "description": "获得等同于你已损失生命数量的金币。战斗后恢复10点小队生命值。"
+    },
+    {
+      "strategy_id": "303101",
+      "title": "采购专员•彩",
+      "description": "每5次刷新，商店会刷出5张费用相同的角色，费用为你备战席最左侧角色的费用。"
+    },
+    {
+      "strategy_id": "303201",
+      "title": "金币大使叽米",
+      "description": "超稀有的叽米登场！爆出超多金币！！"
+    },
+    {
+      "strategy_id": "303301",
+      "title": "星徽大使叽米",
+      "description": "超稀有的叽米登场！爆出超多星徽！！"
+    },
+    {
+      "strategy_id": "303401",
+      "title": "偶像经济",
+      "description": "获得<color=#927fe7>【火花】</color>和一个【火花礼盒】，倒计时10个节点后礼盒打开，提供大量奖励！战斗完胜时，额外减少1点倒计时。"
+    },
+    {
+      "strategy_id": "303501",
+      "title": "武器批发商",
+      "description": "下个首领节点后，获得所有类型的简易装备各1个。"
+    },
+    {
+      "strategy_id": "303601",
+      "title": "远见",
+      "description": "获得一个随机黄金投资策略和15金币。后续的投资策略节点改为获得随机1个棱彩投资策略（无法刷新），并且不增加敌人难度。"
+    },
+    {
+      "strategy_id": "303701",
+      "title": "搜打撤",
+      "description": "每当你进入新节点时，获得1次免费刷新。通关下一个首领节点后，获得等同于场上和备战席所有角色价值的金币。"
+    },
+    {
+      "strategy_id": "303801",
+      "title": "不等价交换",
+      "description": "交换你的小队生命值和金币。"
+    },
+    {
+      "strategy_id": "303901",
+      "title": "着眼当下",
+      "description": "你购买的下一个1/2/3/4/5费角色变成2星，随后，将其从商店中移除。立即获得5金币。"
+    },
+    {
+      "strategy_id": "310101",
+      "title": "列车同行星徽套组",
+      "description": "获得1个【列车同行星徽】，和1个<color=35030204cce9f>【丹恒•饮月】</color>，以及1个【高周波电锯】。"
+    },
+    {
+      "strategy_id": "310301",
+      "title": "银河学者星徽套组",
+      "description": "获得1个【银河学者星徽】，和1个<color=#b4b4b4>【艾丝妲】</color>，以及1个【胜利之旗】。"
+    },
+    {
+      "strategy_id": "310501",
+      "title": "贝洛伯格星徽套组",
+      "description": "获得1个【贝洛伯格星徽】，和1个<color=35030203cce9f>【佩拉】</color>，以及1个【武器大师】。"
+    },
+    {
+      "strategy_id": "310601",
+      "title": "星间旅人星徽套组",
+      "description": "获得1个【星间旅人星徽】，和1个<color=35030808cce9f>【银枝】</color>，以及1个【永动机】。"
+    },
+    {
+      "strategy_id": "310701",
+      "title": "仙舟星徽套组",
+      "description": "获得1个【仙舟星徽】，和1个<color=#b4b4b4>【藿藿】</color>，以及1个【生命之环】。"
+    },
+    {
+      "strategy_id": "310801",
+      "title": "狼狩星徽套组",
+      "description": "获得1个【狼狩星徽】，和1个<color=#b4b4b4>【椒丘】</color>，以及1个【生命之环】。"
+    },
+    {
+      "strategy_id": "311001",
+      "title": "盛会之星星徽套组",
+      "description": "获得1个【盛会之星星徽】，和1个<color=35030206cce9f>【花火】</color>，以及1个【信心注入器】。"
+    },
+    {
+      "strategy_id": "311101",
+      "title": "昼之半神星徽套组",
+      "description": "获得1个【昼之半神星徽】，和1个<color=35030505cce9f>【风堇】</color>，以及1个【生命之环】。"
+    },
+    {
+      "strategy_id": "311201",
+      "title": "夜之半神星徽套组",
+      "description": "获得1个【夜之半神星徽】，和1个<color=35030205cce9f>【万敌】</color>，以及1个【杀红眼】。"
+    },
+    {
+      "strategy_id": "320101",
+      "title": "追击星徽套组",
+      "description": "获得1个【追击星徽】，和1个<color=#b4b4b4>【飞霄】</color>，以及1个【永动机】。"
+    },
+    {
+      "strategy_id": "320201",
+      "title": "击破星徽套组",
+      "description": "获得1个【击破星徽】，和1个<color=35030106cce9f>【阮•梅】</color>，以及1个【流星飞翼】。"
+    },
+    {
+      "strategy_id": "320301",
+      "title": "群攻星徽套组",
+      "description": "获得1个【群攻星徽】，和1个<color=#b4b4b4>【翡翠】</color>，以及1个【反卫星狙击枪】。"
+    },
+    {
+      "strategy_id": "320401",
+      "title": "能量星徽套组",
+      "description": "获得1个【能量星徽】，和1个<color=#7196ff>【星期日】</color>，以及1个【胜利之旗】。"
+    },
+    {
+      "strategy_id": "320501",
+      "title": "治疗星徽套组",
+      "description": "获得1个【治疗星徽】，和1个<color=35030505cce9f>【风堇】</color>，以及1个【生命之环】。"
+    },
+    {
+      "strategy_id": "320601",
+      "title": "燃血星徽套组",
+      "description": "获得1个【燃血星徽】，和1个<color=35030205cce9f>【万敌】</color>，以及1个【杀红眼】。"
+    },
+    {
+      "strategy_id": "320701",
+      "title": "减益星徽套组",
+      "description": "获得1个【减益星徽】，和1个<color=#7196ff>【黄泉】</color>，以及1个【高周波电锯】。"
+    },
+    {
+      "strategy_id": "320801",
+      "title": "持续伤害星徽套组",
+      "description": "获得1个【持续伤害星徽】，和1个<color=35030101cce9f>【卡芙卡】</color>，以及1个【反重力皮靴】。"
+    },
+    {
+      "strategy_id": "320901",
+      "title": "量子同频星徽套组",
+      "description": "获得1个【量子同频星徽】，和1个<color=#7196ff>【希儿】</color>，以及1个【反重力皮靴】。"
+    },
+    {
+      "strategy_id": "321001",
+      "title": "护盾星徽套组",
+      "description": "获得一个【护盾星徽】，和1个<color=35030306cce9f>【砂金】</color>，以及1个【自适应外骨骼】。"
+    },
+    {
+      "strategy_id": "321101",
+      "title": "战技点星徽套组",
+      "description": "获得1个【战技点星徽】，和1个<color=35030204cce9f>【丹恒•饮月】</color>，以及1个【高周波电锯】。"
+    },
+    {
+      "strategy_id": "330101",
+      "title": "优势火力论",
+      "description": "获得1个【特权赋予卡】和1个【简易武装箱】。"
+    },
+    {
+      "strategy_id": "330201",
+      "title": "财富就是力量",
+      "description": "获得1个【财富宝钻】，该装备额外提供30%前/后台强度和20%速度增幅。"
+    },
+    {
+      "strategy_id": "330301",
+      "title": "复印件",
+      "description": "获得一个已经拥有的星徽的复制，获得24点经验。"
+    },
+    {
+      "strategy_id": "330401",
+      "title": "客制化服务",
+      "description": "【随便骰子】会为你的角色随机出其推荐列表中的装备。获得3个【幸运星】。"
+    },
+    {
+      "strategy_id": "330501",
+      "title": "军备供应链",
+      "description": "获得1个【简易武装箱】，接下来5个节点开始时，获得1个【简易武装箱】。"
+    },
+    {
+      "strategy_id": "330601",
+      "title": "公司军火更新•彩",
+      "description": "每次进入新节点时，物品栏里的装备变为同品质的其他装备。 获得1件随机特权装备。"
+    },
+    {
+      "strategy_id": "330701",
+      "title": "手枪发烧友",
+      "description": "获得5个【和平手枪】。【和平手枪】提供5%幸运一击率。"
+    },
+    {
+      "strategy_id": "330801",
+      "title": "多元化团队",
+      "description": "获得2个【财富宝钻】，你的羁绊最多只能激活到4人口对应的效果。"
+    },
+    {
+      "strategy_id": "330901",
+      "title": "终身学习",
+      "description": "现在以及每个位面开始时，获得【星徽秘典】。"
+    },
+    {
+      "strategy_id": "331001",
+      "title": "佩佩客串",
+      "description": "佩佩闪亮登场！每完美通关一个战斗节点，佩佩就会穿戴一件进阶装备，进入5个节点后，阿兰接走佩佩们并留下所有装备。"
+    },
+    {
+      "strategy_id": "331101",
+      "title": "装备方案A",
+      "description": "获得【光速螺旋桨】、【反重力皮靴】和【折叠小刀】。"
+    },
+    {
+      "strategy_id": "331201",
+      "title": "装备方案B",
+      "description": "获得【冷笑话引擎】、【永动机】和【和平手枪】。"
+    },
+    {
+      "strategy_id": "331301",
+      "title": "入职礼包",
+      "description": "进入战斗时：携带了2件装备的至多4个角色会获得一件处在推荐列表中的随机进阶装备。"
+    },
+    {
+      "strategy_id": "331401",
+      "title": "独家代言",
+      "description": "从3件进阶装备中选择一件获取。本局游戏中，你获得组成该装备的简易装备时，改为获得该进阶装备。"
+    },
+    {
+      "strategy_id": "331501",
+      "title": "精密拆装·彩",
+      "description": "获得1个【精密拆装扳手】和1个【随便骰子·特权】。"
+    },
+    {
+      "strategy_id": "331601",
+      "title": "好运令牌·彩",
+      "description": "获得1个【好运令牌】。每累计进入4个节点后，获得1个【好运令牌】。"
+    },
+    {
+      "strategy_id": "331701",
+      "title": "全都要•彩",
+      "description": "本局游戏中，补给阶段的可选项减少2个。补给阶段选择后，额外获得所有未选择的角色及装备。"
+    },
+    {
+      "strategy_id": "331801",
+      "title": "分解万物",
+      "description": "获得一个【物质分解液】，本局游戏中，你的所有进阶装备变成【物质分解液】。它将额外造成3次伤害，对普通/精英及首领敌人分别造成2%/1%生命上限百分比的真实伤害，并使我方小队获得4%伤害减免。"
+    },
+    {
+      "strategy_id": "331901",
+      "title": "完美进化",
+      "description": "获得一个【战场进化手册】，进入战斗时，穿戴【战场进化手册】的1星角色会变为2星。4个节点后，获得一个【战场进化手册】。"
+    },
+    {
+      "strategy_id": "332001",
+      "title": "脱颖而出",
+      "description": "穿戴3件装备的角色在进入战斗时，会将其中随机一件变为特权装备，持续到战斗结束。"
+    },
+    {
+      "strategy_id": "332101",
+      "title": "数值碾压",
+      "description": "角色穿戴的简易装备额外提供8倍的基础属性。获得2件随机简易装备。"
+    },
+    {
+      "strategy_id": "332201",
+      "title": "轮回不止",
+      "description": "获得<color=#7196ff>【白厄】</color>和一件【轮回者】装备。进入第二/三位面时，再获得一次。\\n\\n\\n<color=#b4b4b4><i>本局游戏结束时，<color=#7196ff>【白厄】</color>携带着装备成为新的【轮回者】。\\n若游戏结束时<color=#7196ff>【白厄】</color>不在队伍中，【轮回者】的装备变为初始状态。</i></color>"
+    },
+    {
+      "strategy_id": "332301",
+      "title": "融合召唤",
+      "description": "给角色穿戴2件相同进阶装备时，它们会合成为对应的特权装备。获得1个【简易武装箱】。"
+    },
+    {
+      "strategy_id": "332401",
+      "title": "环保大使叽米",
+      "description": "获得超稀有的叽米！！获得超多【金垃圾袋】！！"
+    },
+    {
+      "strategy_id": "350101",
+      "title": "幸运之子",
+      "description": "我方小队幸运一击率提高25%。进入战斗时，我方小队中幸运一击率达到100%的角色，自身与忆灵幸运一击伤害提高40%。"
+    },
+    {
+      "strategy_id": "350301",
+      "title": "超光速提拔",
+      "description": "战斗开始时：1个随机的<color=#b4b4b4>1费角色</color>在这场战斗中升为4星，并获得5%前/后台强度。"
+    },
+    {
+      "strategy_id": "350401",
+      "title": "战术义眼",
+      "description": "我方小队消灭普通/精英及首领敌人时，恢复25%/75%能量。"
+    },
+    {
+      "strategy_id": "350402",
+      "title": "战术义眼+",
+      "description": "我方小队消灭普通/精英及首领敌人时，恢复25%/75%能量。获得1个【简易武装箱】。"
+    },
+    {
+      "strategy_id": "350403",
+      "title": "战术义眼++",
+      "description": "我方小队消灭普通/精英及首领敌人时，恢复25%/75%能量。获得1个【进阶武装箱】。"
+    },
+    {
+      "strategy_id": "350501",
+      "title": "榜样的力量•彩",
+      "description": "战斗中，伤害统计排名第一的队员成为【榜样】，前/后台强度提高70%。其他队员施放攻击后，对攻击目标造成等同于【榜样】累计伤害1%的真实伤害。"
+    },
+    {
+      "strategy_id": "350601",
+      "title": "佩佩驾到",
+      "description": "获得1个携带着3个永久附着星徽的【佩佩】。获得8金币。"
+    },
+    {
+      "strategy_id": "350701",
+      "title": "万箭齐发",
+      "description": "战斗开始时，发射风箭攻击随机敌方目标，箭矢数量等同于小队总星数+8，每根风箭造成等同于1600%基础伤害的风属性伤害。"
+    },
+    {
+      "strategy_id": "350801",
+      "title": "后勤超响应",
+      "description": "角色的后台强度提高，其数值等同于后台总星数×12%。"
+    },
+    {
+      "strategy_id": "350901",
+      "title": "三五成群",
+      "description": "后台角色数量达到3名/5名及以上时，你的小队获得5%/30%速度增幅和10%/50%前/后台强度。"
+    },
+    {
+      "strategy_id": "351001",
+      "title": "基本保障",
+      "description": "至少携带1件装备的角色获得20%生命增幅和16%伤害增幅。"
+    },
+    {
+      "strategy_id": "351101",
+      "title": "更快，更幸运",
+      "description": "进入战斗时，速度最高的角色及其忆灵速度增幅提高8%，幸运一击率提高12%。每经过20行动值，在另一名我方角色上重复此效果。"
+    },
+    {
+      "strategy_id": "351201",
+      "title": "鲜血阶梯",
+      "description": "获得【斩首行动】。我方队员每消灭一名精英/首领敌人，我方小队在本局伤害增幅永久提高8%。"
+    },
+    {
+      "strategy_id": "351301",
+      "title": "打通上下游•彩",
+      "description": "我方小队获得15%前/后台强度，每次进入新节点时，该加成提高3%。"
+    },
+    {
+      "strategy_id": "351401",
+      "title": "野蛮成长",
+      "description": "战斗开始时，随机两名前台角色获得100%前台强度提高，随机两名后台角色获得100%后台强度提高。"
+    },
+    {
+      "strategy_id": "351501",
+      "title": "保守派",
+      "description": "我方小队获得8%伤害减免。进入战斗时，生命上限最低的角色额外获得12%伤害减免。获得一件【进阶武装箱】。"
+    },
+    {
+      "strategy_id": "351601",
+      "title": "攻防一体",
+      "description": "我方小队获得25%伤害减免，且获得等同于伤害减免的伤害增幅。"
+    },
+    {
+      "strategy_id": "351701",
+      "title": "幸运闪避EX",
+      "description": "我方小队获得25%幸运一击率，受到敌人攻击时，有等同于30%幸运一击率的概率使受到的伤害变为1。"
+    },
+    {
+      "strategy_id": "351801",
+      "title": "羁绊的力量",
+      "description": "每有一个已激活的非独立羁绊，小队就会获得5%伤害增幅和3%伤害减免。"
+    },
+    {
+      "strategy_id": "351901",
+      "title": "定点爆破",
+      "description": "每个波次开始时，【重锤】立即对当前生命值最高的敌人造成999999%基础伤害，最多对首领敌人造成50%生命上限的伤害。"
+    },
+    {
+      "strategy_id": "352101",
+      "title": "乱成一锅粥",
+      "description": "每次进入新节点时，处在备战席最左侧6个位置的角色变为随机的同费用角色。立刻获得5次免费刷新和10金币。"
+    },
+    {
+      "strategy_id": "352102",
+      "title": "乱成一锅粥+",
+      "description": "每次进入新节点时，处在备战席最左侧6个位置的角色变为随机的同费用角色。立刻获得7次免费刷新和14金币。"
+    },
+    {
+      "strategy_id": "352201",
+      "title": "白衣伙伴",
+      "description": "你的<color=#7196ff>【白厄】</color>/<color=#7196ff>【星期日】</color>可以互相用于升星。首次获得3星<color=#7196ff>【白厄】</color>/<color=#7196ff>【星期日】</color>之一时，立即获得另一个的3星版本。获得<color=#7196ff>【白厄】</color>，3个节点后获得<color=#7196ff>【星期日】</color>。\\n\\n<color=#b4b4b4><i>升星结果取决于较多的那一方。比如，2星<color=#7196ff>【白厄】</color>+2星<color=#7196ff>【白厄】</color>+2星<color=#7196ff>【星期日】</color>=3星<color=#7196ff>【白厄】</color>。</i></color>"
+    },
+    {
+      "strategy_id": "352301",
+      "title": "双龙会",
+      "description": "你的<color=#6cce9f>【丹恒•饮月】</color>/<color=#6cce9f>【丹恒•腾荒】</color>可以互相用于升星。首次获得3星<color=#6cce9f>【丹恒•饮月】</color>/<color=#6cce9f>【丹恒•腾荒】</color>之一时，立即获得另一个的3星版本。获得<color=#6cce9f>【丹恒•腾荒】</color>、<color=#6cce9f>【丹恒•饮月】</color>。\\n\\n<color=#b4b4b4><i>升星结果取决于较多的那一方。比如，2星<color=#6cce9f>【丹恒•饮月】</color>+2星<color=#6cce9f>【丹恒•腾荒】</color>+2星<color=#6cce9f>【丹恒•腾荒】</color>=3星<color=#6cce9f>【丹恒•腾荒】</color>。</i></color>"
+    },
+    {
+      "strategy_id": "352401",
+      "title": "盗用身份",
+      "description": "进入第二位面的首领节点时，获得一个穿着2个【动能激发剑】和【列车同行星徽】的<color=#927fe7>【火花】</color>和1个<color=#927fe7>【{NICKNAME}】</color>。"
+    },
+    {
+      "strategy_id": "352501",
+      "title": "本姑娘就是罗刹",
+      "description": "获得2星<color=#b4b4b4>【三月七】</color>。每次进入新节点时，获得<color=#b4b4b4>【三月七】</color>。进入战斗前，这位姑娘化身<color=#927fe7>【罗刹】</color>。战斗中，她会「治疗」敌方目标，造成等同于（200+2.0*后台强度）%的基础伤害，每有100后台强度，还可在「急救」时造成2%最大生命值的真实伤害。\\n\\n<color=#b4b4b4><i>现在，本姑娘就是罗刹！</i></color>"
+    },
+    {
+      "strategy_id": "360101",
+      "title": "摸个鱼吧 III",
+      "description": "摸到了！获得18个<color=#b4b4b4>【青雀】</color>和2个【好运令牌】！"
+    },
+    {
+      "strategy_id": "360201",
+      "title": "快请专家•彩",
+      "description": "获得2个【<gridfightinfo type=item id=99990>】，1个【好运令牌】和1个【进阶武装箱】。"
+    },
+    {
+      "strategy_id": "360301",
+      "title": "琼玉专家：青雀",
+      "description": "获得装备着3个随机星徽的专家顾问<color=#b4b4b4>【青雀】</color>，并使其在本局游戏中加入商店。获得2个【冶金炉】。"
+    },
+    {
+      "strategy_id": "360401",
+      "title": "贸易专家：停云",
+      "description": "获得专家顾问<color=#b4b4b4>【停云】</color>，并使其在本局游戏中加入商店。并获得4个【简易武装箱】、【精密拆装扳手】和10金币。"
+    },
+    {
+      "strategy_id": "360501",
+      "title": "调饮专家：加拉赫",
+      "description": "获得装备着【绝对热量】的专家顾问<color=#b4b4b4>【加拉赫】</color>，并使其在本局游戏中加入商店。加拉赫行动时，为我方全体恢复3点能量并触发【绝对热量】的生命回复效果。"
+    }
+  ]
+}

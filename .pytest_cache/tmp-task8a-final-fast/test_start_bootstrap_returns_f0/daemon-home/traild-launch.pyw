@@ -1,0 +1,7 @@
+from __future__ import annotations
+import os
+import sys
+from trail.daemon.server import main
+os.chdir(r"C:\Users\34404\source\repos\trail-cli\.worktrees\cw-static-resource-bundle\.pytest_cache\tmp-task8a-final-fast\test_start_bootstrap_returns_f0")
+sys.path.insert(0, r"C:\Users\34404\source\repos\trail-cli\.worktrees\cw-static-resource-bundle\.pytest_cache\tmp-task8a-final-fast\test_start_bootstrap_returns_f0")
+main()

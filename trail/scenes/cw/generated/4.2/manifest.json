@@ -1,0 +1,599 @@
+{
+  "bundle_schema_version": 1,
+  "generator_schema_version": 1,
+  "resource_version": "4.2",
+  "generated_at": "2026-04-30T20:39:46.496890+00:00",
+  "season_id": "1",
+  "sub_season_id": "3",
+  "rpg_game_big_version": "4.2",
+  "rpg_game_lineup_tourn_filter": "3.7",
+  "source_kind": "build",
+  "files": [
+    {
+      "path": "raw_config.json",
+      "sha256": "7a0f84e0c9973e79394fdad4da4f89ccad519db62fbb2c67418a65d32790331a",
+      "size": 644655
+    },
+    {
+      "path": "guide_config.json",
+      "sha256": "04e3ed1448c18ce796beb0d7f54120090c64047f322659ab764be62516095116",
+      "size": 97959
+    },
+    {
+      "path": "guide_config_enriched.json",
+      "sha256": "14d29c0c462650cd8e78d1878526526b3623ffb4a9c83687f43754c83444ba76",
+      "size": 150723
+    },
+    {
+      "path": "indexes.json",
+      "sha256": "80fcb2a55bbaa5108c1792a7a3b207b3531ab20f3cafe5eb004c41c501837442",
+      "size": 380463
+    },
+    {
+      "path": "equipment/manifest.json",
+      "sha256": "4e4d9d592cf4226678990c79f00a0b0733e1cc996d9d1e70de9e8ed544491270",
+      "size": 59834
+    },
+    {
+      "path": "equipment/features.json",
+      "sha256": "40701510f84edd20410b41b91050e90cc15d8fae5ee61551d6056a166eae4d34",
+      "size": 44735212
+    },
+    {
+      "path": "equipment/icons/advanced-350701.png",
+      "sha256": "b1dcca02e296bb358ad69fdd926bdeba5bb18a391083f71e3c859e53575d10a1",
+      "size": 26332
+    },
+    {
+      "path": "equipment/icons/basic-350601.png",
+      "sha256": "4d698cfb86282b396689a6e2800f8937b8d14b01528fff0cd3a1b8f6243b8ff0",
+      "size": 25106
+    },
+    {
+      "path": "equipment/icons/basic-350602.png",
+      "sha256": "657d42bc44af06210a7a2889e03263f25638214b0ee2767b925320f8af0e9025",
+      "size": 23134
+    },
+    {
+      "path": "equipment/icons/advanced-35030101.png",
+      "sha256": "d84b6bb2e5872bc5eeee7636fc67d9b17ade40a6db4f9c47ef5a23d6e836cf83",
+      "size": 27494
+    },
+    {
+      "path": "equipment/icons/basic-350201.png",
+      "sha256": "46ecae4fb9f1aa0b19970320f546250642df6f2fa253f116ef6811e01dfd9754",
+      "size": 19795
+    },
+    {
+      "path": "equipment/icons/advanced-35030102.png",
+      "sha256": "71ddcbbd1eac563bd90d58b3246f6a439d3d3b12220930d9e203692c71e28e35",
+      "size": 27213
+    },
+    {
+      "path": "equipment/icons/basic-350202.png",
+      "sha256": "9fcd1fe1711a57c58222ce4f77db3fa092e7243e3b72715a2431f34753543eb4",
+      "size": 12939
+    },
+    {
+      "path": "equipment/icons/advanced-35030103.png",
+      "sha256": "a6aa5f556e96c999a62e5e8fe733009beed56cecccdf25c6926043810ffdea88",
+      "size": 34427
+    },
+    {
+      "path": "equipment/icons/basic-350203.png",
+      "sha256": "1ee627ae6e5d9cb78efd4a3bc3361af5825b447545311e8de142735f45accfd8",
+      "size": 17935
+    },
+    {
+      "path": "equipment/icons/advanced-35030104.png",
+      "sha256": "ea0c0251c3b0e55cdb9c5a110810388002cf013671a937b07ca42faff244a957",
+      "size": 34864
+    },
+    {
+      "path": "equipment/icons/basic-350204.png",
+      "sha256": "1de54531030ff9705d0c12f0818d7e52d89c45448ba22f57491989381b80506f",
+      "size": 14428
+    },
+    {
+      "path": "equipment/icons/advanced-35030105.png",
+      "sha256": "2779f8f1370dfc428f3034b45e5946eb8e7bd7ac5fb186459d276719b5b7a088",
+      "size": 32232
+    },
+    {
+      "path": "equipment/icons/basic-350205.png",
+      "sha256": "f306e4b161cd855a7faa957f5bc48b47b0e190a572772217b484971f408f7e48",
+      "size": 20910
+    },
+    {
+      "path": "equipment/icons/advanced-35030106.png",
+      "sha256": "9defb3b87dd114fe3930f899d811f6af891255f960a99a4bc0810f76b9b5ba2e",
+      "size": 31608
+    },
+    {
+      "path": "equipment/icons/basic-350206.png",
+      "sha256": "cc38dd1e3a53c340f5683829cc1441248d2526bcbacbfabadc1fa54a0da23115",
+      "size": 15584
+    },
+    {
+      "path": "equipment/icons/advanced-35030107.png",
+      "sha256": "63cd3450dc2a399cedadda2646f5cc767a372bcf85edce0dda2f72fc7a52eb6a",
+      "size": 32105
+    },
+    {
+      "path": "equipment/icons/basic-350207.png",
+      "sha256": "932d70ce3c71574802201a69552c485c72f5a2695d6786168d113d356852ec7a",
+      "size": 14256
+    },
+    {
+      "path": "equipment/icons/advanced-35030108.png",
+      "sha256": "479ddf1b97ab768b3487054fb4c22c9801536c655f9fff85505a2072a0c0a20b",
+      "size": 30628
+    },
+    {
+      "path": "equipment/icons/basic-350208.png",
+      "sha256": "54301a075bddf3c0574b4bf8379077b587212948d5a8445210454f78f32e8fc3",
+      "size": 15041
+    },
+    {
+      "path": "equipment/icons/advanced-35030202.png",
+      "sha256": "7c31c127dcc648b1ab4537a9edc0cb0d9bb547c40d8b2e5c39251182c78899ea",
+      "size": 32451
+    },
+    {
+      "path": "equipment/icons/advanced-35030203.png",
+      "sha256": "4c20ec07d2ea1218cb86e59cc1401f82edd9a568df7ab9d2d565bf75c9cf5487",
+      "size": 35400
+    },
+    {
+      "path": "equipment/icons/advanced-35030204.png",
+      "sha256": "11aa297f1af0c7b57354d6489894c9de5bd56eb88e9c848304752d7254ac123b",
+      "size": 31426
+    },
+    {
+      "path": "equipment/icons/advanced-35030205.png",
+      "sha256": "cc50e3a95efae2c81aae8bc888a8d109f9ca9ff475cb2e80d9990ae77533f3b9",
+      "size": 30735
+    },
+    {
+      "path": "equipment/icons/advanced-35030206.png",
+      "sha256": "8dfd6459fa8dc35680546773d3fd3388074a4750731e767f1afe2180c148f7a1",
+      "size": 32574
+    },
+    {
+      "path": "equipment/icons/advanced-35030207.png",
+      "sha256": "1d88629c2ee4125b9b6ca0de10c2de413a15126d6c9696698ce66c3faeea4bc0",
+      "size": 29898
+    },
+    {
+      "path": "equipment/icons/advanced-35030208.png",
+      "sha256": "7be2b1935caf307771ba33110a827bd9b2fbb3f1a1dd5676697a5c8d16b37f05",
+      "size": 32216
+    },
+    {
+      "path": "equipment/icons/advanced-35030303.png",
+      "sha256": "ce80500d87e5069742e25b32485806a550088c1914f141b3be95c2dac626e4b6",
+      "size": 36366
+    },
+    {
+      "path": "equipment/icons/advanced-35030304.png",
+      "sha256": "8a42ac0af5c588015d8ac08f432ae948e75b1c37bf7ba4a4d43839d73bc203f8",
+      "size": 33263
+    },
+    {
+      "path": "equipment/icons/advanced-35030305.png",
+      "sha256": "3fd1e5a77531ff16543223d908583755dc3dd6018947dee6b0716792dc2fd1a6",
+      "size": 32927
+    },
+    {
+      "path": "equipment/icons/advanced-35030306.png",
+      "sha256": "300948aa37af22457813fbb2e31ff2908b4fe0ee01d0f20effebf34622b6d96b",
+      "size": 36035
+    },
+    {
+      "path": "equipment/icons/advanced-35030307.png",
+      "sha256": "00a20a6e81eb6aa308c808a84c635ee0d5a9d8b15e202ba08d4dcb5fcaa50a6b",
+      "size": 31375
+    },
+    {
+      "path": "equipment/icons/advanced-35030308.png",
+      "sha256": "e7c3023abd6bdb8ccac51694068f5956a9ce52b3b8ff653b07f03a3f9bedf1f3",
+      "size": 36082
+    },
+    {
+      "path": "equipment/icons/advanced-35030404.png",
+      "sha256": "a0690d5f188bee40e981b0d1b82d0ed848efe6673d671e4dca80399f7d178bea",
+      "size": 24731
+    },
+    {
+      "path": "equipment/icons/advanced-35030405.png",
+      "sha256": "cbfb03faf59605e25df50e8081f3dba15e1f3d3ce2df647c653f02189a43bd4f",
+      "size": 32702
+    },
+    {
+      "path": "equipment/icons/advanced-35030406.png",
+      "sha256": "205e999508261547b665f6dd07c67c98ffcea0c6aa5f04a209a3d34d1a5476f5",
+      "size": 36018
+    },
+    {
+      "path": "equipment/icons/advanced-35030407.png",
+      "sha256": "7c6d3fb5b8004e5c3ef125d4d4ca73f48d52da62613040f0bc263aae29f95c91",
+      "size": 27215
+    },
+    {
+      "path": "equipment/icons/advanced-35030408.png",
+      "sha256": "fde7583797394e843760f9e7d06c21cfafbb4d6bcf4a4fd278d4774b1180e356",
+      "size": 34559
+    },
+    {
+      "path": "equipment/icons/advanced-35030505.png",
+      "sha256": "04f8d5129388146c837245a0cbe610e3ec0b56f027c91f7ba1c81a64a742bf0a",
+      "size": 33837
+    },
+    {
+      "path": "equipment/icons/advanced-35030506.png",
+      "sha256": "7914ec67e99342d1d9a102e8e833b303a741850bac564585740814e57ee33313",
+      "size": 30557
+    },
+    {
+      "path": "equipment/icons/advanced-35030507.png",
+      "sha256": "528d3bea71a22a4bee8002cc2175580da4c0d85865e863dc41247501f9542fba",
+      "size": 25950
+    },
+    {
+      "path": "equipment/icons/advanced-35030508.png",
+      "sha256": "befaea1a76da46b7cf52f8b0bde405afe55f800eeabd9c0e1c79c7951d46e753",
+      "size": 30653
+    },
+    {
+      "path": "equipment/icons/advanced-35030606.png",
+      "sha256": "83b0d1f55108420242495fbf6d6716743984a18699377f47462aad562de99bbb",
+      "size": 28780
+    },
+    {
+      "path": "equipment/icons/advanced-35030607.png",
+      "sha256": "29e89dbe2a4135c3fa12b1e990452c8924bbf06a3cf75d495fb720b5705925fb",
+      "size": 32287
+    },
+    {
+      "path": "equipment/icons/advanced-35030608.png",
+      "sha256": "a0923c3ec24206ea1e3679cd35b7aec7aa05055c122c7b075aabb9dbe62a712e",
+      "size": 24212
+    },
+    {
+      "path": "equipment/icons/advanced-35030707.png",
+      "sha256": "667822dd1492ab7d532dd2ecb4c9914edb789e2cbb8efee078a1fa5f16d23b60",
+      "size": 33375
+    },
+    {
+      "path": "equipment/icons/advanced-35030708.png",
+      "sha256": "4d51e4d00c95f2b3be2774ed944a755ed5fa2630868526e300f4ed748f8e0248",
+      "size": 26953
+    },
+    {
+      "path": "equipment/icons/advanced-35030808.png",
+      "sha256": "06ba46c8cbac0c8dc616fcc2f4ebb534a78c5539f8427c6e2c1aa555c1a1841d",
+      "size": 33247
+    },
+    {
+      "path": "equipment/icons/advanced-35040101.png",
+      "sha256": "d84b6bb2e5872bc5eeee7636fc67d9b17ade40a6db4f9c47ef5a23d6e836cf83",
+      "size": 27494
+    },
+    {
+      "path": "equipment/icons/advanced-35040102.png",
+      "sha256": "71ddcbbd1eac563bd90d58b3246f6a439d3d3b12220930d9e203692c71e28e35",
+      "size": 27213
+    },
+    {
+      "path": "equipment/icons/advanced-35040103.png",
+      "sha256": "a6aa5f556e96c999a62e5e8fe733009beed56cecccdf25c6926043810ffdea88",
+      "size": 34427
+    },
+    {
+      "path": "equipment/icons/advanced-35040104.png",
+      "sha256": "ea0c0251c3b0e55cdb9c5a110810388002cf013671a937b07ca42faff244a957",
+      "size": 34864
+    },
+    {
+      "path": "equipment/icons/advanced-35040105.png",
+      "sha256": "2779f8f1370dfc428f3034b45e5946eb8e7bd7ac5fb186459d276719b5b7a088",
+      "size": 32232
+    },
+    {
+      "path": "equipment/icons/advanced-35040106.png",
+      "sha256": "9defb3b87dd114fe3930f899d811f6af891255f960a99a4bc0810f76b9b5ba2e",
+      "size": 31608
+    },
+    {
+      "path": "equipment/icons/advanced-35040107.png",
+      "sha256": "63cd3450dc2a399cedadda2646f5cc767a372bcf85edce0dda2f72fc7a52eb6a",
+      "size": 32105
+    },
+    {
+      "path": "equipment/icons/advanced-35040108.png",
+      "sha256": "479ddf1b97ab768b3487054fb4c22c9801536c655f9fff85505a2072a0c0a20b",
+      "size": 30628
+    },
+    {
+      "path": "equipment/icons/advanced-35040202.png",
+      "sha256": "7c31c127dcc648b1ab4537a9edc0cb0d9bb547c40d8b2e5c39251182c78899ea",
+      "size": 32451
+    },
+    {
+      "path": "equipment/icons/advanced-35040203.png",
+      "sha256": "4c20ec07d2ea1218cb86e59cc1401f82edd9a568df7ab9d2d565bf75c9cf5487",
+      "size": 35400
+    },
+    {
+      "path": "equipment/icons/advanced-35040204.png",
+      "sha256": "11aa297f1af0c7b57354d6489894c9de5bd56eb88e9c848304752d7254ac123b",
+      "size": 31426
+    },
+    {
+      "path": "equipment/icons/advanced-35040205.png",
+      "sha256": "cc50e3a95efae2c81aae8bc888a8d109f9ca9ff475cb2e80d9990ae77533f3b9",
+      "size": 30735
+    },
+    {
+      "path": "equipment/icons/advanced-35040206.png",
+      "sha256": "8dfd6459fa8dc35680546773d3fd3388074a4750731e767f1afe2180c148f7a1",
+      "size": 32574
+    },
+    {
+      "path": "equipment/icons/advanced-35040207.png",
+      "sha256": "1d88629c2ee4125b9b6ca0de10c2de413a15126d6c9696698ce66c3faeea4bc0",
+      "size": 29898
+    },
+    {
+      "path": "equipment/icons/advanced-35040208.png",
+      "sha256": "7be2b1935caf307771ba33110a827bd9b2fbb3f1a1dd5676697a5c8d16b37f05",
+      "size": 32216
+    },
+    {
+      "path": "equipment/icons/advanced-35040303.png",
+      "sha256": "ce80500d87e5069742e25b32485806a550088c1914f141b3be95c2dac626e4b6",
+      "size": 36366
+    },
+    {
+      "path": "equipment/icons/advanced-35040304.png",
+      "sha256": "8a42ac0af5c588015d8ac08f432ae948e75b1c37bf7ba4a4d43839d73bc203f8",
+      "size": 33263
+    },
+    {
+      "path": "equipment/icons/advanced-35040305.png",
+      "sha256": "3fd1e5a77531ff16543223d908583755dc3dd6018947dee6b0716792dc2fd1a6",
+      "size": 32927
+    },
+    {
+      "path": "equipment/icons/advanced-35040306.png",
+      "sha256": "300948aa37af22457813fbb2e31ff2908b4fe0ee01d0f20effebf34622b6d96b",
+      "size": 36035
+    },
+    {
+      "path": "equipment/icons/advanced-35040307.png",
+      "sha256": "00a20a6e81eb6aa308c808a84c635ee0d5a9d8b15e202ba08d4dcb5fcaa50a6b",
+      "size": 31375
+    },
+    {
+      "path": "equipment/icons/advanced-35040308.png",
+      "sha256": "e7c3023abd6bdb8ccac51694068f5956a9ce52b3b8ff653b07f03a3f9bedf1f3",
+      "size": 36082
+    },
+    {
+      "path": "equipment/icons/advanced-35040404.png",
+      "sha256": "a0690d5f188bee40e981b0d1b82d0ed848efe6673d671e4dca80399f7d178bea",
+      "size": 24731
+    },
+    {
+      "path": "equipment/icons/advanced-35040405.png",
+      "sha256": "cbfb03faf59605e25df50e8081f3dba15e1f3d3ce2df647c653f02189a43bd4f",
+      "size": 32702
+    },
+    {
+      "path": "equipment/icons/advanced-35040406.png",
+      "sha256": "205e999508261547b665f6dd07c67c98ffcea0c6aa5f04a209a3d34d1a5476f5",
+      "size": 36018
+    },
+    {
+      "path": "equipment/icons/advanced-35040407.png",
+      "sha256": "7c6d3fb5b8004e5c3ef125d4d4ca73f48d52da62613040f0bc263aae29f95c91",
+      "size": 27215
+    },
+    {
+      "path": "equipment/icons/advanced-35040408.png",
+      "sha256": "fde7583797394e843760f9e7d06c21cfafbb4d6bcf4a4fd278d4774b1180e356",
+      "size": 34559
+    },
+    {
+      "path": "equipment/icons/advanced-35040505.png",
+      "sha256": "04f8d5129388146c837245a0cbe610e3ec0b56f027c91f7ba1c81a64a742bf0a",
+      "size": 33837
+    },
+    {
+      "path": "equipment/icons/advanced-35040506.png",
+      "sha256": "7914ec67e99342d1d9a102e8e833b303a741850bac564585740814e57ee33313",
+      "size": 30557
+    },
+    {
+      "path": "equipment/icons/advanced-35040507.png",
+      "sha256": "528d3bea71a22a4bee8002cc2175580da4c0d85865e863dc41247501f9542fba",
+      "size": 25950
+    },
+    {
+      "path": "equipment/icons/advanced-35040508.png",
+      "sha256": "befaea1a76da46b7cf52f8b0bde405afe55f800eeabd9c0e1c79c7951d46e753",
+      "size": 30653
+    },
+    {
+      "path": "equipment/icons/advanced-35040606.png",
+      "sha256": "83b0d1f55108420242495fbf6d6716743984a18699377f47462aad562de99bbb",
+      "size": 28780
+    },
+    {
+      "path": "equipment/icons/advanced-35040607.png",
+      "sha256": "29e89dbe2a4135c3fa12b1e990452c8924bbf06a3cf75d495fb720b5705925fb",
+      "size": 32287
+    },
+    {
+      "path": "equipment/icons/advanced-35040608.png",
+      "sha256": "a0923c3ec24206ea1e3679cd35b7aec7aa05055c122c7b075aabb9dbe62a712e",
+      "size": 24212
+    },
+    {
+      "path": "equipment/icons/advanced-35040707.png",
+      "sha256": "667822dd1492ab7d532dd2ecb4c9914edb789e2cbb8efee078a1fa5f16d23b60",
+      "size": 33375
+    },
+    {
+      "path": "equipment/icons/advanced-35040708.png",
+      "sha256": "4d51e4d00c95f2b3be2774ed944a755ed5fa2630868526e300f4ed748f8e0248",
+      "size": 26953
+    },
+    {
+      "path": "equipment/icons/advanced-35040808.png",
+      "sha256": "06ba46c8cbac0c8dc616fcc2f4ebb534a78c5539f8427c6e2c1aa555c1a1841d",
+      "size": 33247
+    },
+    {
+      "path": "equipment/icons/advanced-35051001.png",
+      "sha256": "880c2f03501a002f8d7e1247bc7473fbe67c82b62aa84823ce0919df598dead8",
+      "size": 26664
+    },
+    {
+      "path": "equipment/icons/advanced-35051003.png",
+      "sha256": "b59781b9a279c6da5a5f17b817529312acedb3abc6b499d6d4b279b2eee8179a",
+      "size": 25792
+    },
+    {
+      "path": "equipment/icons/advanced-35051005.png",
+      "sha256": "dcc04105f316dc466cb2bc4d4c2a539716fa580071195937688568a2bd7808a9",
+      "size": 25569
+    },
+    {
+      "path": "equipment/icons/advanced-35051006.png",
+      "sha256": "3fc7ad4b3f8ac8e9926d55938a7e6cd99bf9ad62b42787201193edae51726fbf",
+      "size": 26390
+    },
+    {
+      "path": "equipment/icons/advanced-35051007.png",
+      "sha256": "4233645f028ec0e535e32bca5302d755e9bd8012a83cfa78c1a4ec6b70e7c593",
+      "size": 27974
+    },
+    {
+      "path": "equipment/icons/advanced-35051008.png",
+      "sha256": "8bbdbbce9a2e5c2cd04efcae5de8bd5e3ecf1d20d16415b5ccd3296551ab6313",
+      "size": 27017
+    },
+    {
+      "path": "equipment/icons/advanced-35051010.png",
+      "sha256": "0ddeff4f1b6d020291f49675b5135231063a0aa6671d05f3d2b4af1e06468d2e",
+      "size": 27587
+    },
+    {
+      "path": "equipment/icons/advanced-35051011.png",
+      "sha256": "3acb8c0dc51c022f792872d60147fdf0fdc5aa0d5e8ba05fa48a64f8a4d11e92",
+      "size": 27156
+    },
+    {
+      "path": "equipment/icons/advanced-35051012.png",
+      "sha256": "a36a6427bfe9a9c6b5ae4394a80fba60b62bee0ebb141cdf439371a35e935823",
+      "size": 26551
+    },
+    {
+      "path": "equipment/icons/advanced-35052001.png",
+      "sha256": "1572ee08ddaf5594f725987be62992e724ac5edfb4269c26ec77856e8e226a8c",
+      "size": 26365
+    },
+    {
+      "path": "equipment/icons/advanced-35052002.png",
+      "sha256": "f8b850c31f6f269b08a128d8ec030b0308991aa02c64ee6651fb61dfff1e27de",
+      "size": 25507
+    },
+    {
+      "path": "equipment/icons/advanced-35052003.png",
+      "sha256": "a64020323d03042596a6f9b3fce7611425904306269d7d964bf6c590f1f07f75",
+      "size": 26789
+    },
+    {
+      "path": "equipment/icons/advanced-35052004.png",
+      "sha256": "8a1d4ff5cf8364f9ca5ab0b830eecf7cbcfaadda6acc98edb7b040d769bc0bc0",
+      "size": 25814
+    },
+    {
+      "path": "equipment/icons/advanced-35052005.png",
+      "sha256": "2ae3a3a5dbdb4e5a75934219e7384dcf2aff0f84f19c8f2b61911bf8b0c94404",
+      "size": 25444
+    },
+    {
+      "path": "equipment/icons/advanced-35052006.png",
+      "sha256": "f8e718bb09d258605c6007ecb1a0dcbdb3039d2da5c38f95df1cbfada6769dfd",
+      "size": 26867
+    },
+    {
+      "path": "equipment/icons/advanced-35052007.png",
+      "sha256": "1adacfce62bbaade04e88a4243ea086dff33c676b3cab861834f4f4927a89e80",
+      "size": 27891
+    },
+    {
+      "path": "equipment/icons/advanced-35052008.png",
+      "sha256": "3a571f4099c933598710e217781eb0f01073a6a3a0a535e1625eab64e95404a0",
+      "size": 27903
+    },
+    {
+      "path": "equipment/icons/advanced-35052009.png",
+      "sha256": "79832b85ad7e3ccf9886f6f4a96c55390f90f07ca7c244e6643287058b26b06d",
+      "size": 26009
+    },
+    {
+      "path": "equipment/icons/advanced-35052010.png",
+      "sha256": "409dd627185b44f374fd808ca41170dfb0ce3514c45e2d835bb4ebf9eab26044",
+      "size": 25729
+    },
+    {
+      "path": "equipment/icons/advanced-35052011.png",
+      "sha256": "dd1d1094a52df2472e46ea9c6c107b55e06f14ad075f2a758e5f36e1a37c81be",
+      "size": 27278
+    },
+    {
+      "path": "equipment/icons/advanced-35052012.png",
+      "sha256": "5e3f476b0d573f61191ee146352d31575c8d25e1bb1b02335f717d44cc34a66d",
+      "size": 35120
+    },
+    {
+      "path": "equipment/icons/basic-352101.png",
+      "sha256": "61c53c0231ca3f99d194a375576983e7c1efe52f886431f927d28a0c84c0af0d",
+      "size": 25407
+    },
+    {
+      "path": "equipment/icons/advanced-35100001.png",
+      "sha256": "63cd3450dc2a399cedadda2646f5cc767a372bcf85edce0dda2f72fc7a52eb6a",
+      "size": 32105
+    },
+    {
+      "path": "equipment/icons/advanced-35100002.png",
+      "sha256": "4c20ec07d2ea1218cb86e59cc1401f82edd9a568df7ab9d2d565bf75c9cf5487",
+      "size": 35400
+    },
+    {
+      "path": "equipment/icons/advanced-35100003.png",
+      "sha256": "00a20a6e81eb6aa308c808a84c635ee0d5a9d8b15e202ba08d4dcb5fcaa50a6b",
+      "size": 31375
+    },
+    {
+      "path": "equipment/icons/advanced-35100011.png",
+      "sha256": "63cd3450dc2a399cedadda2646f5cc767a372bcf85edce0dda2f72fc7a52eb6a",
+      "size": 32105
+    },
+    {
+      "path": "equipment/icons/advanced-35100012.png",
+      "sha256": "4c20ec07d2ea1218cb86e59cc1401f82edd9a568df7ab9d2d565bf75c9cf5487",
+      "size": 35400
+    },
+    {
+      "path": "equipment/icons/advanced-35100013.png",
+      "sha256": "00a20a6e81eb6aa308c808a84c635ee0d5a9d8b15e202ba08d4dcb5fcaa50a6b",
+      "size": 31375
+    }
+  ],
+  "content_digest": "937a04ea82f225fd473de805e01ebdb70550549f6b977b188feda92b798336d7"
+}

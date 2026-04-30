@@ -112,6 +112,7 @@ def _append_warnings(lines: list[str], payload: dict[str, Any]) -> None:
             lines,
             "warn",
             ("code", warning.get("code")),
+            ("count", warning.get("count")),
             ("query", warning.get("query")),
             ("resolved", warning.get("resolved")),
             ("msg", warning.get("message")),
@@ -870,7 +871,7 @@ def _render_cw_portal_select(command: str, payload: dict[str, Any]) -> list[str]
     equipment = _as_dict(data.get("equipment"))
     _append_cw_equipment_section(lines, equipment)
     _append_cw_shop_section(lines, shop)
-    _append_cw_equipment_low_confidence_warning(lines, equipment)
+    _append_cw_equipment_low_confidence_warning(lines, payload, equipment)
     equipment_stale = equipment.get("stale")
     equipment_is_fresh = equipment_stale is False or (
         type(equipment_stale) in (int, float) and equipment_stale == 0
@@ -1357,7 +1358,18 @@ def _cw_equipment_uncertain_count(data: dict[str, Any]) -> int:
     )
 
 
-def _append_cw_equipment_low_confidence_warning(lines: list[str], data: dict[str, Any]) -> None:
+def _payload_has_warning_code(payload: dict[str, Any], code: str) -> bool:
+    warnings = payload.get("warnings")
+    if not isinstance(warnings, list):
+        return False
+    return any(isinstance(warning, dict) and warning.get("code") == code for warning in warnings)
+
+
+def _append_cw_equipment_low_confidence_warning(
+    lines: list[str], payload: dict[str, Any], data: dict[str, Any]
+) -> None:
+    if _payload_has_warning_code(payload, "LOW_CONFIDENCE"):
+        return
     uncertain_count = _cw_equipment_uncertain_count(data)
     if uncertain_count <= 0:
         return
@@ -1389,7 +1401,7 @@ def _render_cw_equipment_read(command: str, payload: dict[str, Any]) -> list[str
     ]
     _append_success_capture_block(lines, payload)
     _append_cw_equipment_lines(lines, data)
-    _append_cw_equipment_low_confidence_warning(lines, data)
+    _append_cw_equipment_low_confidence_warning(lines, payload, data)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines

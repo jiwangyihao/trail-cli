@@ -1,0 +1,34 @@
+{
+  "rpg_game_big_version": "3.2",
+  "trait_info_list": [
+    {
+      "id": "t1",
+      "name": "Trait A",
+      "type": "faction"
+    }
+  ],
+  "role_list": [
+    {
+      "id": "r1",
+      "name": "Role A",
+      "trait_ids": [
+        "t1"
+      ]
+    }
+  ],
+  "portal_list": [],
+  "fight_augment_list": [
+    {
+      "id": "a1",
+      "name": "Strategy A",
+      "desc": "desc"
+    }
+  ],
+  "equipment_list": [
+    {
+      "id": "e1",
+      "name": "Equipment A",
+      "icon": "https://example.test/icon-a.png"
+    }
+  ]
+}

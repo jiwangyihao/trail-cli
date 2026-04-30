@@ -27,7 +27,8 @@ CW_GUIDE_HELP = (
 CW_PORTAL_HELP = (
     "投资环境页上的识别/选择/刷新/重开动作。"
     "detect 重新识别并保存当前三张卡；refresh 点击刷新后生成新的三张卡。"
-    "投资环境卡片会输出 投资环境、说明、待收集、score，以及下挂攻略摘要。"
+    "投资环境卡片会输出 投资环境、说明、待收集、score；默认不自动附加动态攻略摘要。"
+    "需要动态攻略信息时显式 guide.list.cw / guide.fetch.cw。"
     "select 成功后会自动应用当前已选攻略，并自动收集 stage/slots/equipment/shop 预备事实；"
     "装备失败（装备读取失败）会作为 soft warning 返回，不改变 cw.portal.select -> trail-cw-prep handoff。"
 )
@@ -40,7 +41,8 @@ CW_SLOTS_HELP = "读取编队槽位并执行换位或上场。"
 CW_SHOP_HELP = "读取商店、购买槽位/经验并刷新或关闭。"
 CW_EQUIPMENT_HELP = (
     "compose 是只写 session 的装备记录命令，不执行真实 UI 合成，slot 使用从 1 开始的位置。"
-    "prepare 只准备资源缓存，read 会截图并识别当前装备网格。"
+    "prepare 默认只汇总 bundle 装备资源，不下载；--refresh 写 workspace override 并刷新图标/特征。"
+    "read 默认使用 bundle recognizer，会截图并识别当前装备网格。"
 )
 CW_CRYSTALS_HELP = "收取当前局内结晶产出。"
 CW_HAND_HELP = "出售手牌或生成出售候选。"
@@ -398,6 +400,9 @@ def cw_equipment_prepare(
     session: str = typer.Option(..., "--session"),
     refresh: bool = typer.Option(False, "--refresh"),
 ) -> None:
+    if current_output_format() is OutputFormat.YAML:
+        print_output("cw.equipment.prepare", _output_format_not_supported_response("cw.equipment.prepare"))
+        return
     _print_cw("cw.equipment.prepare", session_id=session, payload={"refresh": refresh})
 
 

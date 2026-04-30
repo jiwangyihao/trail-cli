@@ -19,6 +19,12 @@ IMAGE_BACKED_OPEN_SHOP_SHOT = IMAGE_BACKED_SHOT_ROOT / "2033ad2b66ff4947b0b6644f
 IMAGE_BACKED_CLOSED_SHOP_SHOT = IMAGE_BACKED_SHOT_ROOT / "3e2fae9b5be74f99bbfce0953d9d1ec7-7ed1d69ed6.jpg"
 
 
+@pytest.fixture(autouse=True)
+def _default_no_network_cw_guide_config(monkeypatch):
+    config = _shop_catalog_config()
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: deepcopy(config), raising=False)
+
+
 def fake_shop_snapshot():
     return {
         "items": [{"name": "银狼", "price": 20}],
@@ -58,12 +64,16 @@ def _shop_catalog_config() -> dict:
             {"id": "1007", "name": "仙舟", "layers": [{"layer": 1}, {"layer": 3}]},
             {"id": "2002", "name": "量子", "layers": [{"layer": 1}, {"layer": 2}]},
             {"id": "3001", "name": "商店羁绊", "layers": [{"layer": 1}, {"layer": 2}]},
+            {"id": "4001", "name": "银河学者", "layers": [{"layer": 1}, {"layer": 2}]},
+            {"id": "4002", "name": "群攻", "layers": [{"layer": 1}, {"layer": 2}]},
         ],
         "roles": [
             {"id": "1502", "name": "爻光", "trait_ids": ["1007"]},
             {"id": "1001", "name": "希儿", "trait_ids": ["2002"]},
             {"id": "1002", "name": "佩拉", "trait_ids": ["2002"]},
+            {"id": "1003", "name": "银狼", "trait_ids": ["2002"]},
             {"id": "9001", "name": "商店角色", "trait_ids": ["3001"]},
+            {"id": "1013", "name": "黑塔", "trait_ids": ["4001", "4002"]},
         ],
     }
 

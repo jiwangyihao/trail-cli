@@ -788,6 +788,29 @@ def test_cw_equipment_compose_rejects_yaml_output(cli_runner, fake_daemon_client
     assert client.calls == []
 
 
+def test_cw_equipment_prepare_rejects_yaml_output_without_rpc(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {
+            "cw.equipment.prepare": build_success_response(
+                request_id="req-cw-equipment-prepare-yaml",
+                data={"big_version": "3.2", "count": 1, "cached": 1, "downloaded": 0, "refreshed": True},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        ["--format", "yaml", "cw", "equipment", "prepare", "--session", SESSION_ID, "--refresh"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.equipment.prepare code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        'why msg="yaml not supported for cw.equipment.prepare"',
+    ]
+    assert client.calls == []
+
+
 def test_cw_shop_scan_renders_unknown_result_failure_contract(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
@@ -1694,3 +1717,100 @@ def test_cw_slots_read_contract_includes_stage_projection(cli_runner, fake_daemo
         ],
     )
     _assert_single_call(client, method="cw.slots.read", payload={"slot": None}, tmp_path=tmp_path)
+
+
+def test_cw_equipment_read_yaml_keeps_structured_fields_after_resource_bundle(
+    cli_runner,
+    fake_daemon_client,
+    tmp_path,
+):
+    client = fake_daemon_client(
+        {
+            "cw.equipment.read": build_success_response(
+                request_id="req-equipment-read-yaml-fields",
+                data={
+                    "count": 1,
+                    "uncertain": 1,
+                    "empty": 59,
+                    "items": [
+                        {
+                            "pos": "equipment:1",
+                            "idx": 1,
+                            "row": 1,
+                            "col": 1,
+                            "center": {"x": 1855, "y": 275},
+                            "name": "幸运星",
+                            "score": 0.7,
+                            "gap": 0.01,
+                            "uncertain": True,
+                            "alt": "光能电池",
+                            "alt_score": 0.69,
+                            "candidates": [{"name": "幸运星", "score": 0.7}],
+                        }
+                    ],
+                    "backend": "vector",
+                    "layout": "default",
+                    "columns": 10,
+                    "rows": 6,
+                    "stale": False,
+                },
+                screenshot=".trail/shots/req-equipment-read-yaml-fields.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["--format", "yaml", "cw", "equipment", "read", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert "idx: 1" in result.stdout
+    assert "row: 1" in result.stdout
+    assert "col: 1" in result.stdout
+    assert "candidates:" in result.stdout
+    assert "gap: 0.01" in result.stdout
+    assert "alt: 光能电池" in result.stdout
+    assert "alt_score: 0.69" in result.stdout
+    assert "idx=" not in result.stdout
+    assert "row=" not in result.stdout
+    assert "col=" not in result.stdout
+    _assert_single_call(client, method="cw.equipment.read", payload={}, tmp_path=tmp_path)
+
+
+def test_guide_config_cw_cli_and_yaml_keep_bundle_shape(cli_runner, fake_daemon_client, tmp_path):
+    data = {
+        "meta": {"big_version": "3.2", "season_id": "s1", "sub_season_id": "sub1"},
+        "lineup_levels": [],
+        "traits": [{"id": "t1", "name": "贝洛伯格", "layers": [2, 4, 6]}],
+        "roles": [],
+        "role_tags": [],
+        "portal_list": [],
+        "strategy_list": [],
+    }
+    default_client = fake_daemon_client(
+        {"guide.config.cw": build_success_response(request_id="req-guide-config", data=data)}
+    )
+
+    default_result = cli_runner.invoke(app, ["guide", "config", "cw"])
+
+    assert default_result.exit_code == 0
+    assert "ok guide.config.cw" in default_result.stdout
+    assert "大版本=3.2" in default_result.stdout
+    assert default_client.calls[0]["method"] == "guide.config.cw"
+
+    yaml_client = fake_daemon_client(
+        {"guide.config.cw": build_success_response(request_id="req-guide-config-yaml", data=data)}
+    )
+
+    yaml_result = cli_runner.invoke(app, ["--format", "yaml", "guide", "config", "cw"])
+
+    assert yaml_result.exit_code == 0
+    assert "meta:" in yaml_result.stdout
+    assert "season_id: s1" in yaml_result.stdout
+    assert "sub_season_id: sub1" in yaml_result.stdout
+    assert "lineup_levels: []" in yaml_result.stdout
+    assert "traits:" in yaml_result.stdout
+    assert "贝洛伯格" in yaml_result.stdout
+    assert "roles: []" in yaml_result.stdout
+    assert "role_tags: []" in yaml_result.stdout
+    assert "portal_list: []" in yaml_result.stdout
+    assert "strategy_list: []" in yaml_result.stdout
+    assert yaml_client.calls[0]["method"] == "guide.config.cw"

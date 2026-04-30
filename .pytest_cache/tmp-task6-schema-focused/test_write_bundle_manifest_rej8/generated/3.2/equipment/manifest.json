@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "cache_key": "raw-config",
+      "name": "Raw Config",
+      "kind": "basic",
+      "icon_url": "https://example.test/raw-config.png",
+      "big_version": "3.2",
+      "local_path": "equipment/../raw_config.json",
+      "sha256": "8a22b0b197f1d26743a68b49e352bea165944ae71be577dc7073bef3ed9e8555",
+      "size": 105
+    }
+  ]
+}
