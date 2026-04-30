@@ -52,6 +52,7 @@ def test_third_party_notices_cover_runtime_transitive_dependencies():
         "six",
         "tqdm",
         "annotated-doc",
+        "importlib_metadata",
         "packaging",
         "pyperclip",
         "mpmath",

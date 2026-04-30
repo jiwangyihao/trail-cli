@@ -12,6 +12,7 @@ RUNTIME_DISTS = {
     "click",
     "colorama",
     "flatbuffers",
+    "importlib_metadata",
     "markdown-it-py",
     "mdurl",
     "mouseinfo",

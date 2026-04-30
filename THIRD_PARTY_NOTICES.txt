@@ -10,9 +10,9 @@ License-Files: annotated_doc-0.0.4.dist-info/licenses/LICENSE; LICENSE
 Notice: Document parameters, class attributes, return types, and variables inline, with Annotated.
 
 Package: click
-Version: 8.3.3
+Version: 8.3.2
 License: BSD-3-Clause
-License-Files: click-8.3.3.dist-info/licenses/LICENSE.txt; LICENSE.txt
+License-Files: click-8.3.2.dist-info/licenses/LICENSE.txt; LICENSE.txt
 Notice: Composable command line interface toolkit
 
 Package: colorama
@@ -26,6 +26,12 @@ Version: 25.12.19
 License: Apache 2.0
 License-Files: not provided by installed distribution
 Notice: The FlatBuffers serialization format for Python
+
+Package: importlib_metadata
+Version: 9.0.0
+License: Apache-2.0
+License-Files: importlib_metadata-9.0.0.dist-info/licenses/LICENSE; LICENSE
+Notice: Read metadata from Python packages
 
 Package: markdown-it-py
 Version: 4.0.0
@@ -58,7 +64,7 @@ License-Files: LICENSE.txt; numpy-2.4.4.dist-info/licenses/LICENSE.txt; numpy-2.
 Notice: Fundamental package for array computing in Python
 
 Package: onnxruntime
-Version: 1.25.1
+Version: 1.24.4
 License: MIT License
 License-Files: onnxruntime/LICENSE
 Notice: ONNX Runtime is a runtime accelerator for Machine Learning models
@@ -76,9 +82,9 @@ License-Files: cv2/LICENSE-3RD-PARTY.txt; cv2/LICENSE.txt; LICENSE-3RD-PARTY.txt
 Notice: Wrapper package for OpenCV python bindings.
 
 Package: packaging
-Version: 26.2
+Version: 26.0
 License: Apache-2.0 OR BSD-2-Clause
-License-Files: LICENSE; LICENSE.APACHE; LICENSE.BSD; packaging-26.2.dist-info/licenses/LICENSE; packaging-26.2.dist-info/licenses/LICENSE.APACHE; packaging-26.2.dist-info/licenses/LICENSE.BSD
+License-Files: LICENSE; LICENSE.APACHE; LICENSE.BSD; packaging-26.0.dist-info/licenses/LICENSE; packaging-26.0.dist-info/licenses/LICENSE.APACHE; packaging-26.0.dist-info/licenses/LICENSE.BSD
 Notice: Core utilities for Python packages
 
 Package: pillow
@@ -208,9 +214,9 @@ License-Files: LICENCE; tqdm-4.67.3.dist-info/licenses/LICENCE
 Notice: Fast, Extensible Progress Meter
 
 Package: typer
-Version: 0.25.0
+Version: 0.24.1
 License: MIT
-License-Files: LICENSE; typer-0.25.0.dist-info/licenses/LICENSE
+License-Files: LICENSE; typer-0.24.1.dist-info/licenses/LICENSE
 Notice: Typer, build great CLIs. Easy to code. Based on Python type hints.
 
 Package: windows-capture
