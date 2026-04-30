@@ -68,6 +68,18 @@ def _shop_catalog_config() -> dict:
     }
 
 
+def _shop_scan_catalog_config() -> dict:
+    return {
+        "traits": [
+            {"id": "4001", "name": "银河学者", "layers": [{"layer": 1}, {"layer": 2}]},
+            {"id": "4002", "name": "群攻", "layers": [{"layer": 1}, {"layer": 2}]},
+        ],
+        "roles": [
+            {"id": "1013", "name": "黑塔", "trait_ids": ["4001", "4002"]},
+        ],
+    }
+
+
 def load_cw_shop_module():
     try:
         return importlib.import_module("trail.scenes.cw.shop")
@@ -1789,12 +1801,13 @@ def test_shop_buy_slot_confirmation_canonicalizes_before_expect_compare(tmp_path
         (1, "银狼", fake_shop_snapshot, "SHOP_BUY_NOT_CONFIRMED"),
     ],
 )
-def test_shop_buy_slot_rejects_invalid_purchase_without_consuming_purchase(tmp_path, slot, expect, scanner, code):
+def test_shop_buy_slot_rejects_invalid_purchase_without_consuming_purchase(tmp_path, monkeypatch, slot, expect, scanner, code):
     shop_module = load_cw_shop_module()
     scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
     buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
     assert scan_cw_shop is not None
     assert buy_cw_shop_slot is not None
+    monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
 
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
@@ -1817,12 +1830,13 @@ def test_shop_buy_slot_rejects_invalid_purchase_without_consuming_purchase(tmp_p
     assert session.scene_state["cw"]["shop"]["items"] == [{"name": "银狼", "price": 20}]
 
 
-def test_shop_buy_slot_rejects_other_slot_change_without_target_change(tmp_path):
+def test_shop_buy_slot_rejects_other_slot_change_without_target_change(tmp_path, monkeypatch):
     shop_module = load_cw_shop_module()
     scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
     buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
     assert scan_cw_shop is not None
     assert buy_cw_shop_slot is not None
+    monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
 
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
@@ -1846,12 +1860,13 @@ def test_shop_buy_slot_rejects_other_slot_change_without_target_change(tmp_path)
     assert session.scene_state["cw"]["shop"] == before_shop
 
 
-def test_shop_buy_slot_noop_failure_keeps_shop_snapshot_unchanged(tmp_path):
+def test_shop_buy_slot_noop_failure_keeps_shop_snapshot_unchanged(tmp_path, monkeypatch):
     shop_module = load_cw_shop_module()
     scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
     buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
     assert scan_cw_shop is not None
     assert buy_cw_shop_slot is not None
+    monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
 
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
@@ -2533,6 +2548,7 @@ def test_cw_shop_mutating_commands_flow_through_command_service_journal(
     expected_value,
 ):
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: _shop_catalog_config())
     setup_patches(monkeypatch)
 
     envelope = _run_cw_mutation(
@@ -2554,6 +2570,7 @@ def test_cw_shop_mutating_commands_flow_through_command_service_journal(
 def test_cw_shop_scan_read_commands_persist_two_phase_snapshot(tmp_path: Path, monkeypatch):
     shop_module = load_cw_shop_module()
     _install_fake_shop_batch_ocr(monkeypatch, shop_module)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: _shop_scan_catalog_config())
     runtime = _build_cw_shop_scan_runtime(shop_module)
     registry, service, session, cw_service, _ = _build_cw_harness(tmp_path, runtime=runtime)
     loaded = service.load_session(session.session_id)
@@ -2609,6 +2626,7 @@ def test_cw_shop_scan_read_commands_persist_two_phase_snapshot(tmp_path: Path, m
 def test_cw_shop_scan_flows_through_command_service_mutation_journal_and_persists_snapshot(tmp_path: Path, monkeypatch):
     shop_module = load_cw_shop_module()
     _install_fake_shop_batch_ocr(monkeypatch, shop_module)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: _shop_scan_catalog_config())
     runtime = _build_cw_shop_scan_runtime(shop_module)
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     loaded = service.load_session(session.session_id)
@@ -2765,6 +2783,7 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_ocr_image_raises_afte
 ):
     shop_module = load_cw_shop_module()
     monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: {})
     runtime = _build_cw_shop_scan_runtime(
         shop_module,
         ocr_image_error=RuntimeError("batch OCR boom"),
@@ -2810,6 +2829,7 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_save_fails_after_clic
 ):
     shop_module = load_cw_shop_module()
     _install_fake_shop_batch_ocr(monkeypatch, shop_module)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: _shop_scan_catalog_config())
     runtime = _build_cw_shop_scan_runtime(shop_module)
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path, runtime=runtime)
     before_shop = {
@@ -2872,6 +2892,7 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_click_side_effect_rai
 ):
     shop_module = load_cw_shop_module()
     monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: {})
     runtime = _build_cw_shop_scan_runtime(
         shop_module,
         click_error=RuntimeError("click after effect boom"),
@@ -2931,6 +2952,7 @@ def test_cw_shop_scan_keeps_failed_before_side_effect_when_click_fails_before_in
 ):
     shop_module = load_cw_shop_module()
     monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: {})
     runtime = _build_cw_shop_scan_runtime(
         shop_module,
         click_error=TrailError("INPUT_BACKEND_MISSING", "input backend missing"),
@@ -2988,6 +3010,7 @@ def test_cw_shop_scan_keeps_failed_before_side_effect_when_window_not_foreground
 ):
     shop_module = load_cw_shop_module()
     monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: {})
     runtime = _build_cw_shop_scan_runtime(
         shop_module,
         click_error=TrailError("WINDOW_NOT_FOREGROUND", "窗口不在前台，无法执行输入"),
@@ -3046,6 +3069,7 @@ def test_cw_shop_scan_marks_applied_but_not_persisted_when_click_reports_window_
 ):
     shop_module = load_cw_shop_module()
     monkeypatch.setattr(shop_module, "sleep", lambda seconds: None)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: {})
     error = TrailError("WINDOW_NOT_FOREGROUND", "窗口不在前台，无法执行输入")
     error.completed_after_side_effect = True
     runtime = _build_cw_shop_scan_runtime(
@@ -3107,6 +3131,7 @@ def test_cw_shop_scan_ignores_metadata_boom_after_persist(
 ):
     shop_module = load_cw_shop_module()
     _install_fake_shop_batch_ocr(monkeypatch, shop_module)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: _shop_scan_catalog_config())
     absolute_screenshot_path = tmp_path / ".trail" / "shots" / "req-cw-shop-scan-metadata-boom.png"
     runtime = _build_cw_shop_scan_runtime(
         shop_module,
@@ -3208,6 +3233,7 @@ def test_cw_shop_buy_slot_marks_applied_but_not_persisted_when_confirmation_fail
         "trail.daemon.cw_service.shop_buyer_factory",
         lambda runtime: lambda slot, expect: runtime.click_point(111, 222),
     )
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {})
     monkeypatch.setattr("trail.daemon.cw_service.shop_scanner_factory", lambda runtime: fake_shop_snapshot)
     monkeypatch.setattr("trail.scenes.cw.shop.sleep", lambda seconds: None)
 

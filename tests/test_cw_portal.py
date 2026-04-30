@@ -1385,6 +1385,7 @@ def test_restart_cw_portal_waits_for_in_game_before_returning_home(tmp_path: Pat
     )
     monkeypatch.setattr(cw_service_module, "fetch_cw_guide_config", lambda **kwargs: {"portal_list": []}, raising=False)
     monkeypatch.setattr(cw_service_module, "summarize_portal_cards", lambda pieces, portal_list, collection_matches=None: _portal_cards(), raising=False)
+    monkeypatch.setattr(cw_service_module, "_attach_guides_to_cards", lambda cards, **kwargs: cards, raising=False)
 
     envelope = _run_cw_portal_mutation(
         command_service=command_service,
@@ -2476,6 +2477,7 @@ def test_cw_start_boss_preview_requires_complete_recorded_entry_before_side_effe
 
 def test_cw_start_noops_on_invest_and_backfills_entry_params(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    _stub_cw_start_fast_paths(monkeypatch)
     runtime = StartRuntime(
         locate_results={
             _asset("entry.invest_environment"): _box("entry.invest_environment", left=400, top=500),

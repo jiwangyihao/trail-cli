@@ -398,9 +398,10 @@ def test_known_cw_stage_writers_use_preserving_helper():
     assert offenders == []
 
 
-def test_wait_cw_stage_retries_until_stage_is_detected(tmp_path):
+def test_wait_cw_stage_retries_until_stage_is_detected(tmp_path, monkeypatch):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
     stages = iter([None, None, "settle"])
+    monkeypatch.setattr(stage_scene, "sleep", lambda seconds: None)
 
     refreshed = stage_scene.wait_cw_stage(session, detector=lambda: next(stages), timeout=1)
 
@@ -426,6 +427,7 @@ def test_wait_cw_stage_raises_timeout_when_stage_missing(tmp_path, monkeypatch):
     ticks = iter([0.0, 0.2, 1.2])
 
     monkeypatch.setattr(stage_scene, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(stage_scene, "sleep", lambda seconds: None)
 
     with pytest.raises(TrailError) as exc_info:
         stage_scene.wait_cw_stage(session, detector=lambda: None, timeout=1)

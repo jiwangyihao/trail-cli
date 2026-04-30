@@ -1274,6 +1274,7 @@ def test_cw_portal_select_preserves_numeric_zero_equipment_freshness(tmp_path: P
         return {"card_idx": card_idx, "portal_title": "A", "equipment": deepcopy(snapshot)}
 
     monkeypatch.setattr("trail.daemon.cw_service._select_portal_and_apply_selected_guide", fake_select)
+    monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: None)
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: Runtime())
     payload = CwService(runtime_service=runtime_service).handle_mutation(
         method="cw.portal.select",
@@ -2464,6 +2465,10 @@ def test_command_service_routes_cw_equipment_read_through_capture(tmp_path: Path
         return snapshot
 
     monkeypatch.setattr("trail.scenes.cw.equipment.read_cw_equipment", fake_read_equipment)
+    monkeypatch.setattr(
+        "trail.scenes.cw.equipment.fetch_cw_raw_guide_config",
+        lambda workspace_root=None: {"rpg_game_big_version": "test", "equipment_list": []},
+    )
     monkeypatch.setattr(
         "trail.daemon.cw_service.read_cw_equipment",
         fake_read_equipment,
@@ -4298,6 +4303,8 @@ def test_command_service_handles_cw_start_valid_ax_x_does_not_leak_public_invali
     from trail.runtime.resources import resolve_scene_asset
 
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
+    monkeypatch.setattr("trail.daemon.cw_service._attach_guides_to_cards", lambda cards, **kwargs: cards)
 
     def asset(alias: str) -> str:
         return str(resolve_scene_asset("cw", alias))
@@ -5636,6 +5643,7 @@ def test_command_service_handles_cw_portal_refresh_and_updates_snapshot(tmp_path
             "more": False,
         },
     )
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {"portal_list": []})
     monkeypatch.setattr("trail.daemon.cw_service.refresh_cw_portal", lambda session, runtime, portal_list: session.scene_state["cw"].__setitem__("portal", snapshot) or snapshot)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
@@ -6207,6 +6215,7 @@ def test_command_service_routes_cw_shop_buy_slot_through_mutation_journal(tmp_pa
     session = registry.for_workspace(str(tmp_path)).create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: SimpleNamespace())
     cw_service = CwService(runtime_service=runtime_service)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {})
     monkeypatch.setattr("trail.daemon.cw_service.shop_buyer_factory", lambda runtime: object())
     monkeypatch.setattr("trail.daemon.cw_service.shop_scanner_factory", lambda runtime: object())
     monkeypatch.setattr(
@@ -6293,6 +6302,7 @@ def test_command_service_handles_cw_shop_buy_exp_through_mutation_journal(tmp_pa
         session.scene_state.setdefault("cw", {})["shop"] = scanner()
         return SimpleNamespace(session=session, scene_state=session.scene_state, response_snapshot=session.scene_state["cw"]["shop"])
 
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {})
     monkeypatch.setattr("trail.daemon.cw_service.shop_exp_buyer_factory", fake_buyer_factory)
     monkeypatch.setattr("trail.daemon.cw_service.shop_scan_snapshot_reader_factory", fake_scanner_factory)
     monkeypatch.setattr("trail.daemon.cw_service.buy_cw_shop_exp", fake_buy_exp)
@@ -6359,6 +6369,7 @@ def test_command_service_marks_cw_shop_buy_exp_post_click_failure_recoverable(tm
         buyer()
         raise TrailError("CW_SHOP_SCAN_FAILED", "shop scan failed after buying exp")
 
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {})
     monkeypatch.setattr("trail.daemon.cw_service.shop_exp_buyer_factory", fake_buyer_factory)
     monkeypatch.setattr("trail.daemon.cw_service.buy_cw_shop_exp", fake_buy_exp)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)

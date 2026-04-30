@@ -15,6 +15,7 @@ FORBIDDEN_MODULE_PREFIXES = (
     "StarRailAssistant",
 )
 FORBIDDEN_IMPORTED_NAMES = {"TaskManager"}
+FORBIDDEN_SOURCE_TOKENS = (*FORBIDDEN_MODULE_PREFIXES, *FORBIDDEN_IMPORTED_NAMES)
 
 
 def _iter_python_sources():
@@ -23,7 +24,10 @@ def _iter_python_sources():
 
 
 def _iter_import_references(file: Path):
-    tree = ast.parse(file.read_text(encoding="utf-8"), filename=str(file))
+    source = file.read_text(encoding="utf-8")
+    if not any(token in source for token in FORBIDDEN_SOURCE_TOKENS):
+        return
+    tree = ast.parse(source, filename=str(file))
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
