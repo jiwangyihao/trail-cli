@@ -1,7 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
 
 
+ROOT = Path(SPECPATH).resolve().parent.parent
 datas = []
 binaries = []
 hiddenimports = []
@@ -17,15 +20,15 @@ datas += copy_metadata("trail-cli")
 datas += collect_data_files("trail")
 
 cli_analysis = Analysis(
-    ["packaging/trail_cli_entry.py"],
-    pathex=[],
+    [str(ROOT / "packaging/trail_cli_entry.py")],
+    pathex=[str(ROOT)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
 )
 daemon_analysis = Analysis(
-    ["packaging/traild_entry.py"],
-    pathex=[],
+    [str(ROOT / "packaging/traild_entry.py")],
+    pathex=[str(ROOT)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

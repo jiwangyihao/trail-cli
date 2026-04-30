@@ -83,6 +83,8 @@ def test_release_build_files_define_required_assets():
     assert "windows_capture" in spec
     assert "packaging/trail_cli_entry.py" in spec
     assert "packaging/traild_entry.py" in spec
+    assert "SPECPATH" in spec
+    assert "pathex=[str(ROOT)]" in spec
 
 
 def test_release_selfcheck_command_runs_and_stays_hidden(monkeypatch):
