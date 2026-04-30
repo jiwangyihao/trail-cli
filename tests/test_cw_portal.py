@@ -1396,6 +1396,7 @@ def test_restart_cw_portal_waits_for_in_game_before_returning_home(tmp_path: Pat
 
 def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
     start_box = _box("entry.start", left=100, top=200)
     entry_new_box = _box("entry.new", left=200, top=300)
     start_game_box = _box("entry.start_game", left=240, top=340)
@@ -1658,6 +1659,7 @@ def test_cw_start_from_clean_home_reveals_unfinished_progress_after_start_click(
 
 def test_cw_start_continue_from_whole_run_settlement_chain_reaches_invest_and_persists_new_mode(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
     cards = _portal_cards()
     start_box = _box("entry.start", left=100, top=200)
     entry_new_box = _box("entry.new", left=200, top=300)
@@ -1939,6 +1941,7 @@ def test_cw_start_entry_continue_keeps_recorded_exact_difficulty(tmp_path: Path,
 
 def test_cw_start_continue_from_whole_run_settlement_chain_reaches_invest_and_persists_new_mode(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
     cards = _portal_cards()
     start_box = _box("entry.start", left=100, top=200)
     entry_new_box = _box("entry.new", left=140, top=180)

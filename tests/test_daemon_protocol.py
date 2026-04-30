@@ -2557,9 +2557,11 @@ def test_cw_equipment_methods_are_classified_for_command_routing():
     assert "cw.equipment.prepare" in CW_SESSION_SAVE_METHODS
 
 
-def test_command_service_handles_cw_enter_world_to_home(tmp_path: Path):
+def test_command_service_handles_cw_enter_world_to_home(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
     from trail.runtime.resources import resolve_scene_asset
+
+    monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
 
     def asset(alias: str) -> str:
         return str(resolve_scene_asset("cw", alias))
@@ -3991,6 +3993,7 @@ def test_command_service_handles_cw_start_continue_from_whole_run_settlement_cha
     from trail.runtime.resources import resolve_scene_asset
 
     monkeypatch.setattr("trail.scenes.cw.entry._detect_cw_stage_from_ocr", lambda runtime: None)
+    monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
 
     def asset(alias: str) -> str:
         return str(resolve_scene_asset("cw", alias))

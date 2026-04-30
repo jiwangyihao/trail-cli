@@ -992,7 +992,8 @@ def test_enter_cw_prefers_recorded_game_over_over_home_on_shared_start_resource(
     assert getattr(exc_info.value, "data", None) == {"page": "in_game", "stage": "game_over"}
 
 
-def test_enter_cw_ignores_recorded_game_over_when_runtime_is_still_world(tmp_path):
+def test_enter_cw_ignores_recorded_game_over_when_runtime_is_still_world(tmp_path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
     session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
 
@@ -1048,7 +1049,8 @@ def test_enter_cw_ignores_recorded_game_over_when_runtime_is_still_world(tmp_pat
     assert runtime.keys == [("f4", 1, 0.2)]
 
 
-def test_enter_cw_runs_world_to_currency_wars_entry_chain_until_home(tmp_path):
+def test_enter_cw_runs_world_to_currency_wars_entry_chain_until_home(tmp_path, monkeypatch):
+    monkeypatch.setattr("trail.scenes.cw.entry._transition_sleep", lambda seconds: None)
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
 
     menu_box = _box("entry.menu", left=12, top=24)
