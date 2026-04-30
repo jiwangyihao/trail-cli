@@ -68,6 +68,26 @@ def test_save_manifest_leaves_existing_file_untouched_when_replace_fails(tmp_pat
     assert path.read_text(encoding="utf-8") == original
 
 
+def test_save_manifest_retries_transient_permission_error_on_replace(tmp_path: Path, monkeypatch):
+    path = manifest_path_for_user(tmp_path / "daemon-home")
+    real_replace = Path.replace
+    attempts: list[Path] = []
+
+    def fail_once(self: Path, target: Path) -> Path:
+        attempts.append(self)
+        if len(attempts) == 1:
+            raise PermissionError(5, "拒绝访问")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_once)
+
+    manifest = _sample_manifest()
+    save_manifest(path, manifest)
+
+    assert len(attempts) == 2
+    assert load_manifest(path) == manifest
+
+
 def test_write_ready_manifest_publishes_runtime_endpoint_and_token_generation(tmp_path: Path):
     manifest_path = write_ready_manifest(
         tmp_path / "daemon-home",

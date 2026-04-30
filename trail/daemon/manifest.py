@@ -4,8 +4,12 @@ import json
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
+from time import sleep
 
 from trail.daemon.models import InstallRecord, RuntimeRecord, TrailDaemonManifest
+
+
+_REPLACE_PERMISSION_RETRY_DELAYS = (0.02, 0.05, 0.1)
 
 
 def manifest_path_for_user(daemon_home: Path) -> Path:
@@ -18,6 +22,17 @@ def load_manifest(path: Path) -> TrailDaemonManifest:
         install=InstallRecord(**payload["install"]),
         runtime=RuntimeRecord(**payload["runtime"]),
     )
+
+
+def _replace_manifest(temp_path: Path, manifest_path: Path) -> None:
+    for delay in (*_REPLACE_PERMISSION_RETRY_DELAYS, None):
+        try:
+            temp_path.replace(manifest_path)
+            return
+        except PermissionError:
+            if delay is None:
+                raise
+            sleep(delay)
 
 
 def save_manifest(path: Path, manifest: TrailDaemonManifest) -> None:
@@ -37,7 +52,7 @@ def save_manifest(path: Path, manifest: TrailDaemonManifest) -> None:
             temp_path = Path(temp_file.name)
             temp_file.write(payload)
 
-        temp_path.replace(manifest_path)
+        _replace_manifest(temp_path, manifest_path)
     except Exception:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)

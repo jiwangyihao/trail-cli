@@ -359,6 +359,7 @@ def test_build_cw_shop_scanner_reads_rapidocr_tuple_text_fields(monkeypatch):
     assert batch_calls == [{"keys": ["items", "coins"], "trace_prefix": "cw_shop_batch_ocr"}]
 
 
+@pytest.mark.slow
 def test_build_cw_shop_scanner_reads_image_backed_shop_page_when_fixture_available():
     shop_module = load_cw_shop_module()
     build_cw_shop_scanner = getattr(shop_module, "build_cw_shop_scanner", None)
@@ -379,6 +380,7 @@ def test_build_cw_shop_scanner_reads_image_backed_shop_page_when_fixture_availab
     assert "exp" not in snapshot
 
 
+@pytest.mark.slow
 def test_build_cw_shop_scan_reader_reads_image_backed_shop_page_when_fixture_available(monkeypatch):
     shop_module = load_cw_shop_module()
     build_cw_shop_scan_snapshot_reader = getattr(shop_module, "build_cw_shop_scan_snapshot_reader", None)
