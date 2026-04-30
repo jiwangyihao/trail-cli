@@ -2,7 +2,7 @@
   "bundle_schema_version": 1,
   "generator_schema_version": 1,
   "resource_version": "4.2",
-  "generated_at": "2026-04-30T20:39:46.496890+00:00",
+  "generated_at": "2026-04-30T21:42:07.130063+00:00",
   "season_id": "1",
   "sub_season_id": "3",
   "rpg_game_big_version": "4.2",
@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "raw_config.json",
-      "sha256": "7a0f84e0c9973e79394fdad4da4f89ccad519db62fbb2c67418a65d32790331a",
+      "sha256": "142587d91c3587250ba5e199b0b445b209659e8dd364da4dcc027ac0b786f380",
       "size": 644655
     },
     {
@@ -595,5 +595,5 @@
       "size": 31375
     }
   ],
-  "content_digest": "937a04ea82f225fd473de805e01ebdb70550549f6b977b188feda92b798336d7"
+  "content_digest": "5efec0d0b3ec12aab0817b696829b083e1eb959f4fed7e1c22b440d77fd7a360"
 }
