@@ -1,5 +1,6 @@
 .trail/
-uv.lock
+build/
+dist/
 **/__pycache__/
 .worktrees/
 .pytest-tmp/

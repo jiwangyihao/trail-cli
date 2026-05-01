@@ -613,10 +613,16 @@ def test_user_installer_agent_docs_and_skill_install_notes_exist():
     assert "CliOnly" in agent_doc and "SkillsOnly" in agent_doc
     assert "风险" in agent_doc
 
-    assert "最新版下载" in readme
-    assert "https://github.com/" in readme and "releases/latest" in readme
+    assert "发布页" in readme
+    assert "https://github.com/" in readme and "/releases" in readme
+    assert "https://github.com/jiwangyihao/trail-cli/releases" in readme
+    assert "releases/latest" not in readme
+    assert "https://github.com/trail-cli/trail-cli/releases/latest" not in readme
     assert "trail-cli-windows-x64-vX.Y.Z.zip" in readme
     assert "AGENT_INSTALL.md" in readme
+    assert "releases?per_page=20" in installer
+    assert "Where-Object { -not $_.draft }" in installer
+    assert "releases/latest" not in installer
 
     assert "complete Trail skill bundle" in hsr_skill
     assert "complete Trail skill bundle" in cw_entry

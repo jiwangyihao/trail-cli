@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Agent-friendly HSR automation CLI"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "MPL-2.0"
+license = "GPL-3.0-only"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES*"]
 dependencies = [
   "typer>=0.12",
@@ -26,6 +26,11 @@ dev = ["pytest>=8.0", "pytest-xdist>=3.6", "build>=1.2", "pyinstaller>=6.11"]
 
 [tool.pytest.ini_options]
 addopts = ["--basetemp=.pytest-tmp"]
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
 
 [project.scripts]
 trail = "trail.cli:app"
