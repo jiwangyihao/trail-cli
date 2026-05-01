@@ -385,9 +385,25 @@ def test_prepare_equipment_icon_cache_redownloads_corrupt_file(tmp_path):
             "equipment_list": [{"id": "e1", "name": "幸运星", "icon": "https://act-webstatic.mihoyo.com/e1.png"}],
         }
     )
-    resources.prepare_equipment_icon_cache(catalog, workspace_root=tmp_path, fetcher=lambda url, timeout, max_bytes: _png_bytes("red"))
-    icon_path = tmp_path / ".trail" / "cache" / "cw-equipment-icons" / "3.2" / "icons" / "advanced-e1.png"
+    version_dir = tmp_path / ".trail" / "cache" / "cw-equipment-icons" / "3.2"
+    icon_path = version_dir / "icons" / "advanced-e1.png"
+    icon_path.parent.mkdir(parents=True)
     icon_path.write_text("broken", encoding="utf-8")
+    (version_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "big_version": "3.2",
+                "items": [
+                    {
+                        "cache_key": "advanced-e1",
+                        "icon_url": "https://act-webstatic.mihoyo.com/e1.png",
+                        "local_path": "icons/advanced-e1.png",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     calls: list[str] = []
 
     result = resources.prepare_equipment_icon_cache(

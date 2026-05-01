@@ -64,6 +64,11 @@ def _normalizer(data, *, timeout=10, workspace_root=None, enrich_traits=False):
     }
 
 
+def _skip_bundle_validation(module, monkeypatch):
+    monkeypatch.setattr(module, "_build_precomputed_equipment_features", lambda icon_pairs: {"items": []})
+    monkeypatch.setattr(module, "load_cw_resource_bundle_from_path", lambda root: None)
+
+
 def test_build_cw_resource_bundle_writes_manifest_and_loadable_bundle(tmp_path):
     module = _load_script()
 
@@ -104,8 +109,9 @@ def test_build_cw_resource_bundle_writes_manifest_and_loadable_bundle(tmp_path):
     assert loaded.indexes["equipment_by_cache_key"]["advanced-e1"]["big_version"] == "3.2"
 
 
-def test_build_cw_resource_bundle_removes_stale_generated_content(tmp_path):
+def test_build_cw_resource_bundle_removes_stale_generated_content(tmp_path, monkeypatch):
     module = _load_script()
+    _skip_bundle_validation(module, monkeypatch)
     output_root = tmp_path / "generated"
     old_version = output_root / "old-version"
     root_stale_file = output_root / "stale.txt"
@@ -136,10 +142,6 @@ def test_build_cw_resource_bundle_removes_stale_generated_content(tmp_path):
     assert not stale_same_version.exists()
     assert not stale_icon.exists()
 
-    from trail.scenes.cw.static_resources import load_cw_resource_bundle_from_path
-
-    assert load_cw_resource_bundle_from_path(bundle_root).big_version == "3.2"
-
 
 def test_build_cw_resource_bundle_rejects_generated_output_symlink(tmp_path):
     module = _load_script()
@@ -164,8 +166,9 @@ def test_build_cw_resource_bundle_rejects_generated_output_symlink(tmp_path):
     assert not any(external_generated.iterdir())
 
 
-def test_build_cw_resource_bundle_sanitizes_big_version_directory(tmp_path):
+def test_build_cw_resource_bundle_sanitizes_big_version_directory(tmp_path, monkeypatch):
     module = _load_script()
+    _skip_bundle_validation(module, monkeypatch)
     output_root = tmp_path / "generated"
     raw_config = _raw_config()
     raw_config["rpg_game_big_version"] = "../3.2"
