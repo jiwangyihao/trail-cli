@@ -3094,7 +3094,6 @@ def test_cw_resource_service_refresh_rejects_workspace_cache_symlink_escape(tmp_
 
 
 def test_cw_resource_service_refresh_can_replace_damaged_workspace_override(monkeypatch, tmp_path: Path):
-    from PIL import Image
     from trail.daemon import cw_resource_service as resource_module
     from trail.daemon.cw_resource_service import CwResourceService
     from trail.scenes.cw.equipment_resources import EquipmentCatalogEntry
@@ -3146,15 +3145,16 @@ def test_cw_resource_service_refresh_can_replace_damaged_workspace_override(monk
     def fake_prepare(catalog, workspace_root=None, refresh=False):
         icon_path = Path(workspace_root) / ".trail" / "cache" / "cw-equipment-icons" / "3.2" / "icons" / "icon-a.png"
         icon_path.parent.mkdir(parents=True, exist_ok=True)
-        Image.new("RGBA", (16, 16), "red").save(icon_path)
+        icon_path.write_bytes(b"icon-a")
         return {"big_version": "3.2", "count": 1, "cached": 0, "downloaded": 1, "refreshed": True}
 
     monkeypatch.setattr(resource_module, "prepare_equipment_icon_cache", fake_prepare)
     monkeypatch.setattr(
         resource_module,
         "load_cached_equipment_icons",
-        lambda catalog, workspace_root=None: [(entry, Image.new("RGBA", (128, 128), "red"))],
+        lambda catalog, workspace_root=None: [(entry, object())],
     )
+    monkeypatch.setattr(resource_module, "build_precomputed_equipment_features", lambda icons: {"items": []})
 
     service = CwResourceService(
         bundle_loader=stale_loader,
