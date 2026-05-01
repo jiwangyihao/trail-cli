@@ -439,29 +439,27 @@ def test_load_cw_resource_bundle_rejects_raw_config_missing_required_field(tmp_p
 
 
 @pytest.mark.parametrize("empty_key", ["trait_info_list", "role_list", "portal_list", "equipment_list"])
-def test_load_cw_resource_bundle_rejects_empty_raw_catalog(tmp_path, empty_key):
-    root = _bundle(tmp_path)
+def test_validate_raw_config_rejects_empty_catalog(empty_key):
+    from trail.scenes.cw import static_resources
+
     payload = _valid_raw_config()
     payload[empty_key] = []
-    _write_json(root / "raw_config.json", payload)
-    _refresh_manifest_entry(root, "raw_config.json")
 
     with pytest.raises(TrailError) as exc_info:
-        load_cw_resource_bundle_from_path(root)
+        static_resources._validate_raw_config(payload)
 
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
 
-def test_load_cw_resource_bundle_rejects_missing_raw_strategy_catalog_list(tmp_path):
-    root = _bundle(tmp_path)
+def test_validate_raw_config_rejects_missing_strategy_catalog_list():
+    from trail.scenes.cw import static_resources
+
     payload = _valid_raw_config()
     payload.pop("fight_augment_list")
     payload.pop("strategy_list", None)
-    _write_json(root / "raw_config.json", payload)
-    _refresh_manifest_entry(root, "raw_config.json")
 
     with pytest.raises(TrailError) as exc_info:
-        load_cw_resource_bundle_from_path(root)
+        static_resources._validate_raw_config(payload)
 
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
@@ -493,19 +491,15 @@ def test_load_cw_resource_bundle_allows_empty_strategy_catalogs(tmp_path):
     assert bundle.indexes["strategies_by_title"] == {}
 
 
-@pytest.mark.parametrize("relative", ["guide_config.json", "guide_config_enriched.json"])
 @pytest.mark.parametrize("missing_key", ["lineup_levels", "traits", "roles", "role_tags", "portal_list", "strategy_list"])
-def test_load_cw_resource_bundle_rejects_guide_config_missing_required_structure(
-    tmp_path, relative, missing_key
-):
-    root = _bundle(tmp_path)
+def test_validate_guide_config_rejects_missing_required_structure(missing_key):
+    from trail.scenes.cw import static_resources
+
     payload = _valid_guide_config()
     payload.pop(missing_key)
-    _write_json(root / relative, payload)
-    _refresh_manifest_entry(root, relative)
 
     with pytest.raises(TrailError) as exc_info:
-        load_cw_resource_bundle_from_path(root)
+        static_resources._validate_guide_config(payload, "guide config")
 
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
@@ -524,17 +518,15 @@ def test_load_cw_resource_bundle_rejects_guide_config_missing_big_version(tmp_pa
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
 
-@pytest.mark.parametrize("relative", ["guide_config.json", "guide_config_enriched.json"])
 @pytest.mark.parametrize("empty_key", ["traits", "roles", "portal_list"])
-def test_load_cw_resource_bundle_rejects_empty_guide_catalog(tmp_path, relative, empty_key):
-    root = _bundle(tmp_path)
+def test_validate_guide_config_rejects_empty_catalog(empty_key):
+    from trail.scenes.cw import static_resources
+
     payload = _valid_guide_config()
     payload[empty_key] = []
-    _write_json(root / relative, payload)
-    _refresh_manifest_entry(root, relative)
 
     with pytest.raises(TrailError) as exc_info:
-        load_cw_resource_bundle_from_path(root)
+        static_resources._validate_guide_config(payload, "guide config")
 
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
@@ -549,15 +541,14 @@ def test_load_cw_resource_bundle_rejects_empty_guide_catalog(tmp_path, relative,
         "equipment_by_cache_key",
     ],
 )
-def test_load_cw_resource_bundle_rejects_indexes_missing_required_key(tmp_path, missing_key):
-    root = _bundle(tmp_path)
+def test_validate_indexes_rejects_missing_required_key(missing_key):
+    from trail.scenes.cw import static_resources
+
     indexes = _valid_indexes()
     indexes.pop(missing_key)
-    _write_json(root / "indexes.json", indexes)
-    _refresh_manifest_entry(root, "indexes.json")
 
     with pytest.raises(TrailError) as exc_info:
-        load_cw_resource_bundle_from_path(root)
+        static_resources._validate_indexes(indexes)
 
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
@@ -572,15 +563,14 @@ def test_load_cw_resource_bundle_rejects_indexes_missing_required_key(tmp_path, 
         "equipment_by_cache_key",
     ],
 )
-def test_load_cw_resource_bundle_rejects_indexes_required_key_that_is_not_object(tmp_path, bad_key):
-    root = _bundle(tmp_path)
+def test_validate_indexes_rejects_required_key_that_is_not_object(bad_key):
+    from trail.scenes.cw import static_resources
+
     indexes = _valid_indexes()
     indexes[bad_key] = []
-    _write_json(root / "indexes.json", indexes)
-    _refresh_manifest_entry(root, "indexes.json")
 
     with pytest.raises(TrailError) as exc_info:
-        load_cw_resource_bundle_from_path(root)
+        static_resources._validate_indexes(indexes)
 
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
@@ -589,15 +579,14 @@ def test_load_cw_resource_bundle_rejects_indexes_required_key_that_is_not_object
     "empty_key",
     ["traits_by_name", "roles_by_name", "portals_by_title", "equipment_by_cache_key"],
 )
-def test_load_cw_resource_bundle_rejects_empty_core_indexes(tmp_path, empty_key):
-    root = _bundle(tmp_path)
+def test_validate_indexes_rejects_empty_core_indexes(empty_key):
+    from trail.scenes.cw import static_resources
+
     indexes = _valid_indexes()
     indexes[empty_key] = {}
-    _write_json(root / "indexes.json", indexes)
-    _refresh_manifest_entry(root, "indexes.json")
 
     with pytest.raises(TrailError) as exc_info:
-        load_cw_resource_bundle_from_path(root)
+        static_resources._validate_indexes(indexes)
 
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
@@ -1011,18 +1000,7 @@ def test_write_bundle_manifest_includes_equipment_icons_and_loads(tmp_path):
             ]
         },
     )
-    _write_json(
-        root / "equipment" / "features.json",
-        {
-            "items": [_valid_feature_item()],
-            "equipment_feature_schema_version": 1,
-            "recognizer_algorithm_version": "vector-mask-v1",
-            "feature_size": [32, 32],
-            "match_size": [64, 64],
-            "min_score": 0.72,
-            "min_gap": 0.05,
-        },
-    )
+    _write_json(root / "equipment" / "features.json", _valid_feature_payload())
 
     manifest = write_bundle_manifest(
         root,
