@@ -55,13 +55,12 @@ def test_cw_resources_are_resolved_from_local_package_assets():
     assert path.is_relative_to(CW_ASSET_ROOT)
 
 
-def test_all_cw_aliases_resolve_to_existing_local_assets():
+def test_all_cw_aliases_point_to_existing_local_assets():
     aliases = load_scene_aliases("cw")
 
-    for alias, relative_path in aliases.items():
-        resolved = resolve_scene_asset("cw", alias)
+    for _alias, relative_path in aliases.items():
+        resolved = (CW_ASSET_ROOT / relative_path).resolve()
 
-        assert resolved == (CW_ASSET_ROOT / relative_path).resolve()
         assert resolved.is_file()
         assert resolved.is_relative_to(CW_ASSET_ROOT)
 

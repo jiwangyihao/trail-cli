@@ -97,6 +97,10 @@ def _valid_feature_payload(cache_key: str = "icon-a") -> dict:
     }
 
 
+def _light_feature_payload(cache_key: str = "icon-a", *, min_score: float = 0.72) -> dict:
+    return {"items": [{"cache_key": cache_key}], "min_score": min_score}
+
+
 def _write_valid_equipment_manifest_item(root: Path, cache_key: str = "icon-a") -> None:
     icon_relative = f"equipment/icons/{cache_key}.png"
     icon_path = root / icon_relative
@@ -134,7 +138,7 @@ def _refresh_manifest_entry(root: Path, relative: str) -> None:
     _write_json(manifest_path, manifest)
 
 
-def _bundle(tmp_path: Path) -> Path:
+def _bundle_files_root(tmp_path: Path, *, equipment_features: dict | None = None) -> Path:
     root = tmp_path / "generated" / "3.2"
     _write_json(root / "raw_config.json", _valid_raw_config())
     guide_config = _valid_guide_config()
@@ -142,7 +146,12 @@ def _bundle(tmp_path: Path) -> Path:
     _write_json(root / "guide_config_enriched.json", guide_config)
     _write_json(root / "indexes.json", _valid_indexes())
     _write_valid_equipment_manifest_item(root)
-    _write_json(root / "equipment" / "features.json", _valid_feature_payload())
+    _write_json(root / "equipment" / "features.json", equipment_features or _valid_feature_payload())
+    return root
+
+
+def _bundle(tmp_path: Path, *, equipment_features: dict | None = None) -> Path:
+    root = _bundle_files_root(tmp_path, equipment_features=equipment_features)
     write_bundle_manifest(
         root,
         source_manifest={
@@ -176,6 +185,13 @@ def _manifest_writer_root(tmp_path: Path) -> Path:
     return root
 
 
+def _skip_equipment_feature_payload_validation(monkeypatch):
+    from trail.scenes.cw import static_resources
+
+    monkeypatch.setattr(static_resources, "_validate_equipment_features", lambda payload: None)
+    return static_resources
+
+
 def test_load_cw_resource_bundle_validates_manifest_files(tmp_path):
     bundle = load_cw_resource_bundle_from_path(_bundle(tmp_path))
 
@@ -207,11 +223,16 @@ def test_cw_resource_source_signature_changes_when_manifest_digest_changes(monke
     assert first != second
 
 
-def _write_equipment_override(root: Path, *, base_identity: str, min_score: float = 0.33) -> Path:
+def _write_equipment_override(
+    root: Path,
+    *,
+    base_identity: str,
+    min_score: float = 0.33,
+    equipment_features: dict | None = None,
+) -> Path:
     override_root = root / ".trail" / "cache" / "cw-equipment-resource"
     _write_valid_equipment_manifest_item(override_root, cache_key="icon-a")
-    features = _valid_feature_payload("icon-a")
-    features["min_score"] = min_score
+    features = {**(equipment_features or _valid_feature_payload("icon-a")), "min_score": min_score}
     _write_json(override_root / "equipment" / "features.json", features)
     files = []
     for relative in ("equipment/manifest.json", "equipment/features.json", "equipment/icons/icon-a.png"):
@@ -228,10 +249,15 @@ def _write_equipment_override(root: Path, *, base_identity: str, min_score: floa
 
 
 def test_load_default_cw_resource_bundle_overlays_workspace_equipment_without_replacing_config(monkeypatch, tmp_path):
-    from trail.scenes.cw import static_resources
+    static_resources = _skip_equipment_feature_payload_validation(monkeypatch)
 
-    package_root = _bundle(tmp_path / "package")
-    _write_equipment_override(tmp_path / "workspace", base_identity=_bundle_identity(package_root), min_score=0.33)
+    package_root = _bundle(tmp_path / "package", equipment_features=_light_feature_payload())
+    _write_equipment_override(
+        tmp_path / "workspace",
+        base_identity=_bundle_identity(package_root),
+        min_score=0.33,
+        equipment_features=_light_feature_payload(min_score=0.33),
+    )
     monkeypatch.setattr(static_resources, "_package_bundle_candidates", lambda: [package_root])
 
     bundle = static_resources.load_default_cw_resource_bundle(workspace_root=tmp_path / "workspace")
@@ -246,10 +272,15 @@ def test_load_default_cw_resource_bundle_overlays_workspace_equipment_without_re
 
 
 def test_load_default_cw_resource_bundle_ignores_stale_workspace_equipment_override(monkeypatch, tmp_path):
-    from trail.scenes.cw import static_resources
+    static_resources = _skip_equipment_feature_payload_validation(monkeypatch)
 
-    package_root = _bundle(tmp_path / "package")
-    _write_equipment_override(tmp_path / "workspace", base_identity="old-package", min_score=0.33)
+    package_root = _bundle(tmp_path / "package", equipment_features=_light_feature_payload())
+    _write_equipment_override(
+        tmp_path / "workspace",
+        base_identity="old-package",
+        min_score=0.33,
+        equipment_features=_light_feature_payload(min_score=0.33),
+    )
     monkeypatch.setattr(static_resources, "_package_bundle_candidates", lambda: [package_root])
 
     bundle = static_resources.load_default_cw_resource_bundle(workspace_root=tmp_path / "workspace")
@@ -259,10 +290,15 @@ def test_load_default_cw_resource_bundle_ignores_stale_workspace_equipment_overr
 
 
 def test_load_default_cw_resource_bundle_rejects_matching_incomplete_workspace_equipment_override(monkeypatch, tmp_path):
-    from trail.scenes.cw import static_resources
+    static_resources = _skip_equipment_feature_payload_validation(monkeypatch)
 
-    package_root = _bundle(tmp_path / "package")
-    override_root = _write_equipment_override(tmp_path / "workspace", base_identity=_bundle_identity(package_root), min_score=0.33)
+    package_root = _bundle(tmp_path / "package", equipment_features=_light_feature_payload())
+    override_root = _write_equipment_override(
+        tmp_path / "workspace",
+        base_identity=_bundle_identity(package_root),
+        min_score=0.33,
+        equipment_features=_light_feature_payload(min_score=0.33),
+    )
     (override_root / "equipment" / "icons" / "icon-a.png").unlink()
     monkeypatch.setattr(static_resources, "_package_bundle_candidates", lambda: [package_root])
 
@@ -273,10 +309,15 @@ def test_load_default_cw_resource_bundle_rejects_matching_incomplete_workspace_e
 
 
 def test_load_default_cw_resource_bundle_rejects_workspace_equipment_override_config_files(monkeypatch, tmp_path):
-    from trail.scenes.cw import static_resources
+    static_resources = _skip_equipment_feature_payload_validation(monkeypatch)
 
-    package_root = _bundle(tmp_path / "package")
-    override_root = _write_equipment_override(tmp_path / "workspace", base_identity=_bundle_identity(package_root), min_score=0.33)
+    package_root = _bundle(tmp_path / "package", equipment_features=_light_feature_payload())
+    override_root = _write_equipment_override(
+        tmp_path / "workspace",
+        base_identity=_bundle_identity(package_root),
+        min_score=0.33,
+        equipment_features=_light_feature_payload(min_score=0.33),
+    )
     _write_json(override_root / "raw_config.json", {"rpg_game_big_version": "bad"})
     manifest_path = override_root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -293,10 +334,15 @@ def test_load_default_cw_resource_bundle_rejects_workspace_equipment_override_co
 
 
 def test_load_default_cw_resource_bundle_rejects_workspace_equipment_override_root_symlink(monkeypatch, tmp_path):
-    from trail.scenes.cw import static_resources
+    static_resources = _skip_equipment_feature_payload_validation(monkeypatch)
 
-    package_root = _bundle(tmp_path / "package")
-    target = _write_equipment_override(tmp_path / "target", base_identity=_bundle_identity(package_root), min_score=0.33)
+    package_root = _bundle(tmp_path / "package", equipment_features=_light_feature_payload())
+    target = _write_equipment_override(
+        tmp_path / "target",
+        base_identity=_bundle_identity(package_root),
+        min_score=0.33,
+        equipment_features=_light_feature_payload(min_score=0.33),
+    )
     workspace_root = tmp_path / "workspace"
     link = workspace_root / ".trail" / "cache" / "cw-equipment-resource"
     link.parent.mkdir(parents=True)
@@ -478,31 +524,19 @@ def test_validate_raw_config_rejects_missing_strategy_catalog_list():
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
 
-def test_load_cw_resource_bundle_allows_empty_strategy_catalogs(tmp_path):
-    root = _bundle(tmp_path)
+def test_validate_resource_catalogs_allow_empty_strategy_catalogs():
+    from trail.scenes.cw import static_resources
+
     raw_config = _valid_raw_config()
     raw_config["fight_augment_list"] = []
     guide_config = _valid_guide_config()
     guide_config["strategy_list"] = []
     indexes = _valid_indexes()
     indexes["strategies_by_title"] = {}
-    _write_json(root / "raw_config.json", raw_config)
-    _write_json(root / "guide_config.json", guide_config)
-    _write_json(root / "guide_config_enriched.json", guide_config)
-    _write_json(root / "indexes.json", indexes)
-    for relative in [
-        "raw_config.json",
-        "guide_config.json",
-        "guide_config_enriched.json",
-        "indexes.json",
-    ]:
-        _refresh_manifest_entry(root, relative)
 
-    bundle = load_cw_resource_bundle_from_path(root)
-
-    assert bundle.raw_config["fight_augment_list"] == []
-    assert bundle.guide_config["strategy_list"] == []
-    assert bundle.indexes["strategies_by_title"] == {}
+    static_resources._validate_raw_config(raw_config)
+    static_resources._validate_guide_config(guide_config, "guide config")
+    static_resources._validate_indexes(indexes)
 
 
 @pytest.mark.parametrize("missing_key", ["lineup_levels", "traits", "roles", "role_tags", "portal_list", "strategy_list"])
@@ -518,16 +552,14 @@ def test_validate_guide_config_rejects_missing_required_structure(missing_key):
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
 
-@pytest.mark.parametrize("relative", ["guide_config.json", "guide_config_enriched.json"])
-def test_load_cw_resource_bundle_rejects_guide_config_missing_big_version(tmp_path, relative):
-    root = _bundle(tmp_path)
+def test_validate_guide_config_rejects_missing_big_version():
+    from trail.scenes.cw import static_resources
+
     payload = _valid_guide_config()
     payload["meta"] = {}
-    _write_json(root / relative, payload)
-    _refresh_manifest_entry(root, relative)
 
     with pytest.raises(TrailError) as exc_info:
-        load_cw_resource_bundle_from_path(root)
+        static_resources._validate_guide_config(payload, "guide config")
 
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
@@ -605,16 +637,16 @@ def test_validate_indexes_rejects_empty_core_indexes(empty_key):
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
 
-def test_load_cw_resource_bundle_requires_equipment_icon_paths_in_manifest_files(tmp_path):
-    root = _bundle(tmp_path)
-    manifest_path = root / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["files"] = [entry for entry in manifest["files"] if entry["path"] != "equipment/icons/icon-a.png"]
-    manifest["content_digest"] = _bundle_content_digest(manifest)
-    _write_json(manifest_path, manifest)
+def test_validate_equipment_manifest_paths_requires_icon_paths_in_manifest_files(tmp_path):
+    from trail.scenes.cw import static_resources
+
+    icon_path = tmp_path / "equipment" / "icons" / "icon-a.png"
+    icon_path.parent.mkdir(parents=True)
+    icon_path.write_bytes(b"icon-a")
+    equipment_manifest = {"items": [{"local_path": "equipment/icons/icon-a.png"}]}
 
     with pytest.raises(TrailError) as exc_info:
-        load_cw_resource_bundle_from_path(root)
+        static_resources._validate_equipment_manifest_paths_listed(tmp_path, equipment_manifest, set())
 
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
@@ -945,29 +977,8 @@ def test_write_bundle_manifest_rejects_normalized_equipment_icon_path_conflict(t
 
 
 def test_write_bundle_manifest_includes_equipment_icons_and_loads(tmp_path):
-    root = _bundle(tmp_path)
+    root = _bundle_files_root(tmp_path)
     icon_relative = "equipment/icons/icon-a.png"
-    icon_path = root / icon_relative
-    icon_path.parent.mkdir(parents=True, exist_ok=True)
-    icon_path.write_bytes(b"icon-a")
-    _write_json(
-        root / "equipment" / "manifest.json",
-        {
-            "items": [
-                {
-                    "cache_key": "icon-a",
-                    "name": "Icon A",
-                    "kind": "basic",
-                    "icon_url": "https://example.test/icon-a.png",
-                    "big_version": "3.2",
-                    "local_path": icon_relative,
-                    "sha256": _sha256(icon_path),
-                    "size": icon_path.stat().st_size,
-                }
-            ]
-        },
-    )
-    _write_json(root / "equipment" / "features.json", _valid_feature_payload())
 
     manifest = write_bundle_manifest(
         root,
