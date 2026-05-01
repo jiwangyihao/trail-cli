@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import tomllib
 
+import pytest
 from typer.testing import CliRunner
 
 
@@ -129,6 +130,7 @@ def test_release_build_files_define_required_assets():
     assert "uv.lock" not in gitignore.splitlines()
 
 
+@pytest.mark.slow
 def test_agent_installer_latest_release_selection_and_pagination():
     installer = (ROOT / "scripts" / "agent-install.ps1").read_text(encoding="utf-8")
     functions = "\n".join(
