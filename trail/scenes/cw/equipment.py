@@ -157,8 +157,6 @@ def _guide_role_equipment_requirements(guide: dict[str, Any]) -> dict[str, dict[
                 equipment_by_name = by_role.setdefault(role_name, {})
                 for equipment_name in _ordered_names(role.get("first_equipments")):
                     equipment_by_name[equipment_name] = "优选"
-                for equipment_name in _ordered_names(role.get("second_equipments")):
-                    equipment_by_name.setdefault(equipment_name, "次选")
     return by_role
 
 

@@ -1692,6 +1692,29 @@ def test_build_equipment_recommendations_prefers_first_equipment_category_across
     ]
 
 
+def test_build_equipment_recommendations_ignores_second_equipment_until_boss_prep(tmp_path):
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    cw_state = ensure_cw_state(session)
+    cw_state["guide"]["role_stages"] = [
+        {"front_roles": [{"name": "希儿", "first_equipments": [], "second_equipments": ["高周波电锯"]}], "back_roles": []},
+    ]
+    cw_state["slots"]["front"] = [{"name": "希儿", "equipments": []}]
+    cw_state["slots"]["back"] = []
+    cw_state["slots"]["hand"] = []
+
+    recommendations = equipment.build_cw_equipment_recommendations(
+        session,
+        snapshot={"items": []},
+        raw_config=_equipment_raw_config_for_recommendations(),
+    )
+
+    assert recommendations["priority"][0]["required_roles"] == []
+    assert recommendations["role_missing"] == []
+
+
 def test_record_equipment_compose_writes_role_object_and_marks_equipment_stale(tmp_path):
     from trail.scenes.cw.models import ensure_cw_state
 

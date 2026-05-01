@@ -35,6 +35,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 - `cw.equipment.read` 返回截图时必须先读原始截图，再消费 `item pos=equipment:<idx> center=x,y ...` 行、`# 装备优先级` 的 `guide` 行，以及 `# 角色装备需求` 的 `slot` 行或 `info todo=slots`；这些装备推荐分块位于 `warn`、`ref` 之前。若看到 `info todo=slots`，先运行或刷新 `cw.slots.read`，不要用 stale slots 推断角色缺口。需要排查 `row/col` 时，使用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`。
 - `cw.equipment.read` daemon 默认热路径使用 bundle recognizer，不调用 prepare/download/load icon cache；不要为普通装备读取先跑 `cw.equipment.prepare`。
 - 接收 `cw.portal.select` handoff 后，如果后续执行 `cw.equipment.read` 并看到装备推荐，仍要先读截图，再看 `# 装备优先级` 的基础装备 `have/need` 与需求角色，最后看 `# 角色装备需求` 的当前 canonical 角色缺口；不要为了低优先级装备过早消耗基础装备。
+- `# 角色装备需求` 当前只消费攻略 `优选装备` / `first_equipments`；不要因为攻略里有 `次选装备` / `second_equipments` 就提前合成。TODO：最后一层 BOSS 战前的备战阶段再考虑次选装备。
 - `cw.equipment.compose` / `trail cw equipment compose` 是只写 session 的记录命令，不执行真实 UI 合成。只有已决定合成并装备某个进阶装备时，才用 `--name`、`--slot`、`--role` 记录；slot 使用 `front:1`、`back:1`、`hand:1` 这种从 1 开始的位置，成功首行为 `ok cw.equipment.compose pos=... name=... 装备=... count=...`。
 - 读完截图后，先判断本轮是否存在可收集晶矿奖励；这个信息不能只依赖结构化文本。
 - 不确定阶段时先用 `trail cw stage detect --session <id>` 或 `trail cw stage wait --session <id>`。

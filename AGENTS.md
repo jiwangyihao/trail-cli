@@ -113,6 +113,7 @@
 - `cw.strategy.detect|refresh` 必须输出 `info 已加载攻略=0|1`，且固定在所有 `opt` 行之后。
 - `cw.equipment.read` 归入列表读取 renderer 家族；canonical command 固定为 `cw.equipment.read`，success 首行固定为 `ok cw.equipment.read count=<n> uncertain=<n> empty=<n>`，`count/uncertain/empty` 即使为 `0` 也必须保留。
 - `cw.equipment.read` success 正文顺序固定为首行 -> `shot` -> `info read_image_first=1` -> 背包 `item` -> `info backend/layout` -> `# 装备优先级` 的 `guide` 行 -> `# 角色装备需求` 的 `slot` 行或 `info todo=slots` -> `warn` -> `ref`；`item` 行字段固定使用 `pos/center/name/score/uncertain/gap/alt/alt_score`，确定项默认只输出 `pos/center/name/score/uncertain`，只有 `uncertain=1` 时才输出 `gap/alt/alt_score`。
+- `cw.equipment.read` 的角色装备需求只推荐攻略 `first_equipments` / `优选装备`；`second_equipments` / `次选装备` 暂不进入 `需求角色`、已获取/未获取角色或 `# 角色装备需求` 的 `slot` 行。TODO：最后一层 BOSS 战前的备战阶段再开放次选装备推荐。
 - `cw.equipment.read` 在 slots 缺失或 stale 时，`# 装备优先级` 仍可输出攻略顺序、基础装备持有情况和需求角色，但不得输出依赖当前角色集合的已获取/未获取字段；`# 角色装备需求` 输出 `info todo=slots`，提示先刷新 `cw.slots.read`。
 - `cw.equipment.read` 默认文本不输出 `idx/row/col/box`；`row/col` 只保留在结构化 `data`、`trail --format yaml cw equipment read --session <id>` 与 `trail --format yaml state dump --session <id>` 的 `cw_state.equipment` 中，供诊断使用。
 - `cw.equipment.read` 单格低置信不失败；当 `uncertain>0` 时默认文本输出 `warn code=LOW_CONFIDENCE count=... msg=...`。

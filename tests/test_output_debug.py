@@ -436,5 +436,8 @@ def test_cw_equipment_recommendation_docs_are_synced() -> None:
     assert "info todo=slots" in prep_skill
     assert "info todo=slots" in command_surface
     assert "`# 装备优先级` 的 `guide` 行 -> `# 角色装备需求` 的 `slot` 行或 `info todo=slots` -> `warn` -> `ref`" in agents
+    assert "角色装备需求只推荐攻略 `first_equipments` / `优选装备`" in agents
+    assert "当前只消费攻略 `优选装备` / `first_equipments`" in prep_skill
+    assert "当前只推荐攻略 `优选装备` / `first_equipments`" in command_surface
     assert "装备推荐分块位于 `warn`、`ref` 之前" in prep_skill
     assert "这些分块位于 `warn`、`ref` 之前" in command_surface
