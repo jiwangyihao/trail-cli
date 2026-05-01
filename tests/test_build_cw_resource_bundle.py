@@ -32,6 +32,36 @@ def _png_bytes(color="red"):
     return buffer.getvalue()
 
 
+@lru_cache(maxsize=None)
+def _pixel_payload(mode, size, channels):
+    return {
+        "mode": mode,
+        "size": list(size),
+        "data": [0] * (size[0] * size[1] * channels),
+    }
+
+
+def _feature_payload(cache_key="advanced-e1"):
+    return {
+        "equipment_feature_schema_version": 1,
+        "recognizer_algorithm_version": "vector-mask-v1",
+        "feature_size": [32, 32],
+        "match_size": [64, 64],
+        "min_score": 0.72,
+        "min_gap": 0.05,
+        "items": [
+            {
+                "cache_key": cache_key,
+                "name": "幸运星",
+                "feature_rgba": _pixel_payload("RGBA", (32, 32), 4),
+                "match_rgba": _pixel_payload("RGBA", (64, 64), 4),
+                "feature_mask": _pixel_payload("L", (32, 32), 1),
+                "match_mask": _pixel_payload("L", (64, 64), 1),
+            }
+        ],
+    }
+
+
 def _raw_config() -> dict:
     return {
         "season_id": "s1",
@@ -93,8 +123,13 @@ def _skip_bundle_validation(module, monkeypatch):
     monkeypatch.setattr(module, "load_cw_resource_bundle_from_path", lambda root: None)
 
 
-def test_build_cw_resource_bundle_writes_manifest_and_loadable_bundle(tmp_path):
+def test_build_cw_resource_bundle_writes_manifest_and_loadable_bundle(tmp_path, monkeypatch):
     module = _load_script()
+    monkeypatch.setattr(
+        module,
+        "_build_precomputed_equipment_features",
+        lambda icon_pairs: _feature_payload(),
+    )
 
     result = module.build_cw_resource_bundle(
         output_root=tmp_path / "generated",
