@@ -64,7 +64,31 @@ def _normalizer(data, *, timeout=10, workspace_root=None, enrich_traits=False):
     }
 
 
+class _FakeImage:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def convert(self, mode):
+        return self
+
+    def copy(self):
+        return self
+
+
+def _skip_icon_png_processing(module, monkeypatch):
+    def write_icon(path, data):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    monkeypatch.setattr(module, "write_verified_equipment_icon", write_icon)
+    monkeypatch.setattr(module.Image, "open", lambda path: _FakeImage())
+
+
 def _skip_bundle_validation(module, monkeypatch):
+    _skip_icon_png_processing(module, monkeypatch)
     monkeypatch.setattr(module, "_build_precomputed_equipment_features", lambda icon_pairs: {"items": []})
     monkeypatch.setattr(module, "load_cw_resource_bundle_from_path", lambda root: None)
 
@@ -195,6 +219,7 @@ def test_build_cw_resource_bundle_sanitizes_big_version_directory(tmp_path, monk
 
 def test_build_cw_resource_bundle_rejects_generated_invalid_features(tmp_path, monkeypatch):
     module = _load_script()
+    _skip_icon_png_processing(module, monkeypatch)
     monkeypatch.setattr(
         module,
         "_build_precomputed_equipment_features",

@@ -377,7 +377,7 @@ def test_prepare_equipment_icon_cache_refresh_redownloads_changed_url_only_with_
     assert calls == ["https://act-webstatic.mihoyo.com/a.png", "https://act-webstatic.mihoyo.com/b.png"]
 
 
-def test_prepare_equipment_icon_cache_redownloads_corrupt_file(tmp_path):
+def test_prepare_equipment_icon_cache_redownloads_corrupt_file(monkeypatch, tmp_path):
     resources = load_equipment_resources_module()
     catalog = resources.build_cw_equipment_catalog(
         {
@@ -405,6 +405,8 @@ def test_prepare_equipment_icon_cache_redownloads_corrupt_file(tmp_path):
         encoding="utf-8",
     )
     calls: list[str] = []
+    monkeypatch.setattr(resources, "_open_verified_png", lambda path: False)
+    monkeypatch.setattr(resources, "_write_verified_icon", lambda path, data: path.write_bytes(data))
 
     result = resources.prepare_equipment_icon_cache(
         catalog,
@@ -414,6 +416,7 @@ def test_prepare_equipment_icon_cache_redownloads_corrupt_file(tmp_path):
 
     assert result["downloaded"] == 1
     assert calls == ["https://act-webstatic.mihoyo.com/e1.png"]
+    assert icon_path.read_bytes() == _png_bytes("green")
 
 
 def test_prepare_equipment_icon_cache_no_refresh_reuses_previous_url_when_changed_icon_missing(tmp_path):
