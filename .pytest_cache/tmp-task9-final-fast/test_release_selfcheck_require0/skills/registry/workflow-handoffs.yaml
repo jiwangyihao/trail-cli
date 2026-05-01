@@ -1,6 +1,0 @@
-commands:
-  cw.enter:
-    default:
-      handoff_skill: trail-cw-entry
-      handoff_strength: strong
-      handoff_reason: scene_entered
