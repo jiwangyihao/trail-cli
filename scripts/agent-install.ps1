@@ -301,11 +301,53 @@ function Get-AssetName([string]$Value) {
   return "trail-cli-windows-x64-$tag.zip"
 }
 
+function Select-LatestReleaseTag($Releases) {
+  $candidates = @(
+    $Releases |
+      Where-Object { -not $_.draft } |
+      Sort-Object -Property @{ Expression = {
+        if (Is-Blank $_.published_at) { [datetimeoffset]::MinValue } else { [datetimeoffset]$_.published_at }
+      } } -Descending
+  )
+  foreach ($release in $candidates) {
+    $tag = [string]$release.tag_name
+    if (Is-Blank $tag) { continue }
+    $assetName = Get-AssetName $tag
+    if (Is-Blank $assetName) { continue }
+    $asset = @($release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1)
+    if ($asset.Count -gt 0) { return $tag }
+  }
+  return $null
+}
+
+function Get-NextReleaseApiUrl($Response) {
+  if ($null -eq $Response) { return $null }
+  $headers = $Response.Headers
+  if ($null -eq $headers) { return $null }
+  $link = $null
+  try {
+    $link = [string]$headers['Link']
+  } catch {
+    $link = [string]$headers.Link
+  }
+  if (Is-Blank $link) { return $null }
+  foreach ($entry in ($link -split ',')) {
+    if ($entry -match '<([^>]+)>;\s*rel="next"') { return $Matches[1] }
+  }
+  return $null
+}
+
 function Resolve-LatestTag([string]$RepoSlugValue) {
   if (Is-Blank $RepoSlugValue) { Fail 'REPO_SLUG_REQUIRED' 'Remote install requires -RepoSlug.' }
-  $api = "https://api.github.com/repos/$RepoSlugValue/releases/latest"
-  $release = Invoke-WebRequest -Uri $api -UseBasicParsing | ConvertFrom-Json
-  return [string]$release.tag_name
+  $api = "https://api.github.com/repos/$RepoSlugValue/releases?per_page=20"
+  while (-not (Is-Blank $api)) {
+    $response = Invoke-WebRequest -Uri $api -UseBasicParsing
+    $releases = @($response.Content | ConvertFrom-Json)
+    $tag = Select-LatestReleaseTag $releases
+    if (-not (Is-Blank $tag)) { return $tag }
+    $api = Get-NextReleaseApiUrl $response
+  }
+  Fail 'RELEASE_ASSET_NOT_FOUND' 'No published release with Trail zip asset found.'
 }
 
 function Assert-DirectoryExists([string]$PathValue, [string]$Code, [string]$Message) {

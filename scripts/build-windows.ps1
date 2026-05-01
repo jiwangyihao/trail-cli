@@ -23,7 +23,7 @@ try {
   Get-ChildItem (Join-Path $Root 'dist\trail') -Recurse -Directory -Filter '*.dist-info' | ForEach-Object {
     $pkg = $_.Name -replace '-[0-9].*\.dist-info$', ''
     $normalized = $pkg.ToLowerInvariant().Replace('_', '-').Replace('.', '-')
-    if ($normalized -eq 'trail-cli') { continue }
+    if ($normalized -eq 'trail-cli') { return }
     if ($noticeNames -notcontains $normalized) {
       throw "missing third-party notice for bundled package $pkg"
     }

@@ -50,8 +50,8 @@ jobs:
 
           ````powershell
           `$script = Join-Path `$env:TEMP 'trail-agent-install.ps1'
-          iwr 'https://github.com/${{ github.repository }}/releases/latest/download/agent-install.ps1' -UseB -OutFile `$script
-          powershell -NoProfile -ExecutionPolicy Bypass -File `$script -Agent openclaw -Scope user -CliVersion latest -RepoSlug '${{ github.repository }}' -Yes
+          iwr 'https://github.com/${{ github.repository }}/releases/download/v$project/agent-install.ps1' -UseB -OutFile `$script
+          powershell -NoProfile -ExecutionPolicy Bypass -File `$script -Agent openclaw -Scope user -CliVersion $project -RepoSlug '${{ github.repository }}' -Yes
           ````
           "@ | Set-Content dist\RELEASE_NOTES.md -Encoding utf8
           Get-Content dist\SHA256SUMS.txt
@@ -75,3 +75,7 @@ jobs:
             dist\*.tar.gz
           generate_release_notes: true
           body_path: dist\RELEASE_NOTES.md
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          fail_on_unmatched_files: true

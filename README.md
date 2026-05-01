@@ -8,7 +8,7 @@ Trail 包含 Windows 命令行程序和配套 skills。安装后，Agent 可以�
 
 普通 Windows 用户：
 
-1. 打开 [最新版下载](https://github.com/trail-cli/trail-cli/releases/latest)。
+1. 打开 [发布页](https://github.com/jiwangyihao/trail-cli/releases)，选择最新版本。
 2. 下载 Assets 里的 `trail-cli-windows-x64-vX.Y.Z.zip`。
 3. 解压到一个固定文件夹。
 4. 双击 `安装 Trail.cmd`。
@@ -43,6 +43,10 @@ Trail 包含 Windows 命令行程序和配套 skills。安装后，Agent 可以�
 - 通过 Trail skills 编排玩法流程。
 - 在“货币战争”里选择攻略、识别投资环境、读取商店和阵容，并推进战斗流程。
 
+## 致谢
+
+Trail CLI 早期实现参考并使用了 [StarRailAssistant](https://github.com/Shasnow/StarRailAssistant) 的部分代码与思路。感谢原项目作者和贡献者。
+
 ## 许可证
 
-Trail CLI 使用 [MPL-2.0](LICENSE) 开源。第三方声明见 [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt)。
+Trail CLI 使用 [GPL-3.0-only](LICENSE) 开源。第三方声明见 [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt)。
