@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -30,9 +31,14 @@ def _bundle_content_digest(manifest: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+@lru_cache(maxsize=None)
+def _zero_pixel_data(length: int) -> tuple[int, ...]:
+    return (0,) * length
+
+
 def _pixel_payload(mode: str, size: list[int]) -> dict:
     channels = 4 if mode == "RGBA" else 1
-    return {"mode": mode, "size": size, "data": [0] * (size[0] * size[1] * channels)}
+    return {"mode": mode, "size": size, "data": _zero_pixel_data(size[0] * size[1] * channels)}
 
 
 def _valid_feature_item(cache_key: str = "icon-a", name: str = "Icon A") -> dict:

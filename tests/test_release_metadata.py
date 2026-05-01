@@ -129,7 +129,7 @@ def test_release_build_files_define_required_assets():
     assert "uv.lock" not in gitignore.splitlines()
 
 
-def test_agent_installer_latest_release_selector_skips_drafts_and_missing_assets():
+def test_agent_installer_latest_release_selection_and_pagination():
     installer = (ROOT / "scripts" / "agent-install.ps1").read_text(encoding="utf-8")
     functions = "\n".join(
         extract_powershell_function(installer, name)
@@ -138,6 +138,8 @@ def test_agent_installer_latest_release_selector_skips_drafts_and_missing_assets
             "Resolve-VersionTag",
             "Get-AssetName",
             "Select-LatestReleaseTag",
+            "Get-NextReleaseApiUrl",
+            "Resolve-LatestTag",
         ]
     )
     command = functions + r'''
@@ -171,32 +173,7 @@ $releases = @(
 )
 $result = Select-LatestReleaseTag $releases
 if ($result -ne 'v0.10.0') { throw "expected v0.10.0, got $result" }
-'''
 
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", command],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-    )
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_agent_installer_latest_release_resolver_follows_github_pagination():
-    installer = (ROOT / "scripts" / "agent-install.ps1").read_text(encoding="utf-8")
-    functions = "\n".join(
-        extract_powershell_function(installer, name)
-        for name in [
-            "Is-Blank",
-            "Resolve-VersionTag",
-            "Get-AssetName",
-            "Select-LatestReleaseTag",
-            "Get-NextReleaseApiUrl",
-            "Resolve-LatestTag",
-        ]
-    )
-    command = functions + r'''
 $script:requestedUris = @()
 function Invoke-WebRequest([string]$Uri, [switch]$UseBasicParsing) {
   $script:requestedUris += $Uri

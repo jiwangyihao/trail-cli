@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -91,16 +92,21 @@ def _stage_status_capture_calls():
 
 
 def _packed_ocr_pieces(targets: list[dict[str, object]]):
+    targets_key = tuple((target["key"], target["size"], target.get("text")) for target in targets)
+    return deepcopy(_packed_ocr_pieces_cached(targets_key))
+
+
+@lru_cache(maxsize=None)
+def _packed_ocr_pieces_cached(targets_key):
     from trail.runtime.batch_ocr import BatchOcrTarget, pack_batch_ocr_targets
 
     batch_targets = [
-        BatchOcrTarget(target["key"], Image.new("RGB", target["size"]))
-        for target in targets
+        BatchOcrTarget(key, Image.new("RGB", size))
+        for key, size, _text in targets_key
     ]
     _, packed = pack_batch_ocr_targets(batch_targets)
     pieces = []
-    for target, item in zip(targets, packed, strict=True):
-        text = target.get("text")
+    for (_key, _size, text), item in zip(targets_key, packed, strict=True):
         if not text:
             continue
         rect = item.content_rect

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from io import BytesIO
 import importlib.util
 import json
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "build-cw-resource-bundle.py"
 
 
+@lru_cache(maxsize=None)
 def _load_script():
     spec = importlib.util.spec_from_file_location("build_cw_resource_bundle", SCRIPT)
     assert spec is not None and spec.loader is not None
@@ -23,6 +25,7 @@ def _load_script():
     return module
 
 
+@lru_cache(maxsize=None)
 def _png_bytes(color="red"):
     buffer = BytesIO()
     Image.new("RGBA", (24, 24), color).save(buffer, format="PNG")
