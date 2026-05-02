@@ -93,6 +93,7 @@ def _role_feature_payload():
     }
 
 
+@lru_cache(maxsize=None)
 def _empty_png_bytes(*, mode: str = "RGBA", size: tuple[int, int] = (103, 120)) -> bytes:
     buffer = BytesIO()
     Image.new(mode, size).save(buffer, format="PNG")
