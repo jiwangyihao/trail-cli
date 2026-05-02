@@ -6,9 +6,12 @@ import shutil
 from threading import RLock
 from typing import Any
 
+from PIL import Image
+
 from trail.scenes.cw.equipment_recognition import build_precomputed_equipment_features
 from trail.scenes.cw.equipment_recognition import VectorEquipmentIconRecognizer
 from trail.scenes.cw.equipment_resources import load_cached_equipment_icons, prepare_equipment_icon_cache
+from trail.scenes.cw.role_recognition import VectorRoleIconRecognizer
 from trail.scenes.cw.static_resources import (
     cw_resource_source_signature,
     equipment_catalog_from_manifest,
@@ -29,16 +32,19 @@ class CwResourceService:
         bundle_loader=load_default_cw_resource_bundle,
         package_bundle_loader=load_default_cw_package_resource_bundle,
         recognizer_cls=VectorEquipmentIconRecognizer,
+        role_recognizer_cls=VectorRoleIconRecognizer,
         source_signature=cw_resource_source_signature,
     ) -> None:
         self._bundle_loader = bundle_loader
         self._package_bundle_loader = package_bundle_loader
         self._recognizer_cls = recognizer_cls
+        self._role_recognizer_cls = role_recognizer_cls
         self._source_signature = source_signature
         self._bundle_by_workspace: dict[str, Any] = {}
         self._source_signature_by_workspace: dict[str, tuple[Any, ...]] = {}
         self._bundles: dict[tuple[Any, ...], Any] = {}
         self._recognizers: dict[tuple[Any, ...], Any] = {}
+        self._role_recognizers: dict[tuple[Any, ...], Any] = {}
         self._lock = RLock()
 
     def _workspace_key(self, *, workspace_root: str | Path) -> str:
@@ -53,11 +59,13 @@ class CwResourceService:
             getattr(bundle, "source_kind", "package"),
             str(getattr(bundle, "manifest_path", getattr(bundle, "root", ""))),
             str(getattr(bundle, "equipment_manifest_path", "")),
+            str(getattr(bundle, "role_manifest_path", "")),
             manifest.get("bundle_schema_version"),
             manifest.get("resource_version"),
             getattr(bundle, "big_version", ""),
             getattr(bundle, "manifest_mtime", 0.0),
             getattr(bundle, "equipment_manifest_mtime", 0.0),
+            getattr(bundle, "role_manifest_mtime", 0.0),
             str(getattr(bundle, "override_manifest_path", "")),
             getattr(bundle, "override_manifest_mtime", 0.0),
             getattr(bundle, "override_identity", ""),
@@ -93,6 +101,32 @@ class CwResourceService:
     def equipment_read_resources(self, *, workspace_root: str | Path) -> tuple[dict[str, Any], Any]:
         bundle = self.bundle(workspace_root=workspace_root)
         return bundle.raw_config, self.equipment_recognizer_for_bundle(workspace_root=workspace_root, bundle=bundle)
+
+    def role_recognizer_for_bundle(self, *, workspace_root: str | Path, bundle: Any):
+        key = self._bundle_key(workspace_root=workspace_root, bundle=bundle)
+        with self._lock:
+            cached = self._role_recognizers.get(key)
+            if cached is None:
+                empty_manifest = bundle.role_manifest["empty_templates"]
+                templates = {}
+                for template_key in ("field", "hand"):
+                    local_path = empty_manifest[template_key]["local_path"]
+                    with Image.open(Path(bundle.root) / local_path) as image:
+                        templates[template_key] = image.convert("RGBA")
+                cached = self._role_recognizer_cls.from_precomputed_features(
+                    bundle.role_features,
+                    empty_templates=templates,
+                )
+                self._role_recognizers[key] = cached
+            return cached
+
+    def slots_read_resources(self, *, workspace_root: str | Path) -> tuple[dict[str, Any], dict[str, Any], Any]:
+        bundle = self.bundle(workspace_root=workspace_root)
+        return (
+            bundle.raw_config,
+            bundle.guide_config_enriched,
+            self.role_recognizer_for_bundle(workspace_root=workspace_root, bundle=bundle),
+        )
 
     def equipment_recognizer(self, *, workspace_root: str | Path):
         bundle = self.bundle(workspace_root=workspace_root)
@@ -144,3 +178,6 @@ class CwResourceService:
             self._source_signature_by_workspace.pop(workspace_key, None)
             self._bundles = {key: value for key, value in self._bundles.items() if key[0] != workspace_key}
             self._recognizers = {key: value for key, value in self._recognizers.items() if key[0] != workspace_key}
+            self._role_recognizers = {
+                key: value for key, value in self._role_recognizers.items() if key[0] != workspace_key
+            }

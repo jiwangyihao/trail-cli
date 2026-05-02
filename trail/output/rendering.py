@@ -978,9 +978,7 @@ def _append_cw_slot_lines(lines: list[str], data: dict[str, Any]) -> None:
                 name = item.get("name")
                 cost = item.get("cost") if item.get("cost") is not None else item.get("price")
                 facts.append(("name", name if name is not None else value))
-                has_match_diagnostics = any(
-                    item.get(key) is not None for key in ("raw_name", "match_score", "score", "match_kind")
-                )
+                has_match_diagnostics = item.get("match_kind") == "low_confidence"
                 if has_match_diagnostics:
                     facts.append(("raw_name", item.get("raw_name")))
                     facts.append(("score", _format_score_value(_match_score_value(item))))

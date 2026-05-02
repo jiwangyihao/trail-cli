@@ -2246,7 +2246,7 @@ def test_cw_portal_select_collects_prep_facts_and_closes_shop(tmp_path: Path, mo
         "crystal.factory(True)",
         "crystal.collect",
         "slots.dismiss",
-        "slots.reader({'dismiss_initial_overlay': False})",
+        "slots.reader({'targets': None, 'request_id': None, 'dismiss_initial_overlay': False})",
         "slots.read",
         "shop.opener.factory(True)",
         "shop.open",

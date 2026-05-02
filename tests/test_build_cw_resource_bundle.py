@@ -32,6 +32,22 @@ def _png_bytes(color="red"):
     return buffer.getvalue()
 
 
+def _empty_png_bytes(*, mode: str = "RGBA", size: tuple[int, int] = (103, 120)) -> bytes:
+    buffer = BytesIO()
+    Image.new(mode, size).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _truncated_empty_png_bytes() -> bytes:
+    return _empty_png_bytes()[:-40]
+
+
+def _write_empty_seed_templates(root: Path, *, field: bytes | None = None, hand: bytes | None = None) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "empty-field-v1.png").write_bytes(field or _empty_png_bytes())
+    (root / "empty-hand-v1.png").write_bytes(hand or _empty_png_bytes())
+
+
 def _raw_config() -> dict:
     return {
         "season_id": "s1",
@@ -39,7 +55,16 @@ def _raw_config() -> dict:
         "rpg_game_big_version": "3.2",
         "rpg_game_lineup_tourn_filter": "filter1",
         "trait_info_list": [{"id": "t1", "name": "贝洛伯格", "type": "faction"}],
-        "role_list": [{"id": "r1", "name": "希儿", "trait_ids": ["t1"]}],
+        "role_list": [
+            {
+                "id": "r1",
+                "name": "希儿",
+                "icon": "https://act-webstatic.mihoyo.com/r1.png",
+                "rarity": "5",
+                "front_back_type": "front",
+                "trait_ids": ["t1"],
+            }
+        ],
         "portal_list": [{"portal_id": "p1", "title": "机械城", "description": "desc"}],
         "fight_augment_list": [{"id": "a1", "name": "快攻", "desc": "说明"}],
         "equipment_list": [
@@ -64,6 +89,54 @@ def _normalizer(data, *, timeout=10, workspace_root=None, enrich_traits=False):
     }
 
 
+def _icon_fetcher(url, timeout, max_bytes):
+    if url.endswith("/r1.png"):
+        return _png_bytes("blue")
+    return _png_bytes("red")
+
+
+def test_role_catalog_extracts_trait_details_ids():
+    from trail.scenes.cw.role_resources import build_cw_role_catalog
+
+    catalog = build_cw_role_catalog(
+        {
+            "role_list": [
+                {
+                    "id": "r1",
+                    "name": "希儿",
+                    "icon": "https://act-webstatic.mihoyo.com/r1.png",
+                    "rarity": "5",
+                    "trait_details": [{"id": "t1"}, {"id": 2}, {}, {"id": None}],
+                }
+            ]
+        }
+    )
+
+    assert catalog[0].trait_ids == ["t1", "2"]
+
+
+@pytest.mark.parametrize("trait_details", [[], [{}], [{"id": None}]])
+def test_role_catalog_falls_back_to_trait_ids_when_trait_details_empty(trait_details):
+    from trail.scenes.cw.role_resources import build_cw_role_catalog
+
+    catalog = build_cw_role_catalog(
+        {
+            "role_list": [
+                {
+                    "id": "r1",
+                    "name": "希儿",
+                    "icon": "https://act-webstatic.mihoyo.com/r1.png",
+                    "rarity": "5",
+                    "trait_details": trait_details,
+                    "trait_ids": ["legacy-t1"],
+                }
+            ]
+        }
+    )
+
+    assert catalog[0].trait_ids == ["legacy-t1"]
+
+
 def test_build_cw_resource_bundle_writes_manifest_and_loadable_bundle(tmp_path):
     module = _load_script()
 
@@ -71,7 +144,7 @@ def test_build_cw_resource_bundle_writes_manifest_and_loadable_bundle(tmp_path):
         output_root=tmp_path / "generated",
         raw_config_fetcher=lambda timeout=10: _raw_config(),
         config_normalizer=_normalizer,
-        icon_fetcher=lambda url, timeout, max_bytes: _png_bytes(),
+        icon_fetcher=_icon_fetcher,
         timeout=1,
     )
 
@@ -86,6 +159,11 @@ def test_build_cw_resource_bundle_writes_manifest_and_loadable_bundle(tmp_path):
         "equipment/manifest.json",
         "equipment/features.json",
         "equipment/icons/advanced-e1.png",
+        "roles/manifest.json",
+        "roles/features.json",
+        "roles/icons/r1.png",
+        "roles/empty/field-v1.png",
+        "roles/empty/hand-v1.png",
     ]:
         assert (bundle_root / relative).is_file()
 
@@ -96,11 +174,29 @@ def test_build_cw_resource_bundle_writes_manifest_and_loadable_bundle(tmp_path):
     assert equipment["items"][0]["cache_key"] == "advanced-e1"
     assert equipment["items"][0]["big_version"] == "3.2"
 
+    roles = json.loads((bundle_root / "roles" / "manifest.json").read_text(encoding="utf-8"))
+    assert roles["items"][0]["role_id"] == "r1"
+    assert roles["items"][0]["normalized_name"] == "希儿"
+    assert roles["items"][0]["local_path"] == "roles/icons/r1.png"
+    assert roles["empty_templates"]["field"]["local_path"] == "roles/empty/field-v1.png"
+    assert roles["empty_templates"]["hand"]["local_path"] == "roles/empty/hand-v1.png"
+
+    role_features = json.loads((bundle_root / "roles" / "features.json").read_text(encoding="utf-8"))
+    assert role_features["min_score"] == 0.58
+    assert role_features["low_score"] == 0.50
+    assert role_features["min_gap"] == 0.035
+    assert role_features["empty_min_score"] == 0.82
+    assert role_features["empty_min_gap"] == 0.08
+    assert role_features["items"][0]["role_id"] == "r1"
+    assert role_features["items"][0]["normalized_name"] == "希儿"
+
     from trail.scenes.cw.static_resources import load_cw_resource_bundle_from_path
 
     loaded = load_cw_resource_bundle_from_path(bundle_root)
     assert loaded.big_version == "3.2"
     assert loaded.equipment_manifest["items"][0]["cache_key"] == "advanced-e1"
+    assert loaded.role_manifest["items"][0]["role_id"] == "r1"
+    assert loaded.role_features["items"][0]["role_id"] == "r1"
     assert loaded.indexes["equipment_by_cache_key"]["advanced-e1"]["big_version"] == "3.2"
 
 
@@ -125,7 +221,7 @@ def test_build_cw_resource_bundle_removes_stale_generated_content(tmp_path):
         output_root=output_root,
         raw_config_fetcher=lambda timeout=10: _raw_config(),
         config_normalizer=_normalizer,
-        icon_fetcher=lambda url, timeout, max_bytes: _png_bytes(),
+        icon_fetcher=_icon_fetcher,
         timeout=1,
     )
 
@@ -156,7 +252,7 @@ def test_build_cw_resource_bundle_rejects_generated_output_symlink(tmp_path):
             output_root=output_root,
             raw_config_fetcher=lambda timeout=10: _raw_config(),
             config_normalizer=_normalizer,
-            icon_fetcher=lambda url, timeout, max_bytes: _png_bytes(),
+            icon_fetcher=_icon_fetcher,
             timeout=1,
         )
 
@@ -174,7 +270,7 @@ def test_build_cw_resource_bundle_sanitizes_big_version_directory(tmp_path):
         output_root=output_root,
         raw_config_fetcher=lambda timeout=10: raw_config,
         config_normalizer=_normalizer,
-        icon_fetcher=lambda url, timeout, max_bytes: _png_bytes(),
+        icon_fetcher=_icon_fetcher,
         timeout=1,
     )
 
@@ -211,7 +307,42 @@ def test_build_cw_resource_bundle_rejects_generated_invalid_features(tmp_path, m
             output_root=tmp_path / "generated",
             raw_config_fetcher=lambda timeout=10: _raw_config(),
             config_normalizer=_normalizer,
-            icon_fetcher=lambda url, timeout, max_bytes: _png_bytes(),
+            icon_fetcher=_icon_fetcher,
+            timeout=1,
+        )
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_build_cw_resource_bundle_rejects_bad_empty_template_seed(tmp_path, monkeypatch):
+    module = _load_script()
+    seed_root = tmp_path / "seed-empty"
+    _write_empty_seed_templates(seed_root, field=_truncated_empty_png_bytes())
+    monkeypatch.setattr(module, "DEFAULT_EMPTY_TEMPLATE_ROOT", seed_root)
+
+    with pytest.raises(TrailError, match="empty template") as exc_info:
+        module.build_cw_resource_bundle(
+            output_root=tmp_path / "generated",
+            raw_config_fetcher=lambda timeout=10: _raw_config(),
+            config_normalizer=_normalizer,
+            icon_fetcher=_icon_fetcher,
+            timeout=1,
+        )
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_build_cw_resource_bundle_rejects_raw_role_missing_icon(tmp_path):
+    module = _load_script()
+    raw_config = _raw_config()
+    raw_config["role_list"][0].pop("icon")
+
+    with pytest.raises(TrailError, match="role icon") as exc_info:
+        module.build_cw_resource_bundle(
+            output_root=tmp_path / "generated",
+            raw_config_fetcher=lambda timeout=10: raw_config,
+            config_normalizer=_normalizer,
+            icon_fetcher=_icon_fetcher,
             timeout=1,
         )
 

@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import stat
 import sys
 import tarfile
+from tempfile import TemporaryDirectory
 from typing import TypeVar
 import zipfile
 
@@ -14,6 +15,8 @@ from trail.core.errors import TrailError
 from trail.scenes.cw.static_resources import (
     CW_RESOURCE_BUNDLE_SCHEMA_VERSION,
     _clean_equipment_icon_relative,
+    _clean_role_empty_relative,
+    _clean_role_icon_relative,
     _manifest_digest,
     _manifest_without_digest,
     _validate_equipment_feature_manifest_keys,
@@ -22,6 +25,9 @@ from trail.scenes.cw.static_resources import (
     _validate_guide_config,
     _validate_indexes,
     _validate_raw_config,
+    _validate_role_feature_manifest_keys,
+    _validate_role_features,
+    _validate_role_manifest,
 )
 
 
@@ -33,7 +39,13 @@ REQUIRED_RELATIVES = (
     "indexes.json",
     "equipment/manifest.json",
     "equipment/features.json",
+    "roles/manifest.json",
+    "roles/features.json",
+    "roles/empty/field-v1.png",
+    "roles/empty/hand-v1.png",
 )
+EQUIPMENT_ICON_PREFIX = "equipment/icons/"
+ROLE_ICON_PREFIX = "roles/icons/"
 ArchiveMember = TypeVar("ArchiveMember")
 ExpectedLayout = tuple[str | None, ...]
 WHEEL_LAYOUT: ExpectedLayout = ("trail", "scenes", "cw", "generated", None)
@@ -155,6 +167,63 @@ def _verify_equipment_manifest_icons(
     return local_paths
 
 
+def _write_temp_bundle_member(root: Path, relative: str, data: bytes) -> None:
+    target = root.joinpath(*PurePosixPath(relative).parts)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+
+
+def _verify_role_manifest_resources(
+    label: str,
+    bundle_root: str,
+    referenced: set[str],
+    read_member: Callable[[str], bytes],
+    role_manifest: dict,
+) -> set[str]:
+    local_paths: set[str] = set()
+    temp_files: list[tuple[str, bytes]] = []
+
+    def check_resource(entry: dict, *, kind: str) -> None:
+        try:
+            relative = (
+                _clean_role_empty_relative(entry.get("local_path"))
+                if kind == "empty template"
+                else _clean_role_icon_relative(entry.get("local_path"))
+            )
+        except TrailError as exc:
+            raise ValueError(f"{label}: role manifest {kind} path invalid: {entry.get('local_path')}") from exc
+        if relative not in referenced:
+            raise ValueError(f"{label}: role manifest references unlisted {kind}: {relative}")
+        data = read_member(_bundle_member(bundle_root, relative))
+        if len(data) != entry.get("size") or hashlib.sha256(data).hexdigest() != entry.get("sha256"):
+            raise ValueError(f"{label}: role {kind} checksum mismatch: {relative}")
+        local_paths.add(relative)
+        temp_files.append((relative, data))
+
+    empty_templates = role_manifest.get("empty_templates")
+    if isinstance(empty_templates, dict):
+        for key in ("field", "hand"):
+            entry = empty_templates.get(key)
+            if isinstance(entry, dict):
+                check_resource(entry, kind="empty template")
+
+    items = role_manifest.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                check_resource(item, kind="icon")
+
+    with TemporaryDirectory(prefix="trail-cw-role-verify-") as temp_dir:
+        temp_root = Path(temp_dir)
+        for relative, data in temp_files:
+            _write_temp_bundle_member(temp_root, relative, data)
+        try:
+            _validate_role_manifest(temp_root, role_manifest)
+        except TrailError as exc:
+            raise ValueError(f"{label}: runtime schema invalid: {exc}") from exc
+    return local_paths
+
+
 def _verify_runtime_payload_schema(
     label: str,
     bundle_root: str,
@@ -167,6 +236,8 @@ def _verify_runtime_payload_schema(
     indexes = _load_json_member(read_member, _bundle_member(bundle_root, "indexes.json"))
     equipment_manifest = _load_json_member(read_member, _bundle_member(bundle_root, "equipment/manifest.json"))
     equipment_features = _load_json_member(read_member, _bundle_member(bundle_root, "equipment/features.json"))
+    role_manifest = _load_json_member(read_member, _bundle_member(bundle_root, "roles/manifest.json"))
+    role_features = _load_json_member(read_member, _bundle_member(bundle_root, "roles/features.json"))
     try:
         _validate_raw_config(raw_config)
         _validate_guide_config(guide_config, "guide config")
@@ -175,9 +246,18 @@ def _verify_runtime_payload_schema(
         _validate_equipment_manifest_payload(equipment_manifest)
         _validate_equipment_features(equipment_features)
         _validate_equipment_feature_manifest_keys(equipment_manifest, equipment_features)
+        _validate_role_features(role_features)
     except TrailError as exc:
         raise ValueError(f"{label}: runtime schema invalid: {exc}") from exc
-    return _verify_equipment_manifest_icons(label, bundle_root, referenced, read_member, equipment_manifest)
+    role_paths = _verify_role_manifest_resources(label, bundle_root, referenced, read_member, role_manifest)
+    try:
+        _validate_role_feature_manifest_keys(role_manifest, role_features)
+    except TrailError as exc:
+        raise ValueError(f"{label}: runtime schema invalid: {exc}") from exc
+    return {
+        *_verify_equipment_manifest_icons(label, bundle_root, referenced, read_member, equipment_manifest),
+        *role_paths,
+    }
 
 
 def _verify_members(
@@ -190,7 +270,15 @@ def _verify_members(
     member_set = set(members)
     bundle_root = _find_bundle_root(members, expected_layout)
     generated_root = _generated_root(bundle_root)
-    allowed_directories = {generated_root, bundle_root, f"{bundle_root}/equipment", f"{bundle_root}/equipment/icons"}
+    allowed_directories = {
+        generated_root,
+        bundle_root,
+        f"{bundle_root}/equipment",
+        f"{bundle_root}/equipment/icons",
+        f"{bundle_root}/roles",
+        f"{bundle_root}/roles/icons",
+        f"{bundle_root}/roles/empty",
+    }
     for directory in directories:
         if not directory.startswith(generated_root + "/"):
             continue
@@ -218,6 +306,7 @@ def _verify_members(
     referenced: set[str] = set()
     allowed_members = {manifest_member, _bundle_member(generated_root, ".gitkeep")}
     icon_count = 0
+    role_icon_count = 0
     for entry in files:
         if not isinstance(entry, dict):
             raise ValueError(f"{label}: manifest file entry invalid")
@@ -229,8 +318,10 @@ def _verify_members(
         if relative in referenced:
             raise ValueError(f"{label}: duplicate manifest file entry: {relative}")
         referenced.add(relative)
-        if relative.startswith("equipment/icons/"):
+        if relative.startswith(EQUIPMENT_ICON_PREFIX):
             icon_count += 1
+        if relative.startswith(ROLE_ICON_PREFIX):
+            role_icon_count += 1
 
         member = _bundle_member(bundle_root, relative)
         if member not in member_set:
@@ -246,6 +337,8 @@ def _verify_members(
         raise ValueError(f"{label}: manifest missing required file entry {missing_references[0]}")
     if icon_count == 0:
         raise ValueError(f"{label}: manifest missing equipment/icons/ entry")
+    if role_icon_count == 0:
+        raise ValueError(f"{label}: manifest missing roles/icons/ entry")
     equipment_paths = _verify_runtime_payload_schema(label, bundle_root, referenced, read_member)
     allowed_references = {*REQUIRED_RELATIVES, *equipment_paths}
     extra_references = sorted(referenced - allowed_references)

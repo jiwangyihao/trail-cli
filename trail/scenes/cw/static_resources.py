@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from hashlib import sha256
+from io import BytesIO
 import json
 import math
 import os
 from pathlib import Path, PurePosixPath
 from shutil import copy2
 from typing import Any
+
+from PIL import Image
 
 from trail.core.errors import TrailError
 from trail.scenes.cw.equipment_resources import (
@@ -19,6 +22,11 @@ from trail.scenes.cw.equipment_resources import (
 
 CW_RESOURCE_BUNDLE_SCHEMA_VERSION = 1
 CW_EQUIPMENT_FEATURE_SCHEMA_VERSION = 1
+CW_ROLE_MANIFEST_SCHEMA_VERSION = 1
+CW_ROLE_FEATURE_SCHEMA_VERSION = 1
+CW_ROLE_RECOGNIZER_ALGORITHM_VERSION = "role-card-mask-v1"
+CW_SLOT_GEOMETRY_VERSION = "cw-slots-1920x1080-v2"
+CW_SLOT_EMPTY_TEMPLATE_VERSION = "cw-slots-empty-v1"
 CW_GENERATED_RELATIVE = Path("scenes") / "cw" / "generated"
 
 _FIXED_BUNDLE_RELATIVES = (
@@ -28,6 +36,10 @@ _FIXED_BUNDLE_RELATIVES = (
     "indexes.json",
     "equipment/manifest.json",
     "equipment/features.json",
+    "roles/manifest.json",
+    "roles/features.json",
+    "roles/empty/field-v1.png",
+    "roles/empty/hand-v1.png",
 )
 _FEATURE_ITEM_REQUIRED_KEYS = (
     "cache_key",
@@ -47,6 +59,32 @@ _EQUIPMENT_MANIFEST_REQUIRED_KEYS = (
     "sha256",
     "size",
 )
+_ROLE_MANIFEST_REQUIRED_KEYS = (
+    "role_id",
+    "name",
+    "normalized_name",
+    "icon_url",
+    "local_path",
+    "sha256",
+    "size",
+    "front_back_type",
+    "trait_ids",
+)
+_ROLE_FEATURE_ITEM_REQUIRED_KEYS = (
+    "role_id",
+    "name",
+    "normalized_name",
+    "front_back_type",
+    "trait_ids",
+    "icon_rgba",
+    "icon_mask",
+    "histogram",
+)
+_ROLE_EMPTY_TEMPLATE_RELATIVES = {
+    "field": "roles/empty/field-v1.png",
+    "hand": "roles/empty/hand-v1.png",
+}
+_ROLE_EMPTY_TEMPLATE_SIZE = (103, 120)
 
 
 @dataclass(frozen=True)
@@ -59,11 +97,15 @@ class CwResourceBundle:
     indexes: dict[str, Any]
     equipment_manifest: dict[str, Any]
     equipment_features: dict[str, Any]
+    role_manifest: dict[str, Any]
+    role_features: dict[str, Any]
     source_kind: str = "package"
     manifest_path: Path | None = None
     manifest_mtime: float = 0.0
     equipment_manifest_path: Path | None = None
     equipment_manifest_mtime: float = 0.0
+    role_manifest_path: Path | None = None
+    role_manifest_mtime: float = 0.0
     override_manifest_path: Path | None = None
     override_manifest_mtime: float = 0.0
     override_identity: str = ""
@@ -135,6 +177,43 @@ def _clean_equipment_icon_relative(value: object) -> str:
     return relative
 
 
+def _clean_role_icon_relative(value: object) -> str:
+    relative = _clean_bundle_relative(value, source="cw role icon")
+    parts = PurePosixPath(relative).parts
+    if len(parts) != 3 or parts[:2] != ("roles", "icons") or not parts[2].endswith(".png"):
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role icon path invalid: {value}")
+    return relative
+
+
+def _clean_role_empty_relative(value: object) -> str:
+    relative = _clean_bundle_relative(value, source="cw role empty template")
+    if relative not in set(_ROLE_EMPTY_TEMPLATE_RELATIVES.values()):
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template path invalid: {value}")
+    return relative
+
+
+def _validate_role_empty_template_bytes(data: bytes, source: str) -> None:
+    try:
+        with Image.open(BytesIO(data)) as image:
+            if image.mode != "RGBA":
+                raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template mode invalid: {source}")
+            if image.size != _ROLE_EMPTY_TEMPLATE_SIZE:
+                raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template size invalid: {source}")
+            image.load()
+    except TrailError:
+        raise
+    except OSError as exc:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template invalid: {source}") from exc
+
+
+def _validate_role_empty_template_path(path: Path, source: str | None = None) -> None:
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template invalid: {source or path}") from exc
+    _validate_role_empty_template_bytes(data, source or str(path))
+
+
 def _is_path_link(path: Path) -> bool:
     is_junction = getattr(path, "is_junction", None)
     return path.is_symlink() or (callable(is_junction) and is_junction())
@@ -183,7 +262,9 @@ def write_bundle_manifest(
 ) -> dict[str, Any]:
     file_relatives = [*_FIXED_BUNDLE_RELATIVES]
     equipment_manifest = _read_json(root / "equipment" / "manifest.json")
+    role_manifest = _read_json(root / "roles" / "manifest.json")
     _validate_equipment_manifest(root, equipment_manifest)
+    _validate_role_manifest(root, role_manifest)
     items = equipment_manifest.get("items")
     seen_local_paths: set[str] = set(_FIXED_BUNDLE_RELATIVES)
     for item in items:
@@ -191,6 +272,13 @@ def write_bundle_manifest(
         normalized_local_path = _bundle_relative(root, _bundle_path(root, local_path))
         if normalized_local_path in seen_local_paths:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment manifest duplicate local_path: {local_path}")
+        seen_local_paths.add(normalized_local_path)
+        file_relatives.append(normalized_local_path)
+    for item in role_manifest["items"]:
+        local_path = _clean_role_icon_relative(item["local_path"])
+        normalized_local_path = _bundle_relative(root, _bundle_path(root, local_path))
+        if normalized_local_path in seen_local_paths:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role manifest duplicate local_path: {local_path}")
         seen_local_paths.add(normalized_local_path)
         file_relatives.append(normalized_local_path)
     manifest = {
@@ -402,6 +490,132 @@ def _validate_equipment_features(payload: dict[str, Any]) -> None:
         _validate_pixel_payload(item["match_mask"], "match_mask", "L", [64, 64], 1)
 
 
+def _validate_role_manifest(root: Path, payload: dict[str, Any]) -> None:
+    if payload.get("role_manifest_schema_version") != CW_ROLE_MANIFEST_SCHEMA_VERSION:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest schema version unsupported")
+    if not isinstance(payload.get("resource_version"), str) or not payload.get("resource_version"):
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest missing resource_version")
+    if payload.get("empty_template_version") != CW_SLOT_EMPTY_TEMPLATE_VERSION:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role empty template version unsupported")
+    empty_templates = payload.get("empty_templates")
+    if not isinstance(empty_templates, dict):
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest missing empty_templates")
+    for key, expected_relative in _ROLE_EMPTY_TEMPLATE_RELATIVES.items():
+        entry = empty_templates.get(key)
+        if not isinstance(entry, dict):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role manifest missing empty template: {key}")
+        local_path = _clean_role_empty_relative(entry.get("local_path"))
+        if local_path != expected_relative:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template path invalid: {local_path}")
+        expected_hash = entry.get("sha256")
+        expected_size = entry.get("size")
+        if not isinstance(expected_hash, str) or not expected_hash:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template sha256 invalid: {key}")
+        if not isinstance(expected_size, int) or isinstance(expected_size, bool):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template size invalid: {key}")
+        template_path = _bundle_path(root, local_path)
+        if template_path.stat().st_size != expected_size or _file_sha256(template_path) != expected_hash:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template checksum mismatch: {local_path}")
+        _validate_role_empty_template_path(template_path, local_path)
+
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest missing items")
+    if not items:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest empty items")
+    seen_role_ids: set[str] = set()
+    seen_local_paths: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest item invalid")
+        for key in _ROLE_MANIFEST_REQUIRED_KEYS:
+            if key not in item:
+                raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role manifest item missing {key}")
+        if "rarity" not in item and "cost" not in item:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest item missing rarity or cost")
+        for key in ("role_id", "name", "normalized_name", "icon_url", "local_path", "sha256"):
+            if not isinstance(item.get(key), str) or not item.get(key):
+                raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role manifest item {key} invalid")
+        role_id = item["role_id"]
+        if role_id in seen_role_ids:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role manifest duplicate role_id: {role_id}")
+        seen_role_ids.add(role_id)
+        if item.get("front_back_type") is not None and not isinstance(item.get("front_back_type"), str):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest item front_back_type invalid")
+        if not isinstance(item.get("trait_ids"), list) or not all(isinstance(value, str) for value in item["trait_ids"]):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest item trait_ids invalid")
+        for key in ("rarity", "cost"):
+            if key in item and item[key] is not None and not isinstance(item[key], str):
+                raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role manifest item {key} invalid")
+        if not isinstance(item.get("size"), int) or isinstance(item.get("size"), bool):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest item size invalid")
+        local_path = _clean_role_icon_relative(item["local_path"])
+        icon_path = _bundle_path(root, local_path)
+        normalized_local_path = _bundle_relative(root, icon_path)
+        if normalized_local_path in seen_local_paths:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role manifest duplicate local_path: {local_path}")
+        seen_local_paths.add(normalized_local_path)
+        if icon_path.stat().st_size != item["size"] or _file_sha256(icon_path) != item["sha256"]:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role icon checksum mismatch: {local_path}")
+
+
+def _validate_role_features(payload: dict[str, Any]) -> None:
+    if payload.get("role_feature_schema_version") != CW_ROLE_FEATURE_SCHEMA_VERSION:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role feature schema version unsupported")
+    if payload.get("recognizer_algorithm_version") != CW_ROLE_RECOGNIZER_ALGORITHM_VERSION:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role recognizer algorithm unsupported")
+    if payload.get("geometry_version") != CW_SLOT_GEOMETRY_VERSION:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role geometry version unsupported")
+    if payload.get("empty_template_version") != CW_SLOT_EMPTY_TEMPLATE_VERSION:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role empty template version unsupported")
+    if payload.get("target_size") != [103, 120]:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role target size unsupported")
+    if payload.get("avatar_roi") != [5, 4, 98, 108]:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role avatar roi unsupported")
+    if payload.get("feature_size") != [64, 64]:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role feature size unsupported")
+    if payload.get("hist_bins") != [16, 16, 16]:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role histogram bins unsupported")
+    for key in ("min_score", "low_score", "min_gap", "empty_min_score", "empty_min_gap"):
+        _validate_finite_float(payload.get(key), key, source="cw role feature")
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role features missing items")
+    if not items:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role features empty items")
+    seen_role_ids: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role feature item invalid")
+        for key in _ROLE_FEATURE_ITEM_REQUIRED_KEYS:
+            if key not in item:
+                raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role feature item missing {key}")
+        if "rarity" not in item and "cost" not in item:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role feature item missing rarity or cost")
+        for key in ("role_id", "name", "normalized_name"):
+            if not isinstance(item.get(key), str) or not item.get(key):
+                raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role feature item {key} invalid")
+        role_id = item["role_id"]
+        if role_id in seen_role_ids:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role feature duplicate role_id: {role_id}")
+        seen_role_ids.add(role_id)
+        if item.get("front_back_type") is not None and not isinstance(item.get("front_back_type"), str):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role feature item front_back_type invalid")
+        if not isinstance(item.get("trait_ids"), list) or not all(isinstance(value, str) for value in item["trait_ids"]):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role feature item trait_ids invalid")
+        for key in ("rarity", "cost"):
+            if key in item and item[key] is not None and not isinstance(item[key], str):
+                raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role feature item {key} invalid")
+        _validate_pixel_payload(item["icon_rgba"], "icon_rgba", "RGBA", [64, 64], 4, source="cw role feature")
+        _validate_pixel_payload(item["icon_mask"], "icon_mask", "L", [64, 64], 1, source="cw role feature")
+        histogram = item.get("histogram")
+        if not isinstance(histogram, list) or len(histogram) != 4096:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role feature histogram length invalid")
+        for value in histogram:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role feature histogram value invalid")
+
+
 def _equipment_cache_keys(payload: dict[str, Any], source: str) -> set[str]:
     keys: set[str] = set()
     for item in payload["items"]:
@@ -412,6 +626,18 @@ def _equipment_cache_keys(payload: dict[str, Any], source: str) -> set[str]:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment {source} duplicate cache_key: {cache_key}")
         keys.add(cache_key)
     return keys
+
+
+def _role_ids(payload: dict[str, Any], source: str) -> set[str]:
+    role_ids: set[str] = set()
+    for item in payload["items"]:
+        role_id = item.get("role_id")
+        if not isinstance(role_id, str):
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role {source} item role_id invalid")
+        if role_id in role_ids:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role {source} duplicate role_id: {role_id}")
+        role_ids.add(role_id)
+    return role_ids
 
 
 def _validate_equipment_feature_manifest_keys(
@@ -432,27 +658,53 @@ def _validate_equipment_feature_manifest_keys(
     raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment feature cache_key mismatch{suffix}")
 
 
-def _validate_finite_float(value: Any, key: str) -> None:
+def _validate_role_feature_manifest_keys(role_manifest: dict[str, Any], role_features: dict[str, Any]) -> None:
+    manifest_role_ids = _role_ids(role_manifest, "manifest")
+    feature_role_ids = _role_ids(role_features, "features")
+    if manifest_role_ids == feature_role_ids:
+        return
+    missing = sorted(manifest_role_ids - feature_role_ids)
+    extra = sorted(feature_role_ids - manifest_role_ids)
+    details = []
+    if missing:
+        details.append(f"missing={','.join(missing)}")
+    if extra:
+        details.append(f"extra={','.join(extra)}")
+    suffix = f": {' '.join(details)}" if details else ""
+    raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role feature role_id mismatch{suffix}")
+
+
+def _validate_finite_float(value: Any, key: str, *, source: str = "cw equipment feature") -> None:
+    if isinstance(value, bool):
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"{source} {key} invalid")
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
-        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment feature {key} invalid") from exc
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"{source} {key} invalid") from exc
     if not math.isfinite(number):
-        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment feature {key} invalid")
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"{source} {key} invalid")
 
 
-def _validate_pixel_payload(payload: Any, key: str, mode: str, size: list[int], channels: int) -> None:
+def _validate_pixel_payload(
+    payload: Any,
+    key: str,
+    mode: str,
+    size: list[int],
+    channels: int,
+    *,
+    source: str = "cw equipment feature",
+) -> None:
     if not isinstance(payload, dict):
-        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment feature {key} payload invalid")
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"{source} {key} payload invalid")
     data = payload.get("data")
     if payload.get("mode") != mode or payload.get("size") != size or not isinstance(data, list):
-        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment feature {key} payload invalid")
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"{source} {key} payload invalid")
     if len(data) != size[0] * size[1] * channels:
-        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment feature {key} data length invalid")
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"{source} {key} data length invalid")
     try:
         bytes(data)
     except (TypeError, ValueError) as exc:
-        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment feature {key} data invalid") from exc
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"{source} {key} data invalid") from exc
 
 
 def _validate_equipment_manifest_payload(payload: dict[str, Any]) -> None:
@@ -495,10 +747,35 @@ def _validate_equipment_manifest_paths_listed(root: Path, payload: dict[str, Any
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment icon missing from manifest files: {local_path}")
 
 
-def _validate_manifest_files_allowed(root: Path, payload: dict[str, Any], manifest_files: set[str]) -> None:
+def _iter_role_manifest_local_paths(payload: dict[str, Any]):
+    empty_templates = payload.get("empty_templates") if isinstance(payload, dict) else None
+    if isinstance(empty_templates, dict):
+        for key in ("field", "hand"):
+            entry = empty_templates.get(key)
+            if isinstance(entry, dict):
+                yield _clean_role_empty_relative(entry.get("local_path"))
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                yield _clean_role_icon_relative(item.get("local_path"))
+
+
+def _validate_role_manifest_paths_listed(root: Path, role_manifest: dict[str, Any], manifest_files: set[str]) -> None:
+    for local_path in _iter_role_manifest_local_paths(role_manifest):
+        normalized_local_path = _bundle_relative(root, _bundle_path(root, local_path))
+        if normalized_local_path not in manifest_files:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role resource missing from manifest files: {local_path}")
+
+
+def _validate_manifest_files_allowed(
+    root: Path, equipment_manifest: dict[str, Any], role_manifest: dict[str, Any], manifest_files: set[str]
+) -> None:
     allowed = set(_FIXED_BUNDLE_RELATIVES)
-    for item in payload["items"]:
+    for item in equipment_manifest["items"]:
         local_path = _clean_equipment_icon_relative(item["local_path"])
+        allowed.add(_bundle_relative(root, _bundle_path(root, local_path)))
+    for local_path in _iter_role_manifest_local_paths(role_manifest):
         allowed.add(_bundle_relative(root, _bundle_path(root, local_path)))
     extra = sorted(manifest_files - allowed)
     if extra:
@@ -546,12 +823,19 @@ def load_cw_resource_bundle_from_path(root: str | Path, *, source_kind: str = "p
     equipment_manifest_path = bundle_root / "equipment" / "manifest.json"
     equipment_manifest = _read_json(equipment_manifest_path)
     equipment_features = _read_json(bundle_root / "equipment" / "features.json")
+    role_manifest_path = bundle_root / "roles" / "manifest.json"
+    role_manifest = _read_json(role_manifest_path)
+    role_features = _read_json(bundle_root / "roles" / "features.json")
     _validate_equipment_manifest(bundle_root, equipment_manifest)
-    _validate_manifest_files_allowed(bundle_root, equipment_manifest, manifest_files)
+    _validate_role_manifest(bundle_root, role_manifest)
+    _validate_manifest_files_allowed(bundle_root, equipment_manifest, role_manifest, manifest_files)
     _validate_equipment_manifest_paths_listed(bundle_root, equipment_manifest, manifest_files)
-    _validate_no_unreferenced_bundle_files(bundle_root, manifest_files)
+    _validate_role_manifest_paths_listed(bundle_root, role_manifest, manifest_files)
     _validate_equipment_features(equipment_features)
     _validate_equipment_feature_manifest_keys(equipment_manifest, equipment_features)
+    _validate_role_features(role_features)
+    _validate_role_feature_manifest_keys(role_manifest, role_features)
+    _validate_no_unreferenced_bundle_files(bundle_root, manifest_files)
 
     return CwResourceBundle(
         root=bundle_root,
@@ -562,11 +846,15 @@ def load_cw_resource_bundle_from_path(root: str | Path, *, source_kind: str = "p
         indexes=indexes,
         equipment_manifest=equipment_manifest,
         equipment_features=equipment_features,
+        role_manifest=role_manifest,
+        role_features=role_features,
         source_kind=source_kind,
         manifest_path=manifest_path,
         manifest_mtime=manifest_path.stat().st_mtime,
         equipment_manifest_path=equipment_manifest_path,
         equipment_manifest_mtime=equipment_manifest_path.stat().st_mtime,
+        role_manifest_path=role_manifest_path,
+        role_manifest_mtime=role_manifest_path.stat().st_mtime,
     )
 
 

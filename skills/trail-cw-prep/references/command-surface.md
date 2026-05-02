@@ -1,8 +1,8 @@
 # Command Surface
 
 - `trail cw stage detect --session <id>` / `trail cw stage wait --session <id>`：只用于已进入货币战争后的阶段确认。
-- `trail cw slots read --session <id> --slot front:1 --slot hand:4`：读取指定槽位快照；Agent 可见槽位编号从 1 开始，截图优先。
-- `trail cw slots read --session <id>`：读取完整槽位快照；只作为完整兜底，不表示默认每次都要全量读取。
+- `trail cw slots read --session <id> --slot front:1 --slot hand:4`：读取指定槽位快照；默认使用角色图标识别，不再逐槽位点击详情读取姓名；Agent 可见槽位编号从 1 开始，截图优先。
+- `trail cw slots read --session <id>`：读取完整槽位快照；只作为完整兜底，不表示默认每次都要全量读取。带截图 success 后必须先读本次 `shot path` 指向的截图，再消费 `slot`、羁绊和装备/商店事实；若出现 `CW_ROLE_MATCH_LOW_CONFIDENCE` 或 `SLOTS_RECOGNITION_UNCERTAIN`，先核对截图再做换位、出售或购买决策。
 - `trail cw slots place --session <id> --action hand:1,front:1 --action hand:2,back:3` / `trail cw slots swap --session <id> ...`：显式改变槽位；本 skill 不决定何时执行。
 - `trail cw shop scan --session <id>` / `trail cw shop status --session <id>`：读取商店和经济事实；`shop.scan` 有截图，`cw.shop.status` 不产出截图，也不输出 `info read_image_first=1`。
 - `trail cw equipment prepare --session <id> [--refresh]`：默认只验证/汇总 bundle 装备资源，不下载图标；只有 `--refresh` 会写 workspace equipment override 并刷新图标/特征；canonical 为 `cw.equipment.prepare`。

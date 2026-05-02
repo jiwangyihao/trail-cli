@@ -293,6 +293,9 @@ def cw_slots_read(
         help="定向确认名字不确定槽位；不传 --slot 时仍保留全量读取。",
     ),
 ) -> None:
+    if current_output_format() is OutputFormat.YAML:
+        print_output("cw.slots.read", _output_format_not_supported_response("cw.slots.read"))
+        return
     try:
         slots = [_parse_agent_slot_ref(value) for value in list(slot or [])]
     except TrailError as error:

@@ -180,7 +180,9 @@ def with_auto_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None =
                 **metadata,
             )
 
-        screenshot = _capture_screenshot(resolved_runtime, optional=False)
+        data, screenshot = _pop_precaptured_screenshot(data)
+        if screenshot is None:
+            screenshot = _capture_screenshot(resolved_runtime, optional=False)
         metadata = _safe_collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
         return command_success(
             data=data,
@@ -201,8 +203,13 @@ def with_selective_capture(runtime, fn: Callable[[], dict], *, verbose: bool | N
         try:
             data = fn()
         except TrailError as exc:
-            screenshot = _capture_optional_screenshot(resolved_runtime)
+            screenshot = getattr(exc, "screenshot", None)
+            if screenshot is None:
+                screenshot = _capture_optional_screenshot(resolved_runtime)
             metadata = _safe_collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
+            exc_warnings = getattr(exc, "warnings", None)
+            if isinstance(exc_warnings, list):
+                metadata["warnings"] = [*to_jsonable(exc_warnings), *metadata.get("warnings", [])]
             return command_failure(
                 code=exc.code,
                 message=format_exception_message(exc),

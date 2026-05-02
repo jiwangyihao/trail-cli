@@ -17,14 +17,28 @@ from trail.scenes.cw.equipment_resources import (
     EQUIPMENT_ICON_MAX_BYTES,
     EquipmentCatalogEntry,
     build_cw_equipment_catalog,
-    download_equipment_icon_bytes,
     equipment_bundle_manifest_entry,
     safe_equipment_cache_segment,
     write_verified_equipment_icon,
 )
 from trail.scenes.cw.guide import download_cw_guide_config_data, normalize_cw_guide_config_data
+from trail.scenes.cw.role_recognition import build_precomputed_role_features
+from trail.scenes.cw.role_resources import (
+    ROLE_ICON_MAX_BYTES,
+    RoleCatalogEntry,
+    build_cw_role_catalog,
+    download_role_icon_bytes,
+    safe_role_cache_segment,
+    write_verified_role_icon,
+)
 from trail.scenes.cw.static_resources import (
     CW_RESOURCE_BUNDLE_SCHEMA_VERSION,
+    CW_ROLE_FEATURE_SCHEMA_VERSION,
+    CW_ROLE_MANIFEST_SCHEMA_VERSION,
+    CW_ROLE_RECOGNIZER_ALGORITHM_VERSION,
+    CW_SLOT_EMPTY_TEMPLATE_VERSION,
+    CW_SLOT_GEOMETRY_VERSION,
+    _validate_role_empty_template_path,
     load_cw_resource_bundle_from_path,
     write_bundle_json,
     write_bundle_manifest,
@@ -33,6 +47,11 @@ from trail.scenes.cw.static_resources import (
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = ROOT / "trail" / "scenes" / "cw" / "generated"
+DEFAULT_EMPTY_TEMPLATE_ROOT = ROOT / "trail" / "scenes" / "cw" / "assets" / "slots"
+ROLE_TARGET_SIZE = (103, 120)
+ROLE_FEATURE_SIZE = (64, 64)
+ROLE_AVATAR_ROI = [5, 4, 98, 108]
+ROLE_HIST_BINS = (16, 16, 16)
 
 
 def _is_path_link(path: Path) -> bool:
@@ -99,6 +118,111 @@ def _build_precomputed_equipment_features(
     return build_precomputed_equipment_features(icon_pairs)
 
 
+def _pixel_payload(image: Image.Image, mode: str) -> dict[str, Any]:
+    normalized = image.convert(mode)
+    return {"mode": mode, "size": list(normalized.size), "data": list(normalized.tobytes())}
+
+
+def _normalized_rgba(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+    rgba = image.convert("RGBA")
+    background = Image.new("RGBA", rgba.size, (0, 0, 0, 255))
+    background.alpha_composite(rgba)
+    return background.resize(size, Image.Resampling.LANCZOS)
+
+
+def _alpha_mask(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+    return image.convert("RGBA").getchannel("A").resize(size, Image.Resampling.LANCZOS)
+
+
+def _image_data(image: Image.Image):
+    get_flattened_data = getattr(image, "get_flattened_data", None)
+    return get_flattened_data() if callable(get_flattened_data) else image.getdata()
+
+
+def _hsv_histogram(image: Image.Image) -> list[float]:
+    rgba = image.convert("RGBA").resize(ROLE_FEATURE_SIZE, Image.Resampling.LANCZOS)
+    hsv = rgba.convert("HSV")
+    alpha = rgba.getchannel("A")
+    histogram = [0.0] * (ROLE_HIST_BINS[0] * ROLE_HIST_BINS[1] * ROLE_HIST_BINS[2])
+    total = 0.0
+    for (hue, saturation, value), weight in zip(_image_data(hsv), _image_data(alpha)):
+        if weight <= 8:
+            continue
+        hue_bin = min(ROLE_HIST_BINS[0] - 1, hue * ROLE_HIST_BINS[0] // 256)
+        saturation_bin = min(ROLE_HIST_BINS[1] - 1, saturation * ROLE_HIST_BINS[1] // 256)
+        value_bin = min(ROLE_HIST_BINS[2] - 1, value * ROLE_HIST_BINS[2] // 256)
+        index = hue_bin * ROLE_HIST_BINS[1] * ROLE_HIST_BINS[2] + saturation_bin * ROLE_HIST_BINS[2] + value_bin
+        histogram[index] += float(weight)
+        total += float(weight)
+    if total <= 0.0:
+        return histogram
+    return [round(value / total, 10) for value in histogram]
+
+
+def _role_payload_base(entry: RoleCatalogEntry) -> dict[str, Any]:
+    return {
+        "role_id": entry.role_id,
+        "name": entry.name,
+        "normalized_name": entry.normalized_name,
+        "front_back_type": entry.front_back_type,
+        "trait_ids": list(entry.trait_ids),
+        "rarity": entry.rarity,
+        "cost": entry.cost,
+    }
+
+
+def _build_precomputed_role_features(icon_pairs: Iterable[tuple[RoleCatalogEntry, Image.Image]]) -> dict[str, Any]:
+    pairs = list(icon_pairs)
+    return build_precomputed_role_features(
+        (entry for entry, _ in pairs),
+        {entry.role_id: icon for entry, icon in pairs},
+    )
+
+
+def _copy_empty_template(source_root: Path, staging_root: Path, filename: str, relative: str) -> dict[str, Any]:
+    source = source_root / filename
+    try:
+        _validate_role_empty_template_path(source)
+    except FileNotFoundError as exc:
+        raise TrailError("CW_RESOURCE_BUNDLE_MISSING", f"missing cw role empty template: {source}") from exc
+    except OSError as exc:
+        raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"invalid cw role empty template: {source}") from exc
+    target = staging_root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    return {"local_path": relative, "sha256": sha256(target.read_bytes()).hexdigest(), "size": target.stat().st_size}
+
+
+def _role_manifest_entry(entry: RoleCatalogEntry, *, local_path: str, sha256_value: str, size: int) -> dict[str, Any]:
+    return {
+        **_role_payload_base(entry),
+        "icon_url": entry.icon_url,
+        "local_path": local_path,
+        "sha256": sha256_value,
+        "size": size,
+    }
+
+
+def _source_roles(raw_config: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [item for item in raw_config.get("role_list") or [] if isinstance(item, dict)]
+
+
+def _validate_role_catalog_complete(raw_config: Mapping[str, Any], role_catalog: list[RoleCatalogEntry]) -> None:
+    catalog_ids = {entry.role_id for entry in role_catalog}
+    for index, role in enumerate(_source_roles(raw_config)):
+        role_id = str(role.get("id") or "").strip()
+        name = str(role.get("name") or "").strip()
+        icon = str(role.get("icon") or "").strip()
+        if not role_id:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role id missing idx={index}")
+        if not name:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role name missing id={role_id}")
+        if not icon:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role icon missing id={role_id} name={name}")
+        if role_id not in catalog_ids:
+            raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role icon missing id={role_id} name={name}")
+
+
 def _has_enriched_trait_layers(config: Mapping[str, Any]) -> bool:
     return any(isinstance(item, dict) and item.get("layers") for item in _iter_dicts(config.get("traits")))
 
@@ -151,7 +275,7 @@ def build_cw_resource_bundle(
     output_root: Path = DEFAULT_OUTPUT_ROOT,
     raw_config_fetcher=download_cw_guide_config_data,
     config_normalizer=normalize_cw_guide_config_data,
-    icon_fetcher=download_equipment_icon_bytes,
+    icon_fetcher=download_role_icon_bytes,
     timeout: int = 10,
 ) -> dict:
     raw_config = dict(raw_config_fetcher(timeout=timeout))
@@ -182,6 +306,8 @@ def build_cw_resource_bundle(
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw enriched traits missing layer data")
 
     catalog = build_cw_equipment_catalog(raw_config)
+    role_catalog = build_cw_role_catalog(raw_config)
+    _validate_role_catalog_complete(raw_config, role_catalog)
     with TemporaryDirectory(prefix=f".{safe_big_version}-", dir=output_root) as staging_dir:
         staging_parent = Path(staging_dir)
         staging_root = staging_parent / safe_big_version
@@ -204,11 +330,56 @@ def build_cw_resource_bundle(
             with Image.open(path) as image:
                 icon_pairs.append((entry, image.convert("RGBA").copy()))
 
+        role_items: list[dict[str, Any]] = []
+        role_icon_pairs: list[tuple[RoleCatalogEntry, Image.Image]] = []
+        for entry in role_catalog:
+            safe_key = safe_role_cache_segment(entry.role_id)
+            relative = f"roles/icons/{safe_key}.png"
+            path = staging_root / relative
+            data = icon_fetcher(entry.icon_url, timeout=timeout, max_bytes=ROLE_ICON_MAX_BYTES)
+            write_verified_role_icon(path, data)
+            role_items.append(
+                _role_manifest_entry(
+                    entry,
+                    local_path=relative,
+                    sha256_value=sha256(path.read_bytes()).hexdigest(),
+                    size=path.stat().st_size,
+                )
+            )
+            with Image.open(path) as image:
+                role_icon_pairs.append((entry, image.convert("RGBA").copy()))
+
+        empty_templates = {
+            "field": _copy_empty_template(
+                DEFAULT_EMPTY_TEMPLATE_ROOT,
+                staging_root,
+                "empty-field-v1.png",
+                "roles/empty/field-v1.png",
+            ),
+            "hand": _copy_empty_template(
+                DEFAULT_EMPTY_TEMPLATE_ROOT,
+                staging_root,
+                "empty-hand-v1.png",
+                "roles/empty/hand-v1.png",
+            ),
+        }
+
         write_bundle_json(staging_root / "raw_config.json", raw_config)
         write_bundle_json(staging_root / "guide_config.json", dict(guide_config))
         write_bundle_json(staging_root / "guide_config_enriched.json", dict(guide_config_enriched))
         write_bundle_json(staging_root / "equipment" / "manifest.json", {"items": equipment_items})
         write_bundle_json(staging_root / "equipment" / "features.json", _build_precomputed_equipment_features(icon_pairs))
+        write_bundle_json(
+            staging_root / "roles" / "manifest.json",
+            {
+                "role_manifest_schema_version": CW_ROLE_MANIFEST_SCHEMA_VERSION,
+                "resource_version": big_version,
+                "empty_template_version": CW_SLOT_EMPTY_TEMPLATE_VERSION,
+                "empty_templates": empty_templates,
+                "items": role_items,
+            },
+        )
+        write_bundle_json(staging_root / "roles" / "features.json", _build_precomputed_role_features(role_icon_pairs))
         write_bundle_json(staging_root / "indexes.json", _indexes(dict(guide_config_enriched), equipment_items))
         write_bundle_manifest(staging_root, source_manifest=_source_manifest(raw_config, big_version=big_version), source_kind="build")
         load_cw_resource_bundle_from_path(staging_root)

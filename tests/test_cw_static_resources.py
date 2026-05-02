@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from io import BytesIO
 from functools import lru_cache
 import hashlib
 import json
 import os
 from pathlib import Path
 
+from PIL import Image
 import pytest
 
 from trail.core.errors import TrailError
@@ -39,6 +41,16 @@ def _zero_pixel_data(length: int) -> tuple[int, ...]:
 def _pixel_payload(mode: str, size: list[int]) -> dict:
     channels = 4 if mode == "RGBA" else 1
     return {"mode": mode, "size": size, "data": _zero_pixel_data(size[0] * size[1] * channels)}
+
+
+def _png_bytes(*, mode: str = "RGBA", size: tuple[int, int] = (103, 120)) -> bytes:
+    buffer = BytesIO()
+    Image.new(mode, size).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _truncated_empty_png_bytes() -> bytes:
+    return _png_bytes()[:-40]
 
 
 def _valid_feature_item(cache_key: str = "icon-a", name: str = "Icon A") -> dict:
@@ -97,6 +109,82 @@ def _valid_feature_payload(cache_key: str = "icon-a") -> dict:
     }
 
 
+def _valid_role_manifest(root: Path) -> dict:
+    icon_relative = "roles/icons/r1.png"
+    field_relative = "roles/empty/field-v1.png"
+    hand_relative = "roles/empty/hand-v1.png"
+    for relative, data in {
+        icon_relative: b"role-icon-r1",
+        field_relative: _png_bytes(),
+        hand_relative: _png_bytes(),
+    }.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    return {
+        "role_manifest_schema_version": 1,
+        "resource_version": "3.2",
+        "empty_template_version": "cw-slots-empty-v1",
+        "empty_templates": {
+            "field": {
+                "local_path": field_relative,
+                "sha256": _sha256(root / field_relative),
+                "size": (root / field_relative).stat().st_size,
+            },
+            "hand": {
+                "local_path": hand_relative,
+                "sha256": _sha256(root / hand_relative),
+                "size": (root / hand_relative).stat().st_size,
+            },
+        },
+        "items": [
+            {
+                "role_id": "r1",
+                "name": "Role A",
+                "normalized_name": "role a",
+                "icon_url": "https://example.test/r1.png",
+                "local_path": icon_relative,
+                "sha256": _sha256(root / icon_relative),
+                "size": (root / icon_relative).stat().st_size,
+                "rarity": "2",
+                "front_back_type": "Common",
+                "trait_ids": ["t1"],
+            }
+        ],
+    }
+
+
+def _valid_role_features() -> dict:
+    return {
+        "role_feature_schema_version": 1,
+        "recognizer_algorithm_version": "role-card-mask-v1",
+        "geometry_version": "cw-slots-1920x1080-v2",
+        "empty_template_version": "cw-slots-empty-v1",
+        "target_size": [103, 120],
+        "avatar_roi": [5, 4, 98, 108],
+        "feature_size": [64, 64],
+        "hist_bins": [16, 16, 16],
+        "min_score": 0.58,
+        "low_score": 0.50,
+        "min_gap": 0.035,
+        "empty_min_score": 0.82,
+        "empty_min_gap": 0.08,
+        "items": [
+            {
+                "role_id": "r1",
+                "name": "Role A",
+                "normalized_name": "role a",
+                "rarity": "2",
+                "front_back_type": "Common",
+                "trait_ids": ["t1"],
+                "icon_rgba": _pixel_payload("RGBA", [64, 64]),
+                "icon_mask": _pixel_payload("L", [64, 64]),
+                "histogram": [0.0] * 4096,
+            }
+        ],
+    }
+
+
 def _write_valid_equipment_manifest_item(root: Path, cache_key: str = "icon-a") -> None:
     icon_relative = f"equipment/icons/{cache_key}.png"
     icon_path = root / icon_relative
@@ -134,6 +222,19 @@ def _refresh_manifest_entry(root: Path, relative: str) -> None:
     _write_json(manifest_path, manifest)
 
 
+def _replace_role_empty_template(root: Path, key: str, data: bytes) -> None:
+    role_manifest_path = root / "roles" / "manifest.json"
+    role_manifest = json.loads(role_manifest_path.read_text(encoding="utf-8"))
+    relative = role_manifest["empty_templates"][key]["local_path"]
+    path = root / relative
+    path.write_bytes(data)
+    role_manifest["empty_templates"][key]["sha256"] = _sha256(path)
+    role_manifest["empty_templates"][key]["size"] = path.stat().st_size
+    _write_json(role_manifest_path, role_manifest)
+    _refresh_manifest_entry(root, "roles/manifest.json")
+    _refresh_manifest_entry(root, relative)
+
+
 def _bundle(tmp_path: Path) -> Path:
     root = tmp_path / "generated" / "3.2"
     _write_json(root / "raw_config.json", _valid_raw_config())
@@ -143,6 +244,8 @@ def _bundle(tmp_path: Path) -> Path:
     _write_json(root / "indexes.json", _valid_indexes())
     _write_valid_equipment_manifest_item(root)
     _write_json(root / "equipment" / "features.json", _valid_feature_payload())
+    _write_json(root / "roles" / "manifest.json", _valid_role_manifest(root))
+    _write_json(root / "roles" / "features.json", _valid_role_features())
     write_bundle_manifest(
         root,
         source_manifest={
@@ -164,6 +267,152 @@ def test_load_cw_resource_bundle_validates_manifest_files(tmp_path):
     assert bundle.big_version == "3.2"
     assert bundle.raw_config["rpg_game_big_version"] == "3.2"
     assert bundle.guide_config["meta"]["big_version"] == "3.2"
+
+
+def test_load_cw_resource_bundle_validates_role_resources(tmp_path):
+    bundle = load_cw_resource_bundle_from_path(_bundle(tmp_path))
+
+    assert bundle.role_manifest["items"][0]["role_id"] == "r1"
+    assert bundle.role_features["recognizer_algorithm_version"] == "role-card-mask-v1"
+
+
+@pytest.mark.parametrize(
+    ("data", "match"),
+    [
+        (_truncated_empty_png_bytes(), "invalid"),
+        (_png_bytes(size=(102, 120)), "size"),
+        (_png_bytes(mode="RGB"), "mode"),
+    ],
+)
+def test_load_cw_resource_bundle_rejects_bad_role_empty_templates(tmp_path, data: bytes, match: str):
+    root = _bundle(tmp_path)
+    _replace_role_empty_template(root, "field", data)
+
+    with pytest.raises(TrailError, match=match) as exc_info:
+        load_cw_resource_bundle_from_path(root)
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_load_cw_resource_bundle_rejects_role_icon_path_escape(tmp_path):
+    root = _bundle(tmp_path)
+    role_manifest = json.loads((root / "roles" / "manifest.json").read_text(encoding="utf-8"))
+    role_manifest["items"][0]["local_path"] = "roles/icons/../escape.png"
+    _write_json(root / "roles" / "manifest.json", role_manifest)
+    _refresh_manifest_entry(root, "roles/manifest.json")
+
+    with pytest.raises(TrailError) as exc_info:
+        load_cw_resource_bundle_from_path(root)
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_load_cw_resource_bundle_rejects_role_feature_manifest_mismatch(tmp_path):
+    root = _bundle(tmp_path)
+    features = _valid_role_features()
+    features["items"][0]["role_id"] = "missing-from-manifest"
+    _write_json(root / "roles" / "features.json", features)
+    _refresh_manifest_entry(root, "roles/features.json")
+
+    with pytest.raises(TrailError) as exc_info:
+        load_cw_resource_bundle_from_path(root)
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_load_cw_resource_bundle_rejects_duplicate_role_icon_local_path(tmp_path):
+    root = _bundle(tmp_path)
+    role_manifest = json.loads((root / "roles" / "manifest.json").read_text(encoding="utf-8"))
+    role_manifest["items"].append({**role_manifest["items"][0], "role_id": "r2", "name": "Role B", "normalized_name": "role b"})
+    _write_json(root / "roles" / "manifest.json", role_manifest)
+    _refresh_manifest_entry(root, "roles/manifest.json")
+    features = _valid_role_features()
+    features["items"].append({**features["items"][0], "role_id": "r2", "name": "Role B", "normalized_name": "role b"})
+    _write_json(root / "roles" / "features.json", features)
+    _refresh_manifest_entry(root, "roles/features.json")
+
+    with pytest.raises(TrailError) as exc_info:
+        load_cw_resource_bundle_from_path(root)
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_load_cw_resource_bundle_rejects_bool_role_feature_threshold(tmp_path):
+    root = _bundle(tmp_path)
+    features = _valid_role_features()
+    features["min_score"] = True
+    _write_json(root / "roles" / "features.json", features)
+    _refresh_manifest_entry(root, "roles/features.json")
+
+    with pytest.raises(TrailError) as exc_info:
+        load_cw_resource_bundle_from_path(root)
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+
+
+def test_load_cw_resource_bundle_role_feature_payload_error_does_not_mention_equipment(tmp_path):
+    root = _bundle(tmp_path)
+    features = _valid_role_features()
+    features["items"][0]["icon_rgba"] = []
+    _write_json(root / "roles" / "features.json", features)
+    _refresh_manifest_entry(root, "roles/features.json")
+
+    with pytest.raises(TrailError) as exc_info:
+        load_cw_resource_bundle_from_path(root)
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
+    assert "cw role feature icon_rgba payload invalid" in str(exc_info.value)
+    assert "equipment" not in str(exc_info.value)
+
+
+def test_role_resource_helpers_build_catalog_and_normalize_names():
+    from trail.scenes.cw.role_resources import build_cw_role_catalog, normalize_role_name, safe_role_cache_segment
+
+    catalog = build_cw_role_catalog(
+        {
+            "role_list": [
+                {
+                    "id": " r1 ",
+                    "name": " Role   A ",
+                    "icon": " https://example.test/r1.png ",
+                    "rarity": 2,
+                    "cost": "3",
+                    "front_back_type": "Common",
+                    "trait_ids": ["t1", 2],
+                },
+                {"id": "missing-icon", "name": "Missing Icon"},
+            ]
+        }
+    )
+
+    assert normalize_role_name(" Role\t A  ") == "role a"
+    assert catalog[0].role_id == "r1"
+    assert catalog[0].name == "Role   A"
+    assert catalog[0].normalized_name == "role a"
+    assert catalog[0].icon_url == "https://example.test/r1.png"
+    assert catalog[0].rarity == "2"
+    assert catalog[0].cost == "3"
+    assert catalog[0].front_back_type == "Common"
+    assert catalog[0].trait_ids == ["t1", "2"]
+    assert len(catalog) == 1
+    assert safe_role_cache_segment("Role/A") == "Role-A"
+
+
+def test_write_verified_role_icon_writes_rgba_png_and_rejects_invalid_data(tmp_path):
+    from trail.scenes.cw.role_resources import write_verified_role_icon
+
+    source = BytesIO()
+    Image.new("RGB", (1, 1), "red").save(source, format="PNG")
+    icon_path = tmp_path / "roles" / "icons" / "r1.png"
+
+    write_verified_role_icon(icon_path, source.getvalue())
+
+    with Image.open(icon_path) as image:
+        assert image.mode == "RGBA"
+        assert image.size == (1, 1)
+    with pytest.raises(TrailError) as exc_info:
+        write_verified_role_icon(tmp_path / "bad.png", b"not a png")
+    assert exc_info.value.code == "CW_ROLE_ICON_INVALID"
 
 
 def test_cw_resource_source_signature_changes_when_manifest_digest_changes(monkeypatch, tmp_path):
@@ -224,8 +473,34 @@ def test_load_default_cw_resource_bundle_overlays_workspace_equipment_without_re
     assert bundle.guide_config_enriched == base_bundle.guide_config_enriched
     assert bundle.indexes == base_bundle.indexes
     assert bundle.equipment_features["min_score"] == 0.33
+    assert bundle.role_manifest == base_bundle.role_manifest
+    assert bundle.role_features == base_bundle.role_features
     assert bundle.source_kind == "package+workspace_equipment"
     assert bundle.identity != base_bundle.identity
+
+
+def test_load_default_cw_resource_bundle_rejects_matching_workspace_equipment_override_role_files(
+    monkeypatch, tmp_path
+):
+    from trail.scenes.cw import static_resources
+
+    package_root = _bundle(tmp_path / "package")
+    base_bundle = static_resources.load_cw_resource_bundle_from_path(package_root)
+    override_root = _write_equipment_override(tmp_path / "workspace", base_identity=base_bundle.identity, min_score=0.33)
+    _write_json(override_root / "roles" / "features.json", _valid_role_features())
+    manifest_path = override_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    role_path = override_root / "roles" / "features.json"
+    manifest["files"].append({"path": "roles/features.json", "sha256": _sha256(role_path), "size": role_path.stat().st_size})
+    manifest["content_digest"] = _bundle_content_digest(manifest)
+    _write_json(manifest_path, manifest)
+
+    monkeypatch.setattr(static_resources, "_package_bundle_candidates", lambda: [package_root])
+
+    with pytest.raises(TrailError) as exc_info:
+        static_resources.load_default_cw_resource_bundle(workspace_root=tmp_path / "workspace")
+
+    assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
 
 def test_load_default_cw_resource_bundle_ignores_stale_workspace_equipment_override(monkeypatch, tmp_path):

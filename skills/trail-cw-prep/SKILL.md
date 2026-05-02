@@ -31,6 +31,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 - 若上一条 `cw.portal.select` success 输出含 stage/slots/equipment/shop facts，说明它可能已经提供最新首帧快照；必须先读截图，再用这些文本事实制定第一步备战动作。
 - 接收 `cw.portal.select` handoff 时，优先复用该响应中标题下 facts；`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行。读完截图后，再消费这些标题下的事实：`# 综合信息` 下看 stage/status，`# 攻略提示` 下看 skill_info，`# 角色信息` 下看 slot，`# 羁绊信息` 下看 trait summary，`# 装备信息` 下看装备背包 item/summary info，`# 装备优先级` 下看装备推荐 guide，`# 角色装备需求` 下看角色装备需求 slot/info，`# 商店信息` 下看 item/coins/reserve facts；只有缺失、stale 或页面变化才重扫。
 - 只有事实缺失、stale 或页面已变化时，才主动调用 `trail cw slots read`、`trail cw equipment read` 或 `trail cw shop scan` 刷新；不要在接收 handoff 后立刻重复扫描。优先复用同次 equipment facts；缺失/stale/page changed 时才重跑 `cw.equipment.read`。
+- `cw.slots.read` 默认使用角色图标识别，不再逐槽位点击详情读取姓名。带截图 success 后必须先读本次 `shot path` 指向的截图，再消费 `slot`、羁绊和装备/商店事实；若出现 `CW_ROLE_MATCH_LOW_CONFIDENCE` 或 `SLOTS_RECOGNITION_UNCERTAIN`，先核对截图再做换位、出售或购买决策。
 - 若 `slots.read` 或 `shop.scan` 输出 `match_kind=low_confidence`、`raw_name` 或低置信度 `warn`，必须先读截图确认，再接受 canonicalized 名称。
 - `cw.equipment.read` 返回截图时必须先读原始截图，再消费 `item pos=equipment:<idx> center=x,y ...` 行、`# 装备优先级` 的 `guide` 行，以及 `# 角色装备需求` 的 `slot` 行或 `info todo=slots`；这些装备推荐分块位于 `warn`、`ref` 之前。若看到 `info todo=slots`，先运行或刷新 `cw.slots.read`，不要用 stale slots 推断角色缺口。需要排查 `row/col` 时，使用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`。
 - `cw.equipment.read` daemon 默认热路径使用 bundle recognizer，不调用 prepare/download/load icon cache；不要为普通装备读取先跑 `cw.equipment.prepare`。
@@ -44,7 +45,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 ## Command Surface
 
 - `trail cw stage detect|wait`：确认当前 CW 阶段。
-- `trail cw slots read`：读取前台、后台、手牌和羁绊摘要；Agent 可见槽位编号从 1 开始。
+- `trail cw slots read`：默认使用角色图标识别读取前台、后台、手牌和羁绊摘要，不再逐槽位点击详情读取姓名；Agent 可见槽位编号从 1 开始。带截图 success 后必须先读本次 `shot path` 指向的截图，再消费 `slot`、羁绊和装备/商店事实；若出现 `CW_ROLE_MATCH_LOW_CONFIDENCE` 或 `SLOTS_RECOGNITION_UNCERTAIN`，先核对截图再做换位、出售或购买决策。
 - `trail cw shop scan|status|buy-slot|buy-exp|refresh|close`：读取和执行商店动作；`shop.scan` 有截图，`shop.status` 无截图。
 - `trail cw equipment read --session <id>`：读取当前装备背包图标；返回截图时必须先读原始截图，再消费背包 `item`、`# 装备优先级` 的 `guide` 行、`# 角色装备需求` 的 `slot` 行或 `info todo=slots`。若看到 `info todo=slots`，先运行或刷新 `cw.slots.read`；这些分块位于 `warn`、`ref` 之前。需要诊断 `row/col` 时用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`。
 - `trail cw equipment compose --session <id> --name <进阶装备名> --slot front:1 --role <角色名>`：canonical command 为 `cw.equipment.compose`；只写 session，不执行真实 UI 合成，slot 使用 Agent 可见 1-based。

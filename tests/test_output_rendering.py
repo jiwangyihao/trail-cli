@@ -4142,6 +4142,7 @@ def test_render_cw_slots_read_renders_role_match_diagnostics_and_warning_1_based
         "data": {
             "front": [
                 {
+                    "role_id": "role_yaoguang",
                     "name": "爻光",
                     "raw_name": "交光",
                     "match_score": 0.5,
@@ -4169,7 +4170,9 @@ def test_render_cw_slots_read_renders_role_match_diagnostics_and_warning_1_based
         "error": None,
     }
 
-    assert render_output("cw.slots.read", envelope).splitlines() == [
+    rendered = render_output("cw.slots.read", envelope)
+
+    assert rendered.splitlines() == [
         "ok cw.slots.read front=1 back=0 hand=0 stale=0",
         "shot path=.trail/shots/demo.jpg",
         "info read_image_first=1",
@@ -4177,6 +4180,64 @@ def test_render_cw_slots_read_renders_role_match_diagnostics_and_warning_1_based
         "slot pos=front:1 name=爻光 raw_name=交光 score=0.50 match_kind=low_confidence traits=仙舟",
         "warn code=CW_ROLE_MATCH_LOW_CONFIDENCE pos=front:1 query=交光 resolved=爻光 score=0.50 candidates=爻光:0.50 msg=角色名未精确命中，请先看截图确认",
     ]
+    assert "role_id" not in rendered
+
+
+def test_render_cw_slots_read_keeps_high_confidence_icon_matches_clean():
+    envelope = {
+        "ok": True,
+        "data": {
+            "front": [
+                {
+                    "role_id": "role_tibao",
+                    "name": "缇宝",
+                    "star": 2,
+                    "traits": ["昼之半神", "群攻"],
+                    "raw_name": "缇宝",
+                    "match_score": 0.99,
+                    "score": 0.99,
+                    "match_kind": "icon_high_confidence",
+                    "candidates": ["缇宝:0.99"],
+                    "empty_score": 0.01,
+                    "fee_color": "gold",
+                    "star_boxes": [{"left": 1, "top": 2, "width": 3, "height": 4}],
+                    "confidence_reason": "icon_distance",
+                }
+            ],
+            "back": [],
+            "hand": [],
+            "stale": False,
+        },
+        "screenshot": ".trail/shots/high-confidence-slots.jpg",
+        "image_guidance": {"read_image_first": True},
+        "warnings": [],
+        "references": [],
+        "debug": {"trace": [{"step": "cw.slots.read", "ok": True}]},
+        "error": None,
+    }
+
+    rendered = render_output("cw.slots.read", envelope)
+
+    assert rendered.splitlines() == [
+        "ok cw.slots.read front=1 back=0 hand=0 stale=0",
+        "shot path=.trail/shots/high-confidence-slots.jpg",
+        "info read_image_first=1",
+        "# 角色信息",
+        "slot pos=front:1 name=缇宝 star=2 traits=昼之半神|群攻",
+    ]
+    for field in (
+        "role_id",
+        "debug kind=trace",
+        "raw_name",
+        "score=",
+        "match_kind",
+        "candidates",
+        "empty_score",
+        "fee_color",
+        "star_boxes",
+        "confidence_reason",
+    ):
+        assert field not in rendered
 
 
 def test_render_output_renders_cw_slots_traits_and_trait_summary():
