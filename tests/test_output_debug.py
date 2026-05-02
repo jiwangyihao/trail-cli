@@ -443,6 +443,13 @@ def test_cw_equipment_recommendation_docs_are_synced() -> None:
     assert "只写 session" not in compose_docs
     assert "shot path" in compose_docs
     assert "info read_image_first=1" in compose_docs
+    assert "action=equip_existing" in compose_docs
+    assert "consumed=0" in compose_docs
+    assert "item kind=existing phase=pre_equip" in compose_docs
+    assert "action=compose" in compose_docs
+    assert "consumed=2" in compose_docs
+    assert "item kind=material phase=pre_compose" in compose_docs
+    assert "item kind=result phase=post_compose" in compose_docs
     assert "材料不足" in compose_docs
     assert "info todo=slots" in prep_skill
     assert "info todo=slots" in command_surface

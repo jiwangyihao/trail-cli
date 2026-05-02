@@ -2824,6 +2824,280 @@ def test_cw_service_equipment_compose_uses_resource_service_and_injections(tmp_p
     assert calls["bundle_workspaces"] == [str(tmp_path)]
 
 
+def test_command_service_equipment_compose_direct_existing_target_success_contract(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.daemon import cw_service as cw_service_module
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    direct_data = {
+        "action": "equip_existing",
+        "pos": "front:1",
+        "name": "希儿",
+        "equipment": "高周波电锯",
+        "count": 2,
+        "role": "希儿",
+        "slot": "front:1",
+        "equipment_name": "高周波电锯",
+        "existing_item": {
+            "idx": 4,
+            "pos": "equipment:4",
+            "name": "高周波电锯",
+            "score": 0.99,
+            "uncertain": False,
+        },
+        "equip_action": {"drag_from": "equipment:4", "drag_to": "front:1"},
+        "verified": True,
+        "consumed": 0,
+        "post_equip_equipment_count": 3,
+        "equipment_stale": True,
+    }
+
+    class ResourceService:
+        def equipment_read_resources(self, *, workspace_root):
+            del workspace_root
+            return {"rpg_game_big_version": "4.2", "equipment_list": []}, object()
+
+        def slots_read_resources(self, *, workspace_root):
+            del workspace_root
+            return {}, {}, object()
+
+        def bundle(self, *, workspace_root):
+            del workspace_root
+            return SimpleNamespace(guide_config={}, guide_config_enriched={})
+
+    class Runtime:
+        def __init__(self):
+            self.drags: list[tuple[int, int, int, int]] = []
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, **kwargs):
+            del kwargs
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional
+            return str(tmp_path / ".trail" / "shots" / f"{request_id}.png")
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    def fake_compose(session_arg, runtime, **kwargs):
+        del kwargs
+        session_arg.scene_state.setdefault("cw", {})["compose_marker"] = "direct"
+        runtime.drag_to(1, 2, 3, 4)
+        return dict(direct_data)
+
+    monkeypatch.setattr(cw_service_module, "compose_and_equip_cw_equipment", fake_compose)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service, cw_resource_service=ResourceService())
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-equipment-compose-direct",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.equipment.compose",
+        payload={"session_id": session.session_id, "name": "高周波电锯", "slot": "front:1", "role": "希儿"},
+    )
+
+    response = command_service.handle(request)
+    status = session_service.request_status(request.request_id)
+    persisted = session_service.load_session(session.session_id)
+
+    assert response["ok"] is True
+    assert response["data"] == direct_data
+    assert response["screenshot"] == ".trail/shots/req-equipment-compose-direct.png"
+    assert response["image_guidance"] == {"read_image_first": 1}
+    assert "compose_action" not in response["data"]
+    assert "post_compose_equipment_count" not in response["data"]
+    assert "verified_shift" not in response["data"]
+    assert runtime.drags == [(1, 2, 3, 4)]
+    assert status["final_state"] == "completed"
+    assert status["tainted"] is False
+    assert persisted.last_screenshot == ".trail/shots/req-equipment-compose-direct.png"
+    assert persisted.scene_state["cw"]["compose_marker"] == "direct"
+
+
+def test_command_service_equipment_compose_direct_existing_target_missing_screenshot_is_recoverable_unknown(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.daemon import cw_service as cw_service_module
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+
+    class ResourceService:
+        def equipment_read_resources(self, *, workspace_root):
+            del workspace_root
+            return {"rpg_game_big_version": "4.2", "equipment_list": []}, object()
+
+        def slots_read_resources(self, *, workspace_root):
+            del workspace_root
+            return {}, {}, object()
+
+        def bundle(self, *, workspace_root):
+            del workspace_root
+            return SimpleNamespace(guide_config={}, guide_config_enriched={})
+
+    class Runtime:
+        def __init__(self):
+            self.drags: list[tuple[int, int, int, int]] = []
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, **kwargs):
+            del kwargs
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return None
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    def fake_compose(session_arg, runtime, **kwargs):
+        del kwargs
+        session_arg.scene_state.setdefault("cw", {})["compose_marker"] = "direct"
+        runtime.drag_to(1, 2, 3, 4)
+        return {
+            "action": "equip_existing",
+            "pos": "front:1",
+            "name": "希儿",
+            "equipment": "高周波电锯",
+            "count": 2,
+            "existing_item": {"idx": 4, "pos": "equipment:4", "name": "高周波电锯"},
+            "equip_action": {"drag_from": "equipment:4", "drag_to": "front:1"},
+            "verified": True,
+            "consumed": 0,
+            "post_equip_equipment_count": 3,
+            "equipment_stale": True,
+        }
+
+    monkeypatch.setattr(cw_service_module, "compose_and_equip_cw_equipment", fake_compose)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service, cw_resource_service=ResourceService())
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-equipment-compose-direct-missing-screenshot",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.equipment.compose",
+        payload={"session_id": session.session_id, "name": "高周波电锯", "slot": "front:1", "role": "希儿"},
+    )
+
+    response = command_service.handle(request)
+    status = session_service.request_status(request.request_id)
+    persisted = session_service.load_session(session.session_id)
+
+    assert response["ok"] is False
+    assert response["error"] == {"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"}
+    assert response["screenshot"] is None
+    assert "image_guidance" not in response
+    assert response["debug"]["last_known_stage"] == "state_persisted"
+    assert "cw.equipment.compose success requires screenshot" in response["debug"]["detail"]
+    assert runtime.drags == [(1, 2, 3, 4)]
+    assert status["final_state"] == "persisted_but_response_unknown"
+    assert status["tainted"] is True
+    assert persisted.scene_state["daemon"]["tainted"] is True
+    assert persisted.scene_state["cw"]["compose_marker"] == "direct"
+
+
+def test_command_service_equipment_compose_direct_existing_target_verify_failure_is_unknown_tainted(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.daemon import cw_service as cw_service_module
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+
+    class ResourceService:
+        def equipment_read_resources(self, *, workspace_root):
+            del workspace_root
+            return {"rpg_game_big_version": "4.2", "equipment_list": []}, object()
+
+        def slots_read_resources(self, *, workspace_root):
+            del workspace_root
+            return {}, {}, object()
+
+        def bundle(self, *, workspace_root):
+            del workspace_root
+            return SimpleNamespace(guide_config={}, guide_config_enriched={})
+
+    class Runtime:
+        def __init__(self):
+            self.drags: list[tuple[int, int, int, int]] = []
+
+        def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, **kwargs):
+            del kwargs
+            self.drags.append((from_x, from_y, to_x, to_y))
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional
+            return str(tmp_path / ".trail" / "shots" / f"{request_id}.png")
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    def fake_compose(session_arg, runtime, **kwargs):
+        del session_arg, kwargs
+        runtime.drag_to(1, 2, 3, 4)
+        raise TrailError("CW_EQUIPMENT_COMPOSE_EQUIP_VERIFY_FAILED", "装备给角色后背包验证失败")
+
+    monkeypatch.setattr(cw_service_module, "compose_and_equip_cw_equipment", fake_compose)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service, cw_resource_service=ResourceService())
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    request = DaemonRequest(
+        request_id="req-equipment-compose-direct-verify-fail",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.equipment.compose",
+        payload={"session_id": session.session_id, "name": "高周波电锯", "slot": "front:1", "role": "希儿"},
+    )
+
+    response = command_service.handle(request)
+    status = session_service.request_status(request.request_id)
+    persisted = session_service.load_session(session.session_id)
+
+    assert response["ok"] is False
+    assert response["error"] == {"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"}
+    assert response["debug"]["last_known_stage"] == "side_effect_applied"
+    assert "TrailError: 装备给角色后背包验证失败" in response["debug"]["detail"]
+    assert runtime.drags == [(1, 2, 3, 4)]
+    assert status["final_state"] == "applied_but_not_persisted"
+    assert status["tainted"] is True
+    assert persisted.scene_state["daemon"]["tainted"] is True
+
+
 def test_cw_service_equipment_compose_preflight_scope_suppresses_click_but_drag_failure_is_unknown(
     tmp_path: Path,
     monkeypatch,

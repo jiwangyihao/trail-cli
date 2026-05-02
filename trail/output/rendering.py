@@ -1239,6 +1239,7 @@ def _render_cw_equipment_prepare(command: str, payload: dict[str, Any]) -> list[
 
 def _render_cw_equipment_compose(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
+    action = data.get("action")
     summary = _format_fact_sequence(
         ("pos", data.get("pos")),
         ("name", data.get("name")),
@@ -1251,17 +1252,29 @@ def _render_cw_equipment_compose(command: str, payload: dict[str, Any]) -> list[
     compose_action = _as_dict(data.get("compose_action"))
     equip_action = _as_dict(data.get("equip_action"))
     _append_section(lines, "综合信息")
-    _append_fact_line(
-        lines,
-        "info",
-        ("action", "compose"),
-        ("drag_from", compose_action.get("drag_from")),
-        ("drag_to", compose_action.get("drag_to")),
-        ("verified", data.get("verified")),
-        ("consumed", data.get("consumed")),
-        ("post_compose_equipment_count", data.get("post_compose_equipment_count")),
-        ("verified_shift", data.get("verified_shift")),
-    )
+    equipment_stale = data.get("equipment_stale") if "equipment_stale" in data else True
+    if action == "equip_existing":
+        _append_fact_line(
+            lines,
+            "info",
+            ("action", "equip_existing"),
+            ("verified", data.get("verified")),
+            ("consumed", data.get("consumed")),
+            ("post_equip_equipment_count", data.get("post_equip_equipment_count")),
+            ("equipment_stale", equipment_stale),
+        )
+    else:
+        _append_fact_line(
+            lines,
+            "info",
+            ("action", "compose"),
+            ("drag_from", compose_action.get("drag_from")),
+            ("drag_to", compose_action.get("drag_to")),
+            ("verified", data.get("verified")),
+            ("consumed", data.get("consumed")),
+            ("post_compose_equipment_count", data.get("post_compose_equipment_count")),
+            ("verified_shift", data.get("verified_shift")),
+        )
     _append_fact_line(
         lines,
         "info",
@@ -1270,33 +1283,48 @@ def _render_cw_equipment_compose(command: str, payload: dict[str, Any]) -> list[
         ("drag_to", equip_action.get("drag_to")),
         ("verified", data.get("verified")),
         ("post_equip_equipment_count", data.get("post_equip_equipment_count")),
-        ("equipment_stale", True),
+        ("equipment_stale", equipment_stale),
     )
 
     equipment_lines: list[str] = []
-    for item in _as_list(data.get("materials")):
-        if not isinstance(item, dict):
-            continue
-        _append_fact_line(
-            equipment_lines,
-            "item",
-            ("kind", "material"),
-            ("phase", "pre_compose"),
-            ("idx", item.get("idx")),
-            ("pos", item.get("pos")),
-            ("name", item.get("name")),
-        )
-    result_item = _as_dict(data.get("result_item"))
-    if result_item:
-        _append_fact_line(
-            equipment_lines,
-            "item",
-            ("kind", "result"),
-            ("phase", "post_compose"),
-            ("idx", result_item.get("idx")),
-            ("pos", result_item.get("pos")),
-            ("name", result_item.get("name")),
-        )
+    if action == "equip_existing":
+        existing_item = _as_dict(data.get("existing_item"))
+        if existing_item:
+            _append_fact_line(
+                equipment_lines,
+                "item",
+                ("kind", "existing"),
+                ("phase", "pre_equip"),
+                ("idx", existing_item.get("idx")),
+                ("pos", existing_item.get("pos")),
+                ("name", existing_item.get("name")),
+                ("score", _format_score_value(existing_item.get("score"))),
+                ("uncertain", _cw_equipment_item_uncertain(existing_item)),
+            )
+    else:
+        for item in _as_list(data.get("materials")):
+            if not isinstance(item, dict):
+                continue
+            _append_fact_line(
+                equipment_lines,
+                "item",
+                ("kind", "material"),
+                ("phase", "pre_compose"),
+                ("idx", item.get("idx")),
+                ("pos", item.get("pos")),
+                ("name", item.get("name")),
+            )
+        result_item = _as_dict(data.get("result_item"))
+        if result_item:
+            _append_fact_line(
+                equipment_lines,
+                "item",
+                ("kind", "result"),
+                ("phase", "post_compose"),
+                ("idx", result_item.get("idx")),
+                ("pos", result_item.get("pos")),
+                ("name", result_item.get("name")),
+            )
     if equipment_lines:
         _append_section(lines, "装备信息")
         lines.extend(equipment_lines)
