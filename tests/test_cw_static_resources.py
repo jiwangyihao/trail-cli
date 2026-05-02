@@ -528,11 +528,10 @@ def test_load_default_cw_resource_bundle_overlays_workspace_equipment_without_re
 def test_load_default_cw_resource_bundle_rejects_matching_workspace_equipment_override_role_files(
     monkeypatch, tmp_path
 ):
-    from trail.scenes.cw import static_resources
+    static_resources = _skip_equipment_feature_payload_validation(monkeypatch)
 
     package_root = _bundle(tmp_path / "package")
-    base_bundle = static_resources.load_cw_resource_bundle_from_path(package_root)
-    override_root = _write_equipment_override(tmp_path / "workspace", base_identity=base_bundle.identity, min_score=0.33)
+    override_root = _write_equipment_override(tmp_path / "workspace", base_identity=_bundle_identity(package_root), min_score=0.33)
     _write_json(override_root / "roles" / "features.json", _valid_role_features())
     manifest_path = override_root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
