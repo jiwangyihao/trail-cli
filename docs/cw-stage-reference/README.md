@@ -131,6 +131,7 @@
   - 右下主按钮是 `下一步`
 - 对应命令语义：
   - 这是 `trail cw start --session <id> --mode ...` 在进入投资环境页之前可能经过的中间态之一
+  - 对外 stage token 仍是 `boss_preview`，只用于真正出现 `本场对局首领` 的首领预览页
   - 正常情况下它不该作为停留决策点，而应由 `cw start` 自己继续推进
 - 到达该页面后的推荐下一步：
   1. 如果是手动观测阶段，不要在这里跑 `cw portal.select|refresh|restart`
@@ -205,6 +206,8 @@
 - 对应命令语义：
   - 这是局内战斗结束后的单局结算页，不是整局结算链
   - 结算页也属于 battle flow；battle flow 包含战斗中、结算页、结算翻页但未回到下一稳定阶段
+  - 如果继续后进入整层结束的“点击空白处继续 / 位面”过场，对外 stage token 是 `layer_transition`，不是 `boss_preview`
+  - `layer_transition` 仍属于 battle flow，默认继续 `trail cw battle run --session <id>`，不作为普通稳定阶段或手工中断点
   - 当前默认命令链里，它应继续由 `trail cw battle run --session <id>` 收口，不应切回旧 `trail cw settle next --session <id>`
 - 到达该页面后的推荐下一步：
   1. 先看当前截图；若仍在 battle flow 中，继续运行：

@@ -21,6 +21,10 @@ def _ocr_piece(text: str) -> dict[str, str]:
     return {"text": text}
 
 
+def _ocr_button_piece(text: str, *, left: int, top: int, width: int = 120, height: int = 36) -> dict[str, object]:
+    return {"text": text, "box": {"left": left, "top": top, "width": width, "height": height}}
+
+
 CAPTURE_KEYS = ("from_x", "from_y", "to_x", "to_y")
 HEADLINE_CAPTURE_KEY = (0.30, 0.10, 0.70, 0.28)
 ROUND_CAPTURE_KEY = (0.22, 0.22, 0.48, 0.42)
@@ -60,6 +64,9 @@ class ScriptedBattleRuntime:
         *,
         stable_stage: str = "shop",
         settle_text: str = "挑战成功",
+        settle_headline: str | None = None,
+        settle_page_texts: list[str] | None = None,
+        settle_detect_stage: str | None = "settle",
         battle_start_text: str = "开始战斗",
         sleep_advances_from: tuple[str, ...] = ("battle_progress",),
     ):
@@ -67,6 +74,9 @@ class ScriptedBattleRuntime:
         self.index = 0
         self.stable_stage = stable_stage
         self.settle_text = settle_text
+        self.settle_headline = settle_headline or settle_text
+        self.settle_page_texts = settle_page_texts
+        self.settle_detect_stage = settle_detect_stage
         self.battle_start_text = battle_start_text
         self.sleep_advances_from = set(sleep_advances_from)
         self.actions: list[str] = []
@@ -87,9 +97,10 @@ class ScriptedBattleRuntime:
         if self.state == "battle_progress":
             return {None: [_ocr_piece("自动战斗"), _ocr_piece("暂停")]}
         if self.state == "settle_entry":
+            page_texts = self.settle_page_texts or [self.settle_text]
             return {
-                None: [_ocr_piece(self.settle_text)],
-                HEADLINE_CAPTURE_KEY: [_ocr_piece(self.settle_text)],
+                None: [_ocr_piece(text) for text in page_texts],
+                HEADLINE_CAPTURE_KEY: [_ocr_piece(self.settle_headline)],
                 ROUND_CAPTURE_KEY: [_ocr_piece("第1-1回合")],
                 STATS_CAPTURE_KEY: [_ocr_piece("生命 82"), _ocr_piece("金币 4"), _ocr_piece("经验 2")],
             }
@@ -124,7 +135,7 @@ class ScriptedBattleRuntime:
         if self.state == "game_over":
             return "game_over"
         if self.state == "settle_entry":
-            return "settle"
+            return self.settle_detect_stage
         if self.state == "preparation":
             return "preparation"
         return None
@@ -174,6 +185,90 @@ class FakeClock:
         self.current += seconds
 
 
+class CostlySettleRuntime(ScriptedBattleRuntime):
+    def __init__(
+        self,
+        states: list[str],
+        *,
+        clock: FakeClock,
+        page_ocr_cost: float,
+        capture_ocr_cost: float,
+        **kwargs,
+    ):
+        super().__init__(states, **kwargs)
+        self.clock = clock
+        self.page_ocr_cost = page_ocr_cost
+        self.capture_ocr_cost = capture_ocr_cost
+        self.page_ocr_calls = 0
+        self.capture_ocr_calls: list[object] = []
+
+    def ocr(self, **kwargs):
+        capture = _capture_key(kwargs.get("capture"))
+        if capture is None:
+            self.page_ocr_calls += 1
+            self.clock.current += self.page_ocr_cost
+        else:
+            self.capture_ocr_calls.append(capture)
+            self.clock.current += self.capture_ocr_cost
+        return super().ocr(**kwargs)
+
+    def _ocr_map_for_state(self) -> dict[object, list[object]]:
+        mapping = super()._ocr_map_for_state()
+        if self.state == "settle_entry":
+            page_texts = self.settle_page_texts or [self.settle_text]
+            page_pieces: list[object] = []
+            for text in page_texts:
+                if text == "继续挑战":
+                    page_pieces.append(_ocr_button_piece("继续挑战", left=900, top=884))
+                elif text == "下一步":
+                    page_pieces.append(_ocr_button_piece("下一步", left=900, top=884))
+                else:
+                    page_pieces.append(_ocr_piece(text))
+            mapping[None] = page_pieces
+        if self.state == "settle_followup":
+            mapping[None] = [_ocr_button_piece("下一步", left=900, top=884)]
+        return mapping
+
+    def click_point(self, x: int, y: int):
+        super().click_point(x, y)
+        if self.state == "settle_entry":
+            self.actions.append("continue")
+            self.advance()
+        elif self.state == "settle_followup":
+            self.actions.append("next")
+            self.advance()
+
+
+class LayerTransitionRuntime(ScriptedBattleRuntime):
+    def _ocr_map_for_state(self) -> dict[object, list[object]]:
+        mapping = super()._ocr_map_for_state()
+        if self.state == "layer_transition":
+            mapping[None] = [_ocr_piece("点击空白处继续"), _ocr_piece("位面")]
+        return mapping
+
+    def detect_stage(self) -> str | None:
+        if self.state == "layer_transition":
+            return "layer_transition"
+        return super().detect_stage()
+
+    def click_point(self, x: int, y: int):
+        super().click_point(x, y)
+        if self.state == "layer_transition":
+            self.actions.append("blank_continue")
+            self.advance()
+
+
+def _patch_stage_and_clock_only(monkeypatch, battle_scene, runtime: ScriptedBattleRuntime, *, clock: FakeClock):
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: runtime.detect_stage)
+    monkeypatch.setattr(battle_scene, "monotonic", clock.monotonic, raising=False)
+
+    def fake_sleep(seconds: float) -> None:
+        clock.sleep(seconds)
+        runtime.tick()
+
+    monkeypatch.setattr(battle_scene, "sleep", fake_sleep, raising=False)
+
+
 def _patch_run_loop(
     monkeypatch,
     battle_scene,
@@ -195,13 +290,13 @@ def _patch_run_loop(
     monkeypatch.setattr(
         battle_scene,
         "_continue_after_settlement",
-        lambda _runtime: runtime.run_action("continue", advance=continue_advances),
+        lambda _runtime, observation=None: runtime.run_action("continue", advance=continue_advances),
         raising=False,
     )
     monkeypatch.setattr(
         battle_scene,
         "_advance_settlement_page",
-        lambda _runtime: runtime.run_action("next", advance=settle_advances),
+        lambda _runtime, observation=None: runtime.run_action("next", advance=settle_advances),
         raising=False,
     )
 
@@ -227,7 +322,7 @@ def test_classify_cw_battle_page_requires_positive_battle_anchor(tmp_path: Path)
     battle_scene = load_cw_battle_module()
     runtime = FakeRuntime(ocr_map={None: [_ocr_piece("随机 OCR 文本")], HEADLINE_CAPTURE_KEY: []})
 
-    result = battle_scene.classify_cw_battle_page(runtime, session=build_session(tmp_path))
+    result = battle_scene.classify_cw_battle_page(runtime, session=build_session(tmp_path), detected_stage=None)
 
     assert result == "unknown"
 
@@ -236,7 +331,7 @@ def test_classify_cw_battle_page_detects_positive_battle_anchor(tmp_path: Path):
     battle_scene = load_cw_battle_module()
     runtime = FakeRuntime(ocr_map={None: [_ocr_piece("自动战斗"), _ocr_piece("2倍速"), _ocr_piece("暂停")]})
 
-    result = battle_scene.classify_cw_battle_page(runtime, session=build_session(tmp_path))
+    result = battle_scene.classify_cw_battle_page(runtime, session=build_session(tmp_path), detected_stage=None)
 
     assert result == "battle_progress"
 
@@ -260,7 +355,9 @@ def test_classify_cw_battle_page_treats_chuzhan_preparation_page_as_battle_start
     assert result == "battle_start"
 
 
-def test_classify_cw_battle_page_treats_detected_preparation_as_battle_start_without_ocr(tmp_path: Path, monkeypatch):
+def test_classify_cw_battle_page_treats_detected_preparation_as_battle_start_when_ocr_misses(
+    tmp_path: Path, monkeypatch
+):
     battle_scene = load_cw_battle_module()
     runtime = FakeRuntime(ocr_map={None: [], HEADLINE_CAPTURE_KEY: []})
     monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda runtime: lambda: "preparation")
@@ -291,6 +388,187 @@ def test_classify_cw_battle_page_treats_continue_challenge_as_settlement_entry(t
     result = battle_scene.classify_cw_battle_page(runtime, session=build_session(tmp_path))
 
     assert result == "settle_entry"
+
+
+def test_classify_cw_battle_page_treats_challenge_end_with_continue_as_settlement_entry(tmp_path: Path):
+    battle_scene = load_cw_battle_module()
+    runtime = FakeRuntime(
+        ocr_map={
+            None: [_ocr_piece("挑战结束"), _ocr_piece("继续挑战")],
+            HEADLINE_CAPTURE_KEY: [_ocr_piece("挑战结束")],
+        }
+    )
+
+    result = battle_scene.classify_cw_battle_page(
+        runtime,
+        session=build_session(tmp_path),
+        detected_stage=None,
+    )
+
+    assert result == "settle_entry"
+
+
+def test_classify_cw_battle_page_uses_single_page_ocr_snapshot(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+
+    class RuntimeSpy(FakeRuntime):
+        def __init__(self):
+            super().__init__(ocr_map={None: [_ocr_piece("挑战成功"), _ocr_piece("继续挑战")]})
+            self.page_ocr_calls = 0
+
+        def ocr(self, **kwargs):
+            capture = _capture_key(kwargs.get("capture"))
+            if capture is None:
+                self.page_ocr_calls += 1
+            return super().ocr(**kwargs)
+
+    runtime = RuntimeSpy()
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: lambda: None)
+
+    result = battle_scene.classify_cw_battle_page(runtime, session=build_session(tmp_path), detected_stage=None)
+
+    assert result == "settle_entry"
+    assert runtime.page_ocr_calls == 1
+
+
+def test_classify_cw_battle_page_uses_observation_headline_when_page_ocr_misses(tmp_path: Path):
+    battle_scene = load_cw_battle_module()
+    runtime = FakeRuntime(ocr_map={None: [], HEADLINE_CAPTURE_KEY: [_ocr_piece("挑战成功")]})
+
+    result = battle_scene.classify_cw_battle_page(runtime, session=build_session(tmp_path), detected_stage=None)
+
+    assert result == "settle_entry"
+    assert runtime.ocr_calls == [None, HEADLINE_CAPTURE_KEY]
+
+
+def test_continue_after_settlement_observation_uses_observed_button_without_fallback(monkeypatch):
+    battle_scene = load_cw_battle_module()
+    runtime = CostlySettleRuntime(
+        ["settle_entry"],
+        clock=FakeClock(step=0.0),
+        page_ocr_cost=0.0,
+        capture_ocr_cost=0.0,
+        settle_text="挑战成功",
+        settle_page_texts=["挑战成功", "继续挑战"],
+        settle_detect_stage=None,
+        sleep_advances_from=(),
+    )
+    observation = battle_scene.observe_cw_battle_page(runtime, detected_stage=None)
+
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_battle_continuer",
+        lambda _runtime: lambda: pytest.fail("fallback battle continuer used"),
+    )
+
+    battle_scene._continue_after_settlement(runtime, observation=observation)
+
+    assert runtime.clicks[-1] == (960, 902)
+    assert runtime.page_ocr_calls == 1
+
+
+def test_continue_after_settlement_observation_ignores_off_region_button_and_uses_fallback(monkeypatch):
+    battle_scene = load_cw_battle_module()
+    runtime = CostlySettleRuntime(
+        ["settle_entry"],
+        clock=FakeClock(step=0.0),
+        page_ocr_cost=0.0,
+        capture_ocr_cost=0.0,
+        settle_text="挑战成功",
+        settle_detect_stage=None,
+        sleep_advances_from=(),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_ocr_map_for_state",
+        lambda: {None: [_ocr_button_piece("继续挑战", left=100, top=100)]},
+    )
+    observation = battle_scene.observe_cw_battle_page(runtime, detected_stage=None)
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_battle_continuer",
+        lambda _runtime: lambda: runtime.actions.append("fallback"),
+    )
+
+    battle_scene._continue_after_settlement(runtime, observation=observation)
+
+    assert runtime.clicks == []
+    assert runtime.actions == ["fallback"]
+
+
+def test_advance_settlement_page_observation_uses_observed_button_without_fallback(monkeypatch):
+    battle_scene = load_cw_battle_module()
+    runtime = CostlySettleRuntime(
+        ["settle_followup"],
+        clock=FakeClock(step=0.0),
+        page_ocr_cost=0.0,
+        capture_ocr_cost=0.0,
+        sleep_advances_from=(),
+    )
+    observation = battle_scene.observe_cw_battle_page(runtime, detected_stage=None)
+
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_settle_continuer",
+        lambda _runtime: lambda: pytest.fail("fallback settle continuer used"),
+    )
+
+    battle_scene._advance_settlement_page(runtime, observation=observation)
+
+    assert runtime.clicks[-1] == (960, 902)
+    assert runtime.page_ocr_calls == 1
+
+
+def test_continue_after_settlement_observation_accepts_tuple_ocr_piece_without_fallback(monkeypatch):
+    battle_scene = load_cw_battle_module()
+    runtime = CostlySettleRuntime(
+        ["settle_entry"],
+        clock=FakeClock(step=0.0),
+        page_ocr_cost=0.0,
+        capture_ocr_cost=0.0,
+        settle_text="挑战成功",
+        settle_page_texts=["挑战成功"],
+        settle_detect_stage=None,
+        sleep_advances_from=(),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_ocr_map_for_state",
+        lambda: {
+            None: [([[900, 884], [1020, 884], [1020, 920], [900, 920]], "继续挑战", 0.99)],
+            HEADLINE_CAPTURE_KEY: [_ocr_piece("挑战成功")],
+        },
+    )
+    observation = battle_scene.observe_cw_battle_page(runtime, detected_stage=None)
+
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_battle_continuer",
+        lambda _runtime: lambda: pytest.fail("fallback battle continuer used"),
+    )
+
+    battle_scene._continue_after_settlement(runtime, observation=observation)
+
+    assert runtime.clicks[-1] == (960, 902)
+    assert runtime.page_ocr_calls == 1
+
+
+def test_classify_cw_battle_page_does_not_treat_challenge_end_without_continue_as_settlement_entry(tmp_path: Path):
+    battle_scene = load_cw_battle_module()
+    runtime = FakeRuntime(
+        ocr_map={
+            None: [_ocr_piece("挑战结束")],
+            HEADLINE_CAPTURE_KEY: [_ocr_piece("挑战结束")],
+        }
+    )
+
+    result = battle_scene.classify_cw_battle_page(
+        runtime,
+        session=build_session(tmp_path),
+        detected_stage=None,
+    )
+
+    assert result == "unknown"
 
 
 def test_classify_cw_battle_page_detects_settlement_followup(tmp_path: Path):
@@ -327,6 +605,17 @@ def test_classify_cw_battle_page_does_not_treat_boss_preview_as_stable_stage(tmp
     result = battle_scene.classify_cw_battle_page(FakeRuntime(), session=build_session(tmp_path))
 
     assert result != "stable_stage"
+
+
+def test_classify_cw_battle_page_treats_layer_transition_as_battle_flow_state(
+    tmp_path: Path, monkeypatch
+):
+    battle_scene = load_cw_battle_module()
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: lambda: "layer_transition")
+
+    result = battle_scene.classify_cw_battle_page(FakeRuntime(), session=build_session(tmp_path))
+
+    assert result == "layer_transition"
 
 
 def test_classify_cw_battle_page_maps_detector_settle_to_settlement_entry(tmp_path: Path, monkeypatch):
@@ -760,6 +1049,152 @@ def test_run_cw_battle_finishes_from_continue_only_settle_entry_without_summary(
     assert session.last_stage == {"scene": "cw", "value": "shop"}
 
 
+def test_run_cw_battle_resumes_challenge_end_settlement_entry_when_detector_misses(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(
+        ["settle_entry", "settle_followup", "stable_stage"],
+        settle_headline="挑战结束",
+        settle_page_texts=["挑战结束", "继续挑战"],
+        settle_detect_stage=None,
+    )
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=10)
+
+    assert result == {
+        "status": "completed",
+        "result": "win",
+        "stage": "shop",
+        "stale": False,
+        "in_battle": False,
+        "round": "1-1",
+        "hp": 82,
+        "coins": 4,
+        "exp": 2,
+        "settle_text": "挑战结束",
+    }
+    assert runtime.actions == ["continue", "next"]
+    assert session.scene_state["cw"]["stage"] == {"value": "shop", "stale": False}
+    assert session.last_stage == {"scene": "cw", "value": "shop"}
+
+
+def test_run_cw_battle_resumes_from_settle_into_layer_transition_then_shop(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = LayerTransitionRuntime(["settle_entry", "layer_transition", "stable_stage"])
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: runtime.detect_stage)
+    monkeypatch.setattr(
+        battle_scene,
+        "_continue_after_settlement",
+        lambda _runtime, observation=None: runtime.run_action("continue"),
+    )
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_battle_continuer",
+        lambda _runtime: lambda: pytest.fail("fallback battle continuer used"),
+    )
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_settle_continuer",
+        lambda _runtime: lambda: pytest.fail("fallback settle continuer used"),
+    )
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=15)
+
+    assert result["status"] == "completed"
+    assert result["stage"] == "shop"
+    assert runtime.actions == ["continue", "blank_continue"]
+    assert runtime.clicks[-1] == (960, 903)
+
+
+def test_run_cw_battle_timeout_on_layer_transition_keeps_in_progress(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = LayerTransitionRuntime(["layer_transition", "layer_transition"], sleep_advances_from=())
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+    monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: runtime.detect_stage)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=1)
+
+    assert result["status"] == "in_progress"
+    assert result["stage"] == "layer_transition"
+    assert result["stale"] is True
+    assert result["in_battle"] is False
+
+
+def test_run_cw_battle_resumes_settle_entry_before_short_deadline(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    clock = FakeClock(step=0.0)
+    runtime = CostlySettleRuntime(
+        ["settle_entry", "settle_followup", "stable_stage"],
+        clock=clock,
+        page_ocr_cost=3.0,
+        capture_ocr_cost=1.0,
+        settle_text="挑战成功",
+        settle_page_texts=["挑战成功", "继续挑战"],
+        settle_detect_stage=None,
+        sleep_advances_from=(),
+    )
+    _patch_stage_and_clock_only(monkeypatch, battle_scene, runtime, clock=clock)
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_battle_continuer",
+        lambda _runtime: lambda: pytest.fail("fallback battle continuer used"),
+    )
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_settle_continuer",
+        lambda _runtime: lambda: pytest.fail("fallback settle continuer used"),
+    )
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=15)
+
+    assert result["status"] == "completed"
+    assert result["stage"] == "shop"
+    assert runtime.actions == ["continue", "next"]
+    assert clock.current < 15
+
+
+def test_run_cw_battle_short_deadline_resume_hint_then_settle_still_advances_continue_and_next(
+    tmp_path: Path, monkeypatch
+):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    ensure_cw_state(session)["battle_resume"] = {"in_battle_hint": True}
+    clock = FakeClock(step=0.0)
+    runtime = CostlySettleRuntime(
+        ["settle_entry", "settle_followup", "stable_stage"],
+        clock=clock,
+        page_ocr_cost=3.0,
+        capture_ocr_cost=1.0,
+        settle_text="挑战成功",
+        settle_page_texts=["挑战成功", "继续挑战"],
+        settle_detect_stage=None,
+        sleep_advances_from=(),
+    )
+    _patch_stage_and_clock_only(monkeypatch, battle_scene, runtime, clock=clock)
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_battle_continuer",
+        lambda _runtime: lambda: pytest.fail("fallback battle continuer used"),
+    )
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_settle_continuer",
+        lambda _runtime: lambda: pytest.fail("fallback settle continuer used"),
+    )
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=15)
+
+    assert result["status"] == "completed"
+    assert result["stage"] == "shop"
+    assert runtime.actions == ["continue", "next"]
+    assert ensure_cw_state(session)["battle_resume"] == {}
+
+
 def test_run_cw_battle_returns_settle_timeout_when_starting_from_settle_followup(tmp_path: Path, monkeypatch):
     battle_scene = load_cw_battle_module()
     session = build_session(tmp_path)
@@ -926,7 +1361,8 @@ def test_run_cw_battle_clears_resume_hint_when_settlement_parse_failure_raises(t
     runtime = ScriptedBattleRuntime(["settle_entry"])
     _patch_run_loop(monkeypatch, battle_scene, runtime)
 
-    def fail_settlement_summary(_runtime):
+    def fail_settlement_summary(_runtime, observation=None):
+        del observation
         raise TrailError("CW_SETTLEMENT_UNREADABLE", "无法识别货币战争结算结果")
 
     monkeypatch.setattr(battle_scene, "parse_cw_settlement_summary", fail_settlement_summary)

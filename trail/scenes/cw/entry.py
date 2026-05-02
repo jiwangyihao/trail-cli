@@ -8,7 +8,12 @@ from trail.core.errors import TrailError
 from trail.runtime.ocr_config import OcrRequestConfig
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.models import ensure_cw_state
-from trail.scenes.cw.stage import STAGE_RESOURCE_ALIASES, _detect_cw_stage_from_ocr, _replace_stage_fields
+from trail.scenes.cw.stage import (
+    STAGE_RESOURCE_ALIASES,
+    _detect_cw_stage_from_ocr,
+    _replace_stage_fields,
+    build_cw_stage_detector,
+)
 from trail.session.models import SessionModel
 
 
@@ -475,6 +480,20 @@ def _detect_continue_settlement_page(runtime) -> dict[str, str] | None:
     return None
 
 
+def _allows_boss_preview_compat_fallback(session: SessionModel | None) -> bool:
+    if session is None:
+        return False
+    cw_state = session.scene_state.get("cw")
+    entry = cw_state.get("entry") if isinstance(cw_state, Mapping) else None
+    if not isinstance(entry, Mapping):
+        return False
+    return (
+        entry.get("mode") == "continue"
+        and isinstance(entry.get("difficulty"), str)
+        and isinstance(entry.get("battle_mode"), str)
+    )
+
+
 def _invalidate_stage(session: SessionModel) -> None:
     _replace_stage_fields(session, stale=True)
     session.last_stage = None
@@ -914,19 +933,33 @@ def _detect_current_enter_page(
         return continue_page
 
     try:
+        detected_stage = build_cw_stage_detector(runtime)()
+    except TrailError:
+        raise
+    except Exception:
+        detected_stage = None
+    if detected_stage == "layer_transition":
+        return {"page": "stage.layer_transition", "stage": "layer_transition"}
+    if detected_stage == "boss_preview":
+        return {"page": "stage.boss_preview", "stage": "boss_preview"}
+    if detected_stage is not None:
+        return {"page": "in_game", "stage": detected_stage}
+
+    try:
         ocr_stage = _detect_cw_stage_from_ocr(runtime)
     except Exception:
         ocr_stage = None
     if ocr_stage is not None:
         return {"page": "in_game", "stage": ocr_stage}
 
+    if _allows_boss_preview_compat_fallback(session) and _locate(runtime, "stage.boss_preview") is not None:
+        return {"page": "stage.boss_preview", "stage": "boss_preview"}
+
     for alias, stage in STAGE_RESOURCE_ALIASES:
-        if stage in {"settle", "game_over"}:
+        if stage in {"boss_preview", "settle", "game_over"}:
             continue
         if _locate(runtime, alias) is None:
             continue
-        if stage == "boss_preview":
-            return {"page": "stage.boss_preview", "stage": stage}
         return {"page": "in_game", "stage": stage}
 
     if start_box is not None:
@@ -955,7 +988,7 @@ def _enter_new_game(runtime, *, difficulty: str) -> None:
 
 def _enter_continue_game(runtime) -> None:
     _click_box_center(runtime, _wait(runtime, "entry.continue"))
-    _click_box_center(runtime, _wait(runtime, "stage.boss_preview"))
+    _consume_click_blank_prompt(runtime)
 
 
 def _run_entry_chain(runtime, *, mode: str, difficulty: str, battle_mode: str) -> None:
@@ -1038,6 +1071,22 @@ def _run_start_chain(
         _enter_continue_game(runtime)
         _handle_invest_environment_flow(runtime)
         return {"mode": "continue", "difficulty": recorded_difficulty, "battle_mode": battle_mode}
+    if page == "stage.layer_transition":
+        recorded_mode = existing_entry.get("mode") if isinstance(existing_entry.get("mode"), str) else None
+        recorded_difficulty = existing_entry.get("difficulty") if isinstance(existing_entry.get("difficulty"), str) else None
+        recorded_battle_mode = existing_entry.get("battle_mode") if isinstance(existing_entry.get("battle_mode"), str) else None
+        if recorded_mode is None or recorded_difficulty is None or recorded_battle_mode is None:
+            raise CwStartEntryTruthRequiredError(
+                page="stage.layer_transition",
+                fields=("mode", "difficulty", "battle_mode"),
+            )
+        _consume_click_blank_prompt(runtime)
+        _handle_invest_environment_flow(runtime)
+        return {
+            "mode": recorded_mode,
+            "difficulty": recorded_difficulty,
+            "battle_mode": recorded_battle_mode,
+        }
     if page == "stage.boss_preview":
         if mode != "new":
             raise CwStartContinuePageError(page="stage.boss_preview", stage="boss_preview")
@@ -1072,6 +1121,19 @@ def start_cw(
     cw_state = ensure_cw_state(session)
     existing_entry = cw_state.get("entry") if isinstance(cw_state.get("entry"), Mapping) else {}
     current = _detect_current_enter_page(runtime, session=session, preferred_mode=mode)
+    if current["page"] == "world":
+        recorded_mode = existing_entry.get("mode") if isinstance(existing_entry.get("mode"), str) else None
+        recorded_difficulty = existing_entry.get("difficulty") if isinstance(existing_entry.get("difficulty"), str) else None
+        recorded_battle_mode = existing_entry.get("battle_mode") if isinstance(existing_entry.get("battle_mode"), str) else None
+        if (
+            recorded_mode == "continue"
+            and (recorded_difficulty is None or recorded_battle_mode is None)
+            and _locate(runtime, "stage.boss_preview") is not None
+        ):
+            raise CwStartEntryTruthRequiredError(
+                page="stage.boss_preview",
+                fields=("mode", "difficulty", "battle_mode"),
+            )
     if current["page"] == "home" and current.get("unfinished_progress") == "1":
         raise CwStartProgressPendingError()
     if current["page"] == "invest":

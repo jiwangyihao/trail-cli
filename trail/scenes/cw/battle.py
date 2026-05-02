@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from time import monotonic, sleep
 
 from trail.core.errors import TrailError
@@ -27,6 +28,15 @@ SETTLEMENT_STATS_CAPTURE = {
     "to_x": 0.60,
     "to_y": 0.52,
 }
+_CW_REFERENCE_WIDTH = 1920
+_CW_REFERENCE_HEIGHT = 1080
+_CW_ACTION_OCR_REGION = {
+    "from_x": 0.30,
+    "from_y": 0.72,
+    "to_x": 0.70,
+    "to_y": 0.92,
+}
+LAYER_TRANSITION_CONTINUE_POINT = (960, 903)
 
 STABLE_BATTLE_RETURN_STAGES: frozenset[str] = frozenset(
     {
@@ -79,54 +89,133 @@ def _joined_ocr_text(runtime, *, capture=None) -> str:
     return "".join(_read_ocr_piece(piece).strip() for piece in pieces or [])
 
 
+@dataclass
+class BattleObservation:
+    runtime: object
+    detected_stage: object
+    page_ocr_pieces: list[object]
+    page_text: str
+    _headline_text: str | None = None
+    _round_text: str | None = None
+    _stats_text: str | None = None
+
+    def headline_text(self) -> str:
+        if self._headline_text is None:
+            self._headline_text = _joined_ocr_text(self.runtime, capture=SETTLEMENT_HEADLINE_CAPTURE)
+        return self._headline_text
+
+    def round_text(self) -> str:
+        if self._round_text is None:
+            self._round_text = _joined_ocr_text(self.runtime, capture=SETTLEMENT_ROUND_CAPTURE)
+        return self._round_text
+
+    def stats_text(self) -> str:
+        if self._stats_text is None:
+            self._stats_text = _joined_ocr_text(self.runtime, capture=SETTLEMENT_STATS_CAPTURE)
+        return self._stats_text
+
+
+def observe_cw_battle_page(runtime, *, detected_stage: object) -> BattleObservation:
+    ocr = getattr(runtime, "ocr", None)
+    pieces: list[object] = []
+    if callable(ocr):
+        try:
+            pieces = list(ocr() or [])
+        except TypeError:
+            pieces = list(ocr(capture=None) or [])
+        except Exception:
+            pieces = []
+    page_text = "".join(_read_ocr_piece(piece).strip() for piece in pieces)
+    return BattleObservation(
+        runtime=runtime,
+        detected_stage=detected_stage,
+        page_ocr_pieces=pieces,
+        page_text=page_text,
+    )
+
+
 def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
-def _has_battle_start(runtime) -> bool:
-    return _contains_any(_joined_ocr_text(runtime), _BATTLE_START_KEYWORDS)
+def _page_text(runtime, observation: BattleObservation | None = None) -> str:
+    if observation is not None:
+        return observation.page_text
+    return _joined_ocr_text(runtime)
 
 
-def _has_settlement_entry(runtime) -> bool:
+def _has_battle_start(runtime, observation: BattleObservation | None = None) -> bool:
+    return _contains_any(_page_text(runtime, observation), _BATTLE_START_KEYWORDS)
+
+
+def _has_settlement_entry(runtime, observation: BattleObservation | None = None) -> bool:
+    if observation is not None:
+        page_text = observation.page_text
+        if "挑战结束" in page_text and "继续挑战" in page_text:
+            return True
+        if _contains_any(page_text, _SETTLEMENT_ENTRY_KEYWORDS):
+            return True
+        headline = observation.headline_text()
+        if _contains_any(headline, ("挑战成功", "挑战失败", "继续挑战")):
+            return True
+        if "挑战结束" in headline and "继续挑战" in page_text:
+            return True
+        return False
+
     headline = _joined_ocr_text(runtime, capture=SETTLEMENT_HEADLINE_CAPTURE)
     if _contains_any(headline, _SETTLEMENT_ENTRY_KEYWORDS):
         return True
-    return _contains_any(_joined_ocr_text(runtime), _SETTLEMENT_ENTRY_KEYWORDS)
+    page_text = _joined_ocr_text(runtime)
+    if "挑战结束" in headline and "继续挑战" in page_text:
+        return True
+    if _contains_any(page_text, _SETTLEMENT_ENTRY_KEYWORDS):
+        return True
+    return False
 
 
-def _is_continue_only_settlement_entry(runtime) -> bool:
-    headline = _joined_ocr_text(runtime, capture=SETTLEMENT_HEADLINE_CAPTURE) or _joined_ocr_text(runtime)
+def _is_continue_only_settlement_entry(runtime, observation: BattleObservation | None = None) -> bool:
+    if observation is not None:
+        headline = observation.headline_text() or observation.page_text
+    else:
+        headline = _joined_ocr_text(runtime, capture=SETTLEMENT_HEADLINE_CAPTURE) or _joined_ocr_text(runtime)
     return "继续挑战" in headline and "挑战成功" not in headline and "挑战失败" not in headline
 
 
-def _has_settlement_followup(runtime) -> bool:
-    return _contains_any(_joined_ocr_text(runtime), _SETTLEMENT_FOLLOWUP_KEYWORDS)
+def _has_settlement_followup(runtime, observation: BattleObservation | None = None) -> bool:
+    return _contains_any(_page_text(runtime, observation), _SETTLEMENT_FOLLOWUP_KEYWORDS)
 
 
-def _has_game_over(runtime) -> bool:
-    return _contains_any(_joined_ocr_text(runtime), _GAME_OVER_KEYWORDS)
+def _has_game_over(runtime, observation: BattleObservation | None = None) -> bool:
+    return _contains_any(_page_text(runtime, observation), _GAME_OVER_KEYWORDS)
 
 
-def _has_positive_battle_anchor(runtime) -> bool:
-    return _contains_any(_joined_ocr_text(runtime), _BATTLE_PROGRESS_KEYWORDS)
+def _has_positive_battle_anchor(runtime, observation: BattleObservation | None = None) -> bool:
+    return _contains_any(_page_text(runtime, observation), _BATTLE_PROGRESS_KEYWORDS)
 
 
-def _read_settle_headline(runtime) -> tuple[str, str]:
-    headline = _joined_ocr_text(runtime, capture=SETTLEMENT_HEADLINE_CAPTURE) or _joined_ocr_text(runtime)
+def _read_settle_headline(runtime, observation: BattleObservation | None = None) -> tuple[str, str]:
+    if observation is not None:
+        headline = observation.headline_text() or observation.page_text
+    else:
+        headline = _joined_ocr_text(runtime, capture=SETTLEMENT_HEADLINE_CAPTURE) or _joined_ocr_text(runtime)
     if "挑战成功" in headline:
         return "win", "挑战成功"
     if "挑战失败" in headline:
         return "lose", "挑战失败"
     if "挑战结束" in headline:
-        page_text = headline if "继续挑战" in headline else f"{headline}{_joined_ocr_text(runtime)}"
+        page_text = headline if "继续挑战" in headline else f"{headline}{_page_text(runtime, observation)}"
         if "继续挑战" in page_text:
             return "win", "挑战结束"
     raise TrailError("CW_SETTLEMENT_UNREADABLE", "无法识别货币战争结算结果")
 
 
-def _read_optional_settlement_metrics(runtime) -> dict[str, str | int]:
-    round_text = _joined_ocr_text(runtime, capture=SETTLEMENT_ROUND_CAPTURE)
-    stats_text = _joined_ocr_text(runtime, capture=SETTLEMENT_STATS_CAPTURE)
+def _read_optional_settlement_metrics(runtime, observation: BattleObservation | None = None) -> dict[str, str | int]:
+    if observation is not None:
+        round_text = observation.round_text()
+        stats_text = observation.stats_text()
+    else:
+        round_text = _joined_ocr_text(runtime, capture=SETTLEMENT_ROUND_CAPTURE)
+        stats_text = _joined_ocr_text(runtime, capture=SETTLEMENT_STATS_CAPTURE)
     combined_text = f"{round_text} {stats_text}".strip()
     metrics: dict[str, str | int] = {}
 
@@ -146,16 +235,25 @@ def _read_optional_settlement_metrics(runtime) -> dict[str, str | int]:
     return metrics
 
 
-def classify_cw_battle_page(runtime, *, session: SessionModel, detected_stage: object = _DETECTED_STAGE_UNSET) -> str:
+def classify_cw_battle_page(
+    runtime,
+    *,
+    session: SessionModel,
+    detected_stage: object = _DETECTED_STAGE_UNSET,
+    observation: BattleObservation | None = None,
+) -> str:
     del session
 
-    if _has_battle_start(runtime):
+    if observation is None:
+        observation = observe_cw_battle_page(runtime, detected_stage=detected_stage)
+
+    if _has_battle_start(runtime, observation):
         return "battle_start"
-    if _has_settlement_entry(runtime):
+    if _has_settlement_entry(runtime, observation):
         return "settle_entry"
-    if _has_settlement_followup(runtime):
+    if _has_settlement_followup(runtime, observation):
         return "settle_followup"
-    if _has_game_over(runtime):
+    if _has_game_over(runtime, observation):
         return "game_over"
 
     if detected_stage is _DETECTED_STAGE_UNSET:
@@ -166,21 +264,23 @@ def classify_cw_battle_page(runtime, *, session: SessionModel, detected_stage: o
         return "settle_entry"
     if detected_stage == "preparation":
         return "battle_start"
+    if detected_stage == "layer_transition":
+        return "layer_transition"
     if detected_stage in STABLE_BATTLE_RETURN_STAGES:
         return "stable_stage"
 
-    if _has_positive_battle_anchor(runtime):
+    if _has_positive_battle_anchor(runtime, observation):
         return "battle_progress"
     return "unknown"
 
 
-def parse_cw_settlement_summary(runtime) -> dict[str, str | int]:
-    result, settle_text = _read_settle_headline(runtime)
+def parse_cw_settlement_summary(runtime, observation: BattleObservation | None = None) -> dict[str, str | int]:
+    result, settle_text = _read_settle_headline(runtime, observation=observation)
     summary: dict[str, str | int] = {
         "result": result,
         "settle_text": settle_text,
     }
-    summary.update(_read_optional_settlement_metrics(runtime))
+    summary.update(_read_optional_settlement_metrics(runtime, observation=observation))
     return summary
 
 
@@ -188,12 +288,98 @@ def _start_battle(runtime) -> None:
     build_cw_battle_starter(runtime)()
 
 
-def _continue_after_settlement(runtime) -> None:
+def _normalized_action_text(text: object) -> str:
+    return "".join(str(text or "").split())
+
+
+def _normalize_observation_piece(piece: object) -> dict[str, float | str] | None:
+    if isinstance(piece, dict):
+        text = str(piece.get("text") or "").strip()
+        box = piece.get("box")
+        if not text or not isinstance(box, dict):
+            return None
+        try:
+            left = float(box["left"])
+            top = float(box["top"])
+            width = float(box["width"])
+            height = float(box["height"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return {"text": text, "left": left, "top": top, "width": width, "height": height}
+
+    if isinstance(piece, (list, tuple)) and len(piece) >= 2:
+        polygon = piece[0]
+        text = str(piece[1] or "").strip()
+        if not text or not isinstance(polygon, (list, tuple)):
+            return None
+        try:
+            xs = [float(point[0]) for point in polygon]
+            ys = [float(point[1]) for point in polygon]
+        except (TypeError, ValueError, IndexError):
+            return None
+        if not xs or not ys:
+            return None
+        left = min(xs)
+        top = min(ys)
+        return {"text": text, "left": left, "top": top, "width": max(xs) - left, "height": max(ys) - top}
+
+    return None
+
+
+def _box_center(box: dict[str, float | str]) -> tuple[int, int]:
+    return (
+        int(float(box["left"]) + float(box["width"]) / 2.0),
+        int(float(box["top"]) + float(box["height"]) / 2.0),
+    )
+
+
+def _is_in_action_ocr_region(point: tuple[int, int]) -> bool:
+    x, y = point
+    left = _CW_REFERENCE_WIDTH * _CW_ACTION_OCR_REGION["from_x"]
+    right = _CW_REFERENCE_WIDTH * _CW_ACTION_OCR_REGION["to_x"]
+    top = _CW_REFERENCE_HEIGHT * _CW_ACTION_OCR_REGION["from_y"]
+    bottom = _CW_REFERENCE_HEIGHT * _CW_ACTION_OCR_REGION["to_y"]
+    return left <= x <= right and top <= y <= bottom
+
+
+def _find_action_button_box_from_observation(
+    observation: BattleObservation,
+    *,
+    allowed_texts: set[str],
+) -> dict[str, float | str] | None:
+    normalized_allowed = {_normalized_action_text(text) for text in allowed_texts}
+    for piece in observation.page_ocr_pieces:
+        normalized_piece = _normalize_observation_piece(piece)
+        if normalized_piece is None:
+            continue
+        if _normalized_action_text(normalized_piece["text"]) not in normalized_allowed:
+            continue
+        if not _is_in_action_ocr_region(_box_center(normalized_piece)):
+            continue
+        return normalized_piece
+    return None
+
+
+def _continue_after_settlement(runtime, observation: BattleObservation | None = None) -> None:
+    if observation is not None:
+        button = _find_action_button_box_from_observation(observation, allowed_texts={"继续挑战", "继续"})
+        if button is not None:
+            runtime.click_point(*_box_center(button))
+            return
     build_cw_battle_continuer(runtime)()
 
 
-def _advance_settlement_page(runtime) -> None:
+def _advance_settlement_page(runtime, observation: BattleObservation | None = None) -> None:
+    if observation is not None:
+        button = _find_action_button_box_from_observation(observation, allowed_texts={"下一步", "下一页"})
+        if button is not None:
+            runtime.click_point(*_box_center(button))
+            return
     build_cw_settle_continuer(runtime)()
+
+
+def _advance_layer_transition(runtime) -> None:
+    runtime.click_point(*LAYER_TRANSITION_CONTINUE_POINT)
 
 
 def _set_completed_stage(session: SessionModel, *, stage: str) -> None:
@@ -282,7 +468,13 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
     try:
         while True:
             detected_stage = build_cw_stage_detector(runtime)()
-            state = classify_cw_battle_page(runtime, session=session, detected_stage=detected_stage)
+            observation = observe_cw_battle_page(runtime, detected_stage=detected_stage)
+            state = classify_cw_battle_page(
+                runtime,
+                session=session,
+                detected_stage=detected_stage,
+                observation=observation,
+            )
             if state == "battle_start" and (
                 (started_chain and detected_stage == "preparation") or resume_in_battle
             ):
@@ -298,7 +490,7 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
                         "in_battle": False,
                     },
                 )
-            if state in {"battle_progress", "settle_entry", "settle_followup"}:
+            if state in {"battle_progress", "settle_entry", "settle_followup", "layer_transition"}:
                 started_chain = True
             if state in {"settle_entry", "settle_followup"}:
                 settle_chain_seen = True
@@ -337,6 +529,19 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
 
             remaining = deadline - monotonic()
             if remaining <= 0:
+                if state == "layer_transition":
+                    mark_cw_stage_stale(session)
+                    return _finalize_battle_result(
+                        session,
+                        {
+                            **summary,
+                            "status": "in_progress",
+                            "stage": "layer_transition",
+                            "stale": True,
+                            "in_battle": False,
+                            "timeout_seconds": timeout,
+                        },
+                    )
                 return _finalize_battle_result(
                     session,
                     _timeout_battle_run(
@@ -358,15 +563,22 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
 
             if state == "settle_entry":
                 try:
-                    summary = parse_cw_settlement_summary(runtime)
+                    summary = parse_cw_settlement_summary(runtime, observation=observation)
                 except TrailError as error:
-                    if error.code != "CW_SETTLEMENT_UNREADABLE" or not _is_continue_only_settlement_entry(runtime):
+                    if error.code != "CW_SETTLEMENT_UNREADABLE" or not _is_continue_only_settlement_entry(
+                        runtime,
+                        observation=observation,
+                    ):
                         raise
-                _continue_after_settlement(runtime)
+                _continue_after_settlement(runtime, observation=observation)
                 continue
 
             if state == "settle_followup":
-                _advance_settlement_page(runtime)
+                _advance_settlement_page(runtime, observation=observation)
+                continue
+
+            if state == "layer_transition":
+                _advance_layer_transition(runtime)
                 continue
 
             if state == "unknown":

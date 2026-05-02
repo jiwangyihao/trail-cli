@@ -1782,13 +1782,44 @@ def test_cw_prep_reference_files_exist_with_required_content() -> None:
         "fortune",
         "event",
         "boss_preview",
+        "layer_transition",
         "settle",
         "game_over",
         "unknown",
     ):
         assert fragment in stage_boundaries
+    boss_preview_lines = _lines_with_tokens(stage_boundaries, "boss_preview")
+    layer_transition_lines = _lines_with_tokens(stage_boundaries, "layer_transition")
+    assert boss_preview_lines
+    assert layer_transition_lines
+    assert any("本场对局首领" in line or "BOSS" in line for line in boss_preview_lines)
+    assert any("停止" in line or "交给后续" in line for line in boss_preview_lines)
+    assert not any("battle flow" in line for line in boss_preview_lines)
+    assert not any("trail cw battle run --session <id>" in line for line in boss_preview_lines)
+    assert any("battle flow" in line for line in layer_transition_lines)
+    assert any("trail cw battle run --session <id>" in line for line in layer_transition_lines)
+    assert any("不是普通稳定阶段" in line or "手工中断点" in line for line in layer_transition_lines)
+    assert not any("本场对局首领" in line for line in layer_transition_lines)
     for forbidden in ("优先买", "必须刷新", "默认卖", "直接出战"):
         assert forbidden not in command_surface
+
+
+def test_cw_prep_stage_boundaries_keep_boss_preview_and_layer_transition_split() -> None:
+    stage_boundaries = CW_PREP_STAGE_BOUNDARIES.read_text(encoding="utf-8")
+
+    boss_preview_lines = _lines_with_tokens(stage_boundaries, "boss_preview")
+    layer_transition_lines = _lines_with_tokens(stage_boundaries, "layer_transition")
+
+    assert boss_preview_lines
+    assert layer_transition_lines
+    assert any("本场对局首领" in line or "BOSS" in line for line in boss_preview_lines)
+    assert any("停止" in line or "交给后续" in line for line in boss_preview_lines)
+    assert not any("battle flow" in line for line in boss_preview_lines)
+    assert not any("trail cw battle run --session <id>" in line for line in boss_preview_lines)
+    assert any("battle flow" in line for line in layer_transition_lines)
+    assert any("trail cw battle run --session <id>" in line for line in layer_transition_lines)
+    assert any("不是普通稳定阶段" in line or "手工中断点" in line for line in layer_transition_lines)
+    assert not any("本场对局首领" in line for line in layer_transition_lines)
 
 
 def test_cw_prep_trigger_fixture_has_required_boundary_cases() -> None:

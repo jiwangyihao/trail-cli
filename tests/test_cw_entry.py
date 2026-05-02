@@ -17,6 +17,7 @@ from trail.scenes.cw.entry import (
     parse_cw_start_difficulty_token,
     read_entry_enemy_difficulty,
     resolve_entry_rank_from_enemy_difficulty,
+    start_cw,
 )
 from trail.session.store import SessionStore
 
@@ -861,6 +862,245 @@ def test_select_lowest_recovery_when_step_click_makes_no_progress(monkeypatch):
     assert runtime.drags == []
 
 
+def test_detect_current_enter_page_reports_layer_transition_not_stage_boss_preview(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
+    )
+    monkeypatch.setattr(
+        entry_module,
+        "build_cw_stage_detector",
+        lambda actual_runtime: lambda: "layer_transition",
+        raising=False,
+    )
+
+    page = entry_module._detect_current_enter_page(runtime, preferred_mode="continue")
+
+    assert page == {"page": "stage.layer_transition", "stage": "layer_transition"}
+
+
+def test_detect_current_enter_page_does_not_fallback_click_blank_to_stage_boss_preview(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
+    )
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+
+    page = entry_module._detect_current_enter_page(runtime, preferred_mode="continue")
+
+    assert page == {"page": "world"}
+
+
+def test_detect_current_enter_page_allows_recorded_continue_truth_boss_preview_fallback(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state.setdefault("cw", {})["entry"] = {
+        "page": "home",
+        "mode": "continue",
+        "difficulty": "lowest",
+        "battle_mode": "standard",
+    }
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
+    )
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+
+    page = entry_module._detect_current_enter_page(runtime, session=session, preferred_mode="continue")
+
+    assert page == {"page": "stage.boss_preview", "stage": "boss_preview"}
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"page": "home", "mode": "new", "difficulty": "lowest", "battle_mode": "standard"},
+        {"page": "home", "mode": "continue", "difficulty": "lowest"},
+        {"page": "home", "mode": "continue", "battle_mode": "standard"},
+        {"page": "home", "difficulty": "lowest", "battle_mode": "standard"},
+    ],
+)
+def test_detect_current_enter_page_rejects_incomplete_or_new_boss_preview_fallback(tmp_path, monkeypatch, entry):
+    import trail.scenes.cw.entry as entry_module
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state.setdefault("cw", {})["entry"] = entry
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
+    )
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+
+    page = entry_module._detect_current_enter_page(runtime, session=session, preferred_mode="continue")
+
+    assert page == {"page": "world"}
+
+
+def test_detect_current_enter_page_keeps_true_stage_boss_preview_from_detector(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+
+    runtime = Runtime()
+    _install_template_runtime(runtime)
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: "boss_preview")
+
+    page = entry_module._detect_current_enter_page(runtime, preferred_mode="continue")
+
+    assert page == {"page": "stage.boss_preview", "stage": "boss_preview"}
+
+
+def test_start_cw_continue_mode_handles_layer_transition_with_recorded_truth(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state.setdefault("cw", {})["entry"] = {
+        "page": "invest",
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    boss_preview_box = _box("stage.boss_preview", left=440, top=480)
+    invest_box = _box("entry.invest_environment", left=800, top=200)
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={_asset("stage.boss_preview"): boss_preview_box},
+        wait_results={
+            _asset("stage.boss_preview"): boss_preview_box,
+            _asset("entry.invest_environment"): invest_box,
+        },
+    )
+    monkeypatch.setattr(
+        entry_module,
+        "build_cw_stage_detector",
+        lambda actual_runtime: lambda: "layer_transition",
+        raising=False,
+    )
+
+    result = start_cw(session, mode="continue", difficulty="current", battle_mode="standard", runtime=runtime)
+
+    assert result.scene_state["cw"]["entry"] == {
+        "page": "invest",
+        "mode": "continue",
+        "difficulty": "current",
+        "battle_mode": "standard",
+    }
+    assert runtime.wait_calls == [_asset("stage.boss_preview"), _asset("entry.invest_environment")]
+    assert runtime.clicks == [boss_preview_box.center]
+
+
+def test_enter_cw_rejects_layer_transition_as_already_past_home(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.keys: list[tuple[str, int, float]] = []
+
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
+    )
+    monkeypatch.setattr(
+        entry_module,
+        "build_cw_stage_detector",
+        lambda actual_runtime: lambda: "layer_transition",
+        raising=False,
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        enter_cw(session, mode="continue", runtime=runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_ENTER_ALREADY_PAST_HOME"
+    assert getattr(exc_info.value, "data", None) == {"page": "stage.layer_transition", "stage": "layer_transition"}
+
+
+def test_enter_continue_game_clicks_continue_then_consumes_stage_boss_preview_click_blank_prompt(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    continue_box = _box("entry.continue", left=200, top=300)
+    boss_preview_box = _box("stage.boss_preview", left=440, top=480)
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        wait_results={
+            _asset("entry.continue"): continue_box,
+            _asset("stage.boss_preview"): boss_preview_box,
+        },
+    )
+
+    entry_module._enter_continue_game(runtime)
+
+    assert runtime.wait_calls == [_asset("entry.continue"), _asset("stage.boss_preview")]
+    assert runtime.clicks == [continue_box.center, boss_preview_box.center]
+
+
 def test_enter_cw_records_entry_snapshot_and_invalidates_stage(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
     session.scene_state["cw"] = {
@@ -1178,17 +1418,27 @@ def test_enter_cw_world_entry_flow_waits_between_guide_transitions(tmp_path, mon
 
 
 @pytest.mark.parametrize(
-    ("locate_results", "ocr_results", "expected_data", "expected_message"),
+    ("locate_results", "ocr_results", "detected_stage", "expected_data", "expected_message"),
     [
-        ({_asset("entry.new"): _box("entry.new", left=10, top=20)}, None, {"page": "entry.new"}, "cw enter only supports world or home, current page: entry.new"),
-        ({_asset("entry.continue"): _box("entry.continue", left=10, top=20)}, None, {"page": "entry.continue"}, "cw enter only supports world or home, current page: entry.continue"),
-        ({_asset("stage.boss_preview"): _box("stage.boss_preview", left=10, top=20)}, None, {"page": "stage.boss_preview", "stage": "boss_preview"}, "cw enter only supports world or home, current page: stage.boss_preview, stage: boss_preview"),
-        ({_asset("entry.invest_environment"): _box("entry.invest_environment", left=10, top=20)}, None, {"page": "invest"}, "cw enter only supports world or home, current page: invest"),
-        ({_asset("stage.preparation"): _box("stage.preparation", left=10, top=20)}, None, {"page": "in_game", "stage": "preparation"}, "cw enter only supports world or home, current page: in_game, stage: preparation"),
-        ({_asset("entry.start"): _box("entry.start", left=10, top=20)}, [([0, 0], "挑战失败", 0.99), ([0, 0], "继续挑战", 0.99)], {"page": "in_game", "stage": "settle"}, "cw enter only supports world or home, current page: in_game, stage: settle"),
+        ({_asset("entry.new"): _box("entry.new", left=10, top=20)}, None, None, {"page": "entry.new"}, "cw enter only supports world or home, current page: entry.new"),
+        ({_asset("entry.continue"): _box("entry.continue", left=10, top=20)}, None, None, {"page": "entry.continue"}, "cw enter only supports world or home, current page: entry.continue"),
+        ({}, None, "boss_preview", {"page": "stage.boss_preview", "stage": "boss_preview"}, "cw enter only supports world or home, current page: stage.boss_preview, stage: boss_preview"),
+        ({_asset("entry.invest_environment"): _box("entry.invest_environment", left=10, top=20)}, None, None, {"page": "invest"}, "cw enter only supports world or home, current page: invest"),
+        ({_asset("stage.preparation"): _box("stage.preparation", left=10, top=20)}, None, None, {"page": "in_game", "stage": "preparation"}, "cw enter only supports world or home, current page: in_game, stage: preparation"),
+        ({_asset("entry.start"): _box("entry.start", left=10, top=20)}, [([0, 0], "挑战失败", 0.99), ([0, 0], "继续挑战", 0.99)], None, {"page": "in_game", "stage": "settle"}, "cw enter only supports world or home, current page: in_game, stage: settle"),
     ],
 )
-def test_enter_cw_rejects_pages_beyond_home(tmp_path, locate_results, ocr_results, expected_data, expected_message):
+def test_enter_cw_rejects_pages_beyond_home(
+    tmp_path,
+    monkeypatch,
+    locate_results,
+    ocr_results,
+    detected_stage,
+    expected_data,
+    expected_message,
+):
+    import trail.scenes.cw.entry as entry_module
+
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
 
     class Runtime:
@@ -1211,6 +1461,8 @@ def test_enter_cw_rejects_pages_beyond_home(tmp_path, locate_results, ocr_result
 
     runtime = Runtime()
     _install_template_runtime(runtime, locate_results=locate_results, ocr_results=ocr_results)
+    if detected_stage is not None:
+        monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: detected_stage)
 
     with pytest.raises(Exception) as exc_info:
         enter_cw(session, mode="continue", runtime=runtime)
