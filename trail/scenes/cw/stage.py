@@ -398,31 +398,53 @@ def build_cw_stage_detector(runtime):
         key="blank_continue_candidate",
         template=str(resolve_scene_asset("cw", "stage.boss_preview")),
     )
+    blank_continue_conflict_target = BatchLocateTarget(
+        key="blank_continue_conflict_candidate",
+        template=str(resolve_scene_asset("cw", "stage.settle")),
+    )
 
     def detector() -> str | None:
         screenshot = getattr(runtime, "screenshot", None)
         if not callable(screenshot):
             return None
         shared_image = runtime.screenshot()
-        locate_result = run_batch_locate(
+
+        blank_continue_result = run_batch_locate(
             runtime,
-            (*ordered_targets, blank_continue_target),
+            (blank_continue_target,),
             image=shared_image,
-            trace_prefix="cw_stage_batch_locate",
-        )
-        blank_continue_candidate = locate_result.by_key[blank_continue_target.key]
-        if blank_continue_candidate.found:
+            trace_prefix="cw_stage_blank_continue_locate",
+        ).by_key[blank_continue_target.key]
+        if blank_continue_result.found:
+            conflict_result = run_batch_locate(
+                runtime,
+                (blank_continue_conflict_target,),
+                image=shared_image,
+                trace_prefix="cw_stage_blank_continue_conflict_locate",
+            ).by_key[blank_continue_conflict_target.key]
+            if not conflict_result.found:
+                return "layer_transition"
             ocr_items = _read_blank_continue_ocr(runtime, shared_image)
             if _is_true_boss_preview_from_ocr(ocr_items):
                 return "boss_preview"
             if _is_layer_transition_from_ocr(ocr_items):
                 return "layer_transition"
 
+        locate_result = run_batch_locate(
+            runtime,
+            ordered_targets,
+            image=shared_image,
+            trace_prefix="cw_stage_batch_locate",
+        )
         for target in ordered_targets:
             result = locate_result.by_key[target.key]
             if not result.found:
                 continue
             values = tuple(target.key)
+            if values == ("settle",):
+                if _is_true_boss_preview_from_ocr(_read_blank_continue_ocr(runtime, shared_image)):
+                    return "boss_preview"
+                return "settle"
             if len(values) == 1:
                 return values[0]
             raise TrailError("STAGE_AMBIGUOUS", f"当前资源无法区分阶段: {', '.join(values)}")

@@ -215,7 +215,19 @@ def test_build_cw_stage_detector_reads_tuple_ocr_results_for_settle_keywords():
     assert detector() == "settle"
 
 
-def test_build_cw_stage_detector_maps_click_blank_with_layer_transition_ocr_to_layer_transition():
+def test_build_cw_stage_detector_maps_click_blank_without_conflict_to_layer_transition():
+    runtime = _StageDetectorRuntime(
+        locate_hits={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
+        ocr_image_result=[_rapidocr_piece("本场对局首领")],
+    )
+
+    detector = stage_scene.build_cw_stage_detector(runtime)
+
+    assert detector() == "layer_transition"
+    assert runtime.ocr_image_calls == []
+
+
+def test_build_cw_stage_detector_checks_click_blank_before_normal_stage_templates():
     runtime = _StageDetectorRuntime(
         locate_hits={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
         ocr_image_result=[_rapidocr_piece("点击空白处继续"), _rapidocr_piece("位面")],
@@ -224,12 +236,15 @@ def test_build_cw_stage_detector_maps_click_blank_with_layer_transition_ocr_to_l
     detector = stage_scene.build_cw_stage_detector(runtime)
 
     assert detector() == "layer_transition"
-    assert runtime.ocr_image_calls == [{"ocr": OcrRequestConfig(lang="ch")}]
+    assert runtime.locate_calls == [_asset("stage.boss_preview"), _asset("stage.settle")]
 
 
 def test_build_cw_stage_detector_keeps_true_boss_preview_when_ocr_mentions_boss():
     runtime = _StageDetectorRuntime(
-        locate_hits={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
+        locate_hits={
+            _asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480),
+            _asset("stage.settle"): _box("stage.settle", left=1400, top=960),
+        },
         ocr_image_result=[_rapidocr_piece("本场对局首领")],
     )
 
@@ -239,7 +254,19 @@ def test_build_cw_stage_detector_keeps_true_boss_preview_when_ocr_mentions_boss(
     assert runtime.ocr_image_calls == [{"ocr": OcrRequestConfig(lang="ch")}]
 
 
-def test_build_cw_stage_detector_does_not_treat_click_blank_without_layer_text_as_layer_transition():
+def test_build_cw_stage_detector_maps_next_step_with_boss_ocr_to_boss_preview():
+    runtime = _StageDetectorRuntime(
+        locate_hits={_asset("stage.settle"): _box("stage.settle", left=1400, top=960)},
+        ocr_image_result=[_rapidocr_piece("本场对局首领")],
+    )
+
+    detector = stage_scene.build_cw_stage_detector(runtime)
+
+    assert detector() == "boss_preview"
+    assert runtime.ocr_image_calls == [{"ocr": OcrRequestConfig(lang="ch")}]
+
+
+def test_build_cw_stage_detector_treats_click_blank_without_conflict_as_layer_transition():
     runtime = _StageDetectorRuntime(
         locate_hits={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
         ocr_image_result=[_rapidocr_piece("点击空白处继续")],
@@ -247,8 +274,8 @@ def test_build_cw_stage_detector_does_not_treat_click_blank_without_layer_text_a
 
     detector = stage_scene.build_cw_stage_detector(runtime)
 
-    assert detector() is None
-    assert runtime.ocr_image_calls[0] == {"ocr": OcrRequestConfig(lang="ch")}
+    assert detector() == "layer_transition"
+    assert runtime.ocr_image_calls == []
 
 
 def test_build_cw_stage_detector_uses_single_screenshot_for_template_hits():
