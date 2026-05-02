@@ -2748,6 +2748,10 @@ def test_cw_service_equipment_compose_uses_resource_service_and_injections(tmp_p
             calls["equipment_workspace"] = workspace_root
             return expected_raw_config, expected_recognizer
 
+        def slots_read_resources(self, *, workspace_root):
+            assert workspace_root == str(tmp_path)
+            return {}, {}, object()
+
         def bundle(self, *, workspace_root):
             calls.setdefault("bundle_workspaces", []).append(workspace_root)
             assert workspace_root == str(tmp_path)
@@ -2835,6 +2839,10 @@ def test_cw_service_equipment_compose_preflight_scope_suppresses_click_but_drag_
         def equipment_read_resources(self, *, workspace_root):
             del workspace_root
             return {"rpg_game_big_version": "4.2", "equipment_list": []}, object()
+
+        def slots_read_resources(self, *, workspace_root):
+            del workspace_root
+            return {}, {}, object()
 
         def bundle(self, *, workspace_root):
             del workspace_root
@@ -2933,6 +2941,10 @@ def test_cw_service_equipment_compose_success_without_screenshot_is_persisted_un
             del workspace_root
             return {"rpg_game_big_version": "4.2", "equipment_list": []}, object()
 
+        def slots_read_resources(self, *, workspace_root):
+            del workspace_root
+            return {}, {}, object()
+
         def bundle(self, *, workspace_root):
             del workspace_root
             return SimpleNamespace(guide_config={}, guide_config_enriched={})
@@ -3002,6 +3014,10 @@ def test_command_service_equipment_compose_missing_screenshot_returns_recoverabl
         def equipment_read_resources(self, *, workspace_root):
             del workspace_root
             return {"rpg_game_big_version": "4.2", "equipment_list": []}, object()
+
+        def slots_read_resources(self, *, workspace_root):
+            del workspace_root
+            return {}, {}, object()
 
         def bundle(self, *, workspace_root):
             del workspace_root
@@ -3125,6 +3141,7 @@ def test_cw_service_equipment_compose_fallback_builds_recognizer_without_resourc
     monkeypatch.setattr(cw_service_module, "build_cw_equipment_catalog", fake_build_catalog, raising=False)
     monkeypatch.setattr(cw_service_module, "load_cached_equipment_icons", fake_load_icons, raising=False)
     monkeypatch.setattr(cw_service_module, "VectorEquipmentIconRecognizer", fake_recognizer, raising=False)
+    monkeypatch.setattr(cw_service_module, "slots_reader_factory", lambda runtime, targets=None, request_id=None, dismiss_initial_overlay=True: object())
     monkeypatch.setattr(cw_service_module, "compose_and_equip_cw_equipment", fake_compose)
     cw_service = CwService(runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: Runtime()), cw_resource_service=None)
 
