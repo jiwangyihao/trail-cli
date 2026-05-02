@@ -1414,6 +1414,61 @@ def test_render_output_cw_equipment_compose_summary():
     ]
 
 
+def test_render_output_cw_equipment_compose_existing_target_summary():
+    payload = {
+        "ok": True,
+        "data": {
+            "action": "equip_existing",
+            "pos": "front:1",
+            "name": "希儿",
+            "equipment": "高周波电锯",
+            "count": 2,
+            "role": "希儿",
+            "slot": "front:1",
+            "equipment_name": "高周波电锯",
+            "existing_item": {
+                "idx": 4,
+                "pos": "equipment:4",
+                "name": "高周波电锯",
+                "score": 0.99,
+                "uncertain": False,
+            },
+            "equip_action": {"drag_from": "equipment:4", "drag_to": "front:1"},
+            "verified": True,
+            "consumed": 0,
+            "post_equip_equipment_count": 3,
+            "equipment_stale": True,
+        },
+        "screenshot": ".trail/shots/req-compose.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.equipment.compose", payload).splitlines()
+
+    assert lines == [
+        "ok cw.equipment.compose pos=front:1 name=希儿 装备=高周波电锯 count=2",
+        "shot path=.trail/shots/req-compose.png",
+        "info read_image_first=1",
+        "# 综合信息",
+        "info action=equip_existing verified=1 consumed=0 post_equip_equipment_count=3 equipment_stale=1",
+        "info action=equip drag_from=equipment:4 drag_to=front:1 verified=1 post_equip_equipment_count=3 equipment_stale=1",
+        "# 装备信息",
+        "item kind=existing phase=pre_equip idx=4 pos=equipment:4 name=高周波电锯 score=0.99 uncertain=0",
+        "# 角色信息",
+        "slot pos=front:1 name=希儿 装备=高周波电锯 count=2",
+    ]
+    rendered = "\n".join(lines)
+    assert "action=compose" not in rendered
+    assert "post_compose_equipment_count" not in rendered
+    assert "verified_shift" not in rendered
+    assert "kind=material" not in rendered
+    assert "phase=post_compose" not in rendered
+
+
 def test_render_output_cw_equipment_compose_omits_empty_equipment_section():
     payload = {
         "ok": True,

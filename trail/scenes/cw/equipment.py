@@ -598,6 +598,19 @@ def _item_matches_target_recipe(item: Mapping[str, Any], recipe) -> bool:
     return bool(item_keys & target_keys)
 
 
+def select_existing_cw_equipment_target(snapshot: dict[str, Any], *, recipe) -> Mapping[str, Any] | None:
+    items = sorted(
+        [item for item in _as_list(snapshot.get("items")) if isinstance(item, Mapping)],
+        key=_equipment_item_idx,
+    )
+    for item in items:
+        if item.get("uncertain") is True:
+            continue
+        if _item_matches_target_recipe(item, recipe):
+            return item
+    return None
+
+
 def _expected_post_compose_counter(
     initial_snapshot: dict[str, Any],
     materials: list[Mapping[str, Any]],
@@ -755,6 +768,24 @@ def _verify_cw_equipment_post_equip(
         raise error
 
 
+def _verify_cw_equipment_existing_target_removed(
+    *,
+    post_equip_snapshot: dict[str, Any],
+    existing_item: Mapping[str, Any],
+    recipe,
+) -> None:
+    existing_idx = _equipment_item_idx(existing_item)
+    current_item = _item_at_equipment_idx(post_equip_snapshot, existing_idx)
+    if current_item is not None and _item_matches_target_recipe(current_item, recipe):
+        error = TrailError("CW_EQUIPMENT_COMPOSE_EQUIP_VERIFY_FAILED", "装备给角色后背包槽位验证失败")
+        error.data = {
+            "expected_removed": f"equipment:{existing_idx}",
+            "actual_item": dict(current_item),
+            "result_item": dict(existing_item),
+        }
+        raise error
+
+
 def compose_and_equip_cw_equipment(
     session: SessionModel,
     runtime,
@@ -793,6 +824,51 @@ def compose_and_equip_cw_equipment(
             request_id=request_id,
         )
 
+    recipes = build_cw_equipment_recipes(raw_config)
+    recipe = recipes.get(preflight["equipment_name"])
+    if recipe is not None:
+        existing_item = select_existing_cw_equipment_target(initial_snapshot, recipe=recipe)
+        if existing_item is not None:
+            equip_from = f"equipment:{_equipment_item_idx(existing_item)}"
+            equip_to = preflight["agent_slot"]
+            runtime.drag_to(*equipment_slot_center(equip_from), *SLOT_POINTS_BY_AREA[preflight["area"]][preflight["index"]])
+
+            post_equip_snapshot = apply_cw_equipment_read(
+                session,
+                runtime,
+                workspace_root=workspace_root,
+                raw_config=raw_config,
+                recognizer=recognizer,
+                request_id=request_id,
+            )
+            _verify_cw_equipment_post_equip(
+                post_compose_snapshot=initial_snapshot,
+                post_equip_snapshot=post_equip_snapshot,
+                result_item=existing_item,
+            )
+            _verify_cw_equipment_existing_target_removed(
+                post_equip_snapshot=post_equip_snapshot,
+                existing_item=existing_item,
+                recipe=recipe,
+            )
+
+            result = commit_cw_equipment_compose_record(session, preflight)
+            result.update(
+                {
+                    "action": "equip_existing",
+                    "role": preflight["role_name"],
+                    "slot": equip_to,
+                    "equipment_name": preflight["equipment_name"],
+                    "existing_item": deepcopy(dict(existing_item)),
+                    "equip_action": {"drag_from": equip_from, "drag_to": equip_to},
+                    "verified": True,
+                    "consumed": 0,
+                    "post_equip_equipment_count": _snapshot_count(post_equip_snapshot),
+                    "equipment_stale": True,
+                }
+            )
+            return result
+
     selection = select_cw_equipment_compose_materials(initial_snapshot, name=preflight["equipment_name"], raw_config=raw_config)
     materials = [material for material in selection["materials"] if isinstance(material, Mapping)]
     material_idxs = [_equipment_item_idx(material) for material in materials]
@@ -810,7 +886,7 @@ def compose_and_equip_cw_equipment(
         recognizer=recognizer,
         request_id=request_id,
     )
-    recipe = build_cw_equipment_recipes(raw_config)[preflight["equipment_name"]]
+    recipe = recipes[preflight["equipment_name"]]
     result_item, verified_shift = _verify_cw_equipment_post_compose(
         initial_snapshot=initial_snapshot,
         post_compose_snapshot=post_compose_snapshot,
