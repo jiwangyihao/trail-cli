@@ -43,6 +43,7 @@ def _pixel_payload(mode: str, size: list[int]) -> dict:
     return {"mode": mode, "size": size, "data": _zero_pixel_data(size[0] * size[1] * channels)}
 
 
+@lru_cache(maxsize=None)
 def _png_bytes(*, mode: str = "RGBA", size: tuple[int, int] = (103, 120)) -> bytes:
     buffer = BytesIO()
     Image.new(mode, size).save(buffer, format="PNG")

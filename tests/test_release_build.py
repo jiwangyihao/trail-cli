@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from io import BytesIO
+from functools import lru_cache
 import importlib.util
 import json
 from pathlib import Path
@@ -32,6 +33,7 @@ def _pixel_payload(mode: str, size: list[int]) -> dict:
     return {"mode": mode, "size": size, "data": [0] * (size[0] * size[1] * channels)}
 
 
+@lru_cache(maxsize=None)
 def _png_bytes(*, mode: str = "RGBA", size: tuple[int, int] = (103, 120)) -> bytes:
     buffer = BytesIO()
     Image.new(mode, size).save(buffer, format="PNG")
