@@ -904,16 +904,20 @@ def read_cw_equipment(
     screenshot = _save_reused_screenshot(runtime, image, request_id=request_id) if request_id is not None else None
     cells = list(iter_equipment_grid_cells(DEFAULT_EQUIPMENT_GRID_PROFILE, columns=10, rows=6))
     best_by_idx: dict[int, dict[str, Any]] = {}
-    empty_templates = load_equipment_empty_templates()
+    empty_templates: dict[int, Image.Image] | None = None
     empty_template_idxs: set[int] = set()
 
     for crop in crop_equipment_cells(image, cells):
         if crop.cell.idx in empty_template_idxs:
             continue
-        if empty_templates and crop.cell.col <= 2:
-            if _matches_equipment_empty_template(crop, empty_templates):
+        if crop.cell.col <= 2:
+            if empty_templates is None:
+                empty_templates = load_equipment_empty_templates()
+            if empty_templates and _matches_equipment_empty_template(crop, empty_templates):
                 empty_template_idxs.add(crop.cell.idx)
                 best_by_idx.pop(crop.cell.idx, None)
+                continue
+            if not empty_templates and not crop_has_equipment_slot_markers(crop.image):
                 continue
         elif not crop_has_equipment_slot_markers(crop.image):
             continue

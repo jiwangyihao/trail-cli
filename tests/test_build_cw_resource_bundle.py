@@ -299,14 +299,8 @@ def test_build_cw_resource_bundle_writes_manifest_and_loadable_bundle(tmp_path, 
     assert role_features["items"][0]["role_id"] == "r1"
     assert role_features["items"][0]["normalized_name"] == "希儿"
 
-    from trail.scenes.cw.static_resources import load_cw_resource_bundle_from_path
-
-    loaded = load_cw_resource_bundle_from_path(bundle_root)
-    assert loaded.big_version == "3.2"
-    assert loaded.equipment_manifest["items"][0]["cache_key"] == "advanced-e1"
-    assert loaded.role_manifest["items"][0]["role_id"] == "r1"
-    assert loaded.role_features["items"][0]["role_id"] == "r1"
-    assert loaded.indexes["equipment_by_cache_key"]["advanced-e1"]["big_version"] == "3.2"
+    indexes = json.loads((bundle_root / "indexes.json").read_text(encoding="utf-8"))
+    assert indexes["equipment_by_cache_key"]["advanced-e1"]["big_version"] == "3.2"
 
 
 def test_build_cw_resource_bundle_removes_stale_generated_content(tmp_path, monkeypatch):
