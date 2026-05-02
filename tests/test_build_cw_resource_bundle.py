@@ -41,6 +41,11 @@ def _pixel_payload(mode, size, channels):
     }
 
 
+@lru_cache(maxsize=None)
+def _zero_histogram_data(length: int) -> tuple[float, ...]:
+    return (0.0,) * length
+
+
 def _feature_payload(cache_key="advanced-e1"):
     return {
         "equipment_feature_schema_version": 1,
@@ -87,7 +92,7 @@ def _role_feature_payload():
                 "trait_ids": ["t1"],
                 "icon_rgba": _pixel_payload("RGBA", (64, 64), 4),
                 "icon_mask": _pixel_payload("L", (64, 64), 1),
-                "histogram": [0.0] * 4096,
+                "histogram": _zero_histogram_data(4096),
             }
         ],
     }

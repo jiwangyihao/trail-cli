@@ -28,9 +28,19 @@ ROOT = Path(__file__).resolve().parents[1]
 VERIFIER_SCRIPT = ROOT / "scripts" / "verify-cw-resource-bundle-artifacts.py"
 
 
+@lru_cache(maxsize=None)
+def _zero_pixel_data(length: int) -> tuple[int, ...]:
+    return (0,) * length
+
+
+@lru_cache(maxsize=None)
+def _zero_histogram_data(length: int) -> tuple[float, ...]:
+    return (0.0,) * length
+
+
 def _pixel_payload(mode: str, size: list[int]) -> dict:
     channels = 4 if mode == "RGBA" else 1
-    return {"mode": mode, "size": size, "data": [0] * (size[0] * size[1] * channels)}
+    return {"mode": mode, "size": size, "data": _zero_pixel_data(size[0] * size[1] * channels)}
 
 
 @lru_cache(maxsize=None)
@@ -118,7 +128,7 @@ def _valid_role_feature_item(role_id: str = "r1", name: str = "Role A", normaliz
         "rarity": "5",
         "icon_rgba": _pixel_payload("RGBA", [64, 64]),
         "icon_mask": _pixel_payload("L", [64, 64]),
-        "histogram": [0.0] * 4096,
+        "histogram": _zero_histogram_data(4096),
     }
 
 
