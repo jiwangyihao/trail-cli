@@ -50,6 +50,10 @@ class _IndexedIcon:
     match_mask: Image.Image
 
 
+def _is_privilege_equipment_entry(entry: EquipmentCatalogEntry) -> bool:
+    return entry.category_name == "特权装备" or entry.name.endswith("·特权")
+
+
 def _normalized_rgba(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     rgba = image.convert("RGBA")
     background = Image.new("RGBA", rgba.size, (0, 0, 0, 255))
@@ -176,6 +180,8 @@ def _is_empty_roi(image: Image.Image) -> bool:
 def build_precomputed_equipment_features(icons: Iterable[tuple[EquipmentCatalogEntry, Image.Image]]) -> dict:
     items = []
     for entry, icon in icons:
+        if _is_privilege_equipment_entry(entry):
+            continue
         feature = _normalized_rgba(icon, FEATURE_SIZE)
         match_image = _normalized_rgba(icon, MATCH_SIZE)
         feature_mask = _alpha_mask(icon, FEATURE_SIZE)
@@ -228,6 +234,7 @@ class VectorEquipmentIconRecognizer:
                 match_mask=_alpha_mask(icon, MATCH_SIZE),
             )
             for entry, icon in icons
+            if not _is_privilege_equipment_entry(entry)
         ]
 
     @classmethod
@@ -265,6 +272,8 @@ class VectorEquipmentIconRecognizer:
                 icon_url=str(item.get("icon_url") or ""),
                 big_version=str(item.get("big_version") or ""),
             )
+            if _is_privilege_equipment_entry(entry):
+                continue
             indexed.append(
                 _IndexedIcon(
                     entry=entry,

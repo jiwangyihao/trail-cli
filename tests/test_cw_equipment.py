@@ -725,6 +725,55 @@ def test_vector_equipment_recognizer_picks_best_candidate_with_gap():
     assert result.gap > 0.1
 
 
+def test_vector_equipment_recognizer_ignores_privilege_equipment_candidates():
+    recognition = load_equipment_recognition_module()
+    resources = load_equipment_resources_module()
+    normal_entry = resources.EquipmentCatalogEntry(
+        "advanced-engine",
+        "engine",
+        "永动机",
+        "advanced",
+        "4",
+        "进阶装备",
+        "https://act-webstatic.mihoyo.com/engine.png",
+        "3.2",
+    )
+    privilege_entry = resources.EquipmentCatalogEntry(
+        "advanced-engine-privilege",
+        "engine-privilege",
+        "永动机·特权",
+        "advanced",
+        "7",
+        "特权装备",
+        "https://act-webstatic.mihoyo.com/engine.png",
+        "3.2",
+    )
+    other_entry = resources.EquipmentCatalogEntry(
+        "advanced-wing",
+        "wing",
+        "流星飞翼",
+        "advanced",
+        "4",
+        "进阶装备",
+        "https://act-webstatic.mihoyo.com/wing.png",
+        "3.2",
+    )
+    recognizer = recognition.VectorEquipmentIconRecognizer(
+        [
+            (normal_entry, Image.new("RGBA", (128, 128), "red")),
+            (privilege_entry, Image.new("RGBA", (128, 128), "red")),
+            (other_entry, Image.new("RGBA", (128, 128), "blue")),
+        ]
+    )
+
+    result = recognizer.recognize(Image.new("RGBA", (70, 70), "red"))
+
+    assert result.candidates[0].name == "永动机"
+    assert all("特权" not in candidate.name for candidate in result.candidates)
+    assert result.gap is not None and result.gap > 0.05
+    assert result.uncertain is False
+
+
 def test_vector_recognizer_from_precomputed_features_matches_png_constructor():
     recognition = load_equipment_recognition_module()
     resources = load_equipment_resources_module()
@@ -774,6 +823,58 @@ def test_vector_recognizer_from_precomputed_features_matches_png_constructor():
     assert actual.gap == expected.gap
     assert actual.uncertain is expected.uncertain
     assert actual.empty is expected.empty
+
+
+def test_vector_recognizer_from_precomputed_features_ignores_privilege_equipment_candidates():
+    recognition = load_equipment_recognition_module()
+    resources = load_equipment_resources_module()
+    normal_entry = resources.EquipmentCatalogEntry(
+        "advanced-engine",
+        "engine",
+        "永动机",
+        "advanced",
+        "4",
+        "进阶装备",
+        "https://act-webstatic.mihoyo.com/engine.png",
+        "3.2",
+    )
+    privilege_entry = resources.EquipmentCatalogEntry(
+        "advanced-engine-privilege",
+        "engine-privilege",
+        "永动机·特权",
+        "advanced",
+        "7",
+        "特权装备",
+        "https://act-webstatic.mihoyo.com/engine.png",
+        "3.2",
+    )
+    other_entry = resources.EquipmentCatalogEntry(
+        "advanced-wing",
+        "wing",
+        "流星飞翼",
+        "advanced",
+        "4",
+        "进阶装备",
+        "https://act-webstatic.mihoyo.com/wing.png",
+        "3.2",
+    )
+    payload = recognition.build_precomputed_equipment_features(
+        [
+            (normal_entry, Image.new("RGBA", (128, 128), "red")),
+            (privilege_entry, Image.new("RGBA", (128, 128), "red")),
+            (other_entry, Image.new("RGBA", (128, 128), "blue")),
+        ]
+    )
+
+    result = recognition.VectorEquipmentIconRecognizer.from_precomputed_features(payload).recognize(
+        Image.new("RGBA", (70, 70), "red")
+    )
+
+    assert [item["name"] for item in payload["items"]] == ["永动机", "流星飞翼"]
+    assert result.candidates[0].name == "永动机"
+    assert all("特权" not in candidate.name for candidate in result.candidates)
+    assert result.gap is not None and result.gap > 0.05
+    assert result.uncertain is False
 
 
 def _sample_precomputed_feature_payload():
