@@ -1217,6 +1217,70 @@ def test_read_cw_equipment_recognizes_best_variants_and_counts(monkeypatch, tmp_
     assert result["layout"] == "default"
 
 
+def test_read_cw_equipment_skips_cells_matching_empty_template_before_recognition(monkeypatch, tmp_path):
+    scene = load_equipment_scene_module()
+    grid = load_equipment_grid_module()
+    resources = load_equipment_resources_module()
+    recognition = load_equipment_recognition_module()
+    raw_config = {
+        "rpg_game_big_version": "3.2",
+        "equipment_list": [{"id": "e1", "name": "幸运星", "icon": "https://act-webstatic.mihoyo.com/e1.png"}],
+    }
+    entry = resources.build_cw_equipment_catalog(raw_config)[0]
+
+    class Runtime:
+        def capture_image(self, **kwargs):
+            assert kwargs == {"normalize": True}
+            return Image.new("RGBA", (1920, 1080), "black")
+
+    class Recognizer:
+        def __init__(self):
+            self.calls = 0
+
+        def recognize(self, image):
+            del image
+            self.calls += 1
+            return recognition.EquipmentRecognitionResult(
+                candidates=[recognition.EquipmentCandidate("e1", "advanced-e1", "幸运星", 0.93)],
+                score=0.93,
+                gap=0.2,
+                uncertain=False,
+                empty=False,
+            )
+
+    recognizer = Recognizer()
+    cells = [
+        grid.EquipmentGridCell(1, 1, 1, 1820.0, 240, {"left": 1820, "top": 240, "width": 70, "height": 70}),
+        grid.EquipmentGridCell(2, 2, 2, 1740.25, 318, {"left": 1740, "top": 318, "width": 70, "height": 70}),
+    ]
+    empty_template = Image.new("RGBA", (70, 70), (20, 22, 26, 255))
+    equipped_crop = Image.new("RGBA", (70, 70), (220, 40, 40, 255))
+
+    monkeypatch.setattr(scene, "fetch_cw_raw_guide_config", lambda workspace_root=None: raw_config)
+    monkeypatch.setattr(scene, "prepare_equipment_icon_cache", lambda catalog, workspace_root=None, refresh=False: {})
+    monkeypatch.setattr(scene, "load_cached_equipment_icons", lambda catalog, workspace_root=None: [(entry, Image.new("RGBA", (128, 128), "red"))])
+    monkeypatch.setattr(scene, "VectorEquipmentIconRecognizer", lambda icons: recognizer)
+    monkeypatch.setattr(scene, "iter_equipment_grid_cells", lambda profile, columns=10, rows=6: cells)
+    monkeypatch.setattr(
+        scene,
+        "crop_equipment_cells",
+        lambda image, cells: [
+            grid.EquipmentCrop(cells[0], equipped_crop, "exact"),
+            grid.EquipmentCrop(cells[1], empty_template.copy(), "floor"),
+            grid.EquipmentCrop(cells[1], equipped_crop, "ceil"),
+        ],
+    )
+    monkeypatch.setattr(scene, "crop_has_equipment_slot_markers", lambda image: False)
+    monkeypatch.setattr(scene, "load_equipment_empty_templates", lambda: {2: empty_template})
+
+    result = scene.read_cw_equipment(Runtime(), workspace_root=tmp_path)
+
+    assert recognizer.calls == 1
+    assert result["count"] == 1
+    assert result["empty"] == 1
+    assert result["items"][0]["idx"] == 1
+
+
 def test_read_cw_equipment_filters_isolated_remote_items(monkeypatch, tmp_path):
     scene = load_equipment_scene_module()
     grid = load_equipment_grid_module()
@@ -1322,6 +1386,7 @@ def test_read_cw_equipment_filters_crops_without_slot_markers(monkeypatch, tmp_p
         ],
     )
     monkeypatch.setattr(scene, "crop_has_equipment_slot_markers", lambda image: image.getpixel((0, 0)) == (255, 0, 0, 255))
+    monkeypatch.setattr(scene, "load_equipment_empty_templates", lambda: {})
 
     result = scene.read_cw_equipment(Runtime(), workspace_root=tmp_path)
 

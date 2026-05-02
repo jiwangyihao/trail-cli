@@ -46,3 +46,4 @@ packages = ["trail"]
 [tool.hatch.build.targets.sdist.force-include]
 "trail/scenes/cw/generated" = "trail/scenes/cw/generated"
 "trail/scenes/cw/assets/slots" = "trail/scenes/cw/assets/slots"
+"trail/scenes/cw/assets/equipment-empty" = "trail/scenes/cw/assets/equipment-empty"

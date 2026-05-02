@@ -5,11 +5,12 @@ from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageStat
 
 from trail.core.errors import TrailError
 from trail.session.models import SessionModel
@@ -81,6 +82,37 @@ def _save_reused_screenshot(runtime, image: Image.Image, *, request_id: str | No
     except Exception:
         return None
     return str(path) if path is not None else None
+
+
+EQUIPMENT_EMPTY_TEMPLATE_SIMILARITY_THRESHOLD = 0.98
+
+
+@lru_cache(maxsize=1)
+def load_equipment_empty_templates() -> dict[int, Image.Image]:
+    root = Path(__file__).resolve().parent / "assets" / "equipment-empty"
+    templates: dict[int, Image.Image] = {}
+    for path in sorted(root.glob("equipment-*.png")):
+        raw_idx = path.stem.removeprefix("equipment-")
+        if not raw_idx.isdecimal():
+            continue
+        with Image.open(path) as image:
+            if image.size == (70, 70):
+                templates[int(raw_idx)] = image.convert("RGBA")
+    return templates
+
+
+def _equipment_empty_template_similarity(left: Image.Image, right: Image.Image) -> float:
+    diff = ImageChops.difference(left.convert("RGB"), right.convert("RGB"))
+    channel_means = ImageStat.Stat(diff).mean
+    mean_abs_diff = sum(channel_means) / len(channel_means)
+    return max(0.0, min(1.0, 1.0 - mean_abs_diff / 255.0))
+
+
+def _matches_equipment_empty_template(crop, templates: Mapping[int, Image.Image]) -> bool:
+    template = templates.get(int(crop.cell.idx))
+    if template is None:
+        return False
+    return _equipment_empty_template_similarity(crop.image, template) >= EQUIPMENT_EMPTY_TEMPLATE_SIMILARITY_THRESHOLD
 
 
 def _item_from_result(crop, result: EquipmentRecognitionResult) -> dict[str, Any] | None:
@@ -872,9 +904,18 @@ def read_cw_equipment(
     screenshot = _save_reused_screenshot(runtime, image, request_id=request_id) if request_id is not None else None
     cells = list(iter_equipment_grid_cells(DEFAULT_EQUIPMENT_GRID_PROFILE, columns=10, rows=6))
     best_by_idx: dict[int, dict[str, Any]] = {}
+    empty_templates = load_equipment_empty_templates()
+    empty_template_idxs: set[int] = set()
 
     for crop in crop_equipment_cells(image, cells):
-        if not crop_has_equipment_slot_markers(crop.image):
+        if crop.cell.idx in empty_template_idxs:
+            continue
+        if empty_templates and crop.cell.col <= 2:
+            if _matches_equipment_empty_template(crop, empty_templates):
+                empty_template_idxs.add(crop.cell.idx)
+                best_by_idx.pop(crop.cell.idx, None)
+                continue
+        elif not crop_has_equipment_slot_markers(crop.image):
             continue
         item = _item_from_result(crop, recognizer.recognize(crop.image))
         if item is None:
