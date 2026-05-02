@@ -370,7 +370,7 @@ def test_readme_documents_ocr_mode_and_retry_high_contract() -> None:
 
 def test_readme_documents_trail_start_as_default_entry() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    quick_start = readme.split("## Quick Start", 1)[1].split("## ", 1)[0]
+    quick_start = readme.split("## 开始使用", 1)[1].split("## ", 1)[0]
 
     assert "trail start" in quick_start
     assert "trail ocr read" in quick_start

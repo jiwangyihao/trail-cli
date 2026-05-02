@@ -400,6 +400,9 @@ def build_cw_stage_detector(runtime):
     )
 
     def detector() -> str | None:
+        screenshot = getattr(runtime, "screenshot", None)
+        if not callable(screenshot):
+            return None
         shared_image = runtime.screenshot()
         locate_result = run_batch_locate(
             runtime,
