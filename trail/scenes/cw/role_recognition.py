@@ -27,7 +27,7 @@ ROLE_FEATURE_SIZE = (64, 64)
 ROLE_AVATAR_ROI = (5, 4, 98, 108)
 ROLE_HIST_BINS = (16, 16, 16)
 STAR_ROI = (10, 82, 91, 114)
-FEE_STRIP = (4, 115, 99, 120)
+FEE_STRIP = (4, 113, 99, 118)
 STAR_SCALES = (0.65, 0.75, 0.80)
 STAR_THRESHOLD = 0.78
 STAR_NMS_RADIUS = 8
@@ -274,8 +274,8 @@ def fee_color_from_crop(crop: Image.Image) -> str:
         return "unknown"
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
     mean_hue = float(np.mean(hsv[:, :, 0]))
-    mean_saturation = float(np.mean(hsv[:, :, 1]))
-    if mean_saturation < 28:
+    median_saturation = float(np.median(hsv[:, :, 1]))
+    if median_saturation < 45:
         return "gray"
     if 75 <= mean_hue <= 98:
         return "green"
