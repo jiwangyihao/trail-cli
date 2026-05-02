@@ -40,8 +40,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _fill_fee_strip(crop: Image.Image, color: tuple[int, int, int, int]) -> Image.Image:
     result = crop.copy().convert("RGBA")
-    for x in range(4, 99):
-        for y in range(112, 119):
+    left, top, right, bottom = role_recognition.FEE_STRIP
+    for x in range(left, right):
+        for y in range(top, bottom):
             result.putpixel((x, y), color)
     return result
 
@@ -148,6 +149,17 @@ def test_fee_color_from_crop_classifies_known_strip_colors():
     }
     for expected, color in samples.items():
         assert fee_color_from_crop(_fill_fee_strip(Image.new("RGBA", (103, 120), (0, 0, 0, 255)), color)) == expected
+
+
+def test_fee_color_from_crop_ignores_upper_border_contamination():
+    crop = Image.new("RGBA", (103, 120), (0, 0, 0, 255))
+    for x in range(4, 99):
+        for y in range(112, 115):
+            crop.putpixel((x, y), (50, 112, 190, 255))
+        for y in range(115, 120):
+            crop.putpixel((x, y), (92, 92, 92, 255))
+
+    assert fee_color_from_crop(crop) == "gray"
 
 
 def test_fee_color_from_crop_keeps_unfrozen_hues_unknown():
@@ -515,6 +527,7 @@ def test_real_fixture_field_empty_score_exceeds_threshold():
     assert empty_template_score(crop, empty, []) >= 0.82
 
 
+@pytest.mark.slow
 def test_real_fixture_full_role_recognition_visible_facts():
     recognizer = _loaded_real_recognizer()
     image = Image.open(ROOT / "tests/fixtures/cw/slots-icon/current-prep.jpg").convert("RGBA")
