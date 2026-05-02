@@ -6,8 +6,12 @@ import re
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from trail.core.errors import TrailError
+from trail.runtime.model import Box
+from trail.runtime.ocr_config import OcrRequestConfig
+from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw import stage as stage_scene
 from trail.session.store import SessionStore
@@ -15,6 +19,44 @@ from trail.session.store import SessionStore
 
 def _rapidocr_piece(text: str):
     return ([[0, 0], [10, 0], [10, 10], [0, 10]], text, 0.99)
+
+
+def _asset(alias: str) -> str:
+    return str(resolve_scene_asset("cw", alias))
+
+
+def _box(alias: str, *, left: int, top: int, width: int = 40, height: int = 20) -> Box:
+    return Box(left=left, top=top, width=width, height=height, source=_asset(alias))
+
+
+class _StageDetectorRuntime:
+    def __init__(
+        self,
+        *,
+        locate_hits: dict[str, object] | None = None,
+        ocr_image_result: list[object] | None = None,
+    ):
+        self.locate_hits = locate_hits or {}
+        self.ocr_image_result = ocr_image_result or []
+        self.locate_calls: list[str] = []
+        self.ocr_image_calls: list[dict[str, object]] = []
+        self.screenshot_calls = 0
+        self.matcher = SimpleNamespace(locate=self._locate)
+
+    def screenshot(self, **kwargs):
+        del kwargs
+        self.screenshot_calls += 1
+        return Image.new("RGB", (1280, 720), "white")
+
+    def _locate(self, template: str, image):
+        del image
+        self.locate_calls.append(str(template))
+        return self.locate_hits.get(str(template))
+
+    def ocr_image(self, image, **kwargs):
+        del image
+        self.ocr_image_calls.append(kwargs)
+        return self.ocr_image_result
 
 
 def _build_stage_session(tmp_path: Path):
@@ -46,8 +88,14 @@ def test_build_cw_stage_detector_maps_resource_aliases_to_stage_values():
     class RuntimeSpy:
         def __init__(self):
             self.templates: list[str] = []
+            self.matcher = SimpleNamespace(locate=self._locate)
 
-        def locate(self, template: str, **kwargs):
+        def screenshot(self, **kwargs):
+            del kwargs
+            return Image.new("RGB", (1280, 720), "white")
+
+        def _locate(self, template: str, image):
+            del image
             self.templates.append(template)
             if str(template).endswith("fortune_teller.png"):
                 return {"left": 1, "top": 2, "width": 3, "height": 4}
@@ -65,8 +113,14 @@ def test_build_cw_stage_detector_maps_fold_to_shop():
     class RuntimeSpy:
         def __init__(self):
             self.templates: list[str] = []
+            self.matcher = SimpleNamespace(locate=self._locate)
 
-        def locate(self, template: str, **kwargs):
+        def screenshot(self, **kwargs):
+            del kwargs
+            return Image.new("RGB", (1280, 720), "white")
+
+        def _locate(self, template: str, image):
+            del image
             self.templates.append(template)
             if str(template).endswith("fold.png"):
                 return {"left": 1, "top": 2, "width": 3, "height": 4}
@@ -83,8 +137,14 @@ def test_build_cw_stage_detector_maps_replenish_template_to_replenish():
     class RuntimeSpy:
         def __init__(self):
             self.templates: list[str] = []
+            self.matcher = SimpleNamespace(locate=self._locate)
 
-        def locate(self, template: str, **kwargs):
+        def screenshot(self, **kwargs):
+            del kwargs
+            return Image.new("RGB", (1280, 720), "white")
+
+        def _locate(self, template: str, image):
+            del image
             self.templates.append(template)
             if str(template).endswith("replenish_stage.png"):
                 return {"left": 1, "top": 2, "width": 3, "height": 4}
@@ -102,12 +162,19 @@ def test_build_cw_stage_detector_falls_back_to_settle_keywords_from_ocr():
         def __init__(self):
             self.templates: list[str] = []
             self.ocr_calls = 0
+            self.matcher = SimpleNamespace(locate=self._locate)
 
-        def locate(self, template: str, **kwargs):
+        def screenshot(self, **kwargs):
+            del kwargs
+            return Image.new("RGB", (1280, 720), "white")
+
+        def _locate(self, template: str, image):
+            del image
             self.templates.append(template)
             return None
 
-        def ocr(self, **kwargs):
+        def ocr_image(self, image, **kwargs):
+            del image, kwargs
             self.ocr_calls += 1
             return [
                 {"text": "挑战成功"},
@@ -125,10 +192,19 @@ def test_build_cw_stage_detector_falls_back_to_settle_keywords_from_ocr():
 
 def test_build_cw_stage_detector_reads_tuple_ocr_results_for_settle_keywords():
     class RuntimeSpy:
-        def locate(self, template: str, **kwargs):
+        def __init__(self):
+            self.matcher = SimpleNamespace(locate=self._locate)
+
+        def screenshot(self, **kwargs):
+            del kwargs
+            return Image.new("RGB", (1280, 720), "white")
+
+        def _locate(self, template: str, image):
+            del template, image
             return None
 
-        def ocr(self, **kwargs):
+        def ocr_image(self, image, **kwargs):
+            del image, kwargs
             return [
                 ([[837.0, 199.0], [1081.0, 199.0]], "挑战成功", 0.98),
                 ([[911.0, 880.0], [1011.0, 880.0]], "继续挑战", 0.99),
@@ -137,6 +213,117 @@ def test_build_cw_stage_detector_reads_tuple_ocr_results_for_settle_keywords():
     detector = stage_scene.build_cw_stage_detector(RuntimeSpy())
 
     assert detector() == "settle"
+
+
+def test_build_cw_stage_detector_maps_click_blank_with_layer_transition_ocr_to_layer_transition():
+    runtime = _StageDetectorRuntime(
+        locate_hits={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
+        ocr_image_result=[_rapidocr_piece("点击空白处继续"), _rapidocr_piece("位面")],
+    )
+
+    detector = stage_scene.build_cw_stage_detector(runtime)
+
+    assert detector() == "layer_transition"
+    assert runtime.ocr_image_calls == [{"ocr": OcrRequestConfig(lang="ch")}]
+
+
+def test_build_cw_stage_detector_keeps_true_boss_preview_when_ocr_mentions_boss():
+    runtime = _StageDetectorRuntime(
+        locate_hits={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
+        ocr_image_result=[_rapidocr_piece("本场对局首领")],
+    )
+
+    detector = stage_scene.build_cw_stage_detector(runtime)
+
+    assert detector() == "boss_preview"
+    assert runtime.ocr_image_calls == [{"ocr": OcrRequestConfig(lang="ch")}]
+
+
+def test_build_cw_stage_detector_does_not_treat_click_blank_without_layer_text_as_layer_transition():
+    runtime = _StageDetectorRuntime(
+        locate_hits={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
+        ocr_image_result=[_rapidocr_piece("点击空白处继续")],
+    )
+
+    detector = stage_scene.build_cw_stage_detector(runtime)
+
+    assert detector() is None
+    assert runtime.ocr_image_calls[0] == {"ocr": OcrRequestConfig(lang="ch")}
+
+
+def test_build_cw_stage_detector_uses_single_screenshot_for_template_hits():
+    class RuntimeSpy:
+        def __init__(self):
+            self.screenshot_calls = 0
+            self.ocr_calls = 0
+            self.matcher = SimpleNamespace(locate=self._locate)
+
+        def screenshot(self, **kwargs):
+            del kwargs
+            self.screenshot_calls += 1
+            return Image.new("RGB", (1280, 720), "white")
+
+        def _locate(self, template, image):
+            del image
+            if str(template).endswith("fortune_teller.png"):
+                return {"left": 1, "top": 2, "width": 3, "height": 4}
+            return None
+
+        def locate(self, template, **kwargs):
+            del kwargs
+            return self.matcher.locate(template, self.screenshot())
+
+        def ocr_image(self, image, **kwargs):
+            del image, kwargs
+            self.ocr_calls += 1
+            return []
+
+    runtime = RuntimeSpy()
+    detector = stage_scene.build_cw_stage_detector(runtime)
+
+    assert detector() == "fortune"
+    assert runtime.screenshot_calls == 1
+    assert runtime.ocr_calls == 0
+
+
+def test_build_cw_stage_detector_uses_single_screenshot_before_ocr_fallback():
+    class RuntimeSpy:
+        def __init__(self):
+            self.screenshot_calls = 0
+            self.ocr_calls = 0
+            self.legacy_ocr_calls = 0
+            self.matcher = SimpleNamespace(locate=self._locate)
+
+        def screenshot(self, **kwargs):
+            del kwargs
+            self.screenshot_calls += 1
+            return Image.new("RGB", (1280, 720), "white")
+
+        def _locate(self, template, image):
+            del template, image
+            return None
+
+        def locate(self, template, **kwargs):
+            del kwargs
+            return self.matcher.locate(template, self.screenshot())
+
+        def ocr(self, **kwargs):
+            del kwargs
+            self.legacy_ocr_calls += 1
+            return self.ocr_image(self.screenshot())
+
+        def ocr_image(self, image, **kwargs):
+            del image, kwargs
+            self.ocr_calls += 1
+            return [_rapidocr_piece("挑战成功"), _rapidocr_piece("继续挑战")]
+
+    runtime = RuntimeSpy()
+    detector = stage_scene.build_cw_stage_detector(runtime)
+
+    assert detector() == "settle"
+    assert runtime.screenshot_calls == 1
+    assert runtime.ocr_calls == 1
+    assert runtime.legacy_ocr_calls == 0
 
 
 def test_detect_cw_stage_refreshes_stage_snapshot(tmp_path):

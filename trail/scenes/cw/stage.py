@@ -7,6 +7,8 @@ from time import monotonic, sleep
 from typing import Any
 
 from trail.core.errors import TrailError
+from trail.runtime.batch_locate import BatchLocateTarget, run_batch_locate
+from trail.runtime.ocr_config import OcrRequestConfig
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.models import ensure_cw_state
 from trail.session.models import SessionModel
@@ -343,24 +345,85 @@ def _detect_cw_stage_from_ocr(runtime) -> str | None:
     return None
 
 
+def _detect_cw_stage_from_ocr_image(runtime, image) -> str | None:
+    ocr_image = getattr(runtime, "ocr_image", None)
+    if not callable(ocr_image):
+        return None
+
+    pieces = ocr_image(image, ocr=OcrRequestConfig(ocr_mode="fast", retry_high="auto")) or []
+    text = "".join(_read_ocr_piece(piece).strip() for piece in pieces)
+    if any(keyword in text for keyword in SETTLE_OCR_KEYWORDS):
+        return "settle"
+    return None
+
+
+def _normalized_ocr_text(items: list[Any]) -> str:
+    text = "".join(_read_ocr_piece(item).strip() for item in items)
+    return re.sub(r"\s+", "", text)
+
+
+def _is_layer_transition_from_ocr(items: list[Any]) -> bool:
+    text = _normalized_ocr_text(items)
+    return "点击空白处继续" in text and "位面" in text and "本场对局首领" not in text
+
+
+def _is_true_boss_preview_from_ocr(items: list[Any]) -> bool:
+    return "本场对局首领" in _normalized_ocr_text(items)
+
+
+def _read_blank_continue_ocr(runtime, image) -> list[Any]:
+    ocr_image = getattr(runtime, "ocr_image", None)
+    if not callable(ocr_image):
+        return []
+    result = ocr_image(image, ocr=OcrRequestConfig(lang="ch")) or []
+    if isinstance(result, list):
+        return result
+    if isinstance(result, tuple):
+        return list(result)
+    return []
+
+
 def build_cw_stage_detector(runtime):
     grouped_templates: dict[str, list[str]] = {}
     for alias, value in STAGE_RESOURCE_ALIASES:
+        if value == "boss_preview":
+            continue
         template = str(resolve_scene_asset("cw", alias))
         grouped_templates.setdefault(template, []).append(value)
 
-    templates = tuple((tuple(values), template) for template, values in grouped_templates.items())
+    ordered_targets = tuple(
+        BatchLocateTarget(key=tuple(values), template=template) for template, values in grouped_templates.items()
+    )
+    blank_continue_target = BatchLocateTarget(
+        key="blank_continue_candidate",
+        template=str(resolve_scene_asset("cw", "stage.boss_preview")),
+    )
 
     def detector() -> str | None:
-        for values, template in templates:
-            if runtime.locate(template) is not None:
-                if len(values) == 1:
-                    return values[0]
-                raise TrailError("STAGE_AMBIGUOUS", f"当前资源无法区分阶段: {', '.join(values)}")
-        ocr_stage = _detect_cw_stage_from_ocr(runtime)
-        if ocr_stage is not None:
-            return ocr_stage
-        return None
+        shared_image = runtime.screenshot()
+        locate_result = run_batch_locate(
+            runtime,
+            (*ordered_targets, blank_continue_target),
+            image=shared_image,
+            trace_prefix="cw_stage_batch_locate",
+        )
+        blank_continue_candidate = locate_result.by_key[blank_continue_target.key]
+        if blank_continue_candidate.found:
+            ocr_items = _read_blank_continue_ocr(runtime, shared_image)
+            if _is_true_boss_preview_from_ocr(ocr_items):
+                return "boss_preview"
+            if _is_layer_transition_from_ocr(ocr_items):
+                return "layer_transition"
+
+        for target in ordered_targets:
+            result = locate_result.by_key[target.key]
+            if not result.found:
+                continue
+            values = tuple(target.key)
+            if len(values) == 1:
+                return values[0]
+            raise TrailError("STAGE_AMBIGUOUS", f"当前资源无法区分阶段: {', '.join(values)}")
+        return _detect_cw_stage_from_ocr_image(runtime, shared_image)
 
     return detector
 

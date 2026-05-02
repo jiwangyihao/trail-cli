@@ -230,6 +230,26 @@ def test_render_output_adds_read_image_first_after_shot_for_stage_success():
     ]
 
 
+@pytest.mark.parametrize("command", ("cw.stage.detect", "cw.stage.wait"))
+def test_render_output_stage_commands_can_show_layer_transition(command: str):
+    payload = {
+        "ok": True,
+        "data": {"value": "layer_transition", "stale": False},
+        "screenshot": ".trail/shots/req-stage-layer-transition.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output(command, payload).splitlines() == [
+        f"ok {command} stage=layer_transition stale=0",
+        "shot path=.trail/shots/req-stage-layer-transition.png",
+        "info read_image_first=1",
+    ]
+
+
 def test_render_output_failure_does_not_render_read_image_first_line():
     payload = {
         "request_id": "req-fail",
@@ -568,6 +588,37 @@ def test_readme_documents_battle_run_short_timeout_and_resume_contract() -> None
     assert "结算页也属于 battle flow" in stage_reference
     assert "仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`" in entry_skill
     assert "battle in-progress" in simple_surface
+
+
+def test_docs_and_active_surfaces_split_layer_transition_from_boss_preview() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    stage_reference = (PROJECT_ROOT / "docs" / "cw-stage-reference" / "README.md").read_text(encoding="utf-8")
+    cw_entry = CW_ENTRY_SKILL_PATH.read_text(encoding="utf-8")
+    simple_surface = SIMPLE_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
+    settle_reference_section = _markdown_section(stage_reference, "08-cw-round-settle-success.jpg")
+    boss_preview_reference_section = _markdown_section(stage_reference, "05-cw-boss-preview-page.jpg")
+
+    assert "layer_transition" in readme
+    assert "layer_transition" in stage_reference
+    assert "layer_transition" in cw_entry
+    assert "layer_transition" in simple_surface
+
+    assert "`layer_transition` 仍属于 battle flow" in readme
+    assert "默认继续 `trail cw battle run --session <id>`" in readme
+    assert "不要把它当成真正 `boss_preview`、普通稳定阶段或手工中断点" in readme
+    assert "`layer_transition` 仍属于 battle flow" in cw_entry
+    assert "默认继续 `trail cw battle run --session <id>`" in cw_entry
+    assert "不要把它当成真正 `boss_preview`、普通稳定阶段或手工中断点" in cw_entry
+    assert "`layer_transition` 仍属于 battle flow" in simple_surface
+    assert "默认继续 `trail cw battle run --session <id>`" in simple_surface
+    assert "不要把它当成真正 `boss_preview`、普通稳定阶段或手工中断点" in simple_surface
+
+    assert "layer_transition" in settle_reference_section
+    assert "`layer_transition` 仍属于 battle flow" in settle_reference_section
+    assert "默认继续 `trail cw battle run --session <id>`" in settle_reference_section
+    assert "不作为普通稳定阶段或手工中断点" in settle_reference_section
+    assert "boss_preview" in boss_preview_reference_section
+    assert "本场对局首领" in boss_preview_reference_section
 
 
 def test_readme_documents_portal_detect_recovery_contract() -> None:

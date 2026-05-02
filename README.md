@@ -93,6 +93,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - 常规 battle / settle 流程默认执行：`trail cw battle run --session <id>`；默认 timeout 现在是 `90s`
 - `trail cw battle run` 设计上依赖短等待、`status=in_progress` 与重跑续跑；看到 `info next_action=cw.battle.run why=battle_flow_not_finished` 时，Agent 必须先看截图，若仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`
 - battle flow 包含战斗中、结算页、结算翻页但未回到下一稳定阶段；结算页也属于 battle flow，不要因为到结算页就切回旧 `trail cw settle next`
+- 对外 stage token `layer_transition` 表示整层结束后的“点击空白处继续 / 位面”过场；`layer_transition` 仍属于 battle flow，默认继续 `trail cw battle run --session <id>`，不要把它当成真正 `boss_preview`、普通稳定阶段或手工中断点
 - 如需清掉上一轮 battle.run 的内部续跑提示位，执行：`trail cw battle clear-in-progress --session <id>`；它只清内部提示位，不清 battle 摘要、截图或阶段事实
 - 如果 `trail cw battle run` 已在 daemon 内成功收口但当前 stdout 丢失，立刻执行：`trail state dump --session <id> --format yaml`
 - `trail cw battle start` / `trail cw battle continue` / `trail cw settle next` 仍保留为 CLI 兼容命令，但只建议在内部 fallback 流程中手工拆链使用
@@ -119,7 +120,7 @@ Trail 是面向《崩坏：星穹铁道》的独立命令行工具，默认输�
 - `image`：进阶模板识别与等待
 - `input`：点击、拖拽、按键
 - `state`：进阶读取 session 与 scene state
-- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`portal` 负责开局投资环境页的识别/选择/刷新/重开；`strategy` 负责局内“请选择投资策略”页的识别/单卡刷新/选择；常规 battle / settle 默认入口是 `trail cw battle run --session <id>`，默认 timeout 现在是 `90s`，`status=in_progress` 时输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，先看截图，仍在 battle flow 就重跑，且结算页也属于 battle flow；`trail cw battle clear-in-progress --session <id>` 只清内部提示位；`battle` / `settle` 分组仍保留兼容原子命令，但只建议在内部 fallback 流程使用；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口；其余分组处理局内阶段与资源，包含 `portal`、`strategy`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
+- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`portal` 负责开局投资环境页的识别/选择/刷新/重开；`strategy` 负责局内“请选择投资策略”页的识别/单卡刷新/选择；常规 battle / settle 默认入口是 `trail cw battle run --session <id>`，默认 timeout 现在是 `90s`，`status=in_progress` 时输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，先看截图，仍在 battle flow 就重跑，且结算页与 `layer_transition` 层切换过场都属于 battle flow；`trail cw battle clear-in-progress --session <id>` 只清内部提示位；`battle` / `settle` 分组仍保留兼容原子命令，但只建议在内部 fallback 流程使用；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口；其余分组处理局内阶段与资源，包含 `portal`、`strategy`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
 ## Window Launch
 
@@ -369,7 +370,7 @@ recover action=daemon.request_status request=req-42
 - `trail cw slots place` 用重复 `--action <source,target>` 显式批量上场；`trail cw hand sell` 用重复 `--slot <n>` 显式批量卖牌
 - 这两类批量命令都严格保序、遇错即停；如果中途失败且前面动作可能已生效，先重新执行 `trail cw slots read --session <id>` 再继续后续判断
 - `trail-hsr` 负责 session、窗口检查与场景切换，并在没有已上线 scene entry 时继续承担总入口 owner
-- 当前 scene entry 一旦命中并接管某个具体场景，该 scene entry 就成为该场景内的唯一编排 owner；常规 battle / settle 链默认执行 `trail cw battle run --session <id>`，默认 timeout 现在是 `90s`，`status=in_progress` 输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，先看截图，仍在 battle flow 就重跑，结算页也属于 battle flow；`trail cw battle clear-in-progress --session <id>` 只清内部提示位
+- 当前 scene entry 一旦命中并接管某个具体场景，该 scene entry 就成为该场景内的唯一编排 owner；常规 battle / settle 链默认执行 `trail cw battle run --session <id>`，默认 timeout 现在是 `90s`，`status=in_progress` 输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，先看截图，仍在 battle flow 就重跑，结算页与 `layer_transition` 层切换过场也属于 battle flow；`trail cw battle clear-in-progress --session <id>` 只清内部提示位
 - `trail-hsr-advanced` 是内部恢复层，继续负责 daemon / request-status / reconcile-session / window / session / screen / image / state 这类 control-plane 与恢复链路；如果 `trail cw battle run` 的 stdout 丢失但 `session=<id>` 还在，立刻执行 `trail state dump --session <id> --format yaml`
 - `trail-hsr-advanced` 不作为用户入口；它完成恢复后必须把控制权交回调用它的上层 active skill
 - 归档 skill 不再作为 active owner 或推荐入口
