@@ -2,17 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from difflib import SequenceMatcher
+from io import BytesIO
 from pathlib import Path
 from time import sleep
 from typing import Any
+
+from PIL import Image
 
 from trail.core.errors import TrailError
 from trail.runtime.batch_ocr import BatchOcrTarget, run_batch_ocr
 from trail.scenes.cw import stage
 from trail.scenes.cw.catalog import CwCatalog, build_cw_catalog, resolve_cw_role_name, summarize_cw_field_traits
 from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.role_recognition import CANONICAL_SCREENSHOT_SIZE, iter_slot_specs, warp_slot_crop
 from trail.runtime.resources import resolve_scene_asset
 from trail.session.models import SessionModel
 
@@ -30,6 +34,14 @@ class CwSlotsReadResult:
     hand: list[Any]
     stage_status: dict[str, Any] | None = None
     stage: str | None = None
+    screenshot: str | None = None
+
+
+class CwSlotsRecognitionUncertainError(TrailError):
+    def __init__(self, code: str, message: str, *, screenshot: str | None = None, warnings: list[dict] | None = None):
+        super().__init__(code, message)
+        self.screenshot = screenshot
+        self.warnings = deepcopy(warnings or [])
 
 
 @dataclass(frozen=True)
@@ -115,7 +127,17 @@ CANNOT_BE_FIELDED_ALIAS = "slots.cannot_be_fielded"
 HAND_EXPAND_COLLAPSE_MAX_ATTEMPTS = 5
 SLOT_PANEL_SETTLE_SECONDS = 0.2
 INITIAL_UI_DISMISS_SETTLE_SECONDS = 1.0
-SLOT_MATCH_DIAGNOSTIC_KEYS = {"raw_name", "match_score", "score", "match_kind"}
+SLOT_MATCH_DIAGNOSTIC_KEYS = {
+    "raw_name",
+    "match_score",
+    "score",
+    "match_kind",
+    "candidates",
+    "empty_score",
+    "fee_color",
+    "star_boxes",
+    "confidence_reason",
+}
 
 
 def _clear_sell_plan(cw_state: dict) -> None:
@@ -379,6 +401,86 @@ def _strip_area_match_diagnostics(values: Any) -> Any:
     return [_strip_slot_match_diagnostics(value) for value in values]
 
 
+def _is_unknown_slot_value(value: Any) -> bool:
+    return isinstance(value, dict) and value.get("match_kind") == "unknown"
+
+
+def _unknown_slot_warning(area: str, index: int, value: dict[str, Any], *, preserved_previous: bool = False) -> dict[str, Any]:
+    warning: dict[str, Any] = {
+        "code": "SLOTS_RECOGNITION_UNCERTAIN",
+        "position": {"kind": "slot", "area": area, "index": index},
+        "match_kind": "unknown",
+        "message": "槽位角色图标识别不确定，请先看截图确认",
+    }
+    raw_name = value.get("raw_name")
+    if isinstance(raw_name, str):
+        warning["raw_name"] = raw_name
+    score = value.get("score")
+    if score is not None:
+        warning["score"] = score
+    if preserved_previous:
+        warning["preserved_previous"] = 1
+    return warning
+
+
+def _target_indexes_for_unknowns(area: str, values: list[Any], parsed_targets: dict[str, set[int]] | None) -> list[int]:
+    if parsed_targets is None:
+        return list(range(len(values)))
+    return [index for index in sorted(parsed_targets[area]) if index < len(values)]
+
+
+def _collect_unknown_slot_warnings(
+    front: list[Any],
+    back: list[Any],
+    hand: list[Any],
+    *,
+    parsed_targets: dict[str, set[int]] | None,
+    preserved_previous: bool = False,
+) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    for area, values in (("front", front), ("back", back), ("hand", hand)):
+        for index in _target_indexes_for_unknowns(area, values, parsed_targets):
+            value = values[index]
+            if _is_unknown_slot_value(value):
+                warnings.append(_unknown_slot_warning(area, index, value, preserved_previous=preserved_previous))
+    return warnings
+
+
+def _replace_unknown_targets_with_previous(
+    current: list[Any],
+    previous: Any,
+    *,
+    area: str,
+    parsed_targets: dict[str, set[int]],
+) -> list[Any]:
+    output = list(current)
+    previous_values = _strip_area_match_diagnostics(previous) if isinstance(previous, list) else []
+    for index in _target_indexes_for_unknowns(area, output, parsed_targets):
+        if not _is_unknown_slot_value(output[index]):
+            continue
+        output[index] = deepcopy(previous_values[index]) if index < len(previous_values) else None
+    return output
+
+
+def _unknown_targets_have_previous_values(
+    front: list[Any],
+    back: list[Any],
+    hand: list[Any],
+    *,
+    previous: dict[str, Any],
+    parsed_targets: dict[str, set[int]],
+) -> bool:
+    for area, values in (("front", front), ("back", back), ("hand", hand)):
+        previous_values = _strip_area_match_diagnostics(previous.get(area))
+        previous_values = previous_values if isinstance(previous_values, list) else []
+        for index in _target_indexes_for_unknowns(area, values, parsed_targets):
+            if not _is_unknown_slot_value(values[index]):
+                continue
+            if index >= len(previous_values) or not _slot_value_name(previous_values[index]):
+                return False
+    return True
+
+
 def _score_slot_name_candidates(text: str, *, candidates: list[str]) -> list[tuple[str, float]]:
     scored = [(candidate, SequenceMatcher(a=text, b=candidate).ratio()) for candidate in candidates]
     return sorted(scored, key=lambda item: (-item[1], item[0]))
@@ -514,6 +616,41 @@ def _resolve_catalog_slot_value(
     return _slot_value_from_catalog_match(value, match), _slot_response_from_catalog_match(value, match), warnings
 
 
+def _icon_match_diagnostics(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    if value.get("match_kind") != "low_confidence":
+        return {}
+    keys = ("raw_name", "score", "match_kind", "candidates", "empty_score", "fee_color", "star_boxes", "confidence_reason")
+    return {key: deepcopy(value[key]) for key in keys if key in value}
+
+
+def _response_with_icon_diagnostics(response: Any, value: Any) -> Any:
+    diagnostics = _icon_match_diagnostics(value)
+    if not diagnostics or not isinstance(response, dict):
+        return response
+    return {**response, **diagnostics}
+
+
+def _icon_low_confidence_warning(value: Any, *, area: str, index: int, response: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or value.get("match_kind") != "low_confidence":
+        return None
+    warning: dict[str, Any] = {
+        "code": "CW_ROLE_MATCH_LOW_CONFIDENCE",
+        "position": {"kind": "slot", "area": area, "index": index},
+        "query": str(value.get("raw_name") or value.get("name") or ""),
+        "resolved": _slot_value_name(response),
+        "message": "角色名未精确命中，请先看截图确认",
+    }
+    score = value.get("score")
+    if score is not None:
+        warning["score"] = score
+    candidates = value.get("candidates")
+    if isinstance(candidates, list):
+        warning["candidates"] = deepcopy(candidates)
+    return warning
+
+
 def _canonicalize_slot_value(
     value: Any,
     *,
@@ -529,12 +666,18 @@ def _canonicalize_slot_value(
         position={"kind": "slot", "area": area, "index": index},
     )
     if stable is not None or response is not None:
+        response = _response_with_icon_diagnostics(response, value)
+        icon_warning = _icon_low_confidence_warning(value, area=area, index=index, response=response)
+        if icon_warning is not None:
+            warnings = [*warnings, icon_warning]
         return stable, response, warnings
 
     stable = _strip_slot_match_diagnostics(
         _normalize_slot_value(value, authoritative_candidates=authoritative_candidates, slot_candidates=slot_candidates)
     )
-    return stable, deepcopy(stable), []
+    response = _response_with_icon_diagnostics(deepcopy(stable), value)
+    icon_warning = _icon_low_confidence_warning(value, area=area, index=index, response=response)
+    return stable, response, [icon_warning] if icon_warning is not None else []
 
 
 def _canonicalize_area_snapshot(
@@ -640,6 +783,157 @@ def _ensure_fieldable_target(runtime, *, target: str) -> None:
 def dismiss_cw_slots_overlay(runtime) -> None:
     runtime.click_point(*INFO_DISMISS_POINT)
     sleep(INITIAL_UI_DISMISS_SETTLE_SECONDS)
+
+
+def _runtime_slots_image(runtime) -> Image.Image:
+    capture_image = getattr(runtime, "capture_image", None)
+    if not callable(capture_image):
+        raise TrailError("SLOTS_SCREENSHOT_INVALID", "slots icon reader requires PIL screenshot")
+    try:
+        image = capture_image(normalize=True)
+    except TypeError:
+        image = capture_image()
+
+    if isinstance(image, bytes | bytearray):
+        try:
+            with Image.open(BytesIO(image)) as opened:
+                image = opened.convert("RGBA")
+        except Exception as exc:
+            raise TrailError("SLOTS_SCREENSHOT_INVALID", "slots icon reader requires PIL screenshot") from exc
+
+    if not isinstance(image, Image.Image):
+        raise TrailError("SLOTS_SCREENSHOT_INVALID", "slots icon reader requires PIL screenshot")
+    if image.size != CANONICAL_SCREENSHOT_SIZE:
+        raise TrailError("SLOTS_LAYOUT_MISMATCH", "slots icon reader requires canonical 1920x1080 screenshot")
+    return image.convert("RGBA")
+
+
+def _save_reused_slots_screenshot(runtime, image: Image.Image, *, request_id: str | None = None) -> str | None:
+    if request_id is None:
+        return None
+    save = getattr(runtime, "save_capture_image_to_workspace", None)
+    if not callable(save):
+        return None
+    try:
+        path = save(image, request_id=request_id)
+    except Exception:
+        return None
+    return str(path) if path is not None else None
+
+
+def _candidate_payload(candidate: Any) -> dict[str, Any]:
+    if is_dataclass(candidate):
+        payload = asdict(candidate)
+    elif isinstance(candidate, dict):
+        payload = dict(candidate)
+    else:
+        payload = {
+            key: getattr(candidate, key)
+            for key in (
+                "name",
+                "role_id",
+                "score",
+                "rarity",
+                "cost",
+                "normalized_name",
+                "front_back_type",
+                "trait_ids",
+                "diagnostics",
+            )
+            if hasattr(candidate, key)
+        }
+    return deepcopy(payload)
+
+
+def _role_recognition_candidates(result: Any) -> list[dict[str, Any]]:
+    diagnostics = getattr(result, "diagnostics", None)
+    if isinstance(diagnostics, dict) and isinstance(diagnostics.get("candidates"), list):
+        return deepcopy(diagnostics["candidates"])
+    candidates = getattr(result, "candidates", None)
+    if not isinstance(candidates, list):
+        return []
+    return [_candidate_payload(candidate) for candidate in candidates]
+
+
+def _slot_value_from_role_recognition_result(result: Any) -> Any:
+    diagnostics = getattr(result, "diagnostics", None)
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    match_kind = str(getattr(result, "match_kind", "") or "")
+    common = {
+        "match_kind": match_kind,
+        "score": getattr(result, "score", None),
+        "raw_name": str(getattr(result, "raw_name", getattr(result, "name", "")) or ""),
+        "candidates": _role_recognition_candidates(result),
+        "empty_score": diagnostics.get("empty_score"),
+        "fee_color": getattr(result, "fee_color", None),
+        "star_boxes": deepcopy(getattr(result, "star_boxes", [])),
+        "confidence_reason": getattr(result, "confidence_reason", None),
+    }
+    if bool(getattr(result, "empty", False)):
+        return None
+    name = getattr(result, "name", None)
+    if match_kind == "unknown" or not name:
+        return common
+    value: dict[str, Any] = {
+        "name": str(name),
+        "role_id": getattr(result, "role_id", None),
+        "star": getattr(result, "star_count", None),
+        **common,
+    }
+    rarity = getattr(result, "rarity", None)
+    cost = getattr(result, "cost", None)
+    if rarity is not None:
+        value["rarity"] = rarity
+    if cost is not None:
+        value["cost"] = cost
+    return value
+
+
+def build_cw_slot_icon_reader(
+    runtime,
+    recognizer,
+    targets: list[str] | None = None,
+    *,
+    request_id: str | None = None,
+    dismiss_initial_overlay: bool = True,
+) -> SlotsSnapshotReader:
+    parsed_targets = _parse_slot_targets(targets)
+    status_reader = build_cw_status_reader(runtime)
+
+    def reader() -> CwSlotsReadResult:
+        _collapse_expanded_hand_card(runtime)
+        if dismiss_initial_overlay:
+            dismiss_cw_slots_overlay(runtime)
+        status_result = status_reader()
+        image = _runtime_slots_image(runtime)
+        screenshot = _save_reused_slots_screenshot(runtime, image, request_id=request_id)
+        front, back, hand = _empty_slots_snapshot()
+        targets_by_area = parsed_targets or {
+            "front": set(range(len(FRONT_SLOT_POINTS))),
+            "back": set(range(len(BACK_SLOT_POINTS))),
+            "hand": set(range(len(HAND_SLOT_POINTS))),
+        }
+        for slot_spec in iter_slot_specs():
+            if slot_spec.index not in targets_by_area[slot_spec.area]:
+                continue
+            crop = warp_slot_crop(image, slot_spec)
+            value = _slot_value_from_role_recognition_result(recognizer.recognize_crop(crop, slot_spec.area))
+            if slot_spec.area == "front":
+                front[slot_spec.index] = value
+            elif slot_spec.area == "back":
+                back[slot_spec.index] = value
+            else:
+                hand[slot_spec.index] = value
+        return CwSlotsReadResult(
+            front=front,
+            back=back,
+            hand=hand,
+            stage_status=status_result.stage_status,
+            stage=status_result.stage,
+            screenshot=screenshot,
+        )
+
+    return reader
 
 
 def build_cw_slots_reader(
@@ -777,13 +1071,49 @@ def read_cw_slots(
         front, back, hand = result.front, result.back, result.hand
         stage_status = result.stage_status
         detected_stage = result.stage
+        screenshot = result.screenshot
     else:
         front, back, hand = result
         stage_status = None
         detected_stage = None
+        screenshot = None
     cw_state = ensure_cw_state(session)
     previous = cw_state.get("slots") if isinstance(cw_state.get("slots"), dict) else {}
     parsed_targets = _parse_slot_targets(targets)
+    preserved_unknowns = False
+    unknown_warnings = _collect_unknown_slot_warnings(front, back, hand, parsed_targets=parsed_targets)
+    if unknown_warnings:
+        if parsed_targets is None or previous.get("stale") is not False:
+            raise CwSlotsRecognitionUncertainError(
+                "SLOTS_RECOGNITION_UNCERTAIN",
+                "槽位角色图标识别不确定，请先看截图确认",
+                screenshot=screenshot,
+                warnings=unknown_warnings,
+            )
+        if not _unknown_targets_have_previous_values(
+            front,
+            back,
+            hand,
+            previous=previous,
+            parsed_targets=parsed_targets,
+        ):
+            raise CwSlotsRecognitionUncertainError(
+                "SLOTS_RECOGNITION_UNCERTAIN",
+                "槽位角色图标识别不确定，请先看截图确认",
+                screenshot=screenshot,
+                warnings=unknown_warnings,
+            )
+        preserved_unknowns = True
+        unknown_warnings = _collect_unknown_slot_warnings(
+            front,
+            back,
+            hand,
+            parsed_targets=parsed_targets,
+            preserved_previous=True,
+        )
+        front = _replace_unknown_targets_with_previous(front, previous.get("front"), area="front", parsed_targets=parsed_targets)
+        back = _replace_unknown_targets_with_previous(back, previous.get("back"), area="back", parsed_targets=parsed_targets)
+        hand = _replace_unknown_targets_with_previous(hand, previous.get("hand"), area="hand", parsed_targets=parsed_targets)
     catalog = build_cw_catalog(guide_config) if isinstance(guide_config, dict) else None
     authoritative_candidates, slot_candidates = _session_slot_name_candidates(cw_state)
     front, response_front, front_warnings = _canonicalize_area_snapshot(
@@ -807,7 +1137,7 @@ def read_cw_slots(
         authoritative_candidates=authoritative_candidates,
         slot_candidates=slot_candidates,
     )
-    match_warnings = [*front_warnings, *back_warnings, *hand_warnings]
+    match_warnings = [*unknown_warnings, *front_warnings, *back_warnings, *hand_warnings]
     previous_front = _strip_area_match_diagnostics(previous.get("front"))
     previous_back = _strip_area_match_diagnostics(previous.get("back"))
     previous_hand = _strip_area_match_diagnostics(previous.get("hand"))
@@ -830,7 +1160,7 @@ def read_cw_slots(
         merged_front=merged_front,
         merged_back=merged_back,
         merged_hand=merged_hand,
-    ):
+    ) and not preserved_unknowns:
         raise TrailError("SLOTS_READ_EMPTY", "未读取到任何货币战争槽位角色，请确认当前在编队界面")
     fact_front, fact_back, fact_hand = merged_front, merged_back, merged_hand
     if parsed_targets is not None and previous.get("stale", True) is not False:
@@ -865,6 +1195,8 @@ def read_cw_slots(
         "hand": deepcopy(output_hand),
         "stale": cw_state["slots"]["stale"],
     }
+    if screenshot is not None:
+        response_snapshot["_screenshot"] = screenshot
     if catalog is not None:
         trait_summary = summarize_cw_field_traits(front=fact_front, back=fact_back, catalog=catalog)
         if trait_summary:

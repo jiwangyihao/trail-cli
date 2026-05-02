@@ -1362,8 +1362,17 @@ def test_cw_portal_select_preserves_numeric_zero_equipment_freshness(tmp_path: P
             del screenshot_path, limit
             return []
 
-    def fake_select(session, *, runtime, card_idx: int, guide: dict, workspace_root: str | None = None, cw_resource_service=None):
-        del runtime, guide, workspace_root, cw_resource_service
+    def fake_select(
+        session,
+        *,
+        runtime,
+        card_idx: int,
+        guide: dict,
+        workspace_root: str | None = None,
+        cw_resource_service=None,
+        request_id: str | None = None,
+    ):
+        del runtime, guide, workspace_root, cw_resource_service, request_id
         snapshot = {"items": [{"pos": "equipment:1", "name": "基础装甲"}], "stale": 0}
         session.scene_state.setdefault("cw", {})["equipment"] = deepcopy(snapshot)
         return {"card_idx": card_idx, "portal_title": "A", "equipment": deepcopy(snapshot)}
@@ -5644,6 +5653,276 @@ def test_command_service_handles_cw_slots_read_with_stage_projection(tmp_path: P
     assert payload["data"]["stage_status_stale"] is False
 
 
+def test_command_service_cw_slots_read_reuses_precaptured_screenshot(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw import slots as slots_module
+
+    class Runtime:
+        def __init__(self):
+            self.capture_after_action_calls = 0
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            self.capture_after_action_calls += 1
+            return tmp_path / ".trail" / "shots" / "unexpected.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"traits": [], "roles": []})
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.slots_reader_factory",
+        lambda runtime, targets=None: lambda: slots_module.CwSlotsReadResult(
+            front=[{"name": "希儿"}, None, None, None],
+            back=[None] * 6,
+            hand=[None] * 9,
+            screenshot=str(tmp_path / ".trail" / "shots" / "slots.png"),
+        ),
+    )
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-slots-read-reuse-screenshot",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.slots.read",
+            payload={"session_id": session.session_id},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["screenshot"] == ".trail/shots/slots.png"
+    assert "_screenshot" not in payload["data"]
+    assert runtime.capture_after_action_calls == 0
+
+
+def test_command_service_cw_slots_read_uncertain_reuses_exception_screenshot(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw import slots as slots_module
+
+    class Runtime:
+        def __init__(self):
+            self.capture_after_action_calls = 0
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            self.capture_after_action_calls += 1
+            return tmp_path / ".trail" / "shots" / "unexpected.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    unknown = {"match_kind": "unknown", "score": 0.12}
+    result = slots_module.CwSlotsReadResult(
+        front=[unknown, None, None, None],
+        back=[None] * 6,
+        hand=[None] * 9,
+        screenshot="slots-uncertain.png",
+    )
+    direct_session = SessionServiceRegistry().for_workspace(str(tmp_path / "direct")).create_session(
+        window_binding={"title": "崩坏：星穹铁道", "hwnd": 1}
+    )
+    with pytest.raises(slots_module.CwSlotsRecognitionUncertainError) as exc_info:
+        slots_module.read_cw_slots(direct_session, reader=lambda: result)
+    assert exc_info.value.screenshot == "slots-uncertain.png"
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"traits": [], "roles": []})
+    monkeypatch.setattr("trail.daemon.cw_service.slots_reader_factory", lambda runtime, targets=None: lambda: result)
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-slots-read-uncertain",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.slots.read",
+            payload={"session_id": session.session_id},
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["screenshot"] == "slots-uncertain.png"
+    assert payload["error"]["code"] == "SLOTS_RECOGNITION_UNCERTAIN"
+    assert payload["warnings"][0]["code"] == "SLOTS_RECOGNITION_UNCERTAIN"
+    assert payload["warnings"][0]["position"] == {"kind": "slot", "area": "front", "index": 0}
+    assert payload["warnings"][0]["score"] == 0.12
+    assert runtime.capture_after_action_calls == 0
+
+
+def test_command_service_cw_slots_read_uses_icon_reader_without_slot_detail_ocr(tmp_path: Path, monkeypatch):
+    from PIL import Image
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw import slots as slots_module
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.capture_calls: list[dict[str, object]] = []
+            self.saved: list[str | None] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            point = (x, y)
+            if point in {slot_point for points in slots_module.SLOT_POINTS_BY_AREA.values() for slot_point in points}:
+                raise AssertionError("cw.slots.read must not open legacy slot detail panels")
+            self.clicks.append(point)
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def capture_image(self, **kwargs):
+            if kwargs == {**slots_module.SLOT_NAME_REGION, "normalize": False}:
+                raise AssertionError("cw.slots.read must not capture legacy slot name region")
+            self.capture_calls.append(dict(kwargs))
+            if kwargs == {"normalize": True}:
+                return Image.new("RGBA", (1920, 1080), "black")
+            return Image.new("RGBA", (64, 32), "black")
+
+        def save_capture_image_to_workspace(self, image, request_id=None):
+            del image
+            self.saved.append(request_id)
+            return tmp_path / ".trail" / "shots" / f"{request_id}.jpg"
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            raise AssertionError("cw.slots.read should reuse the icon-reader screenshot")
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+        def ocr_image(self, image, *, ocr=None):
+            del image, ocr
+            raise AssertionError("cw.slots.read must not OCR legacy slot names")
+
+    class Recognizer:
+        def __init__(self):
+            self.calls = 0
+
+        def recognize_crop(self, crop, area):
+            del crop
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    name="希儿",
+                    role_id="1102",
+                    candidates=[],
+                    score=0.91,
+                    empty=False,
+                    star_count=2,
+                    star_boxes=[],
+                    fee_color="gold",
+                    match_kind="exact",
+                    confidence_reason="score_gap",
+                    rarity="5",
+                    cost="5",
+                    diagnostics={"empty_score": 0.01},
+                )
+            return SimpleNamespace(
+                name=None,
+                role_id=None,
+                candidates=[],
+                score=None,
+                empty=True,
+                star_count=0,
+                star_boxes=[],
+                fee_color="",
+                match_kind="empty",
+                confidence_reason="empty_template_match",
+                rarity=None,
+                cost=None,
+                diagnostics={"empty_score": 0.99},
+            )
+
+    class ResourceService:
+        def __init__(self):
+            self.recognizer = Recognizer()
+            self.calls: list[str] = []
+
+        def slots_read_resources(self, *, workspace_root):
+            self.calls.append(workspace_root)
+            return {"roles": []}, {"traits": [], "roles": []}, self.recognizer
+
+    monkeypatch.setattr(slots_module.stage, "build_cw_stage_detector", lambda runtime: lambda: "preparation")
+    monkeypatch.setattr(
+        slots_module,
+        "run_batch_ocr",
+        lambda runtime, targets, trace_prefix: SimpleNamespace(
+            by_key={
+                ("stage_status", "level"): SimpleNamespace(pieces=["LV.3"]),
+                ("stage_status", "exp"): SimpleNamespace(pieces=["0/8"]),
+                ("stage_status", "team_size"): SimpleNamespace(pieces=["1/2"]),
+            }
+        ),
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda **kwargs: {"traits": [], "roles": []})
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    resource_service = ResourceService()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service, cw_resource_service=resource_service),
+    )
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-slots-read-icon-reader",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.slots.read",
+            payload={"session_id": session.session_id},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["data"]["front"][0]["name"] == "希儿"
+    assert resource_service.calls == [str(tmp_path)]
+    assert runtime.clicks == [slots_module.INFO_DISMISS_POINT]
+    assert runtime.capture_calls.count({"normalize": True}) == 1
+    assert runtime.saved == ["req-slots-read-icon-reader"]
+
+
 def test_command_service_persists_cw_slots_read_stage_ambiguous_failure_state(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 
@@ -5787,8 +6066,12 @@ def test_cw_portal_select_preserves_auto_collect_response_diagnostics_and_promot
     from trail.scenes.cw.slots import CwSlotsReadApplied
 
     class Runtime:
+        def __init__(self):
+            self.capture_after_action_calls = 0
+
         def capture_after_action(self, optional: bool = False, request_id: str | None = None):
             del optional, request_id
+            self.capture_after_action_calls += 1
             return tmp_path / ".trail" / "shots" / "req-cw-portal-select.png"
 
         def collect_warnings(self):
@@ -5852,6 +6135,7 @@ def test_cw_portal_select_preserves_auto_collect_response_diagnostics_and_promot
                 "back": [],
                 "hand": [],
                 "stale": False,
+                "_screenshot": str(tmp_path / ".trail" / "shots" / "slots-reused.png"),
                 "warnings": [slot_warning],
             },
         )
@@ -5934,10 +6218,13 @@ def test_cw_portal_select_preserves_auto_collect_response_diagnostics_and_promot
     monkeypatch.setattr("trail.daemon.cw_service.shop_closer_factory", lambda runtime: "shop-closer")
     monkeypatch.setattr("trail.daemon.cw_service.sleep", lambda seconds: None)
 
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
     command_service = CommandService(
-        runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: Runtime()),
+        runtime_service=runtime_service,
         session_service=registry,
-        cw_service=CwService(runtime_service=SimpleNamespace(get_runtime=lambda **kwargs: Runtime())),
+        cw_service=cw_service,
     )
 
     payload = command_service.handle(
@@ -5953,16 +6240,363 @@ def test_cw_portal_select_preserves_auto_collect_response_diagnostics_and_promot
     )
 
     assert payload["ok"] is True
+    assert payload["screenshot"].endswith("slots-reused.png")
+    assert "_screenshot" not in payload["data"]
     assert payload["data"]["slots"]["front"][0]["raw_name"] == "交光"
     assert payload["data"]["slots"]["front"][0]["match_kind"] == "low_confidence"
+    assert "_screenshot" not in payload["data"]["slots"]
     assert payload["data"]["shop"]["items"][0]["raw_name"] == "交光"
     assert payload["data"]["shop"]["items"][0]["match_kind"] == "low_confidence"
     assert "warnings" not in payload["data"]["slots"]
     assert "warnings" not in payload["data"]["shop"]
     assert payload["warnings"] == [slot_warning, shop_warning]
+    assert runtime.capture_after_action_calls == 0
     persisted = service.load_session(session.session_id).scene_state["cw"]
     assert "raw_name" not in persisted["slots"]["front"][0]
     assert "raw_name" not in persisted["shop"]["items"][0]
+
+
+def test_command_service_uses_portal_slots_precaptured_screenshot(tmp_path: Path, monkeypatch):
+    from trail.daemon import cw_service as cw_service_module
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw.slots import CwSlotsReadApplied
+
+    events: list[str] = []
+
+    class Runtime:
+        def __init__(self):
+            self.capture_after_action_calls = 0
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            self.capture_after_action_calls += 1
+            return tmp_path / ".trail" / "shots" / "unexpected-outer.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": _complete_cw_guide_fixture(),
+        "constraints": _complete_cw_constraints_fixture(),
+        "portal": {"cards": [{"card_idx": 2, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88}], "stale": False},
+    }
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    recorded_factory_kwargs: list[dict[str, object]] = []
+
+    def fake_slots_reader_factory(
+        runtime,
+        *,
+        recognizer,
+        targets=None,
+        request_id: str | None = None,
+        dismiss_initial_overlay: bool = True,
+    ):
+        del runtime, recognizer
+        recorded_factory_kwargs.append(
+            {
+                "targets": targets,
+                "request_id": request_id,
+                "dismiss_initial_overlay": dismiss_initial_overlay,
+            }
+        )
+        return "slots-reader"
+
+    def fake_read_slots(session, reader, targets=None, guide_config=None):
+        del targets
+        assert reader == "slots-reader"
+        assert guide_config == {"roles": [], "traits": []}
+        session.scene_state.setdefault("cw", {})["slots"] = {
+            "front": [{"name": "希儿"}],
+            "back": [],
+            "hand": [],
+            "stale": False,
+        }
+        return CwSlotsReadApplied(
+            session=session,
+            response_snapshot={
+                "front": [{"name": "希儿"}],
+                "back": [],
+                "hand": [],
+                "stale": False,
+                "_screenshot": str(tmp_path / ".trail" / "shots" / "slots-reused.png"),
+            },
+        )
+
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": "Beta", "portal_description": "Desc", "score": 0.88},
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
+    _patch_cw_portal_select_auto_collect_success(monkeypatch, events)
+    monkeypatch.setattr(cw_service_module, "_slots_read_resources", lambda **kwargs: ({}, {"roles": [], "traits": []}, object()))
+    monkeypatch.setattr("trail.daemon.cw_service.slots_reader_factory", fake_slots_reader_factory)
+    monkeypatch.setattr("trail.daemon.cw_service.read_cw_slots", fake_read_slots)
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-portal-select-diagnostics",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.portal.select",
+            payload={"session_id": session.session_id, "card_idx": 2},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["screenshot"].endswith("slots-reused.png")
+    assert "_screenshot" not in payload["data"]
+    assert "_screenshot" not in payload["data"]["slots"]
+    assert recorded_factory_kwargs == [
+        {
+            "targets": None,
+            "request_id": "req-cw-portal-select-diagnostics",
+            "dismiss_initial_overlay": False,
+        }
+    ]
+    assert runtime.capture_after_action_calls == 0
+
+
+def test_cw_portal_select_warning_order_is_stable(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw.shop import CwShopApplied
+    from trail.scenes.cw.slots import CwSlotsReadApplied
+
+    class Runtime:
+        def __init__(self):
+            self.warnings = [{"code": "RUNTIME_CAPTURE_WARNING", "message": "runtime warning"}]
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return tmp_path / ".trail" / "shots" / "req-cw-portal-select-warning-order.png"
+
+        def collect_warnings(self):
+            warnings = list(self.warnings)
+            self.warnings.clear()
+            return warnings
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    selected_warning = {"code": "SELECTED_DATA_WARNING", "message": "selected warning"}
+    slot_warning = {"code": "SLOT_WARNING", "message": "slot warning"}
+    equipment_warning = {
+        "code": "CW_EQUIPMENT_AUTO_COLLECT_FAILED",
+        "message": "equipment failed",
+        "detail_code": "EQUIPMENT_FAILED",
+    }
+    shop_warning = {"code": "SHOP_WARNING", "message": "shop warning"}
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": _complete_cw_guide_fixture(),
+        "constraints": _complete_cw_constraints_fixture(),
+        "portal": {"cards": [{"card_idx": 2, "portal_title": "Beta"}], "stale": False},
+    }
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+
+    def fake_read_slots(session, reader, targets=None, guide_config=None):
+        del reader, targets, guide_config
+        session.scene_state.setdefault("cw", {})["slots"] = {
+            "front": [{"name": "希儿"}],
+            "back": [],
+            "hand": [],
+            "stale": False,
+        }
+        return CwSlotsReadApplied(
+            session=session,
+            response_snapshot={"front": [{"name": "希儿"}], "back": [], "hand": [], "stale": False, "warnings": [slot_warning]},
+        )
+
+    def fake_apply_equipment(session, runtime, workspace_root=None):
+        del session, runtime, workspace_root
+        raise TrailError("EQUIPMENT_FAILED", "equipment failed")
+
+    def fake_scan_shop(session, scanner, guide_config=None):
+        del scanner, guide_config
+        session.scene_state.setdefault("cw", {})["shop"] = {
+            "opened": True,
+            "stale": False,
+            "items": [{"slot": 1, "name": "银狼", "price": 20}],
+            "coins": 40,
+            "reserve_full": False,
+        }
+        return CwShopApplied(
+            session=session,
+            response_snapshot={
+                "opened": True,
+                "stale": False,
+                "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                "coins": 40,
+                "reserve_full": False,
+                "warnings": [shop_warning],
+            },
+        )
+
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: {
+            "card_idx": card_idx,
+            "portal_title": "Beta",
+            "warnings": [selected_warning],
+        },
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
+    _patch_cw_portal_select_auto_collect_success(monkeypatch, [])
+    monkeypatch.setattr("trail.daemon.cw_service.read_cw_slots", fake_read_slots)
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_equipment_read", fake_apply_equipment)
+    monkeypatch.setattr("trail.daemon.cw_service.scan_cw_shop", fake_scan_shop)
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-portal-select-warning-order",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.portal.select",
+            payload={"session_id": session.session_id, "card_idx": 2},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["warnings"] == [
+        {"code": "RUNTIME_CAPTURE_WARNING", "message": "runtime warning"},
+        selected_warning,
+        slot_warning,
+        equipment_warning,
+        shop_warning,
+    ]
+
+
+def test_cw_portal_select_slots_uncertain_is_soft_auto_collect_warning(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw.slots import CwSlotsRecognitionUncertainError
+
+    events: list[str] = []
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return tmp_path / ".trail" / "shots" / "req-cw-portal-select-slots-uncertain.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    previous_slots = {
+        "front": [{"name": "希儿"}],
+        "back": [],
+        "hand": [],
+        "stale": False,
+        "trait_summary": [{"name": "巡猎", "count": 1}],
+    }
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
+        "guide": _complete_cw_guide_fixture(),
+        "constraints": _complete_cw_constraints_fixture(),
+        "portal": {"cards": [{"card_idx": 2, "portal_title": "Beta"}], "stale": False},
+        "slots": deepcopy(previous_slots),
+    }
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    slots_screenshot = str(tmp_path / ".trail" / "shots" / "slots-uncertain.png")
+    nested_slot_warning = {
+        "code": "SLOTS_RECOGNITION_UNCERTAIN",
+        "position": {"kind": "slot", "area": "front", "index": 0},
+        "score": 0.12,
+        "match_kind": "unknown",
+        "message": "槽位角色图标识别不确定，请先看截图确认",
+    }
+
+    def fake_read_slots(session, reader, targets=None, guide_config=None):
+        del session, reader, targets, guide_config
+        events.append("slots.read.uncertain")
+        raise CwSlotsRecognitionUncertainError(
+            "SLOTS_RECOGNITION_UNCERTAIN",
+            "槽位角色图标识别不确定，请先看截图确认",
+            screenshot=slots_screenshot,
+            warnings=[nested_slot_warning],
+        )
+
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.select_cw_portal",
+        lambda session, card_idx, runtime: {"card_idx": card_idx, "portal_title": "Beta"},
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.wait_cw_portal_preparation", lambda session, runtime: None, raising=False)
+    monkeypatch.setattr("trail.daemon.cw_service.apply_cw_guide_via_ui", lambda runtime, share_code: None)
+    _patch_cw_portal_select_auto_collect_success(monkeypatch, events)
+    monkeypatch.setattr("trail.daemon.cw_service.read_cw_slots", fake_read_slots)
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-portal-select-slots-uncertain",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.portal.select",
+            payload={"session_id": session.session_id, "card_idx": 2},
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["screenshot"].endswith("slots-uncertain.png")
+    assert payload["data"]["slots"] == previous_slots
+    assert "_screenshot" not in payload["data"]
+    assert "_screenshot" not in payload["data"]["slots"]
+    assert payload["data"]["slots"]["front"]
+    assert payload["data"]["equipment"]["stale"] is False
+    assert payload["data"]["shop"]["items"] == [{"slot": 1, "name": "银狼", "price": 20}]
+    uncertain_warning = payload["warnings"][0]
+    assert uncertain_warning["code"] == "CW_SLOTS_AUTO_COLLECT_UNCERTAIN"
+    assert uncertain_warning["message"] == "槽位角色图标识别不确定，请先看截图确认"
+    assert uncertain_warning["detail_code"] == "SLOTS_RECOGNITION_UNCERTAIN"
+    assert uncertain_warning["preserved_previous"] == 1
+    assert uncertain_warning["warnings"] == [nested_slot_warning]
+    assert [warning["code"] for warning in payload["warnings"]] == ["CW_SLOTS_AUTO_COLLECT_UNCERTAIN"]
+    assert events.index("slots.read.uncertain") < events.index("equipment.read") < events.index("shop.scan")
 
 
 def test_command_service_handles_cw_portal_select_waits_extra_before_capture(tmp_path: Path, monkeypatch):
@@ -6083,7 +6717,15 @@ def test_command_service_marks_cw_portal_select_auto_collect_failure_as_recovera
     monkeypatch.setattr("trail.daemon.cw_service.dismiss_cw_slots_overlay", lambda runtime: events.append("slots.dismiss"))
     monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {"roles": [], "traits": []})
     monkeypatch.setattr("trail.daemon.cw_service.crystal_collector_factory", lambda runtime: "crystal-collector")
-    monkeypatch.setattr("trail.daemon.cw_service.slots_reader_factory", lambda runtime, **kwargs: events.append(f"slots.reader({kwargs})") or "slots-reader")
+    slot_reader_kwargs: list[dict[str, object]] = []
+
+    def fake_slots_reader_factory(runtime, **kwargs):
+        del runtime
+        events.append("slots.reader")
+        slot_reader_kwargs.append(dict(kwargs))
+        return "slots-reader"
+
+    monkeypatch.setattr("trail.daemon.cw_service.slots_reader_factory", fake_slots_reader_factory)
     monkeypatch.setattr(
         "trail.daemon.cw_service.read_cw_slots",
         lambda session, reader, targets=None, guide_config=None: events.append("slots.read")
@@ -6135,7 +6777,14 @@ def test_command_service_marks_cw_portal_select_auto_collect_failure_as_recovera
     assert status_response["data"]["final_state"] == "applied_but_not_persisted"
     assert status_response["data"]["tainted"] is True
     assert status_response["data"]["last_visible_stage"] == "responded"
-    assert events == ["select", "wait", "apply", "crystal.collect", "slots.dismiss", "slots.reader({'dismiss_initial_overlay': False})", "slots.read"]
+    assert events == ["select", "wait", "apply", "crystal.collect", "slots.dismiss", "slots.reader", "slots.read"]
+    assert slot_reader_kwargs == [
+        {
+            "targets": None,
+            "request_id": "req-cw-portal-select-auto-collect-fail",
+            "dismiss_initial_overlay": False,
+        }
+    ]
     assert service.is_session_tainted(session.session_id) is True
     assert blocked["ok"] is False
     assert blocked["error"]["code"] == "SESSION_RECONCILE_REQUIRED"

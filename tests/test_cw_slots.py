@@ -378,6 +378,122 @@ def test_read_cw_slots_persists_stage_status_without_overwriting_stage_value(tmp
     }
 
 
+def test_slots_read_response_snapshot_carries_precaptured_screenshot(tmp_path):
+    slots = load_cw_slots_module()
+    session = build_fake_cw_session(tmp_path)
+    screenshot = tmp_path / ".trail" / "shots" / "slots.png"
+    result = slots.CwSlotsReadResult(
+        front=[{"name": "希儿"}, None, None, None],
+        back=[None] * 6,
+        hand=[None] * 9,
+        screenshot=str(screenshot),
+    )
+
+    refreshed = slots.read_cw_slots(session, reader=lambda: result)
+
+    assert refreshed.response_snapshot["_screenshot"].endswith("slots.png")
+    assert "_screenshot" not in refreshed.scene_state["cw"]["slots"]
+
+
+def test_slots_read_unknown_full_snapshot_fails_without_marking_empty(tmp_path):
+    slots = load_cw_slots_module()
+    session = build_fake_cw_session(tmp_path)
+    previous_slots = deepcopy(session.scene_state["cw"]["slots"])
+    unknown = {"match_kind": "unknown", "raw_name": "", "score": 0.12}
+
+    with pytest.raises(TrailError) as exc_info:
+        slots.read_cw_slots(
+            session,
+            reader=lambda: ([unknown, None, None, None], [None] * 6, [None] * 9),
+        )
+
+    assert exc_info.value.code == "SLOTS_RECOGNITION_UNCERTAIN"
+    assert session.scene_state["cw"]["slots"] == previous_slots
+
+
+def test_slots_read_unknown_target_preserves_fresh_previous(tmp_path):
+    slots = load_cw_slots_module()
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"] = {
+        "front": [
+            {
+                "name": "希儿",
+                "role_id": "1102",
+                "raw_name": "旧希儿",
+                "match_score": 0.88,
+                "score": 0.88,
+                "match_kind": "fuzzy",
+                "candidates": [{"name": "希儿", "score": 0.88}],
+                "empty_score": 0.02,
+                "fee_color": "gold",
+                "star_boxes": [{"x": 1, "y": 2, "w": 3, "h": 4}],
+                "confidence_reason": "legacy",
+            },
+            None,
+            None,
+            None,
+        ],
+        "back": [None] * 6,
+        "hand": [None] * 9,
+        "stale": False,
+    }
+    unknown = {"match_kind": "unknown", "raw_name": "", "score": 0.12}
+
+    refreshed = slots.read_cw_slots(
+        session,
+        reader=lambda: ([unknown, None, None, None], [None] * 6, [None] * 9),
+        targets=["front:0"],
+    )
+
+    preserved = {"name": "希儿", "role_id": "1102"}
+    assert refreshed.response_snapshot["front"][0] == preserved
+    assert refreshed.scene_state["cw"]["slots"]["front"][0] == preserved
+    assert refreshed.response_snapshot["warnings"][0]["code"] == "SLOTS_RECOGNITION_UNCERTAIN"
+    assert refreshed.response_snapshot["warnings"][0]["position"] == {"kind": "slot", "area": "front", "index": 0}
+    assert refreshed.response_snapshot["warnings"][0]["preserved_previous"] == 1
+
+
+def test_slots_read_unknown_target_without_previous_value_fails(tmp_path):
+    slots = load_cw_slots_module()
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"] = {
+        "front": [None, None, None, None],
+        "back": [None] * 6,
+        "hand": [None] * 9,
+        "stale": False,
+    }
+    previous_slots = deepcopy(session.scene_state["cw"]["slots"])
+    unknown = {"match_kind": "unknown", "raw_name": "", "score": 0.12}
+
+    with pytest.raises(TrailError) as exc_info:
+        slots.read_cw_slots(
+            session,
+            reader=lambda: ([unknown, None, None, None], [None] * 6, [None] * 9),
+            targets=["front:0"],
+        )
+
+    assert exc_info.value.code == "SLOTS_RECOGNITION_UNCERTAIN"
+    assert session.scene_state["cw"]["slots"] == previous_slots
+
+
+def test_slots_read_unknown_target_with_stale_previous_fails(tmp_path):
+    slots = load_cw_slots_module()
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["slots"]["stale"] = True
+    previous_slots = deepcopy(session.scene_state["cw"]["slots"])
+    unknown = {"match_kind": "unknown", "raw_name": "", "score": 0.12}
+
+    with pytest.raises(TrailError) as exc_info:
+        slots.read_cw_slots(
+            session,
+            reader=lambda: ([unknown, None, None, None], [None] * 6, [None] * 9),
+            targets=["front:0"],
+        )
+
+    assert exc_info.value.code == "SLOTS_RECOGNITION_UNCERTAIN"
+    assert session.scene_state["cw"]["slots"] == previous_slots
+
+
 def test_read_cw_slots_projects_stage_and_status_into_slots_payload(tmp_path):
     slots_module = load_cw_slots_module()
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
@@ -582,6 +698,195 @@ def test_build_cw_status_reader_keeps_status_when_stage_unknown(monkeypatch):
 
     assert result.stage is None
     assert result.stage_status["level"] == 3
+
+
+def test_build_cw_slot_icon_reader_skips_screenshot_save_without_request_id(monkeypatch, tmp_path):
+    slots_module = load_cw_slots_module()
+    monkeypatch.setattr(slots_module, "sleep", lambda seconds: None, raising=False)
+    monkeypatch.setattr(slots_module.stage, "build_cw_stage_detector", lambda runtime: lambda: "preparation")
+    monkeypatch.setattr(
+        slots_module,
+        "run_batch_ocr",
+        lambda runtime, targets, trace_prefix: SimpleNamespace(
+            by_key={
+                ("stage_status", "level"): SimpleNamespace(pieces=["LV.3"]),
+                ("stage_status", "exp"): SimpleNamespace(pieces=["0/8"]),
+                ("stage_status", "team_size"): SimpleNamespace(pieces=["1/2"]),
+            }
+        ),
+    )
+
+    class Runtime:
+        def __init__(self):
+            self.capture_calls: list[dict[str, object]] = []
+            self.save_calls: list[str | None] = []
+
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del x, y, kwargs
+
+        def capture_image(self, **kwargs):
+            self.capture_calls.append(dict(kwargs))
+            if kwargs == {"normalize": True}:
+                return Image.new("RGBA", (1920, 1080), "black")
+            return Image.new("RGBA", (64, 32), "black")
+
+        def save_capture_image_to_workspace(self, image, request_id=None):
+            del image
+            self.save_calls.append(request_id)
+            return tmp_path / ".trail" / "shots" / "unexpected.jpg"
+
+    class Recognizer:
+        def recognize_crop(self, crop, area):
+            del crop, area
+            return SimpleNamespace(
+                name=None,
+                role_id=None,
+                candidates=[],
+                score=None,
+                empty=True,
+                star_count=0,
+                star_boxes=[],
+                fee_color="",
+                match_kind="empty",
+                confidence_reason="empty_template_match",
+                rarity=None,
+                cost=None,
+                diagnostics={"empty_score": 0.99},
+            )
+
+    runtime = Runtime()
+    reader = slots_module.build_cw_slot_icon_reader(
+        runtime,
+        Recognizer(),
+        targets=["front:0"],
+        request_id=None,
+        dismiss_initial_overlay=False,
+    )
+
+    result = reader()
+
+    assert result.screenshot is None
+    assert runtime.save_calls == []
+    assert runtime.capture_calls.count({"normalize": True}) == 1
+
+
+def test_slots_read_icon_low_confidence_keeps_response_diagnostics_and_warning(monkeypatch, tmp_path):
+    slots_module = load_cw_slots_module()
+    monkeypatch.setattr(slots_module, "sleep", lambda seconds: None, raising=False)
+    monkeypatch.setattr(slots_module.stage, "build_cw_stage_detector", lambda runtime: lambda: "preparation")
+    monkeypatch.setattr(
+        slots_module,
+        "run_batch_ocr",
+        lambda runtime, targets, trace_prefix: SimpleNamespace(
+            by_key={
+                ("stage_status", "level"): SimpleNamespace(pieces=["LV.3"]),
+                ("stage_status", "exp"): SimpleNamespace(pieces=["0/8"]),
+                ("stage_status", "team_size"): SimpleNamespace(pieces=["1/2"]),
+            }
+        ),
+    )
+
+    class Runtime:
+        def locate(self, template: str, **kwargs):
+            del template, kwargs
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del x, y, kwargs
+
+        def capture_image(self, **kwargs):
+            if kwargs == {"normalize": True}:
+                return Image.new("RGBA", (1920, 1080), "black")
+            return Image.new("RGBA", (64, 32), "black")
+
+        def save_capture_image_to_workspace(self, image, request_id=None):
+            del image
+            return tmp_path / ".trail" / "shots" / f"{request_id}.jpg"
+
+    class Recognizer:
+        def recognize_crop(self, crop, area):
+            del crop, area
+            return SimpleNamespace(
+                name="希儿",
+                role_id="1102",
+                candidates=[],
+                score=0.61,
+                empty=False,
+                star_count=2,
+                star_boxes=[],
+                fee_color="gold",
+                match_kind="low_confidence",
+                confidence_reason="low_score",
+                rarity="5",
+                cost="5",
+                diagnostics={"empty_score": 0.03, "candidates": [{"name": "希儿", "role_id": "1102", "score": 0.61}]},
+            )
+
+    session = build_fake_cw_session(tmp_path)
+    result = slots_module.build_cw_slot_icon_reader(
+        Runtime(),
+        Recognizer(),
+        targets=["front:0"],
+        request_id="req-low-confidence",
+        dismiss_initial_overlay=False,
+    )()
+
+    refreshed = slots_module.read_cw_slots(
+        session,
+        reader=lambda: result,
+        targets=["front:0"],
+        guide_config={"traits": [], "roles": [{"id": "1102", "name": "希儿"}]},
+    )
+
+    response_slot = refreshed.response_snapshot["front"][0]
+    assert response_slot["name"] == "希儿"
+    assert response_slot["role_id"] == "1102"
+    assert response_slot["match_kind"] == "low_confidence"
+    assert response_slot["score"] == 0.61
+    assert response_slot["raw_name"] == "希儿"
+    assert refreshed.response_snapshot["warnings"][0]["code"] == "CW_ROLE_MATCH_LOW_CONFIDENCE"
+    assert refreshed.response_snapshot["warnings"][0]["position"] == {"kind": "slot", "area": "front", "index": 0}
+    stored = refreshed.scene_state["cw"]["slots"]["front"][0]
+    for key in ("raw_name", "match_kind", "score", "candidates", "empty_score", "fee_color", "star_boxes", "confidence_reason"):
+        assert key not in stored
+
+
+def test_slots_read_icon_high_confidence_strips_response_diagnostics(tmp_path):
+    slots_module = load_cw_slots_module()
+    session = build_fake_cw_session(tmp_path)
+    value = {
+        "name": "希儿",
+        "role_id": "1102",
+        "star": 2,
+        "score": 0.94,
+        "match_kind": "icon",
+        "raw_name": "希儿",
+        "candidates": [{"name": "希儿", "role_id": "1102", "score": 0.94}],
+        "empty_score": 0.02,
+        "fee_color": "gold",
+        "star_boxes": [{"x": 1, "y": 2, "w": 3, "h": 4}],
+        "confidence_reason": "score_gap",
+    }
+
+    refreshed = slots_module.read_cw_slots(
+        session,
+        reader=lambda: ([value, None, None, None], [None] * 6, [None] * 9),
+        targets=["front:0"],
+        guide_config={"traits": [], "roles": [{"id": "1102", "name": "希儿"}]},
+    )
+
+    response_slot = refreshed.response_snapshot["front"][0]
+    stored_slot = refreshed.scene_state["cw"]["slots"]["front"][0]
+    assert response_slot == {"name": "希儿", "role_id": "1102", "star": 2}
+    assert stored_slot == {"name": "希儿", "role_id": "1102", "star": 2}
+    assert "warnings" not in refreshed.response_snapshot
+    for key in ("raw_name", "match_kind", "score", "candidates", "empty_score", "fee_color", "star_boxes", "confidence_reason"):
+        assert key not in response_slot
+        assert key not in stored_slot
 
 
 def test_build_cw_slots_reader_batches_stage_status_before_slot_clicks(monkeypatch):

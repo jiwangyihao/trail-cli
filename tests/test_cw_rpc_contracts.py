@@ -811,6 +811,27 @@ def test_cw_equipment_prepare_rejects_yaml_output_without_rpc(cli_runner, fake_d
     assert client.calls == []
 
 
+def test_cw_slots_read_rejects_yaml_output_without_rpc(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {
+            "cw.slots.read": build_success_response(
+                request_id="req-cw-slots-read-yaml",
+                data={"front": [{"name": "希儿"}], "back": [], "hand": [], "stale": False},
+                screenshot=".trail/shots/req-cw-slots-read-yaml.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["--format", "yaml", "cw", "slots", "read", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.slots.read code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        'why msg="yaml not supported for cw.slots.read"',
+    ]
+    assert client.calls == []
+
+
 def test_cw_shop_scan_renders_unknown_result_failure_contract(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {

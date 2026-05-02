@@ -5,6 +5,8 @@ from inspect import Parameter, signature
 from pathlib import Path
 from time import sleep
 
+from PIL import Image
+
 from trail.artifacts.store import ArtifactStore
 from trail.core.errors import TrailError
 from trail.core.jsonable import format_exception_detail, format_exception_message, to_jsonable
@@ -80,6 +82,7 @@ from trail.scenes.cw.shop import (
 from trail.scenes.cw.slots import (
     build_cw_crystal_collector,
     build_cw_hand_seller,
+    build_cw_slot_icon_reader,
     build_cw_slot_swapper,
     build_cw_slots_reader,
     collect_cw_crystals,
@@ -91,12 +94,13 @@ from trail.scenes.cw.slots import (
     swap_cw_slots,
 )
 from trail.scenes.cw.stage import build_cw_stage_detector, detect_cw_stage, wait_cw_stage
+from trail.scenes.cw.role_recognition import VectorRoleIconRecognizer
 from trail.scenes.cw.static_resources import load_default_cw_resource_bundle
 from trail.scenes.cw.strategy import detect_cw_strategy, refresh_cw_strategy, select_cw_strategy
 
 
 stage_detector_factory = build_cw_stage_detector
-slots_reader_factory = build_cw_slots_reader
+slots_reader_factory = build_cw_slot_icon_reader
 slot_swapper_factory = build_cw_slot_swapper
 slot_placer_factory = build_cw_slot_swapper
 hand_seller_factory = build_cw_hand_seller
@@ -238,6 +242,76 @@ def _cached_cw_raw_config(*, workspace_root: str | None, cw_resource_service=Non
     return bundle.raw_config if isinstance(bundle.raw_config, dict) else None
 
 
+def _role_recognizer_from_bundle(bundle):
+    empty_manifest = bundle.role_manifest["empty_templates"]
+    templates = {}
+    for template_key in ("field", "hand"):
+        local_path = empty_manifest[template_key]["local_path"]
+        with Image.open(Path(bundle.root) / local_path) as image:
+            templates[template_key] = image.convert("RGBA")
+    return VectorRoleIconRecognizer.from_precomputed_features(bundle.role_features, empty_templates=templates)
+
+
+def _default_slots_read_resources(*, workspace_root: str | None) -> tuple[dict, dict, object]:
+    bundle = load_default_cw_resource_bundle(workspace_root=workspace_root)
+    raw_config = bundle.raw_config if isinstance(bundle.raw_config, dict) else {}
+    guide_config = bundle.guide_config_enriched if isinstance(bundle.guide_config_enriched, dict) else {}
+    return raw_config, guide_config, _role_recognizer_from_bundle(bundle)
+
+
+def _slots_reader_factory_accepts_recognizer(factory) -> bool:
+    try:
+        parameters = signature(factory).parameters
+    except (TypeError, ValueError):
+        return True
+    return "recognizer" in parameters
+
+
+def _slots_read_resources(*, workspace_root: str | None, cw_resource_service=None) -> tuple[dict, dict, object]:
+    if cw_resource_service is not None and hasattr(cw_resource_service, "slots_read_resources"):
+        return cw_resource_service.slots_read_resources(workspace_root=workspace_root)
+    return _default_slots_read_resources(workspace_root=workspace_root)
+
+
+def _build_slots_reader_for_service(
+    runtime,
+    *,
+    targets: list[str] | None,
+    workspace_root: str | None,
+    cw_resource_service=None,
+    request_id: str | None = None,
+    dismiss_initial_overlay: bool = True,
+) -> tuple[object, dict]:
+    if _slots_reader_factory_accepts_recognizer(slots_reader_factory):
+        _raw_config, guide_config, role_recognizer = _slots_read_resources(
+            workspace_root=workspace_root,
+            cw_resource_service=cw_resource_service,
+        )
+        reader = _call_with_supported_keywords(
+            slots_reader_factory,
+            runtime,
+            recognizer=role_recognizer,
+            targets=targets,
+            request_id=request_id,
+            dismiss_initial_overlay=dismiss_initial_overlay,
+        )
+        return reader, deepcopy(guide_config) if isinstance(guide_config, dict) else {}
+
+    reader = _call_with_supported_keywords(
+        slots_reader_factory,
+        runtime,
+        targets=targets,
+        request_id=request_id,
+        dismiss_initial_overlay=dismiss_initial_overlay,
+    )
+    guide_config = _cached_cw_guide_config(
+        workspace_root=workspace_root,
+        cw_resource_service=cw_resource_service,
+        enrich_traits=True,
+    )
+    return reader, guide_config
+
+
 def _begin_runtime_scope(runtime) -> None:
     begin_capture_scope = getattr(runtime, "begin_capture_scope", None)
     if callable(begin_capture_scope):
@@ -366,6 +440,7 @@ class CwService:
             payload=payload,
             workspace_root=workspace_root,
             session_service=session_service,
+            request_id=request_id,
             track_side_effects=True,
             shared_capture_scope=True,
         )
@@ -585,6 +660,7 @@ class CwService:
                 guide=guide,
                 workspace_root=workspace_root,
                 cw_resource_service=self.cw_resource_service,
+                request_id=request_id,
             )
 
         def run_guide_apply() -> dict:
@@ -642,6 +718,21 @@ class CwService:
             if self.cw_resource_service is not None:
                 return self.cw_resource_service.equipment_prepare_summary(workspace_root=workspace_root)
             return _equipment_prepare_summary_from_bundle(workspace_root=workspace_root)
+
+        def run_slots_read() -> dict:
+            slots_reader, trait_config = _build_slots_reader_for_service(
+                runtime(),
+                targets=payload.get("slot"),
+                workspace_root=workspace_root,
+                cw_resource_service=self.cw_resource_service,
+                request_id=request_id,
+            )
+            return read_cw_slots(
+                session,
+                reader=slots_reader,
+                targets=payload.get("slot"),
+                guide_config=trait_config,
+            ).response_snapshot
 
         handlers = {
             "cw.enter": lambda: validated_enter_payload() and enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
@@ -713,12 +804,7 @@ class CwService:
                     cw_resource_service=self.cw_resource_service,
                 ),
             ),
-            "cw.slots.read": lambda: read_cw_slots(
-                session,
-                reader=slots_reader_factory(runtime(), targets=payload.get("slot")),
-                targets=payload.get("slot"),
-                guide_config=guide_config(enrich_traits=True),
-            ).response_snapshot,
+            "cw.slots.read": run_slots_read,
             "cw.slots.swap": lambda: swap_cw_slots(
                 session,
                 source=payload["source"],
@@ -853,6 +939,35 @@ def _cw_equipment_auto_collect_warning(error: Exception) -> dict:
     return warning
 
 
+def _cw_slots_auto_collect_uncertain_warning(error: TrailError) -> dict:
+    warning = {
+        "code": "CW_SLOTS_AUTO_COLLECT_UNCERTAIN",
+        "message": format_exception_message(error),
+    }
+    detail_code = getattr(error, "code", None)
+    if isinstance(detail_code, str) and detail_code:
+        warning["detail_code"] = detail_code
+    position = getattr(error, "position", None)
+    if position is not None:
+        warning["position"] = to_jsonable(position)
+    nested_warnings = getattr(error, "warnings", None)
+    if isinstance(nested_warnings, list) and nested_warnings:
+        warning["warnings"] = to_jsonable(nested_warnings)
+    return warning
+
+
+def _fresh_previous_slots_snapshot(session) -> dict | None:
+    slots = ensure_cw_state(session).get("slots")
+    if not isinstance(slots, dict) or slots.get("stale") is not False:
+        return None
+    areas = [slots.get(area) for area in ("front", "back", "hand")]
+    if not any(isinstance(area, list) for area in areas):
+        return None
+    if not any(item is not None for area in areas if isinstance(area, list) for item in area):
+        return None
+    return deepcopy(slots)
+
+
 def _has_fresh_portal_select_equipment(method: str, result: object) -> bool:
     if method != "cw.portal.select" or not isinstance(result, dict):
         return False
@@ -971,10 +1086,12 @@ def _select_portal_and_apply_selected_guide(
     guide: dict | None = None,
     workspace_root: str | None = None,
     cw_resource_service=None,
+    request_id: str | None = None,
 ) -> dict:
     selected_guide = guide if guide is not None else _require_selected_guide(session)
     selected = select_cw_portal(session, card_idx=card_idx, runtime=runtime)
     wait_cw_portal_preparation(session, runtime=runtime)
+    previous_slots_snapshot = _fresh_previous_slots_snapshot(session)
     try:
         _apply_selected_guide_via_ui(session, runtime=runtime, guide=selected_guide)
     except Exception as error:
@@ -985,14 +1102,39 @@ def _select_portal_and_apply_selected_guide(
         selected_data["skill_info"] = skill_info
     collect_cw_crystals(session, collector=crystal_collector_factory(runtime))
     dismiss_cw_slots_overlay(runtime)
-    guide_config = _cached_cw_guide_config(workspace_root=workspace_root, cw_resource_service=cw_resource_service)
-    slots_result = read_cw_slots(
-        session,
-        reader=slots_reader_factory(runtime, dismiss_initial_overlay=False),
-        guide_config=guide_config,
+    slots_reader, guide_config = _build_slots_reader_for_service(
+        runtime,
+        targets=None,
+        workspace_root=workspace_root,
+        cw_resource_service=cw_resource_service,
+        request_id=request_id,
+        dismiss_initial_overlay=False,
     )
-    slots_snapshot = _response_snapshot_or_fallback(slots_result, ensure_cw_state(session).get("slots") or {})
-    slot_warnings = _pop_response_snapshot_warnings(slots_snapshot)
+    slots_snapshot = None
+    slot_warnings: list[dict] = []
+    try:
+        slots_result = read_cw_slots(
+            session,
+            reader=slots_reader,
+            guide_config=guide_config,
+        )
+        slots_snapshot = _response_snapshot_or_fallback(slots_result, ensure_cw_state(session).get("slots") or {})
+        slots_screenshot = slots_snapshot.pop("_screenshot", None)
+        if slots_screenshot is not None and selected_data.get("_screenshot") is None:
+            selected_data["_screenshot"] = slots_screenshot
+        slot_warnings = _pop_response_snapshot_warnings(slots_snapshot)
+    except TrailError as error:
+        if error.code != "SLOTS_RECOGNITION_UNCERTAIN":
+            raise
+        error_screenshot = getattr(error, "screenshot", None)
+        if error_screenshot is not None and selected_data.get("_screenshot") is None:
+            selected_data["_screenshot"] = error_screenshot
+        warning = _cw_slots_auto_collect_uncertain_warning(error)
+        previous_slots = _fresh_previous_slots_snapshot(session) or previous_slots_snapshot
+        if previous_slots is not None:
+            slots_snapshot = previous_slots
+            warning["preserved_previous"] = 1
+        slot_warnings = [warning]
     equipment_snapshot = None
     equipment_warnings: list[dict] = []
     try:
@@ -1019,7 +1161,8 @@ def _select_portal_and_apply_selected_guide(
     shop_snapshot = {**shop_projection, **shop_response}
     close_cw_shop(session, closer=shop_closer_factory(runtime))
     selected_data["crystals"] = deepcopy(ensure_cw_state(session).get("metrics") or {})
-    selected_data["slots"] = slots_snapshot
+    if slots_snapshot is not None:
+        selected_data["slots"] = slots_snapshot
     if equipment_snapshot is not None:
         selected_data["equipment"] = deepcopy(equipment_snapshot)
     selected_data["shop"] = shop_snapshot

@@ -2,7 +2,7 @@
   "bundle_schema_version": 1,
   "generator_schema_version": 1,
   "resource_version": "4.2",
-  "generated_at": "2026-04-30T21:42:07.130063+00:00",
+  "generated_at": "2026-05-02T00:43:06.279105+00:00",
   "season_id": "1",
   "sub_season_id": "3",
   "rpg_game_big_version": "4.2",
@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "raw_config.json",
-      "sha256": "142587d91c3587250ba5e199b0b445b209659e8dd364da4dcc027ac0b786f380",
+      "sha256": "59fac426dfa0f35c8691e68466571480dfa08e37927f921620c70d2e65239cd2",
       "size": 644655
     },
     {
@@ -38,6 +38,26 @@
       "path": "equipment/features.json",
       "sha256": "40701510f84edd20410b41b91050e90cc15d8fae5ee61551d6056a166eae4d34",
       "size": 44735212
+    },
+    {
+      "path": "roles/manifest.json",
+      "sha256": "f5e0f3d9f12792c8bc823795b65bd497151467ff9cc50fc3a49aa317c4263afe",
+      "size": 39067
+    },
+    {
+      "path": "roles/features.json",
+      "sha256": "a894dc5a9bca12fbd1e2fabd8a0699324acf28bd9fa0ebb92fb5ed8aa285439d",
+      "size": 27438875
+    },
+    {
+      "path": "roles/empty/field-v1.png",
+      "sha256": "ffb41efcd061bb486b9f1b34016ef23531e65d4bca48e05675f494bc90167abc",
+      "size": 5631
+    },
+    {
+      "path": "roles/empty/hand-v1.png",
+      "sha256": "e648e966d73b0362ee1016077b6ffcf53dba551fee74fead5f08d66209a87e77",
+      "size": 2076
     },
     {
       "path": "equipment/icons/advanced-350701.png",
@@ -593,7 +613,362 @@
       "path": "equipment/icons/advanced-35100013.png",
       "sha256": "00a20a6e81eb6aa308c808a84c635ee0d5a9d8b15e202ba08d4dcb5fcaa50a6b",
       "size": 31375
+    },
+    {
+      "path": "roles/icons/1502.png",
+      "sha256": "1dcc5e240b7f3a0619cb94310df4bbc080f531f925df3ff2078fb1635ee208c5",
+      "size": 73534
+    },
+    {
+      "path": "roles/icons/1406.png",
+      "sha256": "4a57f5002395a7812ff3f448d9bae2d44353b364bb7d70c92ea2fdd2bde40b0a",
+      "size": 76036
+    },
+    {
+      "path": "roles/icons/1402.png",
+      "sha256": "07681519dac61eb928fca41a5d8f2b9574ee21f867780ab025c39bfb947c621f",
+      "size": 70635
+    },
+    {
+      "path": "roles/icons/1321.png",
+      "sha256": "a347ca886ee8d2f364dda93bac6229f5eccc21007910d6e2c60c3bcdf469df92",
+      "size": 72401
+    },
+    {
+      "path": "roles/icons/1317.png",
+      "sha256": "96701b29a3a6738d899d88ec8f53886badbafeb9db94a288bc9617f18a5c2f1f",
+      "size": 74115
+    },
+    {
+      "path": "roles/icons/1314.png",
+      "sha256": "f42466faa12ba4abc80c965bf0e872d823e2602cd77a12ab9172cbfdbffc646b",
+      "size": 77802
+    },
+    {
+      "path": "roles/icons/1301.png",
+      "sha256": "c703bcb21aaa0c785b465a1381a21bfff59b8e802437b2629eb40ed16ba570fe",
+      "size": 58893
+    },
+    {
+      "path": "roles/icons/1223.png",
+      "sha256": "22d609facad8e9c439916606b17b27b3fd3fd1fd4579a181f6fc316f39220eed",
+      "size": 62784
+    },
+    {
+      "path": "roles/icons/1220.png",
+      "sha256": "b4ed5ececd851cceefe3fcb7a5e4c196c802243e0ed97280836e7edf5564faab",
+      "size": 79367
+    },
+    {
+      "path": "roles/icons/1218.png",
+      "sha256": "4dd611a37fadc8a736897a7f95cdc5402b26690f56626ba0082d69be504b1e9c",
+      "size": 71165
+    },
+    {
+      "path": "roles/icons/1217.png",
+      "sha256": "399d24c6a355c2349ba0733b56299143500c53a862168573174cd41aee954571",
+      "size": 74264
+    },
+    {
+      "path": "roles/icons/1205.png",
+      "sha256": "abd89d4a70ce629fbf42ff416256a858717333c21092a165b470c317bb985dfb",
+      "size": 59356
+    },
+    {
+      "path": "roles/icons/1202.png",
+      "sha256": "a0dd0b5f087821fa77c7a50aa0abf452902f6cda0b8b22326483f0de4177c518",
+      "size": 70465
+    },
+    {
+      "path": "roles/icons/1201.png",
+      "sha256": "5f4c22a1a48909338507e247ff85295c8e40be0f269b86c42d9e70dab3ab16c0",
+      "size": 61767
+    },
+    {
+      "path": "roles/icons/1108.png",
+      "sha256": "b1166709554aef86ab5d44e0f8914dd843482bd882a12d06d75f192c49112ca1",
+      "size": 73983
+    },
+    {
+      "path": "roles/icons/1013.png",
+      "sha256": "69ebcccd9228d5664b03ac663eab5ab2afee75008573ea3d57a4c520e7f84433",
+      "size": 63694
+    },
+    {
+      "path": "roles/icons/1009.png",
+      "sha256": "f226354df8450c02230862a35471d2e4e36af68f7a4b856655953d54e91dc8d8",
+      "size": 61631
+    },
+    {
+      "path": "roles/icons/1001.png",
+      "sha256": "d9abab3ceead1ba66777db6e607c1bd5abd18258f17c6dc31c67c4b600d7814b",
+      "size": 71155
+    },
+    {
+      "path": "roles/icons/1505.png",
+      "sha256": "aedffe8f09260136b69c31e585dfcd4ffa9e692698d802d65f03f1ec030e20ac",
+      "size": 64583
+    },
+    {
+      "path": "roles/icons/1504.png",
+      "sha256": "22165ef65af4e7605bff576363eef3ab9097d522fc28e45c23ce350ffb0571dc",
+      "size": 67994
+    },
+    {
+      "path": "roles/icons/1414.png",
+      "sha256": "d91e256c713c54e98618c28f29b974ee17eeec22cee5a510f9397ef2fce22b21",
+      "size": 64155
+    },
+    {
+      "path": "roles/icons/1409.png",
+      "sha256": "7bc679e259ae31b6e5862fc07b3766a2f4087061d6774871e4638903cf75246b",
+      "size": 77650
+    },
+    {
+      "path": "roles/icons/1404.png",
+      "sha256": "8a07c085e7f3791de2dcf86b438f068ab8a432c7ccea53a83f5276f12d94e722",
+      "size": 64652
+    },
+    {
+      "path": "roles/icons/1403.png",
+      "sha256": "50d21e9805e1f5fb43e5aa2e3326bee8f99cdeb8dbe4a484711368479da8bcff",
+      "size": 72050
+    },
+    {
+      "path": "roles/icons/1306.png",
+      "sha256": "5c1ac25183d5caddabeb422eae6454b5f2f9041273b48e613ed5cfcc5b561098",
+      "size": 73881
+    },
+    {
+      "path": "roles/icons/1304.png",
+      "sha256": "8ca43e3c186140222161596d8a7de76ef5fcb41c461a849daa6d276fa64b49b5",
+      "size": 62372
+    },
+    {
+      "path": "roles/icons/1303.png",
+      "sha256": "e49a6049bb073b87e763b75de5fbbd5bc55608ee0b0dbd5a90a8eaffac7f2f68",
+      "size": 58672
+    },
+    {
+      "path": "roles/icons/1302.png",
+      "sha256": "6365627c0b868ee323db1037fe69b26ce5137d0ffd7af192bb4253671d64f554",
+      "size": 65535
+    },
+    {
+      "path": "roles/icons/1222.png",
+      "sha256": "78dc42a100c9370d8224840c112f7b14eb1af9e60532cf149f84c9bbfada3462",
+      "size": 59242
+    },
+    {
+      "path": "roles/icons/1213.png",
+      "sha256": "3b6e944b1fdb1aa1b022da8c65b7963084d79dc3d5729fddb84f44b0735c16f7",
+      "size": 59149
+    },
+    {
+      "path": "roles/icons/1106.png",
+      "sha256": "913f3b55e46840abcbe19baaf333b011d1d1b84267b925b5f279b652a9a20946",
+      "size": 72135
+    },
+    {
+      "path": "roles/icons/1005.png",
+      "sha256": "b3c45f4da28c28f7f4a41fd10f1b30fd97ddef499cc4e9ee210c8016b54ba524",
+      "size": 56956
+    },
+    {
+      "path": "roles/icons/15061.png",
+      "sha256": "a9819037e7fda8dd057d4ab110caf592769a209265678cadf648da2f5b6db7ad",
+      "size": 66292
+    },
+    {
+      "path": "roles/icons/1412.png",
+      "sha256": "2db9d5ae3e87cad6c1ce99b932609e0cfcebf5023b700449bc057a919de3badc",
+      "size": 76528
+    },
+    {
+      "path": "roles/icons/1408.png",
+      "sha256": "61abad38ccce4d2c8bde67eb16aaf11ccc9aac632ba8f1da40c61774d9d00e6e",
+      "size": 65681
+    },
+    {
+      "path": "roles/icons/1405.png",
+      "sha256": "354751117039f9858f798e8ea528bd8e1ee34c742a79e74b44096d31aa82d3f5",
+      "size": 70908
+    },
+    {
+      "path": "roles/icons/1313.png",
+      "sha256": "00b7ef1e8075292083a9fb2bd308b18964b6cbf92dd19e1ecf18dc96578a60a0",
+      "size": 80245
+    },
+    {
+      "path": "roles/icons/1308.png",
+      "sha256": "14565105e79833ae9920b2850f7372a6c87893a246e3901b4e2ca973c55d683a",
+      "size": 72059
+    },
+    {
+      "path": "roles/icons/1305.png",
+      "sha256": "24124872d91c209cac03fa25bce056e6835589fd19ba6f19ef59693ea4eab674",
+      "size": 59084
+    },
+    {
+      "path": "roles/icons/1225.png",
+      "sha256": "3bbbe59c192697fff4def579dc6b6ca633245a81b9344efec92ef5ae4844493f",
+      "size": 72624
+    },
+    {
+      "path": "roles/icons/1212.png",
+      "sha256": "73396341e6e04b1bd2744325a6adaa82898cb423f72826c9eb5b7eae460259a2",
+      "size": 68648
+    },
+    {
+      "path": "roles/icons/1105.png",
+      "sha256": "3b342d5d592ff839bb9c3419c3da93399946ef0e8dcb871f506448f3e1618b51",
+      "size": 68035
+    },
+    {
+      "path": "roles/icons/1102.png",
+      "sha256": "4b1cf5b9986dd7df04f58cebd407f1cafa0c2f8527f67f8d9c006df46323ced9",
+      "size": 68876
+    },
+    {
+      "path": "roles/icons/1014.png",
+      "sha256": "a7710059fab090d191ddf5ce915c0bff0512a22286c9392d23bc5c1843cb2d74",
+      "size": 65233
+    },
+    {
+      "path": "roles/icons/1003.png",
+      "sha256": "732239bf4084c168d8bc8bcdfe431424ece53d0177c545cd5b0027f1416900e6",
+      "size": 70844
+    },
+    {
+      "path": "roles/icons/15062.png",
+      "sha256": "a9819037e7fda8dd057d4ab110caf592769a209265678cadf648da2f5b6db7ad",
+      "size": 66292
+    },
+    {
+      "path": "roles/icons/8009.png",
+      "sha256": "f41240f5c8a4d36ced6713a72fa9c59e3c0cbc0ac9ed81e2586650c98727dee5",
+      "size": 51654
+    },
+    {
+      "path": "roles/icons/8007.png",
+      "sha256": "c307153a8e19e96227fca67f0c73415bdcd8f03baa60b879b1826ddf077388d5",
+      "size": 65436
+    },
+    {
+      "path": "roles/icons/1501.png",
+      "sha256": "ab76ce364ba7ba715ef24433f72a8a992e3e2d581d4a8aba180c4862a8c2fd13",
+      "size": 77876
+    },
+    {
+      "path": "roles/icons/1413.png",
+      "sha256": "7b31978627c83cddeb0710264eb63cd6d5a555eea97e2f02ff9d06a284fe2bdc",
+      "size": 76296
+    },
+    {
+      "path": "roles/icons/1410.png",
+      "sha256": "d6ed97207635a472a0736dfe923e225f24888fc62df0c1a6b01f123c659ffb54",
+      "size": 74112
+    },
+    {
+      "path": "roles/icons/1407.png",
+      "sha256": "bf0998065913d5ee5513469251a6be42524fec2c7efbe9efcb5fa5eb1bb0e385",
+      "size": 68054
+    },
+    {
+      "path": "roles/icons/1401.png",
+      "sha256": "83e462a21e9d5ddeba232d13570da222d52242b3e9d2d9877e765319b7b67e31",
+      "size": 74693
+    },
+    {
+      "path": "roles/icons/1315.png",
+      "sha256": "06d5735b8bede01bce2978253abe4daa96cbd773f23f6a41129157df04af5be0",
+      "size": 63851
+    },
+    {
+      "path": "roles/icons/1309.png",
+      "sha256": "3877b6dd0b495fd867072e9d9f64cafc11ae6e2eb67caa84f3242facfbf8ab5a",
+      "size": 65756
+    },
+    {
+      "path": "roles/icons/1209.png",
+      "sha256": "d006b1ffda94e01dfa5a6cc2d8e486793ada0bb9f5d8762b6f0766bbc9bfb0bf",
+      "size": 66246
+    },
+    {
+      "path": "roles/icons/1208.png",
+      "sha256": "e5ee47bf5dcb871933dc2eab229bb07d8721520f1d1551f506a9f91aeca0d68a",
+      "size": 75344
+    },
+    {
+      "path": "roles/icons/1203.png",
+      "sha256": "7f80c863c53d659a0d6688740efdd8dc55a064137add5ac86193f3f11d088206",
+      "size": 65827
+    },
+    {
+      "path": "roles/icons/1104.png",
+      "sha256": "db317119d4e715a0cc73c8355b55f2d5331d28f6a775f4eeced07449a2bb08b5",
+      "size": 68023
+    },
+    {
+      "path": "roles/icons/1006.png",
+      "sha256": "861e0640a8ef86290006b9014a7075f6d03d0060bb644cb6c1dbc158f1b924f5",
+      "size": 78809
+    },
+    {
+      "path": "roles/icons/15063.png",
+      "sha256": "a9819037e7fda8dd057d4ab110caf592769a209265678cadf648da2f5b6db7ad",
+      "size": 66292
+    },
+    {
+      "path": "roles/icons/11012.png",
+      "sha256": "7eaa9588540c762e597cd293dade21687fb1461d79c84e147a68e17211238ae0",
+      "size": 68489
+    },
+    {
+      "path": "roles/icons/11011.png",
+      "sha256": "7eaa9588540c762e597cd293dade21687fb1461d79c84e147a68e17211238ae0",
+      "size": 68489
+    },
+    {
+      "path": "roles/icons/1415.png",
+      "sha256": "7191e93464669f4cd45f179fec43b3fd09a5d847f5dc7b890daa7d00d3e01a83",
+      "size": 77468
+    },
+    {
+      "path": "roles/icons/1310.png",
+      "sha256": "a4bef25ea349ecd2ee76221ef25fb7bfc3bf0d84703804e36d5a7459b5113e96",
+      "size": 78334
+    },
+    {
+      "path": "roles/icons/1307.png",
+      "sha256": "c9832c4e91782f374914fb99a0d6bf442f1847514eab2edf8c8534fe3096acd5",
+      "size": 68139
+    },
+    {
+      "path": "roles/icons/1221.png",
+      "sha256": "6564e966b9d5660b36598425f62aa5e3f20f34a00dc801b810306e46409648bd",
+      "size": 72772
+    },
+    {
+      "path": "roles/icons/1204.png",
+      "sha256": "3feaca5719ec18282064aa2afce4fdaaff345783f00bff85c8621146931996e1",
+      "size": 77244
+    },
+    {
+      "path": "roles/icons/1112.png",
+      "sha256": "3fa131b8d29de476e8c767867d2a71486fef9a14bb6d3755c29480d5a1b1f20e",
+      "size": 64020
+    },
+    {
+      "path": "roles/icons/1015.png",
+      "sha256": "886aa726fe5d6024658135985661d7df9d0a67128fa2760d1e7a49c6fdd3ecf4",
+      "size": 57600
+    },
+    {
+      "path": "roles/icons/1004.png",
+      "sha256": "98eca7672f1df7c9cc3886f7a395e519d672eb638f41e812e17e9bf5f2529083",
+      "size": 60043
     }
   ],
-  "content_digest": "5efec0d0b3ec12aab0817b696829b083e1eb959f4fed7e1c22b440d77fd7a360"
+  "content_digest": "8d11b52cccbfd9665d61d33349b4aece53a80b52c01ce9cecb20e6a39702b1d2"
 }

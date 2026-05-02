@@ -10,9 +10,17 @@ import tarfile
 import tomllib
 import zipfile
 
+from PIL import Image
 import pytest
 
-from trail.scenes.cw.static_resources import CW_RESOURCE_BUNDLE_SCHEMA_VERSION
+from trail.scenes.cw.static_resources import (
+    CW_RESOURCE_BUNDLE_SCHEMA_VERSION,
+    CW_ROLE_FEATURE_SCHEMA_VERSION,
+    CW_ROLE_MANIFEST_SCHEMA_VERSION,
+    CW_ROLE_RECOGNIZER_ALGORITHM_VERSION,
+    CW_SLOT_EMPTY_TEMPLATE_VERSION,
+    CW_SLOT_GEOMETRY_VERSION,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +30,16 @@ VERIFIER_SCRIPT = ROOT / "scripts" / "verify-cw-resource-bundle-artifacts.py"
 def _pixel_payload(mode: str, size: list[int]) -> dict:
     channels = 4 if mode == "RGBA" else 1
     return {"mode": mode, "size": size, "data": [0] * (size[0] * size[1] * channels)}
+
+
+def _png_bytes(*, mode: str = "RGBA", size: tuple[int, int] = (103, 120)) -> bytes:
+    buffer = BytesIO()
+    Image.new(mode, size).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _truncated_empty_png_bytes() -> bytes:
+    return _png_bytes()[:-40]
 
 
 def _valid_feature_item(cache_key: str = "icon-a", name: str = "Icon A") -> dict:
@@ -47,6 +65,90 @@ def _valid_feature_payload() -> dict:
     }
 
 
+def _valid_role_manifest_payload(
+    *,
+    role_icon_data: bytes = b"role-icon",
+    field_empty_data: bytes | None = None,
+    hand_empty_data: bytes | None = None,
+) -> dict:
+    field_empty_data = _png_bytes() if field_empty_data is None else field_empty_data
+    hand_empty_data = _png_bytes() if hand_empty_data is None else hand_empty_data
+    return {
+        "role_manifest_schema_version": CW_ROLE_MANIFEST_SCHEMA_VERSION,
+        "resource_version": "3.2",
+        "empty_template_version": CW_SLOT_EMPTY_TEMPLATE_VERSION,
+        "empty_templates": {
+            "field": {
+                "local_path": "roles/empty/field-v1.png",
+                "sha256": hashlib.sha256(field_empty_data).hexdigest(),
+                "size": len(field_empty_data),
+            },
+            "hand": {
+                "local_path": "roles/empty/hand-v1.png",
+                "sha256": hashlib.sha256(hand_empty_data).hexdigest(),
+                "size": len(hand_empty_data),
+            },
+        },
+        "items": [
+            {
+                "role_id": "r1",
+                "name": "Role A",
+                "normalized_name": "role a",
+                "icon_url": "https://example.test/r1.png",
+                "local_path": "roles/icons/r1.png",
+                "sha256": hashlib.sha256(role_icon_data).hexdigest(),
+                "size": len(role_icon_data),
+                "front_back_type": "front",
+                "trait_ids": ["t1"],
+                "rarity": "5",
+            }
+        ],
+    }
+
+
+def _valid_role_feature_item(role_id: str = "r1", name: str = "Role A", normalized_name: str = "role a") -> dict:
+    return {
+        "role_id": role_id,
+        "name": name,
+        "normalized_name": normalized_name,
+        "front_back_type": "front",
+        "trait_ids": ["t1"],
+        "rarity": "5",
+        "icon_rgba": _pixel_payload("RGBA", [64, 64]),
+        "icon_mask": _pixel_payload("L", [64, 64]),
+        "histogram": [0.0] * 4096,
+    }
+
+
+def _valid_role_feature_payload() -> dict:
+    return {
+        "role_feature_schema_version": CW_ROLE_FEATURE_SCHEMA_VERSION,
+        "recognizer_algorithm_version": CW_ROLE_RECOGNIZER_ALGORITHM_VERSION,
+        "geometry_version": CW_SLOT_GEOMETRY_VERSION,
+        "empty_template_version": CW_SLOT_EMPTY_TEMPLATE_VERSION,
+        "target_size": [103, 120],
+        "avatar_roi": [5, 4, 98, 108],
+        "feature_size": [64, 64],
+        "hist_bins": [16, 16, 16],
+        "min_score": 0.58,
+        "low_score": 0.50,
+        "min_gap": 0.035,
+        "empty_min_score": 0.82,
+        "empty_min_gap": 0.08,
+        "items": [_valid_role_feature_item()],
+    }
+
+
+def test_valid_role_feature_payload_uses_spec_thresholds() -> None:
+    payload = _valid_role_feature_payload()
+
+    assert payload["min_score"] == 0.58
+    assert payload["low_score"] == 0.50
+    assert payload["min_gap"] == 0.035
+    assert payload["empty_min_score"] == 0.82
+    assert payload["empty_min_gap"] == 0.08
+
+
 def _json_bytes(payload: object) -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
@@ -61,11 +163,23 @@ def _load_verifier():
 
 def _cw_bundle_entries(bundle_root: str, overrides: dict[str, object] | None = None) -> dict[str, bytes]:
     icon_data = b"icon"
+    role_icon_data = b"role-icon"
+    field_empty_data = _png_bytes()
+    hand_empty_data = _png_bytes()
     payloads = {
         "raw_config.json": {
             "rpg_game_big_version": "3.2",
             "trait_info_list": [{"id": "t1", "name": "Trait A", "type": "faction"}],
-            "role_list": [{"id": "r1", "name": "Role A", "trait_ids": ["t1"]}],
+            "role_list": [
+                {
+                    "id": "r1",
+                    "name": "Role A",
+                    "icon": "https://example.test/r1.png",
+                    "rarity": "5",
+                    "front_back_type": "front",
+                    "trait_ids": ["t1"],
+                }
+            ],
             "portal_list": [{"portal_id": "p1", "title": "Portal A", "description": "desc"}],
             "fight_augment_list": [{"id": "a1", "name": "Strategy A", "desc": "desc"}],
             "equipment_list": [{"id": "e1", "name": "Equipment A", "icon": "https://example.test/icon-a.png"}],
@@ -111,6 +225,15 @@ def _cw_bundle_entries(bundle_root: str, overrides: dict[str, object] | None = N
         },
         "equipment/features.json": _valid_feature_payload(),
         "equipment/icons/icon-a.png": icon_data,
+        "roles/manifest.json": _valid_role_manifest_payload(
+            role_icon_data=role_icon_data,
+            field_empty_data=field_empty_data,
+            hand_empty_data=hand_empty_data,
+        ),
+        "roles/features.json": _valid_role_feature_payload(),
+        "roles/icons/r1.png": role_icon_data,
+        "roles/empty/field-v1.png": field_empty_data,
+        "roles/empty/hand-v1.png": hand_empty_data,
     }
     payloads.update(overrides or {})
     encoded_payloads = {
@@ -195,6 +318,7 @@ def test_pyproject_includes_cw_generated_resources() -> None:
 
     assert hatch_targets["wheel"]["packages"] == ["trail"]
     assert hatch_targets["sdist"]["force-include"]["trail/scenes/cw/generated"] == "trail/scenes/cw/generated"
+    assert hatch_targets["sdist"]["force-include"]["trail/scenes/cw/assets/slots"] == "trail/scenes/cw/assets/slots"
     assert "force-include" not in hatch_targets["wheel"]
 
 
@@ -208,6 +332,11 @@ def test_verify_cw_resource_bundle_artifacts_script_exists() -> None:
         'manifest.get("files")',
         "equipment/features.json",
         "equipment/icons/",
+        "roles/features.json",
+        "roles/icons/",
+        "roles/empty/",
+        "_validate_role_manifest",
+        "_validate_role_features",
     ]:
         assert required in verifier
 
@@ -693,6 +822,79 @@ def test_verify_zip_rejects_equipment_local_paths_outside_icon_dir(tmp_path: Pat
     _write_zip(archive_path, _replace_manifest(entries, bundle_root, manifest))
 
     with pytest.raises(ValueError, match="cw equipment icon path invalid"):
+        verifier.verify_zip(archive_path)
+
+
+def test_verify_zip_rejects_unreferenced_role_files(tmp_path: Path) -> None:
+    verifier = _load_verifier()
+    bundle_root = "trail/scenes/cw/generated/3.2"
+    entries = _cw_bundle_entries(bundle_root)
+    entries[f"{bundle_root}/roles/icons/stale.png"] = b"stale"
+    archive_path = tmp_path / "unreferenced-role-file.zip"
+    _write_zip(archive_path, entries)
+
+    with pytest.raises(ValueError, match="unreferenced generated file"):
+        verifier.verify_zip(archive_path)
+
+
+def test_verify_zip_rejects_role_feature_manifest_mismatch(tmp_path: Path) -> None:
+    verifier = _load_verifier()
+    bundle_root = "trail/scenes/cw/generated/3.2"
+    archive_path = tmp_path / "role-feature-mismatch.zip"
+    _write_zip(
+        archive_path,
+        _cw_bundle_entries(
+            bundle_root,
+            overrides={"roles/features.json": {**_valid_role_feature_payload(), "items": [_valid_role_feature_item("r2")]}},
+        ),
+    )
+
+    with pytest.raises(ValueError, match="cw role feature role_id mismatch"):
+        verifier.verify_zip(archive_path)
+
+
+def test_verify_zip_rejects_role_icon_checksum_mismatch(tmp_path: Path) -> None:
+    verifier = _load_verifier()
+    bundle_root = "trail/scenes/cw/generated/3.2"
+    entries = _cw_bundle_entries(bundle_root)
+    bad_icon_data = b"wrong-role-icon"
+    entries[f"{bundle_root}/roles/icons/r1.png"] = bad_icon_data
+    manifest = json.loads(entries[f"{bundle_root}/manifest.json"].decode("utf-8"))
+    for entry in manifest["files"]:
+        if entry["path"] == "roles/icons/r1.png":
+            entry["sha256"] = hashlib.sha256(bad_icon_data).hexdigest()
+            entry["size"] = len(bad_icon_data)
+            break
+    manifest["content_digest"] = _manifest_digest(manifest)
+    archive_path = tmp_path / "bad-role-icon-checksum.zip"
+    _write_zip(archive_path, _replace_manifest(entries, bundle_root, manifest))
+
+    with pytest.raises(ValueError, match="role icon checksum mismatch"):
+        verifier.verify_zip(archive_path)
+
+
+@pytest.mark.parametrize(
+    ("data", "match"),
+    [
+        (_truncated_empty_png_bytes(), "invalid"),
+        (_png_bytes(size=(102, 120)), "size"),
+        (_png_bytes(mode="RGB"), "mode"),
+    ],
+)
+def test_verify_zip_rejects_bad_role_empty_templates(tmp_path: Path, data: bytes, match: str) -> None:
+    verifier = _load_verifier()
+    bundle_root = "trail/scenes/cw/generated/3.2"
+    entries = _cw_bundle_entries(
+        bundle_root,
+        overrides={
+            "roles/manifest.json": _valid_role_manifest_payload(field_empty_data=data),
+            "roles/empty/field-v1.png": data,
+        },
+    )
+    archive_path = tmp_path / "bad-role-empty-template.zip"
+    _write_zip(archive_path, entries)
+
+    with pytest.raises(ValueError, match=match):
         verifier.verify_zip(archive_path)
 
 
