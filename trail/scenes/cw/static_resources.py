@@ -219,8 +219,15 @@ def _is_path_link(path: Path) -> bool:
     return path.is_symlink() or (callable(is_junction) and is_junction())
 
 
-def _bundle_path(root: Path, relative: str, *, missing_code: str = "CW_RESOURCE_BUNDLE_MISSING") -> Path:
+def _bundle_path(
+    root: Path,
+    relative: str,
+    *,
+    missing_code: str = "CW_RESOURCE_BUNDLE_MISSING",
+    root_resolved: Path | None = None,
+) -> Path:
     clean_relative = _clean_bundle_relative(relative)
+    root_resolved = root_resolved or root.resolve()
     candidate = root
     for part in PurePosixPath(clean_relative).parts:
         candidate = candidate / part
@@ -228,7 +235,7 @@ def _bundle_path(root: Path, relative: str, *, missing_code: str = "CW_RESOURCE_
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw resource bundle file must not be symlink: {relative}")
     path = (root / clean_relative).resolve()
     try:
-        is_inside_root = path.is_relative_to(root.resolve())
+        is_inside_root = path.is_relative_to(root_resolved)
     except ValueError:
         is_inside_root = False
     if not is_inside_root:
@@ -238,8 +245,8 @@ def _bundle_path(root: Path, relative: str, *, missing_code: str = "CW_RESOURCE_
     return path
 
 
-def _bundle_relative(root: Path, path: Path) -> str:
-    return path.relative_to(root.resolve()).as_posix()
+def _bundle_relative(root: Path, path: Path, *, root_resolved: Path | None = None) -> str:
+    return path.relative_to(root_resolved or root.resolve()).as_posix()
 
 
 def write_bundle_json(path: Path, payload: dict[str, Any]) -> None:
@@ -250,8 +257,13 @@ def write_bundle_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def bundle_file_entry(root: Path, relative: str) -> dict[str, Any]:
-    path = _bundle_path(root, relative)
-    return {"path": _bundle_relative(root, path), "sha256": _file_sha256(path), "size": path.stat().st_size}
+    root_resolved = root.resolve()
+    path = _bundle_path(root, relative, root_resolved=root_resolved)
+    return {
+        "path": _bundle_relative(root, path, root_resolved=root_resolved),
+        "sha256": _file_sha256(path),
+        "size": path.stat().st_size,
+    }
 
 
 def write_bundle_manifest(
@@ -260,6 +272,7 @@ def write_bundle_manifest(
     source_manifest: dict[str, Any],
     source_kind: str = "package",
 ) -> dict[str, Any]:
+    root_resolved = root.resolve()
     file_relatives = [*_FIXED_BUNDLE_RELATIVES]
     equipment_manifest = _read_json(root / "equipment" / "manifest.json")
     role_manifest = _read_json(root / "roles" / "manifest.json")
@@ -269,14 +282,22 @@ def write_bundle_manifest(
     seen_local_paths: set[str] = set(_FIXED_BUNDLE_RELATIVES)
     for item in items:
         local_path = _clean_equipment_icon_relative(item["local_path"])
-        normalized_local_path = _bundle_relative(root, _bundle_path(root, local_path))
+        normalized_local_path = _bundle_relative(
+            root,
+            _bundle_path(root, local_path, root_resolved=root_resolved),
+            root_resolved=root_resolved,
+        )
         if normalized_local_path in seen_local_paths:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment manifest duplicate local_path: {local_path}")
         seen_local_paths.add(normalized_local_path)
         file_relatives.append(normalized_local_path)
     for item in role_manifest["items"]:
         local_path = _clean_role_icon_relative(item["local_path"])
-        normalized_local_path = _bundle_relative(root, _bundle_path(root, local_path))
+        normalized_local_path = _bundle_relative(
+            root,
+            _bundle_path(root, local_path, root_resolved=root_resolved),
+            root_resolved=root_resolved,
+        )
         if normalized_local_path in seen_local_paths:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role manifest duplicate local_path: {local_path}")
         seen_local_paths.add(normalized_local_path)
@@ -378,6 +399,7 @@ def _validate_manifest(root: Path, manifest: dict[str, Any], *, required_relativ
     files = manifest.get("files")
     if not isinstance(files, list):
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw resource bundle manifest missing files")
+    root_resolved = root.resolve()
     seen_paths: set[str] = set()
     for entry in files:
         if not isinstance(entry, dict):
@@ -393,8 +415,8 @@ def _validate_manifest(root: Path, manifest: dict[str, Any], *, required_relativ
         ):
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw resource bundle file entry incomplete")
         clean_relative = _clean_bundle_relative(relative)
-        path = _bundle_path(root, clean_relative)
-        normalized_relative = _bundle_relative(root, path)
+        path = _bundle_path(root, clean_relative, root_resolved=root_resolved)
+        normalized_relative = _bundle_relative(root, path, root_resolved=root_resolved)
         if normalized_relative in seen_paths:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw resource bundle duplicate file entry: {relative}")
         seen_paths.add(normalized_relative)
@@ -500,6 +522,7 @@ def _validate_role_manifest(root: Path, payload: dict[str, Any]) -> None:
     empty_templates = payload.get("empty_templates")
     if not isinstance(empty_templates, dict):
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest missing empty_templates")
+    root_resolved = root.resolve()
     for key, expected_relative in _ROLE_EMPTY_TEMPLATE_RELATIVES.items():
         entry = empty_templates.get(key)
         if not isinstance(entry, dict):
@@ -513,7 +536,7 @@ def _validate_role_manifest(root: Path, payload: dict[str, Any]) -> None:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template sha256 invalid: {key}")
         if not isinstance(expected_size, int) or isinstance(expected_size, bool):
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template size invalid: {key}")
-        template_path = _bundle_path(root, local_path)
+        template_path = _bundle_path(root, local_path, root_resolved=root_resolved)
         if template_path.stat().st_size != expected_size or _file_sha256(template_path) != expected_hash:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role empty template checksum mismatch: {local_path}")
         _validate_role_empty_template_path(template_path, local_path)
@@ -550,8 +573,8 @@ def _validate_role_manifest(root: Path, payload: dict[str, Any]) -> None:
         if not isinstance(item.get("size"), int) or isinstance(item.get("size"), bool):
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest item size invalid")
         local_path = _clean_role_icon_relative(item["local_path"])
-        icon_path = _bundle_path(root, local_path)
-        normalized_local_path = _bundle_relative(root, icon_path)
+        icon_path = _bundle_path(root, local_path, root_resolved=root_resolved)
+        normalized_local_path = _bundle_relative(root, icon_path, root_resolved=root_resolved)
         if normalized_local_path in seen_local_paths:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role manifest duplicate local_path: {local_path}")
         seen_local_paths.add(normalized_local_path)
@@ -729,20 +752,26 @@ def _validate_equipment_manifest_payload(payload: dict[str, Any]) -> None:
 
 def _validate_equipment_manifest(root: Path, payload: dict[str, Any]) -> None:
     _validate_equipment_manifest_payload(payload)
+    root_resolved = root.resolve()
     items = payload["items"]
     for item in items:
         local_path = _clean_equipment_icon_relative(item.get("local_path"))
         expected_hash = item.get("sha256")
         expected_size = item.get("size")
-        icon_path = _bundle_path(root, local_path)
+        icon_path = _bundle_path(root, local_path, root_resolved=root_resolved)
         if icon_path.stat().st_size != expected_size or _file_sha256(icon_path) != expected_hash:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment icon checksum mismatch: {local_path}")
 
 
 def _validate_equipment_manifest_paths_listed(root: Path, payload: dict[str, Any], manifest_files: set[str]) -> None:
+    root_resolved = root.resolve()
     for item in payload["items"]:
         local_path = _clean_equipment_icon_relative(item["local_path"])
-        normalized_local_path = _bundle_relative(root, _bundle_path(root, local_path))
+        normalized_local_path = _bundle_relative(
+            root,
+            _bundle_path(root, local_path, root_resolved=root_resolved),
+            root_resolved=root_resolved,
+        )
         if normalized_local_path not in manifest_files:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment icon missing from manifest files: {local_path}")
 
@@ -762,8 +791,13 @@ def _iter_role_manifest_local_paths(payload: dict[str, Any]):
 
 
 def _validate_role_manifest_paths_listed(root: Path, role_manifest: dict[str, Any], manifest_files: set[str]) -> None:
+    root_resolved = root.resolve()
     for local_path in _iter_role_manifest_local_paths(role_manifest):
-        normalized_local_path = _bundle_relative(root, _bundle_path(root, local_path))
+        normalized_local_path = _bundle_relative(
+            root,
+            _bundle_path(root, local_path, root_resolved=root_resolved),
+            root_resolved=root_resolved,
+        )
         if normalized_local_path not in manifest_files:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw role resource missing from manifest files: {local_path}")
 
@@ -771,22 +805,42 @@ def _validate_role_manifest_paths_listed(root: Path, role_manifest: dict[str, An
 def _validate_manifest_files_allowed(
     root: Path, equipment_manifest: dict[str, Any], role_manifest: dict[str, Any], manifest_files: set[str]
 ) -> None:
+    root_resolved = root.resolve()
     allowed = set(_FIXED_BUNDLE_RELATIVES)
     for item in equipment_manifest["items"]:
         local_path = _clean_equipment_icon_relative(item["local_path"])
-        allowed.add(_bundle_relative(root, _bundle_path(root, local_path)))
+        allowed.add(
+            _bundle_relative(
+                root,
+                _bundle_path(root, local_path, root_resolved=root_resolved),
+                root_resolved=root_resolved,
+            )
+        )
     for local_path in _iter_role_manifest_local_paths(role_manifest):
-        allowed.add(_bundle_relative(root, _bundle_path(root, local_path)))
+        allowed.add(
+            _bundle_relative(
+                root,
+                _bundle_path(root, local_path, root_resolved=root_resolved),
+                root_resolved=root_resolved,
+            )
+        )
     extra = sorted(manifest_files - allowed)
     if extra:
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw resource bundle manifest unexpected file: {extra[0]}")
 
 
 def _validate_equipment_override_files_allowed(root: Path, payload: dict[str, Any], manifest_files: set[str]) -> None:
+    root_resolved = root.resolve()
     allowed = {"equipment/manifest.json", "equipment/features.json"}
     for item in payload["items"]:
         local_path = _clean_equipment_icon_relative(item["local_path"])
-        allowed.add(_bundle_relative(root, _bundle_path(root, local_path)))
+        allowed.add(
+            _bundle_relative(
+                root,
+                _bundle_path(root, local_path, root_resolved=root_resolved),
+                root_resolved=root_resolved,
+            )
+        )
     extra = sorted(manifest_files - allowed)
     if extra:
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment override manifest unexpected file: {extra[0]}")
@@ -798,7 +852,7 @@ def _validate_no_unreferenced_bundle_files(root: Path, manifest_files: set[str])
     for path in resolved_root.rglob("*"):
         if not path.is_file():
             continue
-        relative = _bundle_relative(root, path)
+        relative = _bundle_relative(root, path, root_resolved=resolved_root)
         if relative not in allowed:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw resource bundle unreferenced file: {relative}")
 
