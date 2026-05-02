@@ -4,7 +4,7 @@
 
 - 默认快速回归命令使用 `uv run pytest`；pytest 配置固定 `--basetemp=.pytest-tmp`，避免 Windows 用户临时目录权限/扫描问题拖慢或阻塞测试。
 - 慢速真实集成测试必须标记 `@pytest.mark.slow`，默认跳过；需要完整真实后端/安装器回归时显式运行 `uv run pytest --run-slow`。
-- 推荐本地并行快速回归使用 `uv run pytest -n 8`；需要更激进时可试 `uv run pytest -n auto`，但 Windows 资源压力下固定 worker 数更稳。新增测试应保持 tmp/session/fixture 隔离，避免依赖执行顺序或共享用户环境，确保可被 `pytest-xdist` 分发。
+- 推荐本地并行快速回归使用 `uv run pytest -n 8`；Windows 下若 full suite 尾部抖动明显，优先试 `uv run pytest -n 8 --dist worksteal`。需要更激进时可试 `uv run pytest -n auto`，但 Windows 资源压力下固定 worker 数更稳。并发跑多条 pytest profile 时，必须为每条命令显式设置不同 `--basetemp`，避免多个 worker 同时清理 `.pytest-tmp` 导致权限或文件缺失竞态。新增测试应保持 tmp/session/fixture 隔离，避免依赖执行顺序或共享用户环境，确保可被 `pytest-xdist` 分发。
 - 真实 PowerShell 安装器、真实 OCR 图片质量门禁、联网或下载资源的回归默认归入 slow；普通单测必须 stub 外部 I/O、网络、长 sleep 和用户级环境写入。
 - 调整测试分层时，同步维护 `pyproject.toml`、`tests/conftest.py` 的 marker/选项与本说明；不要通过临时命令行习惯隐藏慢测依赖。
 
