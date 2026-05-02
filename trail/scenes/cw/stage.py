@@ -28,6 +28,7 @@ STAGE_RESOURCE_ALIASES: tuple[tuple[str, str], ...] = (
 )
 
 SETTLE_OCR_KEYWORDS: tuple[str, ...] = ("继续挑战", "挑战成功", "挑战失败")
+PREPARATION_OCR_KEYWORDS: tuple[str, ...] = ("备战阶段", "出战")
 STAGE_WAIT_INTERVAL_SECONDS = 0.5
 CW_STATUS_LEVEL_REGION = {"from_x": 220, "from_y": 880, "to_x": 360, "to_y": 950}
 CW_STATUS_EXP_REGION = {"from_x": 256, "from_y": 943, "to_x": 325, "to_y": 973}
@@ -340,6 +341,8 @@ def _detect_cw_stage_from_ocr(runtime) -> str | None:
 
     pieces = ocr() or []
     text = "".join(_read_ocr_piece(piece).strip() for piece in pieces)
+    if any(keyword in text for keyword in PREPARATION_OCR_KEYWORDS):
+        return "preparation"
     if any(keyword in text for keyword in SETTLE_OCR_KEYWORDS):
         return "settle"
     return None
@@ -352,6 +355,8 @@ def _detect_cw_stage_from_ocr_image(runtime, image) -> str | None:
 
     pieces = ocr_image(image, ocr=OcrRequestConfig(ocr_mode="fast", retry_high="auto")) or []
     text = "".join(_read_ocr_piece(piece).strip() for piece in pieces)
+    if any(keyword in text for keyword in PREPARATION_OCR_KEYWORDS):
+        return "preparation"
     if any(keyword in text for keyword in SETTLE_OCR_KEYWORDS):
         return "settle"
     return None
@@ -402,6 +407,10 @@ def build_cw_stage_detector(runtime):
         key="blank_continue_conflict_candidate",
         template=str(resolve_scene_asset("cw", "stage.settle")),
     )
+    battle_start_target = BatchLocateTarget(
+        key="battle_start_candidate",
+        template=str(resolve_scene_asset("cw", "action.battle_start")),
+    )
 
     def detector() -> str | None:
         screenshot = getattr(runtime, "screenshot", None)
@@ -429,6 +438,15 @@ def build_cw_stage_detector(runtime):
                 return "boss_preview"
             if _is_layer_transition_from_ocr(ocr_items):
                 return "layer_transition"
+
+        battle_start_result = run_batch_locate(
+            runtime,
+            (battle_start_target,),
+            image=shared_image,
+            trace_prefix="cw_stage_battle_start_locate",
+        ).by_key[battle_start_target.key]
+        if battle_start_result.found:
+            return "preparation"
 
         locate_result = run_batch_locate(
             runtime,

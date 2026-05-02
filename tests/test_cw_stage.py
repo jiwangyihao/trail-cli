@@ -215,6 +215,26 @@ def test_build_cw_stage_detector_reads_tuple_ocr_results_for_settle_keywords():
     assert detector() == "settle"
 
 
+def test_build_cw_stage_detector_falls_back_to_preparation_from_ocr():
+    runtime = _StageDetectorRuntime(ocr_image_result=[_rapidocr_piece("备战阶段")])
+
+    detector = stage_scene.build_cw_stage_detector(runtime)
+
+    assert detector() == "preparation"
+
+
+def test_build_cw_stage_detector_maps_battle_button_to_preparation_without_ocr():
+    runtime = _StageDetectorRuntime(
+        locate_hits={_asset("action.battle_start"): _box("action.battle_start", left=1650, top=720)},
+        ocr_image_result=[_rapidocr_piece("备战阶段")],
+    )
+
+    detector = stage_scene.build_cw_stage_detector(runtime)
+
+    assert detector() == "preparation"
+    assert runtime.ocr_image_calls == []
+
+
 def test_build_cw_stage_detector_maps_click_blank_without_conflict_to_layer_transition():
     runtime = _StageDetectorRuntime(
         locate_hits={_asset("stage.boss_preview"): _box("stage.boss_preview", left=440, top=480)},
