@@ -107,14 +107,20 @@ class PortalRuntime(StartRuntime):
         self.keys.append((key, presses, interval))
 
 
-def _build_cw_harness(tmp_path: Path, *, runtime):
+def _build_cw_harness(tmp_path: Path, *, runtime, cw_resource_service=None):
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
-    cw_service = CwService(runtime_service=runtime_service)
+    cw_service = CwService(runtime_service=runtime_service, cw_resource_service=cw_resource_service)
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     return registry, service, session, command_service
+
+
+class _FastSlotsResourceService:
+    def slots_read_resources(self, *, workspace_root):
+        del workspace_root
+        return {}, {}, object()
 
 
 def _patch_portal_select_auto_collect(
@@ -773,7 +779,11 @@ def test_cw_portal_select_guide_preflight_rejects_incomplete_guide_before_click(
 def test_cw_portal_select_auto_applies_selected_guide_and_invalidates_runtime_state(tmp_path: Path, monkeypatch):
     runtime = PortalRuntime()
     _stub_portal_select_auto_collect(monkeypatch)
-    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    registry, service, session, command_service = _build_cw_harness(
+        tmp_path,
+        runtime=runtime,
+        cw_resource_service=_FastSlotsResourceService(),
+    )
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
         "guide": _complete_selected_guide(),
@@ -831,7 +841,11 @@ def test_cw_portal_select_auto_applies_selected_guide_and_invalidates_runtime_st
 def test_cw_portal_select_waits_for_preparation_before_auto_apply(tmp_path: Path, monkeypatch):
     runtime = PortalRuntime()
     _stub_portal_select_auto_collect(monkeypatch)
-    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    registry, service, session, command_service = _build_cw_harness(
+        tmp_path,
+        runtime=runtime,
+        cw_resource_service=_FastSlotsResourceService(),
+    )
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
         "guide": _complete_selected_guide(),
@@ -872,7 +886,11 @@ def test_cw_portal_select_waits_for_preparation_before_auto_apply(tmp_path: Path
 def test_cw_portal_select_adds_operation_guide_skill_info(tmp_path: Path, monkeypatch):
     runtime = PortalRuntime()
     _stub_portal_select_auto_collect(monkeypatch)
-    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    registry, service, session, command_service = _build_cw_harness(
+        tmp_path,
+        runtime=runtime,
+        cw_resource_service=_FastSlotsResourceService(),
+    )
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
         "guide": _complete_selected_guide(operation_guide="前期 先读图"),
@@ -904,7 +922,11 @@ def test_cw_portal_select_adds_operation_guide_skill_info(tmp_path: Path, monkey
 def test_cw_portal_select_skill_info_survives_auto_collect(tmp_path: Path, monkeypatch):
     runtime = PortalRuntime()
     _stub_portal_select_auto_collect(monkeypatch)
-    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    registry, service, session, command_service = _build_cw_harness(
+        tmp_path,
+        runtime=runtime,
+        cw_resource_service=_FastSlotsResourceService(),
+    )
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
         "guide": _complete_selected_guide(operation_guide="前期 先读图"),
@@ -936,7 +958,11 @@ def test_cw_portal_select_skill_info_survives_auto_collect(tmp_path: Path, monke
 def test_cw_portal_select_omits_skill_info_when_operation_guide_blank(tmp_path: Path, monkeypatch):
     runtime = PortalRuntime()
     _stub_portal_select_auto_collect(monkeypatch)
-    registry, service, session, command_service = _build_cw_harness(tmp_path, runtime=runtime)
+    registry, service, session, command_service = _build_cw_harness(
+        tmp_path,
+        runtime=runtime,
+        cw_resource_service=_FastSlotsResourceService(),
+    )
     session.scene_state["cw"] = {
         "entry": {"page": "invest", "mode": "continue", "difficulty": "current", "battle_mode": "standard"},
         "guide": _complete_selected_guide(operation_guide="   "),
