@@ -94,6 +94,8 @@ def _append_warnings(lines: list[str], payload: dict[str, Any]) -> None:
             continue
         if _append_role_match_warning(lines, warning):
             continue
+        if _append_cw_equipment_material_missing_warning(lines, warning):
+            continue
         if warning.get("portal") is not None:
             lines.append(
                 f"warn portal={_encode_value(warning.get('portal'))} score={_encode_value(_format_score_value(warning.get('score')))}"
@@ -161,6 +163,20 @@ def _append_role_match_warning(lines: list[str], warning: dict[str, Any]) -> boo
         ]
     )
     _append_fact_line(lines, "warn", *facts)
+    return True
+
+
+def _append_cw_equipment_material_missing_warning(lines: list[str], warning: dict[str, Any]) -> bool:
+    if warning.get("code") != "CW_EQUIPMENT_MATERIALS_MISSING":
+        return False
+    _append_fact_line(
+        lines,
+        "warn",
+        ("code", warning.get("code")),
+        ("需求", warning.get("需求")),
+        ("持有", warning.get("持有")),
+        ("msg", warning.get("message")),
+    )
     return True
 
 
@@ -1229,14 +1245,80 @@ def _render_cw_equipment_prepare(command: str, payload: dict[str, Any]) -> list[
 
 def _render_cw_equipment_compose(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
-    return _render_success_summary(
-        command,
-        payload,
+    summary = _format_fact_sequence(
         ("pos", data.get("pos")),
         ("name", data.get("name")),
         ("装备", data.get("equipment")),
         ("count", data.get("count") if "count" in data else 0),
     )
+    lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
+    _append_success_capture_block(lines, payload)
+
+    compose_action = _as_dict(data.get("compose_action"))
+    equip_action = _as_dict(data.get("equip_action"))
+    _append_section(lines, "综合信息")
+    _append_fact_line(
+        lines,
+        "info",
+        ("action", "compose"),
+        ("drag_from", compose_action.get("drag_from")),
+        ("drag_to", compose_action.get("drag_to")),
+        ("verified", data.get("verified")),
+        ("consumed", data.get("consumed")),
+        ("post_compose_equipment_count", data.get("post_compose_equipment_count")),
+        ("verified_shift", data.get("verified_shift")),
+    )
+    _append_fact_line(
+        lines,
+        "info",
+        ("action", "equip"),
+        ("drag_from", equip_action.get("drag_from")),
+        ("drag_to", equip_action.get("drag_to")),
+        ("verified", data.get("verified")),
+        ("post_equip_equipment_count", data.get("post_equip_equipment_count")),
+        ("equipment_stale", True),
+    )
+
+    equipment_lines: list[str] = []
+    for item in _as_list(data.get("materials")):
+        if not isinstance(item, dict):
+            continue
+        _append_fact_line(
+            equipment_lines,
+            "item",
+            ("kind", "material"),
+            ("phase", "pre_compose"),
+            ("idx", item.get("idx")),
+            ("pos", item.get("pos")),
+            ("name", item.get("name")),
+        )
+    result_item = _as_dict(data.get("result_item"))
+    if result_item:
+        _append_fact_line(
+            equipment_lines,
+            "item",
+            ("kind", "result"),
+            ("phase", "post_compose"),
+            ("idx", result_item.get("idx")),
+            ("pos", result_item.get("pos")),
+            ("name", result_item.get("name")),
+        )
+    if equipment_lines:
+        _append_section(lines, "装备信息")
+        lines.extend(equipment_lines)
+
+    _append_section(lines, "角色信息")
+    _append_fact_line(
+        lines,
+        "slot",
+        ("pos", data.get("pos")),
+        ("name", data.get("name")),
+        ("装备", data.get("equipment")),
+        ("count", data.get("count") if "count" in data else 0),
+    )
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
 
 
 def _compact_equipment_basics(value: Any) -> str | None:

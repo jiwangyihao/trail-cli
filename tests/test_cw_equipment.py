@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from copy import deepcopy
 from functools import lru_cache
 from io import BytesIO
 
@@ -1558,6 +1559,100 @@ def _equipment_raw_config_for_recommendations():
     }
 
 
+class _ComposeRuntime:
+    def __init__(self):
+        self.drags = []
+
+    def drag_to(self, from_x, from_y, to_x, to_y, **kwargs):
+        self.drags.append((from_x, from_y, to_x, to_y, kwargs))
+
+
+def _equipment_item(idx, name, equipment_id, cache_key, *, uncertain=False, score=0.99, gap=0.50):
+    return {
+        "idx": idx,
+        "pos": f"equipment:{idx}",
+        "name": name,
+        "equipment_id": equipment_id,
+        "cache_key": cache_key,
+        "score": score,
+        "gap": gap,
+        "uncertain": uncertain,
+        "center": {"x": 1000 + idx, "y": 500 + idx},
+    }
+
+
+def _equipment_snapshot(*items, recommendations=None):
+    snapshot = {
+        "count": len(items),
+        "uncertain": sum(1 for item in items if item.get("uncertain")),
+        "empty": 60 - len(items),
+        "items": list(items),
+        "backend": "vector",
+        "layout": "default",
+        "stale": False,
+    }
+    if recommendations is not None:
+        snapshot["recommendations"] = recommendations
+    return snapshot
+
+
+def _slots_reader_for(front=None, back=None, hand=None):
+    return lambda: (
+        front if front is not None else [{"name": "希儿"}],
+        back if back is not None else ["佩拉"],
+        hand if hand is not None else [],
+    )
+
+
+def _compose_raw_config(*, basics=None, advanced_id="saw", advanced_name="高周波电锯"):
+    basics = basics or [
+        {"id": "armor", "name": "基础装甲", "icon": "https://act-webstatic.mihoyo.com/armor.png"},
+        {"id": "battery", "name": "光能电池", "icon": "https://act-webstatic.mihoyo.com/battery.png"},
+    ]
+    return {
+        "rpg_game_big_version": "3.2",
+        "equipment_list": [{"id": advanced_id, "name": advanced_name, "icon": "https://act-webstatic.mihoyo.com/saw.png", "compose_list": [{"childrens": list(basics)}]}],
+    }
+
+
+def _install_compose_equipment_reads(monkeypatch, equipment, session, snapshots):
+    pending = [deepcopy(snapshot) for snapshot in snapshots]
+
+    def fake_apply_cw_equipment_read(*args, **kwargs):
+        from trail.scenes.cw.models import ensure_cw_state
+
+        if not pending:
+            raise AssertionError("unexpected extra equipment read")
+        snapshot = pending.pop(0)
+        ensure_cw_state(session)["equipment"] = deepcopy(snapshot)
+        return deepcopy(snapshot)
+
+    monkeypatch.setattr(equipment, "apply_cw_equipment_read", fake_apply_cw_equipment_read)
+
+
+def _compose_and_equip(
+    equipment,
+    session,
+    runtime,
+    *,
+    raw_config=None,
+    slots_reader=None,
+    guide_config=None,
+):
+    return equipment.compose_and_equip_cw_equipment(
+        session,
+        runtime,
+        name="高周波电锯",
+        slot="front:0",
+        role="希儿",
+        raw_config=raw_config if raw_config is not None else _compose_raw_config(),
+        slots_reader=slots_reader
+        or _slots_reader_for(front=[{"name": "希儿", "equipments": ["战场手册"]}]),
+        guide_config=guide_config if guide_config is not None else {"roles": []},
+        request_id="req-compose",
+    )
+
+
 def test_build_equipment_recommendations_uses_guide_order_slots_and_basic_counts(tmp_path):
     equipment = load_equipment_module()
     session = _cw_session_with_equipment_guide(tmp_path)
@@ -1715,6 +1810,604 @@ def test_build_equipment_recommendations_ignores_second_equipment_until_boss_pre
     assert recommendations["role_missing"] == []
 
 
+def test_select_compose_materials_chooses_lowest_idx_for_two_different_basics(tmp_path):
+    equipment = load_equipment_module()
+    snapshot = _equipment_snapshot(
+        _equipment_item(4, "基础装甲", "armor", "basic-armor"),
+        _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+        _equipment_item(5, "光能电池", "battery", "basic-battery"),
+    )
+    result = equipment.select_cw_equipment_compose_materials(snapshot, name="高周波电锯", raw_config=_compose_raw_config())
+    assert [item["idx"] for item in result["materials"]] == [2, 5]
+    assert result["needed"] == [{"name": "基础装甲", "need": 1, "have": 2}, {"name": "光能电池", "need": 1, "have": 1}]
+
+
+def test_select_compose_materials_need_two_uses_two_distinct_lowest_items(tmp_path):
+    equipment = load_equipment_module()
+    raw_config = _compose_raw_config(basics=[{"id": "armor", "name": "基础装甲", "icon": "https://act-webstatic.mihoyo.com/armor.png"}, {"id": "armor", "name": "基础装甲", "icon": "https://act-webstatic.mihoyo.com/armor.png"}])
+    snapshot = _equipment_snapshot(_equipment_item(3, "基础装甲", "armor", "basic-armor"), _equipment_item(1, "基础装甲", "armor", "basic-armor"), _equipment_item(2, "基础装甲", "armor", "basic-armor"))
+    result = equipment.select_cw_equipment_compose_materials(snapshot, name="高周波电锯", raw_config=raw_config)
+    assert [item["idx"] for item in result["materials"]] == [1, 2]
+
+
+def test_select_compose_materials_rejects_missing_recipe(tmp_path):
+    equipment = load_equipment_module()
+    snapshot = _equipment_snapshot(
+        _equipment_item(1, "基础装甲", "armor", "basic-armor"),
+        _equipment_item(2, "光能电池", "battery", "basic-battery"),
+    )
+    raw_config = {"rpg_game_big_version": "3.2", "equipment_list": []}
+
+    with pytest.raises(Exception) as exc_info:
+        equipment.select_cw_equipment_compose_materials(snapshot, name="高周波电锯", raw_config=raw_config)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_RECIPE_MISSING"
+
+
+def test_select_compose_materials_rejects_unsupported_recipe(tmp_path):
+    equipment = load_equipment_module()
+    raw_config = _compose_raw_config(
+        basics=[
+            {"id": "armor", "name": "基础装甲", "icon": "https://act-webstatic.mihoyo.com/armor.png"},
+            {"id": "battery", "name": "光能电池", "icon": "https://act-webstatic.mihoyo.com/battery.png"},
+            {"id": "gear", "name": "机械齿轮", "icon": "https://act-webstatic.mihoyo.com/gear.png"},
+        ]
+    )
+    snapshot = _equipment_snapshot(
+        _equipment_item(1, "基础装甲", "armor", "basic-armor"),
+        _equipment_item(2, "光能电池", "battery", "basic-battery"),
+        _equipment_item(3, "机械齿轮", "gear", "basic-gear"),
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        equipment.select_cw_equipment_compose_materials(snapshot, name="高周波电锯", raw_config=raw_config)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_RECIPE_UNSUPPORTED"
+
+
+def test_select_compose_materials_rejects_missing_materials_with_needed_and_held(tmp_path):
+    equipment = load_equipment_module()
+    snapshot = _equipment_snapshot(_equipment_item(1, "基础装甲", "armor", "basic-armor"))
+    with pytest.raises(Exception) as exc_info:
+        equipment.select_cw_equipment_compose_materials(snapshot, name="高周波电锯", raw_config=_compose_raw_config())
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_MATERIALS_MISSING"
+    assert exc_info.value.data["needed"] == [
+        {"name": "基础装甲", "need": 1, "have": 1},
+        {"name": "光能电池", "need": 1, "have": 0},
+    ]
+    assert exc_info.value.data["held"] == [
+        {"idx": 1, "pos": "equipment:1", "name": "基础装甲", "equipment_id": "armor", "cache_key": "basic-armor"}
+    ]
+    assert exc_info.value.warnings == [
+        {
+            "code": "CW_EQUIPMENT_MATERIALS_MISSING",
+            "message": "合成 高周波电锯 的基础装备不足",
+            "需求": "基础装甲:1/1|光能电池:0/1",
+            "持有": "equipment:1:基础装甲",
+        }
+    ]
+
+
+def test_select_compose_materials_rejects_uncertain_material_before_drag(tmp_path):
+    equipment = load_equipment_module()
+    snapshot = _equipment_snapshot(_equipment_item(1, "基础装甲", "armor", "basic-armor", uncertain=True, score=0.61, gap=0.02), _equipment_item(2, "光能电池", "battery", "basic-battery"))
+    with pytest.raises(Exception) as exc_info:
+        equipment.select_cw_equipment_compose_materials(snapshot, name="高周波电锯", raw_config=_compose_raw_config())
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_MATERIAL_UNCERTAIN"
+    assert exc_info.value.data["material"]["idx"] == 1
+
+
+def test_select_compose_materials_does_not_use_advanced_item_when_id_matches_basic(tmp_path):
+    equipment = load_equipment_module()
+    raw_config = _compose_raw_config(advanced_id="same-id", basics=[{"id": "same-id", "name": "基础装甲", "icon": "https://act-webstatic.mihoyo.com/basic.png"}, {"id": "battery", "name": "光能电池", "icon": "https://act-webstatic.mihoyo.com/battery.png"}])
+    snapshot = _equipment_snapshot(_equipment_item(1, "高周波电锯", "same-id", "advanced-same-id"), _equipment_item(2, "光能电池", "battery", "basic-battery"))
+    with pytest.raises(Exception) as exc_info:
+        equipment.select_cw_equipment_compose_materials(snapshot, name="高周波电锯", raw_config=raw_config)
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_MATERIALS_MISSING"
+
+
+def test_select_compose_materials_name_fallback_ignores_explicit_advanced_item(tmp_path):
+    equipment = load_equipment_module()
+    raw_config = _compose_raw_config(
+        basics=[
+            {"name": "基础装甲"},
+            {"id": "battery", "name": "光能电池", "icon": "https://act-webstatic.mihoyo.com/battery.png"},
+        ]
+    )
+    snapshot = _equipment_snapshot(
+        _equipment_item(1, "基础装甲", "armor", "advanced-armor"),
+        _equipment_item(2, "光能电池", "battery", "basic-battery"),
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        equipment.select_cw_equipment_compose_materials(snapshot, name="高周波电锯", raw_config=raw_config)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_MATERIALS_MISSING"
+
+
+def test_select_compose_materials_same_name_different_cache_key_does_not_cross_match(tmp_path):
+    equipment = load_equipment_module()
+    raw_config = _compose_raw_config(
+        basics=[
+            {"id": "armor-a", "name": "基础装甲", "icon": "https://act-webstatic.mihoyo.com/armor-a.png"},
+            {"id": "battery", "name": "光能电池", "icon": "https://act-webstatic.mihoyo.com/battery.png"},
+        ]
+    )
+    snapshot = _equipment_snapshot(
+        _equipment_item(1, "基础装甲", "armor-b", "basic-armor-b"),
+        _equipment_item(2, "光能电池", "battery", "basic-battery"),
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        equipment.select_cw_equipment_compose_materials(snapshot, name="高周波电锯", raw_config=raw_config)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_MATERIALS_MISSING"
+
+
+def test_compose_and_equip_cw_equipment_drags_compose_then_equip_and_writes_session(tmp_path, monkeypatch):
+    from trail.scenes.cw import slots as slots_module
+    from trail.scenes.cw.equipment_grid import equipment_slot_center
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+                _equipment_item(6, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
+                _equipment_item(5, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(5, "备用零件", "spare", "basic-spare"),
+                recommendations={"priority": []},
+            ),
+        ],
+    )
+
+    result = _compose_and_equip(equipment, session, runtime)
+
+    assert [drag[:4] for drag in runtime.drags] == [
+        (*equipment_slot_center("equipment:5"), *equipment_slot_center("equipment:2")),
+        (*equipment_slot_center("equipment:2"), *slots_module.SLOT_POINTS_BY_AREA["front"][0]),
+    ]
+    assert result["compose_action"] == {"drag_from": "equipment:5", "drag_to": "equipment:2"}
+    assert result["equip_action"] == {"drag_from": "equipment:2", "drag_to": "front:1"}
+    assert result["verified_shift"] == 1
+    assert result["post_compose_equipment_count"] == 2
+    assert result["post_equip_equipment_count"] == 1
+    assert result["count"] == 2
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册", "高周波电锯"]
+    assert ensure_cw_state(session)["equipment"]["stale"] is True
+    assert "recommendations" not in ensure_cw_state(session)["equipment"]
+
+
+def test_compose_and_equip_materials_missing_does_not_drag_or_write(tmp_path, monkeypatch):
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [_equipment_snapshot(_equipment_item(2, "基础装甲", "armor", "basic-armor"))],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_MATERIALS_MISSING"
+    assert runtime.drags == []
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
+
+
+def test_compose_and_equip_missing_recipe_does_not_drag_or_write(tmp_path, monkeypatch):
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    raw_config = {"rpg_game_big_version": "3.2", "equipment_list": []}
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+            )
+        ],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime, raw_config=raw_config)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_RECIPE_MISSING"
+    assert runtime.drags == []
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
+
+
+def test_compose_and_equip_unsupported_recipe_does_not_drag_or_write(tmp_path, monkeypatch):
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    raw_config = _compose_raw_config(
+        basics=[
+            {"id": "armor", "name": "基础装甲", "icon": "https://act-webstatic.mihoyo.com/armor.png"},
+            {"id": "battery", "name": "光能电池", "icon": "https://act-webstatic.mihoyo.com/battery.png"},
+            {"id": "gear", "name": "机械齿轮", "icon": "https://act-webstatic.mihoyo.com/gear.png"},
+        ]
+    )
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+                _equipment_item(6, "机械齿轮", "gear", "basic-gear"),
+            )
+        ],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime, raw_config=raw_config)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_RECIPE_UNSUPPORTED"
+    assert runtime.drags == []
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
+
+
+def test_compose_and_equip_uncertain_material_does_not_drag_or_write(tmp_path, monkeypatch):
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor", uncertain=True, score=0.61, gap=0.02),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+            )
+        ],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_MATERIAL_UNCERTAIN"
+    assert runtime.drags == []
+
+
+@pytest.mark.parametrize(
+    ("equipments", "code", "patch_slots_read"),
+    [
+        (["战场手册", "高周波电锯"], "CW_EQUIPMENT_ALREADY_HELD", False),
+        (["A", "B", "C"], "CW_EQUIPMENT_ROLE_EQUIPMENT_FULL", False),
+        ("bad", "CW_EQUIPMENT_ROLE_EQUIPMENT_STATE_INVALID", True),
+    ],
+)
+def test_compose_and_equip_preflight_role_errors_happen_before_drag(tmp_path, monkeypatch, equipments, code, patch_slots_read):
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    ensure_cw_state(session)["slots"]["front"][0]["equipments"] = equipments
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(monkeypatch, equipment, session, [])
+    if patch_slots_read:
+        monkeypatch.setattr(equipment, "read_cw_slots", lambda *args, **kwargs: None)
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime)
+
+    assert getattr(exc_info.value, "code", None) == code
+    assert runtime.drags == []
+
+
+def test_compose_and_equip_slots_read_failure_does_not_drag_or_write(tmp_path, monkeypatch):
+    from trail.core.errors import TrailError
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(monkeypatch, equipment, session, [])
+
+    def slots_reader():
+        raise TrailError("SLOTS_READ_EMPTY", "未读取到任何货币战争槽位角色，请确认当前在编队界面")
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime, slots_reader=slots_reader)
+
+    assert getattr(exc_info.value, "code", None) == "SLOTS_READ_EMPTY"
+    assert runtime.drags == []
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
+
+
+def test_compose_and_equip_equipment_read_failure_does_not_drag_or_write(tmp_path, monkeypatch):
+    from trail.core.errors import TrailError
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+
+    def fail_apply(*args, **kwargs):
+        raise TrailError("CW_EQUIPMENT_SCREENSHOT_INVALID", "equipment read requires PIL screenshot")
+
+    monkeypatch.setattr(equipment, "apply_cw_equipment_read", fail_apply)
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_SCREENSHOT_INVALID"
+    assert runtime.drags == []
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
+
+
+def test_compose_and_equip_post_compose_verify_failure_does_not_write_role(tmp_path, monkeypatch):
+    from trail.scenes.cw.equipment_grid import equipment_slot_center
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+                _equipment_item(6, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "备用零件", "spare", "basic-spare"),
+            ),
+        ],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_COMPOSE_VERIFY_FAILED"
+    assert [drag[:4] for drag in runtime.drags] == [
+        (*equipment_slot_center("equipment:5"), *equipment_slot_center("equipment:2"))
+    ]
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
+
+
+def test_compose_and_equip_post_compose_uncertain_target_fails_without_write(tmp_path, monkeypatch):
+    from trail.scenes.cw.equipment_grid import equipment_slot_center
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+                _equipment_item(6, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(2, "高周波电锯", "saw", "advanced-saw", uncertain=True, score=0.62, gap=0.01),
+                _equipment_item(5, "备用零件", "spare", "basic-spare"),
+            ),
+        ],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_COMPOSE_VERIFY_UNCERTAIN"
+    assert [drag[:4] for drag in runtime.drags] == [
+        (*equipment_slot_center("equipment:5"), *equipment_slot_center("equipment:2"))
+    ]
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
+
+
+def test_compose_and_equip_shift_unproven_keeps_verified_shift_zero(tmp_path, monkeypatch):
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+                _equipment_item(6, "备用零件", "spare", "basic-spare"),
+                _equipment_item(7, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
+                _equipment_item(5, "备用零件", "spare", "basic-spare"),
+                _equipment_item(6, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(5, "备用零件", "spare", "basic-spare"),
+                _equipment_item(6, "备用零件", "spare", "basic-spare"),
+            ),
+        ],
+    )
+
+    result = _compose_and_equip(equipment, session, runtime)
+
+    assert result["verified_shift"] == 0
+    assert result["count"] == 2
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册", "高周波电锯"]
+
+
+def test_compose_and_equip_post_compose_shift_mismatch_fails_without_writing_role(tmp_path, monkeypatch):
+    from trail.scenes.cw.equipment_grid import equipment_slot_center
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+                _equipment_item(6, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
+                _equipment_item(6, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(_equipment_item(6, "备用零件", "spare", "basic-spare")),
+        ],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_COMPOSE_VERIFY_FAILED"
+    assert [drag[:4] for drag in runtime.drags] == [
+        (*equipment_slot_center("equipment:5"), *equipment_slot_center("equipment:2"))
+    ]
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
+
+
+def test_compose_and_equip_post_compose_shift_wrong_idx_fails_without_writing_role(tmp_path, monkeypatch):
+    from trail.scenes.cw.equipment_grid import equipment_slot_center
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+                _equipment_item(6, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
+                _equipment_item(4, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(_equipment_item(4, "备用零件", "spare", "basic-spare")),
+        ],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_COMPOSE_VERIFY_FAILED"
+    assert [drag[:4] for drag in runtime.drags] == [
+        (*equipment_slot_center("equipment:5"), *equipment_slot_center("equipment:2"))
+    ]
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
+
+
+def test_compose_and_equip_post_equip_allows_other_same_named_target(tmp_path, monkeypatch):
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+                _equipment_item(6, "高周波电锯", "saw", "advanced-saw"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
+                _equipment_item(5, "高周波电锯", "saw", "advanced-saw"),
+            ),
+            _equipment_snapshot(_equipment_item(5, "高周波电锯", "saw", "advanced-saw")),
+        ],
+    )
+
+    result = _compose_and_equip(equipment, session, runtime)
+
+    assert result["count"] == 2
+    assert result["post_compose_equipment_count"] == 2
+    assert result["post_equip_equipment_count"] == 1
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册", "高周波电锯"]
+
+
+def test_compose_and_equip_post_equip_verify_failure_does_not_write_role(tmp_path, monkeypatch):
+    from trail.scenes.cw import slots as slots_module
+    from trail.scenes.cw.equipment_grid import equipment_slot_center
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+                _equipment_item(6, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
+                _equipment_item(5, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
+                _equipment_item(5, "备用零件", "spare", "basic-spare"),
+            ),
+        ],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_COMPOSE_EQUIP_VERIFY_FAILED"
+    assert [drag[:4] for drag in runtime.drags] == [
+        (*equipment_slot_center("equipment:5"), *equipment_slot_center("equipment:2")),
+        (*equipment_slot_center("equipment:2"), *slots_module.SLOT_POINTS_BY_AREA["front"][0]),
+    ]
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
+
+
 def test_record_equipment_compose_writes_role_object_and_marks_equipment_stale(tmp_path):
     from trail.scenes.cw.models import ensure_cw_state
 
@@ -1735,6 +2428,25 @@ def test_record_equipment_compose_writes_role_object_and_marks_equipment_stale(t
     assert role["equipments"] == ["战场手册", "高周波电锯"]
     assert ensure_cw_state(session)["equipment"]["stale"] is True
     assert "recommendations" not in ensure_cw_state(session)["equipment"]
+
+
+def test_validate_equipment_compose_preflight_does_not_create_cw_state_on_missing_guide(tmp_path):
+    from trail.session.store import SessionStore
+
+    equipment = load_equipment_module()
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+
+    with pytest.raises(Exception) as exc_info:
+        equipment.validate_cw_equipment_compose_preflight(
+            session,
+            name="高周波电锯",
+            slot="front:0",
+            role="希儿",
+            raw_config=_equipment_raw_config_for_recommendations(),
+        )
+
+    assert getattr(exc_info.value, "code", None) == "CW_GUIDE_STATE_INVALID"
+    assert session.scene_state == {}
 
 
 @pytest.mark.parametrize(

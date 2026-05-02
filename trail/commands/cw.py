@@ -40,7 +40,7 @@ CW_STAGE_HELP = "仅用于货币战争内部阶段的快速检测或等待；不
 CW_SLOTS_HELP = "读取编队槽位并执行换位或上场。"
 CW_SHOP_HELP = "读取商店、购买槽位/经验并刷新或关闭。"
 CW_EQUIPMENT_HELP = (
-    "compose 是只写 session 的装备记录命令，不执行真实 UI 合成，slot 使用从 1 开始的位置。"
+    "compose 会执行真实合成并装备指定进阶装备，成功返回截图，slot 使用从 1 开始的位置。"
     "prepare 默认只汇总 bundle 装备资源，不下载；--refresh 写 workspace override 并刷新图标/特征。"
     "read 默认使用 bundle recognizer，会截图并识别当前装备网格。"
 )
@@ -414,13 +414,13 @@ def cw_equipment_read(session: str = typer.Option(..., "--session")) -> None:
 @equipment_app.command(
     "compose",
     help=(
-        "记录某个角色已合成/装备指定进阶装备；只写 session，不执行真实 UI 合成。"
+        "执行真实合成并装备指定进阶装备；成功返回截图并在验证后写入 session。"
         "--slot 使用 front:1/back:1/hand:1 这种 Agent 可见 1-based 位置。"
     ),
 )
 def cw_equipment_compose(
     session: str = typer.Option(..., "--session"),
-    name: str = typer.Option(..., "--name", help="要记录的进阶装备名称。"),
+    name: str = typer.Option(..., "--name", help="要合成并装备的进阶装备名称。"),
     slot: str = typer.Option(..., "--slot", help="角色所在槽位，格式 front:1/back:1/hand:1，从 1 开始。"),
     role: str = typer.Option(..., "--role", help="槽位中预期的角色名称。"),
 ) -> None:

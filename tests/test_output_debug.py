@@ -422,6 +422,14 @@ def test_cw_equipment_recommendation_docs_are_synced() -> None:
     command_surface = (
         PROJECT_ROOT / "skills" / "trail-cw-prep" / "references" / "command-surface.md"
     ).read_text(encoding="utf-8")
+    compose_docs = "\n".join(
+        line
+        for text in (agents, prep_skill, command_surface)
+        for line in text.splitlines()
+        if "compose" in line
+        or "cw.equipment.compose" in line
+        or "trail cw equipment compose" in line
+    )
 
     for text in (agents, prep_skill, command_surface):
         assert "# 装备优先级" in text
@@ -429,10 +437,13 @@ def test_cw_equipment_recommendation_docs_are_synced() -> None:
         assert "cw.equipment.compose" in text
 
     assert "ok cw.equipment.compose pos=" in agents
+    assert "cw.equipment.compose" in command_surface
     assert "trail cw equipment compose" in command_surface
     assert "--slot <front|back|hand>:<1-based>" in command_surface
-    assert "只写 session" in prep_skill
-    assert "只写 session" in command_surface
+    assert "只写 session" not in compose_docs
+    assert "shot path" in compose_docs
+    assert "info read_image_first=1" in compose_docs
+    assert "材料不足" in compose_docs
     assert "info todo=slots" in prep_skill
     assert "info todo=slots" in command_surface
     assert "`# 装备优先级` 的 `guide` 行 -> `# 角色装备需求` 的 `slot` 行或 `info todo=slots` -> `warn` -> `ref`" in agents

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from copy import deepcopy
 from inspect import Parameter, signature
 from pathlib import Path
@@ -14,7 +15,13 @@ from trail.output.capture import with_auto_capture, with_selective_capture
 from trail.output.envelope import build_image_guidance
 from trail.scenes.cw.battle import run_cw_battle
 from trail.scenes.cw.entry import enter_cw, is_cw_exact_difficulty_token, start_cw
-from trail.scenes.cw.equipment import apply_cw_equipment_read, prepare_cw_equipment, record_cw_equipment_compose
+from trail.scenes.cw.equipment import (
+    apply_cw_equipment_read,
+    compose_and_equip_cw_equipment,
+    prepare_cw_equipment,
+)
+from trail.scenes.cw.equipment_recognition import VectorEquipmentIconRecognizer
+from trail.scenes.cw.equipment_resources import build_cw_equipment_catalog, load_cached_equipment_icons
 from trail.scenes.cw.events import (
     build_cw_battle_continuer,
     build_cw_battle_starter,
@@ -46,7 +53,7 @@ from trail.scenes.cw.guide import (
     invalidate_cw_guide_runtime_state,
     require_complete_cw_guide,
 )
-from trail.scenes.cw.guide import fetch_cw_guide_config
+from trail.scenes.cw.guide import fetch_cw_guide_config, fetch_cw_raw_guide_config
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw.portal import (
     detect_cw_portal,
@@ -262,6 +269,20 @@ class _SideEffectTrackingRuntime:
     def __init__(self, runtime, tracker: _RuntimeSideEffectTracker):
         self._runtime = runtime
         self._tracker = tracker
+        self._suppress_side_effects = False
+
+    @contextmanager
+    def suppress_side_effect_tracking(self):
+        previous = self._suppress_side_effects
+        self._suppress_side_effects = True
+        try:
+            yield
+        finally:
+            self._suppress_side_effects = previous
+
+    def _mark_applied(self) -> None:
+        if not self._suppress_side_effects:
+            self._tracker.mark_applied()
 
     def __getattr__(self, name: str):
         attribute = getattr(self._runtime, name)
@@ -273,13 +294,13 @@ class _SideEffectTrackingRuntime:
                 result = attribute(*args, **kwargs)
             except TrailError as error:
                 if _safe_error_attr(error, "completed_after_side_effect"):
-                    self._tracker.mark_applied()
+                    self._mark_applied()
                 raise
             except Exception:
                 # Input backends can raise after the UI has already reacted.
-                self._tracker.mark_applied()
+                self._mark_applied()
                 raise
-            self._tracker.mark_applied()
+            self._mark_applied()
             return result
 
         return wrapped
@@ -366,6 +387,7 @@ class CwService:
             payload=payload,
             workspace_root=workspace_root,
             session_service=session_service,
+            request_id=request_id,
             track_side_effects=True,
             shared_capture_scope=True,
         )
@@ -487,8 +509,23 @@ class CwService:
                     extra_delay_seconds=extra_delay_seconds,
                 )
                 response = with_auto_capture(capture_runtime, lambda: result, verbose=verbose)
+                if method == "cw.equipment.compose" and isinstance(response, dict) and response.get("ok") is True and response.get("screenshot") is None:
+                    error = TrailError(
+                        "CW_EQUIPMENT_COMPOSE_SCREENSHOT_REQUIRED",
+                        "cw.equipment.compose success requires screenshot",
+                    )
+                    response = _merge_envelope_warnings(response, scene_warnings)
+                    raise PersistedButResponseUnknown(
+                        _unknown_result_envelope_from_response(
+                            error,
+                            response=response,
+                            last_known_stage="state_persisted",
+                        )
+                    )
                 return _merge_envelope_warnings(response, scene_warnings)
             except Exception as error:
+                if isinstance(error, PersistedButResponseUnknown):
+                    raise
                 screenshot = _safe_capture_after_action(capture_runtime)
                 raise PersistedButResponseUnknown(
                     unknown_result_envelope(
@@ -627,6 +664,19 @@ class CwService:
                 guide_config=base_config,
             ).response_snapshot
 
+        def equipment_read_resources() -> tuple[dict, object | None]:
+            if self.cw_resource_service is not None and hasattr(self.cw_resource_service, "equipment_read_resources"):
+                return self.cw_resource_service.equipment_read_resources(workspace_root=workspace_root)
+            raw_config = _cached_cw_raw_config(
+                workspace_root=workspace_root,
+                cw_resource_service=self.cw_resource_service,
+            )
+            if raw_config is None:
+                raw_config = _call_with_supported_keywords(fetch_cw_raw_guide_config, workspace_root=workspace_root)
+            catalog = build_cw_equipment_catalog(raw_config)
+            recognizer = VectorEquipmentIconRecognizer(load_cached_equipment_icons(catalog, workspace_root=workspace_root))
+            return raw_config, recognizer
+
         def run_equipment_read() -> dict:
             return _apply_cw_equipment_read_with_resources(
                 session,
@@ -642,6 +692,23 @@ class CwService:
             if self.cw_resource_service is not None:
                 return self.cw_resource_service.equipment_prepare_summary(workspace_root=workspace_root)
             return _equipment_prepare_summary_from_bundle(workspace_root=workspace_root)
+
+        def run_equipment_compose() -> dict:
+            raw_config, recognizer = equipment_read_resources()
+            return compose_and_equip_cw_equipment(
+                session,
+                runtime(),
+                name=payload["name"],
+                slot=payload["slot"],
+                role=payload["role"],
+                workspace_root=workspace_root,
+                request_id=request_id,
+                raw_config=raw_config,
+                recognizer=recognizer,
+                slots_reader=slots_reader_factory(runtime()),
+                guide_config=guide_config(enrich_traits=True),
+                preflight_read_scope=runtime().suppress_side_effect_tracking,
+            )
 
         handlers = {
             "cw.enter": lambda: validated_enter_payload() and enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
@@ -701,18 +768,7 @@ class CwService:
             "cw.guide.current": lambda: _current_guide(session, artifact_store=artifact_store),
             "cw.equipment.prepare": run_equipment_prepare,
             "cw.equipment.read": run_equipment_read,
-            "cw.equipment.compose": lambda: _call_with_supported_keywords(
-                record_cw_equipment_compose,
-                session,
-                name=payload["name"],
-                slot=payload["slot"],
-                role=payload["role"],
-                workspace_root=workspace_root,
-                raw_config=_cached_cw_raw_config(
-                    workspace_root=workspace_root,
-                    cw_resource_service=self.cw_resource_service,
-                ),
-            ),
+            "cw.equipment.compose": run_equipment_compose,
             "cw.slots.read": lambda: read_cw_slots(
                 session,
                 reader=slots_reader_factory(runtime(), targets=payload.get("slot")),
@@ -1259,6 +1315,36 @@ def _unknown_result_envelope(
         "timing": {},
         "warnings": to_jsonable(warnings or []),
         "references": to_jsonable(references or []),
+        "debug": debug_payload,
+        "error": {
+            "code": "DAEMON_UNAVAILABLE",
+            "message": "mutation result unknown",
+        },
+    }
+    guidance = build_image_guidance(screenshot)
+    if guidance is not None:
+        payload["image_guidance"] = guidance
+    return payload
+
+
+def _unknown_result_envelope_from_response(
+    error: Exception,
+    *,
+    response: dict | None,
+    last_known_stage: str,
+) -> dict:
+    previous = to_jsonable(response or {})
+    screenshot = previous.get("screenshot")
+    debug_payload = to_jsonable(previous.get("debug") or {})
+    debug_payload["detail"] = _format_exception_detail(error)
+    debug_payload["last_known_stage"] = last_known_stage
+    payload = {
+        "ok": False,
+        "data": {},
+        "screenshot": screenshot,
+        "timing": to_jsonable(previous.get("timing") or {}),
+        "warnings": to_jsonable(previous.get("warnings") or []),
+        "references": to_jsonable(previous.get("references") or []),
         "debug": debug_payload,
         "error": {
             "code": "DAEMON_UNAVAILABLE",
