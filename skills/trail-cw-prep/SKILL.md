@@ -37,7 +37,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 - `cw.equipment.read` daemon 默认热路径使用 bundle recognizer，不调用 prepare/download/load icon cache；不要为普通装备读取先跑 `cw.equipment.prepare`。
 - 接收 `cw.portal.select` handoff 后，如果后续执行 `cw.equipment.read` 并看到装备推荐，仍要先读截图，再看 `# 装备优先级` 的基础装备 `have/need` 与需求角色，最后看 `# 角色装备需求` 的当前 canonical 角色缺口；不要为了低优先级装备过早消耗基础装备。
 - `# 角色装备需求` 当前只消费攻略 `优选装备` / `first_equipments`；不要因为攻略里有 `次选装备` / `second_equipments` 就提前合成。TODO：最后一层 BOSS 战前的备战阶段再考虑次选装备。
-- `cw.equipment.compose` / `trail cw equipment compose` 是只写 session 的记录命令，不执行真实 UI 合成。只有已决定合成并装备某个进阶装备时，才用 `--name`、`--slot`、`--role` 记录；slot 使用 `front:1`、`back:1`、`hand:1` 这种从 1 开始的位置，成功首行为 `ok cw.equipment.compose pos=... name=... 装备=... count=...`。
+- `cw.equipment.compose` / `trail cw equipment compose` 会刷新角色/装备快照、校验 `slot` + `role`、执行真实合成并装备，验证成功后写入 session；slot 使用 `front:1`、`back:1`、`hand:1` 这种从 1 开始的位置，成功首行为 `ok cw.equipment.compose pos=... name=... 装备=... count=...`。该 success 会输出 `shot path=...` 和 `info read_image_first=1`，必须先读截图，再消费 `# 综合信息`、`# 装备信息`、`# 角色信息` 下的 action/material/result/slot facts。若材料不足，检查 `warn code=CW_EQUIPMENT_MATERIALS_MISSING 需求=... 持有=...`；该命令不支持 YAML。
 - 读完截图后，先判断本轮是否存在可收集晶矿奖励；这个信息不能只依赖结构化文本。
 - 不确定阶段时先用 `trail cw stage detect --session <id>` 或 `trail cw stage wait --session <id>`。
 - 如果截图和结构化文本冲突，以截图为准并重新读取相关事实。
@@ -48,7 +48,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 - `trail cw slots read`：默认使用角色图标识别读取前台、后台、手牌和羁绊摘要，不再逐槽位点击详情读取姓名；Agent 可见槽位编号从 1 开始。带截图 success 后必须先读本次 `shot path` 指向的截图，再消费 `slot`、羁绊和装备/商店事实；若出现 `CW_ROLE_MATCH_LOW_CONFIDENCE` 或 `SLOTS_RECOGNITION_UNCERTAIN`，先核对截图再做换位、出售或购买决策。
 - `trail cw shop scan|status|buy-slot|buy-exp|refresh|close`：读取和执行商店动作；`shop.scan` 有截图，`shop.status` 无截图。
 - `trail cw equipment read --session <id>`：读取当前装备背包图标；返回截图时必须先读原始截图，再消费背包 `item`、`# 装备优先级` 的 `guide` 行、`# 角色装备需求` 的 `slot` 行或 `info todo=slots`。若看到 `info todo=slots`，先运行或刷新 `cw.slots.read`；这些分块位于 `warn`、`ref` 之前。需要诊断 `row/col` 时用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`。
-- `trail cw equipment compose --session <id> --name <进阶装备名> --slot front:1 --role <角色名>`：canonical command 为 `cw.equipment.compose`；只写 session，不执行真实 UI 合成，slot 使用 Agent 可见 1-based。
+- `trail cw equipment compose --session <id> --name <进阶装备名> --slot front:1 --role <角色名>`：canonical command 为 `cw.equipment.compose`；刷新角色/装备快照，校验 `slot` + `role`，执行真实合成和装备，验证成功后写入 session；success 有截图，先读 `shot path=...` 对应原图和 `info read_image_first=1`，再消费 `# 综合信息`、`# 装备信息`、`# 角色信息`；材料不足时检查 `warn code=CW_EQUIPMENT_MATERIALS_MISSING 需求=... 持有=...`；不支持 YAML；slot 使用 Agent 可见 1-based。
 - `trail cw equipment prepare --session <id> [--refresh]`：默认只验证/汇总 bundle 装备资源，不下载图标；只有明确要刷新同版本 URL 变化或重建 workspace equipment override 时才使用 `--refresh`。
 - `trail cw crystals collect`：截图确认本轮有可收晶矿时执行；收取后根据新截图判断手牌区是否变化。
 - `trail cw hand sell-plan|sell`：读取或执行卖牌动作。

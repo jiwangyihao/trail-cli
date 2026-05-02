@@ -119,8 +119,11 @@
 - `cw.equipment.read` 单格低置信不失败；当 `uncertain>0` 时默认文本输出 `warn code=LOW_CONFIDENCE count=... msg=...`。
 - `cw.equipment.read` 成功写入 `cw_state.equipment` 最近快照，并加入 YAML allowlist；除 `cw.equipment.prepare` 外，成功进入 CW mutation 处理的命令应保留最近装备 items 并将该快照标记为 `stale=True`。
 - `cw.equipment.read` daemon 默认热路径使用 bundle recognizer 与预计算特征，不调用 `prepare_equipment_icon_cache`、下载图标或 `load_cached_equipment_icons`；需要刷新装备资源时先显式运行 `cw.equipment.prepare --refresh`。
-- `cw.equipment.compose` 归入检测/状态摘要 renderer 家族；canonical command 固定为 `cw.equipment.compose`；success 首行固定为 `ok cw.equipment.compose pos=<agent-visible-slot> name=<角色名> 装备=<装备名> count=<n>`，字段顺序固定为 `pos/name/装备/count`，其中 `count` 是写入后该角色已记录装备数量。
-- `cw.equipment.compose` 只写 session，不截图，不执行真实 UI 合成，不加入 YAML allowlist；`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`。
+- `cw.equipment.compose` 归入检测/状态摘要 renderer 家族；canonical command 固定为 `cw.equipment.compose`；success 首行固定为 `ok cw.equipment.compose pos=<agent-visible-slot> name=<角色名> 装备=<装备名> count=<角色装备数>`，字段顺序固定为 `pos/name/装备/count`，其中 `count` 是写入后该角色已记录装备数量。
+- `cw.equipment.compose` 是真实 UI mutation，会执行合成并装备到目标角色；success 必须输出 `shot path=...`，并在其后立即输出 `info read_image_first=1`。
+- `cw.equipment.compose` success 正文分段固定为 `# 综合信息`、`# 装备信息`、`# 角色信息`；`# 综合信息` 输出 compose/equip action facts，包括 `verified`、`consumed`、`post_compose_equipment_count`、`verified_shift`、`post_equip_equipment_count`、`equipment_stale=1`。
+- `cw.equipment.compose` 的 `# 装备信息` 在可用时输出 `item kind=material phase=pre_compose ...` 与 `item kind=result phase=post_compose ...`；`# 角色信息` 输出 `slot pos=... name=... 装备=... count=...`。
+- `cw.equipment.compose` 材料不足 failure 使用 `warn code=CW_EQUIPMENT_MATERIALS_MISSING 需求=<基础装备:have/need> 持有=<equipment:N:装备名>`；该命令仍不加入 YAML allowlist，`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`。
 - `cw.equipment.compose` 的 `slot` 与 `role` 必须基于 fresh session slots 校验，Agent 可见 slot 使用 1-based，例如 `front:1`、`back:1`、`hand:1`；daemon/RPC/session internal 仍保持 0-based。
 - `cw.equipment.prepare` 归入检测/状态摘要 renderer 家族；canonical command 固定为 `cw.equipment.prepare`，不产截图，success 首行固定为 `ok cw.equipment.prepare big_version=<version> count=<n> cached=<n> downloaded=<n> refreshed=0|1`，这些事实即使为 `0` 也必须保留。
 - `cw.equipment.prepare` 默认只验证/汇总 bundle 装备资源，不下载图标、不写 workspace override；只有 `cw.equipment.prepare --refresh` 写 workspace equipment override、刷新图标/特征，并处理同一 `rpg_game_big_version` 下 `cache_key` 的 `icon_url` 变化。`cw.equipment.prepare` 不加入 YAML allowlist。

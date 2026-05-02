@@ -1371,8 +1371,25 @@ def test_render_output_cw_equipment_read_stale_slots_outputs_todo_without_curren
 def test_render_output_cw_equipment_compose_summary():
     payload = {
         "ok": True,
-        "data": {"pos": "front:1", "name": "希儿", "equipment": "高周波电锯", "count": 1},
-        "screenshot": None,
+        "data": {
+            "pos": "front:1",
+            "name": "希儿",
+            "equipment": "高周波电锯",
+            "count": 2,
+            "materials": [
+                {"idx": 2, "pos": "equipment:2", "name": "基础装甲"},
+                {"idx": 5, "pos": "equipment:5", "name": "光能电池"},
+            ],
+            "result_item": {"idx": 2, "pos": "equipment:2", "name": "高周波电锯"},
+            "compose_action": {"drag_from": "equipment:5", "drag_to": "equipment:2"},
+            "equip_action": {"drag_from": "equipment:2", "drag_to": "front:1"},
+            "verified": True,
+            "consumed": 2,
+            "post_compose_equipment_count": 2,
+            "post_equip_equipment_count": 1,
+            "verified_shift": False,
+        },
+        "screenshot": ".trail/shots/req-compose.png",
         "timing": {},
         "warnings": [],
         "references": [],
@@ -1381,7 +1398,91 @@ def test_render_output_cw_equipment_compose_summary():
     }
 
     assert render_output("cw.equipment.compose", payload).splitlines() == [
-        "ok cw.equipment.compose pos=front:1 name=希儿 装备=高周波电锯 count=1",
+        "ok cw.equipment.compose pos=front:1 name=希儿 装备=高周波电锯 count=2",
+        "shot path=.trail/shots/req-compose.png",
+        "info read_image_first=1",
+        "# 综合信息",
+        "info action=compose drag_from=equipment:5 drag_to=equipment:2 verified=1 consumed=2 post_compose_equipment_count=2 verified_shift=0",
+        "info action=equip drag_from=equipment:2 drag_to=front:1 verified=1 post_equip_equipment_count=1 equipment_stale=1",
+        "# 装备信息",
+        "item kind=material phase=pre_compose idx=2 pos=equipment:2 name=基础装甲",
+        "item kind=material phase=pre_compose idx=5 pos=equipment:5 name=光能电池",
+        "item kind=result phase=post_compose idx=2 pos=equipment:2 name=高周波电锯",
+        "# 角色信息",
+        "slot pos=front:1 name=希儿 装备=高周波电锯 count=2",
+    ]
+
+
+def test_render_output_cw_equipment_compose_omits_empty_equipment_section():
+    payload = {
+        "ok": True,
+        "data": {
+            "pos": "front:1",
+            "name": "希儿",
+            "equipment": "高周波电锯",
+            "count": 2,
+            "materials": [],
+            "compose_action": {"drag_from": "equipment:5", "drag_to": "equipment:2"},
+            "equip_action": {"drag_from": "equipment:2", "drag_to": "front:1"},
+            "verified": True,
+            "consumed": 2,
+            "post_compose_equipment_count": 2,
+            "post_equip_equipment_count": 1,
+            "verified_shift": False,
+        },
+        "screenshot": ".trail/shots/req-compose.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.equipment.compose", payload).splitlines()
+
+    assert lines == [
+        "ok cw.equipment.compose pos=front:1 name=希儿 装备=高周波电锯 count=2",
+        "shot path=.trail/shots/req-compose.png",
+        "info read_image_first=1",
+        "# 综合信息",
+        "info action=compose drag_from=equipment:5 drag_to=equipment:2 verified=1 consumed=2 post_compose_equipment_count=2 verified_shift=0",
+        "info action=equip drag_from=equipment:2 drag_to=front:1 verified=1 post_equip_equipment_count=1 equipment_stale=1",
+        "# 角色信息",
+        "slot pos=front:1 name=希儿 装备=高周波电锯 count=2",
+    ]
+    assert "# 装备信息" not in lines
+    assert "# 综合信息" in lines
+    assert "# 角色信息" in lines
+
+
+def test_render_output_cw_equipment_compose_materials_missing_warning():
+    payload = {
+        "ok": False,
+        "request_id": "req-missing",
+        "data": {},
+        "screenshot": None,
+        "timing": {},
+        "warnings": [
+            {
+                "code": "CW_EQUIPMENT_MATERIALS_MISSING",
+                "需求": "基础装甲:1/1|光能电池:0/1",
+                "持有": "equipment:1:基础装甲",
+                "message": "合成 高周波电锯 的基础装备不足",
+            }
+        ],
+        "references": [],
+        "debug": None,
+        "error": {
+            "code": "CW_EQUIPMENT_MATERIALS_MISSING",
+            "message": "合成 高周波电锯 的基础装备不足",
+        },
+    }
+
+    assert render_output("cw.equipment.compose", payload).splitlines() == [
+        "fail cw.equipment.compose code=CW_EQUIPMENT_MATERIALS_MISSING",
+        "request id=req-missing",
+        'why msg="合成 高周波电锯 的基础装备不足"',
+        'warn code=CW_EQUIPMENT_MATERIALS_MISSING 需求=基础装甲:1/1|光能电池:0/1 持有=equipment:1:基础装甲 msg="合成 高周波电锯 的基础装备不足"',
     ]
 
 

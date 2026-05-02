@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections import Counter
+from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict
 from io import BytesIO
@@ -15,6 +17,7 @@ from trail.scenes.cw.equipment_grid import (
     DEFAULT_EQUIPMENT_GRID_PROFILE,
     crop_equipment_cells,
     crop_has_equipment_slot_markers,
+    equipment_slot_center,
     equipment_cell_center,
     iter_equipment_grid_cells,
 )
@@ -27,7 +30,13 @@ from trail.scenes.cw.equipment_resources import (
 )
 from trail.scenes.cw.guide import complete_cw_guide_or_none, fetch_cw_raw_guide_config, require_complete_cw_guide
 from trail.scenes.cw.models import ensure_cw_state
-from trail.scenes.cw.slots import canonical_cw_role_slots, format_cw_agent_slot_reference, parse_cw_slot_reference
+from trail.scenes.cw.slots import (
+    SLOT_POINTS_BY_AREA,
+    canonical_cw_role_slots,
+    format_cw_agent_slot_reference,
+    parse_cw_slot_reference,
+    read_cw_slots,
+)
 
 
 def prepare_cw_equipment(*, workspace_root: str | Path | None = None, refresh: bool = False) -> dict[str, Any]:
@@ -185,6 +194,44 @@ def _snapshot_equipment_counts(snapshot: dict[str, Any]) -> dict[tuple[str, str]
     return counts
 
 
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _item_identity_keys(item: Any) -> list[tuple[str, str]]:
+    if not isinstance(item, Mapping):
+        return []
+
+    keys: list[tuple[str, str]] = []
+    cache_key = item.get("cache_key")
+    equipment_id = item.get("equipment_id")
+    prefix = None
+    if isinstance(cache_key, str) and cache_key:
+        keys.append(("cache_key", cache_key))
+        prefix = cache_key.split("-", 1)[0]
+        if prefix in {"basic", "advanced"} and isinstance(equipment_id, str) and equipment_id:
+            keys.append(("kind_id", f"{prefix}:{equipment_id}"))
+    name = item.get("name")
+    if prefix != "advanced" and isinstance(name, str) and name:
+        keys.append(("name", name))
+    return keys
+
+
+def _recipe_child_match_key(child) -> tuple[str, str]:
+    if child.cache_key:
+        return ("cache_key", child.cache_key)
+    if child.id:
+        return ("kind_id", f"basic:{child.id}")
+    return ("name", child.name)
+
+
+def _equipment_identity_counter(items: list[Any]) -> Counter[tuple[str, str]]:
+    counts: Counter[tuple[str, str]] = Counter()
+    for item in items:
+        counts.update(_item_identity_keys(item))
+    return counts
+
+
 def _basic_have_count(counts: dict[tuple[str, str], int], child) -> int:
     if child.cache_key and ("cache_key", child.cache_key) in counts:
         return counts[("cache_key", child.cache_key)]
@@ -193,6 +240,86 @@ def _basic_have_count(counts: dict[tuple[str, str], int], child) -> int:
     if child.cache_key or child.id:
         return 0
     return counts.get(("name", child.name), 0)
+
+
+def _equipment_item_idx(item: Any) -> int:
+    if not isinstance(item, Mapping):
+        return 10**9
+    try:
+        return int(item.get("idx"))
+    except (TypeError, ValueError):
+        return 10**9
+
+
+def _held_compose_item(item: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "idx": item.get("idx"),
+        "pos": item.get("pos"),
+        "name": item.get("name"),
+        "equipment_id": item.get("equipment_id"),
+        "cache_key": item.get("cache_key"),
+    }
+
+
+def select_cw_equipment_compose_materials(
+    snapshot: dict[str, Any],
+    *,
+    name: str,
+    raw_config: dict[str, Any],
+) -> dict[str, Any]:
+    equipment_name = str(name or "").strip()
+    recipes = build_cw_equipment_recipes(raw_config)
+    recipe = recipes.get(equipment_name)
+    if recipe is None:
+        raise TrailError("CW_EQUIPMENT_RECIPE_MISSING", f"missing equipment recipe: {equipment_name}")
+
+    total_basic_need = sum(child.need for child in recipe.basics)
+    if total_basic_need != 2:
+        raise TrailError("CW_EQUIPMENT_RECIPE_UNSUPPORTED", f"unsupported equipment recipe: {equipment_name}")
+
+    items = sorted(
+        [item for item in _as_list(snapshot.get("items")) if isinstance(item, Mapping)],
+        key=_equipment_item_idx,
+    )
+    counts = _equipment_identity_counter(items)
+    needed = [
+        {"name": child.name, "need": child.need, "have": counts.get(_recipe_child_match_key(child), 0)}
+        for child in recipe.basics
+    ]
+    held = [_held_compose_item(item) for item in items]
+
+    available = list(items)
+    materials: list[Mapping[str, Any]] = []
+    for child in recipe.basics:
+        match_key = _recipe_child_match_key(child)
+        for _ in range(child.need):
+            selected_index = next(
+                (idx for idx, item in enumerate(available) if match_key in _item_identity_keys(item)),
+                None,
+            )
+            if selected_index is None:
+                need_text = "|".join(f"{item['name']}:{item['have']}/{item['need']}" for item in needed)
+                held_text = "|".join(f"{item.get('pos')}:{item.get('name')}" for item in held)
+                error = TrailError("CW_EQUIPMENT_MATERIALS_MISSING", f"合成 {equipment_name} 的基础装备不足")
+                error.data = {"needed": needed, "held": held}
+                error.warnings = [
+                    {
+                        "code": "CW_EQUIPMENT_MATERIALS_MISSING",
+                        "message": f"合成 {equipment_name} 的基础装备不足",
+                        "需求": need_text,
+                        "持有": held_text,
+                    }
+                ]
+                raise error
+            materials.append(available.pop(selected_index))
+
+    for material in materials:
+        if material.get("uncertain") is True:
+            error = TrailError("CW_EQUIPMENT_MATERIAL_UNCERTAIN", f"基础装备识别低置信: {material.get('pos')}")
+            error.data = {"material": material}
+            raise error
+
+    return {"equipment": equipment_name, "materials": list(materials), "needed": needed, "held": held}
 
 
 def _role_equipments(value: Any) -> list[str]:
@@ -328,7 +455,7 @@ def _mark_equipment_snapshot_stale(cw_state: dict[str, Any]) -> None:
         equipment.pop("recommendations", None)
 
 
-def record_cw_equipment_compose(
+def validate_cw_equipment_compose_preflight(
     session: SessionModel,
     *,
     name: str,
@@ -344,7 +471,8 @@ def record_cw_equipment_compose(
     if not role_name:
         raise TrailError("CW_EQUIPMENT_ROLE_SLOT_MISMATCH", "role name is required")
 
-    cw_state = ensure_cw_state(session)
+    scene_state = session.scene_state.get("cw")
+    cw_state = scene_state if isinstance(scene_state, dict) else {}
     guide = require_complete_cw_guide(cw_state)
     slots = cw_state.get("slots")
     if not isinstance(slots, dict) or slots.get("stale") is not False:
@@ -378,15 +506,353 @@ def record_cw_equipment_compose(
     if len(equipments) >= 3:
         raise TrailError("CW_EQUIPMENT_ROLE_EQUIPMENT_FULL", f"{role_name} already has 3 equipments")
 
+    return {
+        "equipment_name": equipment_name,
+        "role_name": role_name,
+        "area": area,
+        "index": index,
+        "agent_slot": agent_slot,
+        "values": values,
+        "value": value,
+        "equipments": equipments,
+    }
+
+
+def commit_cw_equipment_compose_record(session: SessionModel, preflight: dict[str, Any]) -> dict[str, Any]:
+    equipments = list(preflight["equipments"])
+    equipment_name = preflight["equipment_name"]
+    role_name = preflight["role_name"]
     equipments.append(equipment_name)
+    values = preflight["values"]
+    index = preflight["index"]
+    value = preflight["value"]
     values[index] = _role_value_for_compose(value, role=role_name, equipments=equipments)
+    cw_state = ensure_cw_state(session)
     _mark_equipment_snapshot_stale(cw_state)
     return {
-        "pos": agent_slot,
+        "pos": preflight["agent_slot"],
         "name": role_name,
         "equipment": equipment_name,
         "count": len(equipments),
     }
+
+
+def record_cw_equipment_compose(
+    session: SessionModel,
+    *,
+    name: str,
+    slot: str,
+    role: str,
+    raw_config: dict[str, Any] | None = None,
+    workspace_root: str | Path | None = None,
+) -> dict[str, Any]:
+    preflight = validate_cw_equipment_compose_preflight(
+        session,
+        name=name,
+        slot=slot,
+        role=role,
+        raw_config=raw_config,
+        workspace_root=workspace_root,
+    )
+    return commit_cw_equipment_compose_record(session, preflight)
+
+
+def _snapshot_items(snapshot: dict[str, Any]) -> list[Any]:
+    return _as_list(snapshot.get("items"))
+
+
+def _snapshot_count(snapshot: dict[str, Any]) -> int:
+    value = snapshot.get("count")
+    if isinstance(value, int):
+        return value
+    return len(_snapshot_items(snapshot))
+
+
+def _item_at_equipment_idx(snapshot: dict[str, Any], idx: int) -> Mapping[str, Any] | None:
+    for item in _snapshot_items(snapshot):
+        if not isinstance(item, Mapping):
+            continue
+        if _equipment_item_idx(item) == idx:
+            return item
+    return None
+
+
+def _counter_without_zeros(counts: Counter[tuple[str, str]]) -> Counter[tuple[str, str]]:
+    return Counter({key: value for key, value in counts.items() if value > 0})
+
+
+def _target_recipe_identity_counter(recipe) -> Counter[tuple[str, str]]:
+    counts: Counter[tuple[str, str]] = Counter()
+    if recipe.cache_key:
+        counts[("cache_key", recipe.cache_key)] += 1
+    if recipe.id:
+        counts[("kind_id", f"advanced:{recipe.id}")] += 1
+    if not counts:
+        counts[("name", recipe.name)] += 1
+    return counts
+
+
+def _item_matches_target_recipe(item: Mapping[str, Any], recipe) -> bool:
+    item_keys = set(_item_identity_keys(item))
+    target_keys = set(_target_recipe_identity_counter(recipe))
+    return bool(item_keys & target_keys)
+
+
+def _expected_post_compose_counter(
+    initial_snapshot: dict[str, Any],
+    materials: list[Mapping[str, Any]],
+    recipe,
+) -> Counter[tuple[str, str]]:
+    expected = _equipment_identity_counter(_snapshot_items(initial_snapshot))
+    for material in materials:
+        expected.subtract(_equipment_identity_counter([material]))
+    expected.update(_target_recipe_identity_counter(recipe))
+    return _counter_without_zeros(expected)
+
+
+def _recognizable_shift_keys(item: Mapping[str, Any]) -> list[tuple[str, str]]:
+    if item.get("uncertain") is True:
+        return []
+    return _item_identity_keys(item)
+
+
+def _unique_shift_identity_key(
+    item: Mapping[str, Any],
+    *,
+    initial_counts: Counter[tuple[str, str]],
+    post_counts: Counter[tuple[str, str]],
+) -> tuple[str, str] | None:
+    keys = _recognizable_shift_keys(item)
+    for kind in ("cache_key", "kind_id", "name"):
+        for key in keys:
+            if key[0] == kind and initial_counts[key] == 1 and post_counts[key] == 1:
+                return key
+    return None
+
+
+def _shift_identity_indexes_by_key(items: list[Mapping[str, Any]]) -> dict[tuple[str, str], list[int]]:
+    indexes: dict[tuple[str, str], list[int]] = {}
+    for item in items:
+        item_idx = _equipment_item_idx(item)
+        if item_idx == 10**9:
+            continue
+        for key in set(_recognizable_shift_keys(item)):
+            indexes.setdefault(key, []).append(item_idx)
+    return indexes
+
+
+def _verify_cw_equipment_post_compose_shift(
+    *,
+    initial_snapshot: dict[str, Any],
+    post_compose_snapshot: dict[str, Any],
+    materials: list[Mapping[str, Any]],
+) -> int:
+    material_idxs = [_equipment_item_idx(material) for material in materials]
+    if not material_idxs:
+        return 0
+
+    from_idx = max(material_idxs)
+    initial_items = [item for item in _snapshot_items(initial_snapshot) if isinstance(item, Mapping)]
+    post_items = [item for item in _snapshot_items(post_compose_snapshot) if isinstance(item, Mapping)]
+    initial_by_idx = {_equipment_item_idx(item): item for item in initial_items}
+    post_indexes_by_identity = _shift_identity_indexes_by_key(post_items)
+    initial_counts = _equipment_identity_counter(initial_items)
+    post_counts = _equipment_identity_counter(post_items)
+    verified_shift = 0
+
+    current_idx = from_idx + 1
+    while current_idx in initial_by_idx:
+        initial_item = initial_by_idx[current_idx]
+        identity_key = _unique_shift_identity_key(
+            initial_item,
+            initial_counts=initial_counts,
+            post_counts=post_counts,
+        )
+        if identity_key is None:
+            return verified_shift
+
+        expected_idx = current_idx - 1
+        post_indexes = post_indexes_by_identity.get(identity_key, [])
+        if not post_indexes:
+            return verified_shift
+        if len(post_indexes) != 1:
+            return verified_shift
+
+        actual_idx = post_indexes[0]
+        if actual_idx == expected_idx:
+            verified_shift = 1
+            current_idx += 1
+            continue
+
+        error = TrailError("CW_EQUIPMENT_COMPOSE_VERIFY_FAILED", "装备合成后背包顺移验证失败")
+        error.data = {
+            "expected_shift_from": f"equipment:{current_idx}",
+            "expected_shift_to": f"equipment:{expected_idx}",
+            "actual": f"equipment:{actual_idx}",
+            "identity": f"{identity_key[0]}:{identity_key[1]}",
+        }
+        raise error
+
+    return verified_shift
+
+
+def _verify_cw_equipment_post_compose(
+    *,
+    initial_snapshot: dict[str, Any],
+    post_compose_snapshot: dict[str, Any],
+    materials: list[Mapping[str, Any]],
+    recipe,
+    to_idx: int,
+) -> tuple[Mapping[str, Any], int]:
+    result_item = _item_at_equipment_idx(post_compose_snapshot, to_idx)
+    if result_item is not None and _item_matches_target_recipe(result_item, recipe) and result_item.get("uncertain") is True:
+        error = TrailError("CW_EQUIPMENT_COMPOSE_VERIFY_UNCERTAIN", f"合成结果识别低置信: equipment:{to_idx}")
+        error.data = {"item": dict(result_item)}
+        raise error
+
+    expected_count = _snapshot_count(initial_snapshot) - 1
+    expected_counter = _expected_post_compose_counter(initial_snapshot, materials, recipe)
+    actual_counter = _equipment_identity_counter(_snapshot_items(post_compose_snapshot))
+    if (
+        _snapshot_count(post_compose_snapshot) != expected_count
+        or result_item is None
+        or not _item_matches_target_recipe(result_item, recipe)
+        or _counter_without_zeros(actual_counter) != expected_counter
+    ):
+        error = TrailError("CW_EQUIPMENT_COMPOSE_VERIFY_FAILED", "装备合成后背包验证失败")
+        error.data = {
+            "expected_count": expected_count,
+            "actual_count": _snapshot_count(post_compose_snapshot),
+            "target": f"equipment:{to_idx}",
+        }
+        raise error
+
+    verified_shift = _verify_cw_equipment_post_compose_shift(
+        initial_snapshot=initial_snapshot,
+        post_compose_snapshot=post_compose_snapshot,
+        materials=materials,
+    )
+    return result_item, verified_shift
+
+
+def _verify_cw_equipment_post_equip(
+    *,
+    post_compose_snapshot: dict[str, Any],
+    post_equip_snapshot: dict[str, Any],
+    result_item: Mapping[str, Any],
+) -> None:
+    expected_count = _snapshot_count(post_compose_snapshot) - 1
+    expected_counter = _equipment_identity_counter(_snapshot_items(post_compose_snapshot))
+    expected_counter.subtract(_equipment_identity_counter([result_item]))
+    actual_counter = _equipment_identity_counter(_snapshot_items(post_equip_snapshot))
+    if _snapshot_count(post_equip_snapshot) != expected_count or _counter_without_zeros(actual_counter) != _counter_without_zeros(expected_counter):
+        error = TrailError("CW_EQUIPMENT_COMPOSE_EQUIP_VERIFY_FAILED", "装备给角色后背包验证失败")
+        error.data = {
+            "expected_count": expected_count,
+            "actual_count": _snapshot_count(post_equip_snapshot),
+            "result_item": dict(result_item),
+        }
+        raise error
+
+
+def compose_and_equip_cw_equipment(
+    session: SessionModel,
+    runtime,
+    *,
+    name: str,
+    slot: str,
+    role: str,
+    raw_config: dict[str, Any],
+    recognizer=None,
+    workspace_root: str | Path | None = None,
+    request_id: str | None = None,
+    slots_reader: Callable[[], Any],
+    guide_config: dict[str, Any] | None = None,
+    preflight_read_scope: Callable[[], Any] | None = None,
+) -> dict[str, Any]:
+    read_scope = preflight_read_scope or nullcontext
+    with read_scope():
+        read_cw_slots(session, reader=slots_reader, guide_config=guide_config)
+
+    preflight = validate_cw_equipment_compose_preflight(
+        session,
+        name=name,
+        slot=slot,
+        role=role,
+        raw_config=raw_config,
+        workspace_root=workspace_root,
+    )
+
+    with read_scope():
+        initial_snapshot = apply_cw_equipment_read(
+            session,
+            runtime,
+            workspace_root=workspace_root,
+            raw_config=raw_config,
+            recognizer=recognizer,
+            request_id=request_id,
+        )
+
+    selection = select_cw_equipment_compose_materials(initial_snapshot, name=preflight["equipment_name"], raw_config=raw_config)
+    materials = [material for material in selection["materials"] if isinstance(material, Mapping)]
+    material_idxs = [_equipment_item_idx(material) for material in materials]
+    from_idx = max(material_idxs)
+    to_idx = min(material_idxs)
+    drag_from = f"equipment:{from_idx}"
+    drag_to = f"equipment:{to_idx}"
+    runtime.drag_to(*equipment_slot_center(drag_from), *equipment_slot_center(drag_to))
+
+    post_compose_snapshot = apply_cw_equipment_read(
+        session,
+        runtime,
+        workspace_root=workspace_root,
+        raw_config=raw_config,
+        recognizer=recognizer,
+        request_id=request_id,
+    )
+    recipe = build_cw_equipment_recipes(raw_config)[preflight["equipment_name"]]
+    result_item, verified_shift = _verify_cw_equipment_post_compose(
+        initial_snapshot=initial_snapshot,
+        post_compose_snapshot=post_compose_snapshot,
+        materials=materials,
+        recipe=recipe,
+        to_idx=to_idx,
+    )
+
+    equip_from = f"equipment:{to_idx}"
+    equip_to = preflight["agent_slot"]
+    runtime.drag_to(*equipment_slot_center(equip_from), *SLOT_POINTS_BY_AREA[preflight["area"]][preflight["index"]])
+
+    post_equip_snapshot = apply_cw_equipment_read(
+        session,
+        runtime,
+        workspace_root=workspace_root,
+        raw_config=raw_config,
+        recognizer=recognizer,
+        request_id=request_id,
+    )
+    _verify_cw_equipment_post_equip(
+        post_compose_snapshot=post_compose_snapshot,
+        post_equip_snapshot=post_equip_snapshot,
+        result_item=result_item,
+    )
+
+    result = commit_cw_equipment_compose_record(session, preflight)
+    result.update(
+        {
+            "materials": deepcopy(materials),
+            "needed": deepcopy(selection["needed"]),
+            "result_item": deepcopy(dict(result_item)),
+            "compose_action": {"drag_from": drag_from, "drag_to": drag_to},
+            "equip_action": {"drag_from": equip_from, "drag_to": equip_to},
+            "verified": True,
+            "consumed": 2,
+            "post_compose_equipment_count": _snapshot_count(post_compose_snapshot),
+            "post_equip_equipment_count": _snapshot_count(post_equip_snapshot),
+            "verified_shift": verified_shift,
+        }
+    )
+    return result
 
 
 def read_cw_equipment(

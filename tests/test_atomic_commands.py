@@ -1925,12 +1925,13 @@ def test_cw_slots_read_help_describes_slot_as_targeted_confirmation():
     assert "全量读取" in slot_help
 
 
-def test_cw_equipment_help_mentions_compose_session_record():
+def test_cw_equipment_help_mentions_compose_real_action():
     help_text = _registered_group_help(cw_app)["equipment"]
 
     assert "compose" in _registered_command_names(equipment_app)
-    assert "只写 session" in help_text
-    assert "不执行真实 UI 合成" in help_text
+    assert "真实合成" in help_text or "执行真实合成" in help_text
+    assert "只写 session" not in help_text
+    assert "不执行真实 UI 合成" not in help_text
 
 
 def test_cw_equipment_compose_help_lists_required_options():

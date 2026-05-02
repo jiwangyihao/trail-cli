@@ -47,6 +47,7 @@ CW_MUTATING_METHODS = {
     "cw.battle.run",
     "cw.battle.start",
     "cw.battle.continue",
+    "cw.equipment.compose",
     "cw.settle.next",
     "cw.event.handle",
 }
@@ -72,9 +73,7 @@ CW_SESSION_SAVE_METHODS = {
     "cw.equipment.prepare",
 }
 
-CW_SESSION_ONLY_MUTATION_METHODS = {
-    "cw.equipment.compose",
-}
+CW_SESSION_ONLY_MUTATION_METHODS = set()
 
 START_RUN_STATUS_ALLOWLIST = {
     "attached",
@@ -979,12 +978,14 @@ class CommandService:
             data["tainted"] = bool(tainted)
         raw_debug = self._error_attr(error, "debug")
         debug = to_jsonable(raw_debug) if isinstance(raw_debug, dict) else None
+        raw_warnings = self._error_attr(error, "warnings")
+        warnings = to_jsonable(raw_warnings) if isinstance(raw_warnings, list) else []
         return {
             "ok": False,
             "data": data,
             "screenshot": None,
             "timing": {},
-            "warnings": [],
+            "warnings": warnings,
             "references": [],
             "debug": debug,
             "error": {"code": code, "message": message},

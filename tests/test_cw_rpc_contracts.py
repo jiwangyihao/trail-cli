@@ -732,7 +732,25 @@ def test_cw_equipment_compose_rpc_contract(cli_runner, fake_daemon_client, tmp_p
         {
             "cw.equipment.compose": build_success_response(
                 request_id="req-cw-equipment-compose",
-                data={"pos": "front:1", "name": "希儿", "equipment": "高周波电锯", "count": 1},
+                data={
+                    "pos": "front:1",
+                    "name": "希儿",
+                    "equipment": "高周波电锯",
+                    "count": 2,
+                    "materials": [
+                        {"idx": 2, "pos": "equipment:2", "name": "基础装甲"},
+                        {"idx": 5, "pos": "equipment:5", "name": "光能电池"},
+                    ],
+                    "result_item": {"idx": 2, "pos": "equipment:2", "name": "高周波电锯"},
+                    "compose_action": {"drag_from": "equipment:5", "drag_to": "equipment:2"},
+                    "equip_action": {"drag_from": "equipment:2", "drag_to": "front:1"},
+                    "verified": True,
+                    "consumed": 2,
+                    "post_compose_equipment_count": 2,
+                    "post_equip_equipment_count": 1,
+                    "verified_shift": False,
+                },
+                screenshot=".trail/shots/req-cw-equipment-compose.png",
             )
         }
     )
@@ -743,7 +761,20 @@ def test_cw_equipment_compose_rpc_contract(cli_runner, fake_daemon_client, tmp_p
     )
 
     assert result.exit_code == 0
-    assert result.stdout.splitlines() == ["ok cw.equipment.compose pos=front:1 name=希儿 装备=高周波电锯 count=1"]
+    assert result.stdout.splitlines() == [
+        "ok cw.equipment.compose pos=front:1 name=希儿 装备=高周波电锯 count=2",
+        "shot path=.trail/shots/req-cw-equipment-compose.png",
+        "info read_image_first=1",
+        "# 综合信息",
+        "info action=compose drag_from=equipment:5 drag_to=equipment:2 verified=1 consumed=2 post_compose_equipment_count=2 verified_shift=0",
+        "info action=equip drag_from=equipment:2 drag_to=front:1 verified=1 post_equip_equipment_count=1 equipment_stale=1",
+        "# 装备信息",
+        "item kind=material phase=pre_compose idx=2 pos=equipment:2 name=基础装甲",
+        "item kind=material phase=pre_compose idx=5 pos=equipment:5 name=光能电池",
+        "item kind=result phase=post_compose idx=2 pos=equipment:2 name=高周波电锯",
+        "# 角色信息",
+        "slot pos=front:1 name=希儿 装备=高周波电锯 count=2",
+    ]
     _assert_single_call(
         client,
         method="cw.equipment.compose",
