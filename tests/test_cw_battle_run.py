@@ -1346,6 +1346,37 @@ def test_run_cw_battle_resume_hint_ocr_only_preparation_completes_when_detector_
     assert ensure_cw_state(session).get("battle_resume") == {}
 
 
+def test_run_cw_battle_completes_after_layer_transition_when_ocr_sees_preparation(
+    tmp_path: Path, monkeypatch
+):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(
+        ["layer_transition", "preparation"],
+        battle_start_text="备战阶段",
+        sleep_advances_from=(),
+    )
+
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_stage_detector",
+        lambda _runtime: lambda: "layer_transition" if runtime.state == "layer_transition" else None,
+    )
+    monkeypatch.setattr(battle_scene, "_advance_layer_transition", lambda _runtime: runtime.run_action("blank_continue"))
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=5)
+
+    assert result == {
+        "status": "completed",
+        "stage": "preparation",
+        "stale": False,
+        "in_battle": False,
+    }
+    assert runtime.actions == ["blank_continue"]
+    assert ensure_cw_state(session).get("battle_resume") == {}
+
+
 def test_run_cw_battle_sets_resume_hint_after_in_battle_timeout(tmp_path: Path, monkeypatch):
     battle_scene = load_cw_battle_module()
     session = build_session(tmp_path)

@@ -48,7 +48,7 @@ STABLE_BATTLE_RETURN_STAGES: frozenset[str] = frozenset(
         "shop",
     }
 )
-_BATTLE_START_KEYWORDS: tuple[str, ...] = ("开始战斗", "开始挑战", "出战")
+_BATTLE_START_KEYWORDS: tuple[str, ...] = ("备战阶段", "开始战斗", "开始挑战", "出战")
 _SETTLEMENT_ENTRY_KEYWORDS: tuple[str, ...] = ("挑战成功", "挑战失败", "继续挑战")
 _SETTLEMENT_FOLLOWUP_KEYWORDS: tuple[str, ...] = ("下一步", "下一页")
 _GAME_OVER_KEYWORDS: tuple[str, ...] = ("游戏结束", "本局结束")
@@ -497,9 +497,7 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
                     detected_stage=detected_stage,
                     observation=observation,
                 )
-            if state == "battle_start" and (
-                (started_chain and detected_stage == "preparation") or resume_in_battle
-            ):
+            if state == "battle_start" and (started_chain or resume_in_battle):
                 completed_stage = detected_stage if detected_stage == "preparation" else "preparation"
                 _set_completed_stage(session, stage=completed_stage)
                 return _finalize_battle_result(
