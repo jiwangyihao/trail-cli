@@ -139,6 +139,7 @@
 - `cw.slots.read` 会刷新 `cw_state.stage.status`；`cw.shop.scan` 只扫描商店页商品/金币切片，并只投影 session 中已有的 `cw_state.stage.status`，不得重新 OCR 全局状态。
 - `cw.slots.read` 与 `cw.shop.scan` 的角色名默认按 CW config canonicalize；低置信度结果必须保留 `raw_name`、`score=0.50` 这类诊断事实，Agent 需要先读截图再接受该匹配。
 - `cw.slots.read` 多板块输出按 `# 综合信息`、`# 角色信息`、`# 羁绊信息` 组织；`cw.shop.scan|status` 多板块输出按 `# 商店信息`、`# 综合信息` 组织，单一事实组不强制加标题。
+- `cw.slots.read` / `cw.portal.select` 复用的羁绊摘要行固定使用 `info 羁绊=... 档位="2*,4,6" 当前角色=...`；已激活档位直接在 `档位` 值中追加 `*` 标记，不再输出 `已激活档位` 或 `占比` 字段。`cw.slots.read` 默认文本过滤底层 status OCR 的 `OCR_LOW_CONFIDENCE`，角色识别低置信仍使用 `CW_ROLE_MATCH_LOW_CONFIDENCE` / `SLOTS_RECOGNITION_UNCERTAIN`。
 - `cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id。
 - `cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径；`current/apply` 只看当前已选攻略摘要，完整攻略仍由 `guide.fetch.cw` 提供。
 - `guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape；真正回到开局链路后，由 `cw.portal.select` 成功时自动兑现当前已选攻略。

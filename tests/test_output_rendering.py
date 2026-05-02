@@ -809,7 +809,7 @@ def test_render_cw_shop_item_warning_idx_follows_sorted_output_order_when_slot_m
     ]
 
 
-def test_render_cw_slots_trait_summary_uses_actual_max_tier_for_activation_display():
+def test_render_cw_slots_trait_summary_marks_active_tiers_without_ratio():
     envelope = {
         "ok": True,
         "data": {
@@ -836,8 +836,9 @@ def test_render_cw_slots_trait_summary_uses_actual_max_tier_for_activation_displ
 
     rendered = render_output("cw.slots.read", envelope)
 
-    assert "已激活档位=3/5" in rendered
-    assert "已激活档位=3/2" not in rendered
+    assert 'info 羁绊=仙舟 档位="3*,5" 当前角色=3' in rendered
+    assert "已激活档位=" not in rendered
+    assert "占比=" not in rendered
 
 
 def test_render_output_renders_shop_stage_status_projection():
@@ -3445,7 +3446,7 @@ def test_portal_select_renders_collected_slots_and_shop_before_warn_ref_and_hand
         "slot pos=front:1 name=希儿 star=1 traits=巡猎",
         "slot pos=hand:1 name=停云",
         "# 羁绊信息",
-        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+        'info 羁绊=巡猎 档位="1*,2" 当前角色=1',
         "# 商店信息",
         "item idx=1 slot=1 name=银狼 cost=20",
         "info coins=40 reserve_full=0",
@@ -3540,7 +3541,7 @@ def test_portal_select_renders_collected_equipment_between_traits_and_shop() -> 
         "# 角色信息",
         "slot pos=front:1 name=希儿 star=1 traits=巡猎",
         "# 羁绊信息",
-        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+        'info 羁绊=巡猎 档位="1*,2" 当前角色=1',
         "# 装备信息",
         "item pos=equipment:1 center=100,200 name=基础装甲 score=0.90 uncertain=0",
         "info count=1 uncertain=0 empty=59 backend=vector layout=default",
@@ -4120,7 +4121,27 @@ def test_render_output_adds_cw_slots_sections_without_breaking_screenshot_order(
         "slot pos=front:1 name=希儿 star=1 traits=巡猎",
         "slot pos=hand:1 name=停云",
         "# 羁绊信息",
-        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+        'info 羁绊=巡猎 档位="1*,2" 当前角色=1',
+    ]
+
+
+def test_render_output_cw_slots_read_suppresses_ocr_low_confidence_warning():
+    payload = {
+        "ok": True,
+        "data": {"front": [{"name": "希儿"}], "back": [], "hand": [], "stale": False},
+        "timing": {},
+        "warnings": [{"code": "OCR_LOW_CONFIDENCE", "message": "text may be incomplete"}],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.slots.read", payload).splitlines()
+
+    assert lines == [
+        "ok cw.slots.read front=1 back=0 hand=0 stale=0",
+        "# 角色信息",
+        "slot pos=front:1 name=希儿",
     ]
 
 
@@ -4368,8 +4389,8 @@ def test_render_output_renders_cw_slots_traits_and_trait_summary():
         "slot pos=back:1 name=佩拉 traits=量子",
         "slot pos=hand:1 name=布洛妮娅 traits=巡猎|辅助",
         "# 羁绊信息",
-        'info 羁绊=量子 档位="1,2" 当前角色=2 已激活档位=2/2 占比=1.00',
-        'info 羁绊=巡猎 档位="1,2" 当前角色=1 已激活档位=1/2 占比=0.50',
+        'info 羁绊=量子 档位="1*,2*" 当前角色=2',
+        'info 羁绊=巡猎 档位="1*,2" 当前角色=1',
     ]
 
 

@@ -17,4 +17,5 @@
 - `slots.read` 和 `shop.scan` 会按 CW config canonicalize 角色名；低置信度结果会带 `raw_name`、`score`、`match_kind`，必须先读截图确认。
 - `item traits=...` 是商品角色 canonicalization 结果，可在 slots 不 fresh 时仍出现；`field trait_summary` 不是默认文本 `item traits`，当前默认文本 renderer 不渲染 shop `trait_summary`，只在 fresh slots 的结构化/RPC 投影中可用。
 - 接收 `cw.portal.select` handoff 时，`trail-cw-prep` 优先复用同次 stage/slots/equipment/shop facts；带截图 success 先读原始截图，`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行：`# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 装备信息`、`# 装备优先级`、`# 角色装备需求`、`# 商店信息`。优先复用同次 equipment facts；缺失/stale/page changed 时才重跑 `cw.equipment.read`，不要在 handoff 后立刻重复扫描 slots/equipment/shop。
+- `# 羁绊信息` 下的羁绊摘要使用 `info 羁绊=... 档位="2*,4,6" 当前角色=...`；`*` 表示该档位已激活，默认文本不再输出 `已激活档位` 或 `占比`。
 - `trail cw battle run --session <id>`：战斗链；本 skill 不决定何时出战。

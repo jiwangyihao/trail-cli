@@ -1019,20 +1019,17 @@ def _append_cw_slot_trait_summary(lines: list[str], data: dict[str, Any]) -> Non
         if not isinstance(item, dict):
             continue
         active_tier = item.get("active_tier")
-        total_tiers = item.get("total_tiers")
         tiers = item.get("tiers")
-        max_tier = None
-        if isinstance(tiers, list):
-            tier_values = [_coerce_int(value) for value in tiers]
-            compact_tiers = [value for value in tier_values if value is not None]
-            if compact_tiers:
-                max_tier = max(compact_tiers)
-        activated = None
-        if active_tier is not None and total_tiers is not None:
-            activated = f"{active_tier}/{max_tier if max_tier is not None else total_tiers}"
         tiers_text = None
         if isinstance(tiers, list):
-            compact = [str(value) for value in tiers if value is not None]
+            active_tier_value = _coerce_int(active_tier)
+            compact = []
+            for value in tiers:
+                tier_value = _coerce_int(value)
+                if value is None:
+                    continue
+                suffix = "*" if active_tier_value is not None and tier_value is not None and tier_value <= active_tier_value else ""
+                compact.append(f"{value}{suffix}")
             if compact:
                 tiers_text = ",".join(compact)
         _append_fact_line(
@@ -1041,8 +1038,6 @@ def _append_cw_slot_trait_summary(lines: list[str], data: dict[str, Any]) -> Non
             ("羁绊", item.get("trait")),
             ("档位", tiers_text),
             ("当前角色", item.get("owned_roles")),
-            ("已激活档位", activated),
-            ("占比", _format_score_value(item.get("ratio"))),
         )
 
 
@@ -1093,6 +1088,7 @@ def _append_cw_trait_section(lines: list[str], data: dict[str, Any]) -> None:
 
 def _render_cw_slots_read(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
+    payload = _without_warnings_code(payload, "OCR_LOW_CONFIDENCE")
     lines = [_render_cw_slots_summary_line(command, data)]
     _append_success_capture_block(lines, payload)
     _append_cw_status_section(lines, data)
