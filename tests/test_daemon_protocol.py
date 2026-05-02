@@ -6208,6 +6208,7 @@ def test_command_service_cw_slots_read_uses_icon_reader_without_slot_detail_ocr(
             return {"roles": []}, {"traits": [], "roles": []}, self.recognizer
 
     monkeypatch.setattr(slots_module.stage, "build_cw_stage_detector", lambda runtime: lambda: "preparation")
+    monkeypatch.setattr(slots_module, "INITIAL_UI_DISMISS_SETTLE_SECONDS", 0)
     monkeypatch.setattr(
         slots_module,
         "run_batch_ocr",
@@ -6240,7 +6241,7 @@ def test_command_service_cw_slots_read_uses_icon_reader_without_slot_detail_ocr(
             session_id=session.session_id,
             verbose=False,
             method="cw.slots.read",
-            payload={"session_id": session.session_id},
+            payload={"session_id": session.session_id, "slot": ["front:0"]},
         )
     )
 

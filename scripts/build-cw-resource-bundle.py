@@ -12,20 +12,16 @@ from typing import Any
 from PIL import Image
 
 from trail.core.errors import TrailError
-from trail.scenes.cw.equipment_recognition import build_precomputed_equipment_features
 from trail.scenes.cw.equipment_resources import (
     EQUIPMENT_ICON_MAX_BYTES,
-    EquipmentCatalogEntry,
     build_cw_equipment_catalog,
     equipment_bundle_manifest_entry,
     safe_equipment_cache_segment,
     write_verified_equipment_icon,
 )
 from trail.scenes.cw.guide import download_cw_guide_config_data, normalize_cw_guide_config_data
-from trail.scenes.cw.role_recognition import build_precomputed_role_features
 from trail.scenes.cw.role_resources import (
     ROLE_ICON_MAX_BYTES,
-    RoleCatalogEntry,
     build_cw_role_catalog,
     download_role_icon_bytes,
     safe_role_cache_segment,
@@ -115,6 +111,8 @@ def _indexes(config: dict, equipment_items: list[dict]) -> dict:
 def _build_precomputed_equipment_features(
     icon_pairs: Iterable[tuple[EquipmentCatalogEntry, Image.Image]],
 ) -> dict:
+    from trail.scenes.cw.equipment_recognition import build_precomputed_equipment_features
+
     return build_precomputed_equipment_features(icon_pairs)
 
 
@@ -172,6 +170,8 @@ def _role_payload_base(entry: RoleCatalogEntry) -> dict[str, Any]:
 
 
 def _build_precomputed_role_features(icon_pairs: Iterable[tuple[RoleCatalogEntry, Image.Image]]) -> dict[str, Any]:
+    from trail.scenes.cw.role_recognition import build_precomputed_role_features
+
     pairs = list(icon_pairs)
     return build_precomputed_role_features(
         (entry for entry, _ in pairs),

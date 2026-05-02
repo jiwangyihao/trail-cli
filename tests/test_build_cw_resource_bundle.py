@@ -62,6 +62,37 @@ def _feature_payload(cache_key="advanced-e1"):
     }
 
 
+def _role_feature_payload():
+    return {
+        "role_feature_schema_version": 1,
+        "recognizer_algorithm_version": "role-card-mask-v1",
+        "geometry_version": "cw-slots-1920x1080-v2",
+        "empty_template_version": "cw-slots-empty-v1",
+        "target_size": [103, 120],
+        "avatar_roi": [5, 4, 98, 108],
+        "feature_size": [64, 64],
+        "hist_bins": [16, 16, 16],
+        "min_score": 0.58,
+        "low_score": 0.50,
+        "min_gap": 0.035,
+        "empty_min_score": 0.82,
+        "empty_min_gap": 0.08,
+        "items": [
+            {
+                "role_id": "r1",
+                "name": "希儿",
+                "normalized_name": "希儿",
+                "rarity": "5",
+                "front_back_type": "front",
+                "trait_ids": ["t1"],
+                "icon_rgba": _pixel_payload("RGBA", (64, 64), 4),
+                "icon_mask": _pixel_payload("L", (64, 64), 1),
+                "histogram": [0.0] * 4096,
+            }
+        ],
+    }
+
+
 def _empty_png_bytes(*, mode: str = "RGBA", size: tuple[int, int] = (103, 120)) -> bytes:
     buffer = BytesIO()
     Image.new(mode, size).save(buffer, format="PNG")
@@ -211,6 +242,11 @@ def test_build_cw_resource_bundle_writes_manifest_and_loadable_bundle(tmp_path, 
         module,
         "_build_precomputed_equipment_features",
         lambda icon_pairs: _feature_payload(),
+    )
+    monkeypatch.setattr(
+        module,
+        "_build_precomputed_role_features",
+        lambda icon_pairs: _role_feature_payload(),
     )
 
     result = module.build_cw_resource_bundle(
