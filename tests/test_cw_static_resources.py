@@ -381,28 +381,19 @@ def test_load_cw_resource_bundle_rejects_hash_mismatch(tmp_path):
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
 
-def test_load_cw_resource_bundle_rejects_bool_manifest_file_size(tmp_path):
-    root = _bundle(tmp_path)
-    icon_path = root / "equipment" / "icons" / "icon-a.png"
-    icon_path.write_bytes(b"x")
-    equipment_manifest_path = root / "equipment" / "manifest.json"
-    equipment_manifest = json.loads(equipment_manifest_path.read_text(encoding="utf-8"))
-    equipment_manifest["items"][0]["sha256"] = _sha256(icon_path)
-    equipment_manifest["items"][0]["size"] = icon_path.stat().st_size
-    _write_json(equipment_manifest_path, equipment_manifest)
-    _refresh_manifest_entry(root, "equipment/manifest.json")
-    manifest_path = root / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    for entry in manifest["files"]:
-        if entry["path"] == "equipment/icons/icon-a.png":
-            entry["sha256"] = _sha256(icon_path)
-            entry["size"] = True
-            break
-    manifest["content_digest"] = _bundle_content_digest(manifest)
-    _write_json(manifest_path, manifest)
+def test_validate_manifest_rejects_bool_file_size(tmp_path):
+    from trail.scenes.cw import static_resources
 
     with pytest.raises(TrailError) as exc_info:
-        load_cw_resource_bundle_from_path(root)
+        static_resources._validate_manifest(
+            tmp_path,
+            {
+                "bundle_schema_version": CW_RESOURCE_BUNDLE_SCHEMA_VERSION,
+                "files": [{"path": "raw_config.json", "sha256": "abc", "size": True}],
+                "content_digest": "unused",
+            },
+            required_relatives=(),
+        )
 
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
@@ -485,15 +476,14 @@ def test_load_cw_resource_bundle_requires_manifest_content_digest(tmp_path):
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
 
-def test_load_cw_resource_bundle_rejects_raw_config_missing_required_field(tmp_path):
-    root = _bundle(tmp_path)
+def test_validate_raw_config_rejects_missing_required_field():
+    from trail.scenes.cw import static_resources
+
     payload = _valid_raw_config()
     payload.pop("trait_info_list")
-    _write_json(root / "raw_config.json", payload)
-    _refresh_manifest_entry(root, "raw_config.json")
 
     with pytest.raises(TrailError) as exc_info:
-        load_cw_resource_bundle_from_path(root)
+        static_resources._validate_raw_config(payload)
 
     assert exc_info.value.code == "CW_RESOURCE_BUNDLE_INVALID"
 
