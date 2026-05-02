@@ -393,13 +393,19 @@ def write_equipment_override_manifest(override_root: Path, *, base_bundle: CwRes
     return manifest
 
 
-def _validate_manifest(root: Path, manifest: dict[str, Any], *, required_relatives: tuple[str, ...] = _FIXED_BUNDLE_RELATIVES) -> set[str]:
+def _validate_manifest(
+    root: Path,
+    manifest: dict[str, Any],
+    *,
+    required_relatives: tuple[str, ...] = _FIXED_BUNDLE_RELATIVES,
+    root_resolved: Path | None = None,
+) -> set[str]:
     if manifest.get("bundle_schema_version") != CW_RESOURCE_BUNDLE_SCHEMA_VERSION:
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw resource bundle schema version unsupported")
     files = manifest.get("files")
     if not isinstance(files, list):
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw resource bundle manifest missing files")
-    root_resolved = root.resolve()
+    root_resolved = root_resolved or root.resolve()
     seen_paths: set[str] = set()
     for entry in files:
         if not isinstance(entry, dict):
@@ -512,7 +518,7 @@ def _validate_equipment_features(payload: dict[str, Any]) -> None:
         _validate_pixel_payload(item["match_mask"], "match_mask", "L", [64, 64], 1)
 
 
-def _validate_role_manifest(root: Path, payload: dict[str, Any]) -> None:
+def _validate_role_manifest(root: Path, payload: dict[str, Any], *, root_resolved: Path | None = None) -> None:
     if payload.get("role_manifest_schema_version") != CW_ROLE_MANIFEST_SCHEMA_VERSION:
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest schema version unsupported")
     if not isinstance(payload.get("resource_version"), str) or not payload.get("resource_version"):
@@ -522,7 +528,7 @@ def _validate_role_manifest(root: Path, payload: dict[str, Any]) -> None:
     empty_templates = payload.get("empty_templates")
     if not isinstance(empty_templates, dict):
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw role manifest missing empty_templates")
-    root_resolved = root.resolve()
+    root_resolved = root_resolved or root.resolve()
     for key, expected_relative in _ROLE_EMPTY_TEMPLATE_RELATIVES.items():
         entry = empty_templates.get(key)
         if not isinstance(entry, dict):
@@ -750,9 +756,9 @@ def _validate_equipment_manifest_payload(payload: dict[str, Any]) -> None:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", "cw equipment manifest item size invalid")
 
 
-def _validate_equipment_manifest(root: Path, payload: dict[str, Any]) -> None:
+def _validate_equipment_manifest(root: Path, payload: dict[str, Any], *, root_resolved: Path | None = None) -> None:
     _validate_equipment_manifest_payload(payload)
-    root_resolved = root.resolve()
+    root_resolved = root_resolved or root.resolve()
     items = payload["items"]
     for item in items:
         local_path = _clean_equipment_icon_relative(item.get("local_path"))
@@ -763,8 +769,14 @@ def _validate_equipment_manifest(root: Path, payload: dict[str, Any]) -> None:
             raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment icon checksum mismatch: {local_path}")
 
 
-def _validate_equipment_manifest_paths_listed(root: Path, payload: dict[str, Any], manifest_files: set[str]) -> None:
-    root_resolved = root.resolve()
+def _validate_equipment_manifest_paths_listed(
+    root: Path,
+    payload: dict[str, Any],
+    manifest_files: set[str],
+    *,
+    root_resolved: Path | None = None,
+) -> None:
+    root_resolved = root_resolved or root.resolve()
     for item in payload["items"]:
         local_path = _clean_equipment_icon_relative(item["local_path"])
         normalized_local_path = _bundle_relative(
@@ -790,8 +802,14 @@ def _iter_role_manifest_local_paths(payload: dict[str, Any]):
                 yield _clean_role_icon_relative(item.get("local_path"))
 
 
-def _validate_role_manifest_paths_listed(root: Path, role_manifest: dict[str, Any], manifest_files: set[str]) -> None:
-    root_resolved = root.resolve()
+def _validate_role_manifest_paths_listed(
+    root: Path,
+    role_manifest: dict[str, Any],
+    manifest_files: set[str],
+    *,
+    root_resolved: Path | None = None,
+) -> None:
+    root_resolved = root_resolved or root.resolve()
     for local_path in _iter_role_manifest_local_paths(role_manifest):
         normalized_local_path = _bundle_relative(
             root,
@@ -803,9 +821,14 @@ def _validate_role_manifest_paths_listed(root: Path, role_manifest: dict[str, An
 
 
 def _validate_manifest_files_allowed(
-    root: Path, equipment_manifest: dict[str, Any], role_manifest: dict[str, Any], manifest_files: set[str]
+    root: Path,
+    equipment_manifest: dict[str, Any],
+    role_manifest: dict[str, Any],
+    manifest_files: set[str],
+    *,
+    root_resolved: Path | None = None,
 ) -> None:
-    root_resolved = root.resolve()
+    root_resolved = root_resolved or root.resolve()
     allowed = set(_FIXED_BUNDLE_RELATIVES)
     for item in equipment_manifest["items"]:
         local_path = _clean_equipment_icon_relative(item["local_path"])
@@ -829,8 +852,14 @@ def _validate_manifest_files_allowed(
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw resource bundle manifest unexpected file: {extra[0]}")
 
 
-def _validate_equipment_override_files_allowed(root: Path, payload: dict[str, Any], manifest_files: set[str]) -> None:
-    root_resolved = root.resolve()
+def _validate_equipment_override_files_allowed(
+    root: Path,
+    payload: dict[str, Any],
+    manifest_files: set[str],
+    *,
+    root_resolved: Path | None = None,
+) -> None:
+    root_resolved = root_resolved or root.resolve()
     allowed = {"equipment/manifest.json", "equipment/features.json"}
     for item in payload["items"]:
         local_path = _clean_equipment_icon_relative(item["local_path"])
@@ -846,9 +875,14 @@ def _validate_equipment_override_files_allowed(root: Path, payload: dict[str, An
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw equipment override manifest unexpected file: {extra[0]}")
 
 
-def _validate_no_unreferenced_bundle_files(root: Path, manifest_files: set[str]) -> None:
+def _validate_no_unreferenced_bundle_files(
+    root: Path,
+    manifest_files: set[str],
+    *,
+    root_resolved: Path | None = None,
+) -> None:
     allowed = {"manifest.json", *manifest_files}
-    resolved_root = root.resolve()
+    resolved_root = root_resolved or root.resolve()
     for path in resolved_root.rglob("*"):
         if not path.is_file():
             continue
@@ -861,9 +895,10 @@ def load_cw_resource_bundle_from_path(root: str | Path, *, source_kind: str = "p
     bundle_root = Path(root)
     if _is_path_link(bundle_root):
         raise TrailError("CW_RESOURCE_BUNDLE_INVALID", f"cw resource bundle root must not be symlink: {bundle_root}")
+    bundle_root_resolved = bundle_root.resolve()
     manifest_path = bundle_root / "manifest.json"
     manifest = _read_json(manifest_path)
-    manifest_files = _validate_manifest(bundle_root, manifest)
+    manifest_files = _validate_manifest(bundle_root, manifest, root_resolved=bundle_root_resolved)
 
     raw_config = _read_json(bundle_root / "raw_config.json")
     guide_config = _read_json(bundle_root / "guide_config.json")
@@ -880,16 +915,32 @@ def load_cw_resource_bundle_from_path(root: str | Path, *, source_kind: str = "p
     role_manifest_path = bundle_root / "roles" / "manifest.json"
     role_manifest = _read_json(role_manifest_path)
     role_features = _read_json(bundle_root / "roles" / "features.json")
-    _validate_equipment_manifest(bundle_root, equipment_manifest)
-    _validate_role_manifest(bundle_root, role_manifest)
-    _validate_manifest_files_allowed(bundle_root, equipment_manifest, role_manifest, manifest_files)
-    _validate_equipment_manifest_paths_listed(bundle_root, equipment_manifest, manifest_files)
-    _validate_role_manifest_paths_listed(bundle_root, role_manifest, manifest_files)
+    _validate_equipment_manifest(bundle_root, equipment_manifest, root_resolved=bundle_root_resolved)
+    _validate_role_manifest(bundle_root, role_manifest, root_resolved=bundle_root_resolved)
+    _validate_manifest_files_allowed(
+        bundle_root,
+        equipment_manifest,
+        role_manifest,
+        manifest_files,
+        root_resolved=bundle_root_resolved,
+    )
+    _validate_equipment_manifest_paths_listed(
+        bundle_root,
+        equipment_manifest,
+        manifest_files,
+        root_resolved=bundle_root_resolved,
+    )
+    _validate_role_manifest_paths_listed(
+        bundle_root,
+        role_manifest,
+        manifest_files,
+        root_resolved=bundle_root_resolved,
+    )
     _validate_equipment_features(equipment_features)
     _validate_equipment_feature_manifest_keys(equipment_manifest, equipment_features)
     _validate_role_features(role_features)
     _validate_role_feature_manifest_keys(role_manifest, role_features)
-    _validate_no_unreferenced_bundle_files(bundle_root, manifest_files)
+    _validate_no_unreferenced_bundle_files(bundle_root, manifest_files, root_resolved=bundle_root_resolved)
 
     return CwResourceBundle(
         root=bundle_root,
@@ -1008,18 +1059,30 @@ def _overlay_workspace_equipment(bundle: CwResourceBundle, override_root: Path) 
     if override_manifest.get("base_content_digest") != bundle.identity:
         return bundle
     try:
+        override_root_resolved = override_root.resolve()
         manifest_files = _validate_manifest(
             override_root,
             override_manifest,
             required_relatives=("equipment/manifest.json", "equipment/features.json"),
+            root_resolved=override_root_resolved,
         )
         equipment_manifest_path = override_root / "equipment" / "manifest.json"
         equipment_manifest = _read_json(equipment_manifest_path)
         equipment_features = _read_json(override_root / "equipment" / "features.json")
-        _validate_equipment_manifest(override_root, equipment_manifest)
-        _validate_equipment_override_files_allowed(override_root, equipment_manifest, manifest_files)
-        _validate_equipment_manifest_paths_listed(override_root, equipment_manifest, manifest_files)
-        _validate_no_unreferenced_bundle_files(override_root, manifest_files)
+        _validate_equipment_manifest(override_root, equipment_manifest, root_resolved=override_root_resolved)
+        _validate_equipment_override_files_allowed(
+            override_root,
+            equipment_manifest,
+            manifest_files,
+            root_resolved=override_root_resolved,
+        )
+        _validate_equipment_manifest_paths_listed(
+            override_root,
+            equipment_manifest,
+            manifest_files,
+            root_resolved=override_root_resolved,
+        )
+        _validate_no_unreferenced_bundle_files(override_root, manifest_files, root_resolved=override_root_resolved)
         _validate_equipment_features(equipment_features)
         _validate_equipment_feature_manifest_keys(equipment_manifest, equipment_features)
     except TrailError as exc:
