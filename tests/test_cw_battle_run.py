@@ -618,6 +618,20 @@ def test_classify_cw_battle_page_treats_layer_transition_as_battle_flow_state(
     assert result == "layer_transition"
 
 
+def test_classify_cw_battle_page_trusts_detected_layer_transition_without_ocr(tmp_path: Path):
+    battle_scene = load_cw_battle_module()
+    runtime = FakeRuntime(ocr_map={None: [], HEADLINE_CAPTURE_KEY: [_ocr_piece("挑战成功")]})
+
+    result = battle_scene.classify_cw_battle_page(
+        runtime,
+        session=build_session(tmp_path),
+        detected_stage="layer_transition",
+    )
+
+    assert result == "layer_transition"
+    assert runtime.ocr_calls == []
+
+
 def test_classify_cw_battle_page_maps_detector_settle_to_settlement_entry(tmp_path: Path, monkeypatch):
     battle_scene = load_cw_battle_module()
     monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda runtime: lambda: "settle")
@@ -1122,6 +1136,30 @@ def test_run_cw_battle_timeout_on_layer_transition_keeps_in_progress(tmp_path: P
     assert result["stage"] == "layer_transition"
     assert result["stale"] is True
     assert result["in_battle"] is False
+
+
+def test_run_cw_battle_advances_detected_layer_transition_without_ocr(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+
+    class NoOcrLayerTransitionRuntime(LayerTransitionRuntime):
+        def __init__(self, states: list[str], *, sleep_advances_from: tuple[str, ...]):
+            super().__init__(states, sleep_advances_from=sleep_advances_from)
+            self.ocr_calls = 0
+
+        def ocr(self, **kwargs):
+            del kwargs
+            self.ocr_calls += 1
+            return []
+
+    runtime = NoOcrLayerTransitionRuntime(["layer_transition", "stable_stage"], sleep_advances_from=())
+    _patch_stage_and_clock_only(monkeypatch, battle_scene, runtime=runtime, clock=FakeClock(step=0.0))
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=30)
+
+    assert result == {"status": "completed", "stage": "shop", "stale": False, "in_battle": False}
+    assert runtime.actions == ["blank_continue"]
+    assert runtime.ocr_calls == 0
 
 
 def test_run_cw_battle_resumes_settle_entry_before_short_deadline(tmp_path: Path, monkeypatch):

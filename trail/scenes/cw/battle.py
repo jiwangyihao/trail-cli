@@ -193,6 +193,18 @@ def _has_positive_battle_anchor(runtime, observation: BattleObservation | None =
     return _contains_any(_page_text(runtime, observation), _BATTLE_PROGRESS_KEYWORDS)
 
 
+def _classify_stage_without_ocr(detected_stage: object) -> str | None:
+    if detected_stage == "game_over":
+        return "game_over"
+    if detected_stage == "preparation":
+        return "battle_start"
+    if detected_stage == "layer_transition":
+        return "layer_transition"
+    if detected_stage in STABLE_BATTLE_RETURN_STAGES:
+        return "stable_stage"
+    return None
+
+
 def _read_settle_headline(runtime, observation: BattleObservation | None = None) -> tuple[str, str]:
     if observation is not None:
         headline = observation.headline_text() or observation.page_text
@@ -244,6 +256,10 @@ def classify_cw_battle_page(
 ) -> str:
     del session
 
+    detected_state = _classify_stage_without_ocr(detected_stage)
+    if detected_state is not None:
+        return detected_state
+
     if observation is None:
         observation = observe_cw_battle_page(runtime, detected_stage=detected_stage)
 
@@ -258,6 +274,9 @@ def classify_cw_battle_page(
 
     if detected_stage is _DETECTED_STAGE_UNSET:
         detected_stage = build_cw_stage_detector(runtime)()
+    detected_state = _classify_stage_without_ocr(detected_stage)
+    if detected_state is not None:
+        return detected_state
     if detected_stage == "game_over":
         return "game_over"
     if detected_stage == "settle":
@@ -468,13 +487,16 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
     try:
         while True:
             detected_stage = build_cw_stage_detector(runtime)()
-            observation = observe_cw_battle_page(runtime, detected_stage=detected_stage)
-            state = classify_cw_battle_page(
-                runtime,
-                session=session,
-                detected_stage=detected_stage,
-                observation=observation,
-            )
+            observation: BattleObservation | None = None
+            state = _classify_stage_without_ocr(detected_stage)
+            if state is None:
+                observation = observe_cw_battle_page(runtime, detected_stage=detected_stage)
+                state = classify_cw_battle_page(
+                    runtime,
+                    session=session,
+                    detected_stage=detected_stage,
+                    observation=observation,
+                )
             if state == "battle_start" and (
                 (started_chain and detected_stage == "preparation") or resume_in_battle
             ):
