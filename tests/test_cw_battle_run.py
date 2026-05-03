@@ -47,7 +47,7 @@ class FakeRuntime:
         self.ocr_calls: list[object] = []
         self.locate_calls: list[str] = []
 
-    def ocr(self, **kwargs):
+    def ocr(self, **kwargs) -> list[object]:
         capture = kwargs.get("capture")
         self.ocr_calls.append(_capture_key(capture))
         return list(self.ocr_map.get(_capture_key(capture), []))
@@ -106,11 +106,30 @@ class ScriptedBattleRuntime:
             }
         if self.state == "settle_followup":
             return {None: [_ocr_piece("下一步")]}
+        if self.state == "game_over_followup":
+            return {None: [_ocr_piece("对局未完成"), _ocr_piece("3-1 战斗"), _ocr_piece("小队生命值 0"), _ocr_piece("下一页")]}
+        if self.state == "game_over_summary":
+            return {None: [_ocr_piece("对局未完成"), _ocr_piece("3-1 战斗"), _ocr_piece("小队生命值 0")]}
+        if self.state == "game_over_return":
+            return {
+                None: [
+                    _ocr_piece("小队生命值"),
+                    _ocr_piece("0"),
+                    _ocr_piece("总经济"),
+                    _ocr_piece("215"),
+                    _ocr_piece("阵容价值"),
+                    _ocr_piece("46"),
+                    _ocr_piece("伤害统计"),
+                    _ocr_piece("返回货币战争"),
+                ]
+            }
+        if self.state == "home":
+            return {None: [_ocr_piece("货币战争"), _ocr_piece("开始游戏")]}
         if self.state == "game_over":
             return {None: [_ocr_piece("游戏结束")]}
         return {None: []}
 
-    def ocr(self, **kwargs):
+    def ocr(self, **kwargs) -> list[object]:
         capture = _capture_key(kwargs.get("capture"))
         return list(self._ocr_map_for_state().get(capture, []))
 
@@ -118,8 +137,17 @@ class ScriptedBattleRuntime:
         del template, kwargs
         return None
 
+    def wait_img(self, template: str, timeout: int = 3, interval: float = 0.5):
+        del timeout, interval
+        if self.state == "home" and str(template):
+            return {"left": 84, "top": 96, "width": 40, "height": 20}
+        return None
+
     def click_point(self, x: int, y: int):
         self.clicks.append((x, y))
+        if self.state == "game_over_return":
+            self.actions.append("return_home")
+            self.advance()
 
     def advance(self) -> None:
         if self.index < len(self.states) - 1:
@@ -134,6 +162,8 @@ class ScriptedBattleRuntime:
             return self.stable_stage
         if self.state == "game_over":
             return "game_over"
+        if self.state == "game_over_return":
+            return None
         if self.state == "settle_entry":
             return self.settle_detect_stage
         if self.state == "preparation":
@@ -157,7 +187,7 @@ class TeamCountConfirmRuntime(ScriptedBattleRuntime):
         self.wait_calls.append(str(template))
         return {"left": 100, "top": 200, "width": 60, "height": 20}
 
-    def ocr(self, **kwargs):
+    def ocr(self, **kwargs) -> list[object]:
         capture = _capture_key(kwargs.get("capture"))
         if capture is None:
             return [_ocr_piece("开始战斗")]
@@ -571,6 +601,60 @@ def test_classify_cw_battle_page_does_not_treat_challenge_end_without_continue_a
     assert result == "unknown"
 
 
+def test_classify_cw_battle_page_treats_go_settle_button_as_settlement_followup(tmp_path: Path):
+    battle_scene = load_cw_battle_module()
+    runtime = FakeRuntime(
+        ocr_map={
+            None: [_ocr_piece("挑战结束"), _ocr_piece("前往结算")],
+            HEADLINE_CAPTURE_KEY: [_ocr_piece("挑战结束")],
+        }
+    )
+
+    result = battle_scene.classify_cw_battle_page(
+        runtime,
+        session=build_session(tmp_path),
+        detected_stage=None,
+    )
+
+    assert result == "settle_followup"
+
+
+def test_classify_cw_battle_page_treats_game_over_with_next_page_as_game_over_followup(tmp_path: Path):
+    battle_scene = load_cw_battle_module()
+    runtime = FakeRuntime(
+        ocr_map={
+            None: [_ocr_piece("对局未完成"), _ocr_piece("前往结算")],
+            HEADLINE_CAPTURE_KEY: [_ocr_piece("对局未完成")],
+        }
+    )
+
+    result = battle_scene.classify_cw_battle_page(
+        runtime,
+        session=build_session(tmp_path),
+        detected_stage=None,
+    )
+
+    assert result == "game_over_followup"
+
+
+def test_classify_cw_battle_page_treats_game_over_summary_as_game_over(tmp_path: Path):
+    battle_scene = load_cw_battle_module()
+    runtime = FakeRuntime(
+        ocr_map={
+            None: [_ocr_piece("对局未完成"), _ocr_piece("小队生命值 0")],
+            HEADLINE_CAPTURE_KEY: [_ocr_piece("对局未完成")],
+        }
+    )
+
+    result = battle_scene.classify_cw_battle_page(
+        runtime,
+        session=build_session(tmp_path),
+        detected_stage=None,
+    )
+
+    assert result == "game_over"
+
+
 def test_classify_cw_battle_page_detects_settlement_followup(tmp_path: Path):
     battle_scene = load_cw_battle_module()
     runtime = FakeRuntime(ocr_map={None: [_ocr_piece("下一步")]})
@@ -578,6 +662,196 @@ def test_classify_cw_battle_page_detects_settlement_followup(tmp_path: Path):
     result = battle_scene.classify_cw_battle_page(runtime, session=build_session(tmp_path))
 
     assert result == "settle_followup"
+
+
+def test_advance_settlement_page_observation_uses_go_settle_button_without_fallback(monkeypatch):
+    battle_scene = load_cw_battle_module()
+    runtime = CostlySettleRuntime(
+        ["settle_followup"],
+        clock=FakeClock(step=0.0),
+        page_ocr_cost=0.0,
+        capture_ocr_cost=0.0,
+        sleep_advances_from=(),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_ocr_map_for_state",
+        lambda: {None: [_ocr_button_piece("前往结算", left=900, top=884)]},
+    )
+    observation = battle_scene.observe_cw_battle_page(runtime, detected_stage=None)
+
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_settle_continuer",
+        lambda _runtime: lambda: pytest.fail("fallback settle continuer used"),
+    )
+
+    battle_scene._advance_settlement_page(runtime, observation=observation)
+
+    assert runtime.clicks[-1] == (960, 902)
+    assert runtime.page_ocr_calls == 1
+
+
+def test_run_cw_battle_advances_game_over_followup_then_reports_game_over(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(["game_over_followup", "game_over_summary"], sleep_advances_from=())
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=15)
+
+    assert result == {
+        "status": "completed",
+        "result": "lose",
+        "stage": "game_over",
+        "stale": False,
+        "in_battle": False,
+        "round": "3-1",
+        "hp": 0,
+        "settle_text": "对局未完成",
+        "game_over": True,
+        "end_reason": "global_battle_failed",
+        "restart_candidate": True,
+    }
+    assert runtime.actions == ["next"]
+    assert session.scene_state["cw"]["stage"] == {"value": "game_over", "stale": False}
+
+
+def test_run_cw_battle_clicks_return_currency_wars_and_reports_final_failure(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(["game_over_return", "home"], sleep_advances_from=())
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=15)
+
+    assert result == {
+        "status": "completed",
+        "result": "lose",
+        "stage": "game_over",
+        "stale": False,
+        "in_battle": False,
+        "hp": 0,
+        "settle_text": "返回货币战争",
+        "game_over": True,
+        "end_reason": "global_battle_failed",
+        "restart_candidate": True,
+        "returned_home": True,
+    }
+    assert runtime.actions == ["return_home"]
+    assert runtime.clicks == [(960, 908)]
+    assert session.scene_state["cw"]["entry"] == {"page": "home"}
+    assert session.scene_state["cw"]["stage"] == {"stale": True}
+    assert session.last_stage is None
+
+
+def test_run_cw_battle_does_not_read_economy_as_hp_on_final_failure(tmp_path: Path, monkeypatch):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(["game_over_return", "home"], sleep_advances_from=())
+
+    def ocr(**kwargs) -> list[object]:
+        capture = _capture_key(kwargs.get("capture"))
+        if capture is None:
+            if runtime.state == "home":
+                return [_ocr_piece("货币战争"), _ocr_piece("开始游戏")]
+            return [
+                _ocr_piece("小队生命值"),
+                _ocr_piece("总经济"),
+                _ocr_piece("215"),
+                _ocr_piece("阵容价值"),
+                _ocr_piece("46"),
+                _ocr_piece("伤害统计"),
+                _ocr_piece("返回货币战争"),
+            ]
+        return []
+
+    monkeypatch.setattr(runtime, "ocr", ocr)
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=15)
+
+    assert result == {
+        "status": "completed",
+        "result": "lose",
+        "stage": "game_over",
+        "stale": False,
+        "in_battle": False,
+        "settle_text": "返回货币战争",
+        "game_over": True,
+        "end_reason": "global_battle_failed",
+        "restart_candidate": True,
+        "returned_home": True,
+    }
+    assert runtime.actions == ["return_home"]
+    assert session.scene_state["cw"]["entry"] == {"page": "home"}
+    assert session.scene_state["cw"]["stage"] == {"stale": True}
+
+
+def test_run_cw_battle_does_not_mark_returned_home_when_game_over_template_still_matches(
+    tmp_path: Path, monkeypatch
+):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(["game_over_return"], sleep_advances_from=())
+    monkeypatch.setattr(
+        runtime,
+        "wait_img",
+        lambda template, timeout=3, interval=0.5: {"left": 84, "top": 96, "width": 40, "height": 20},
+    )
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=15)
+
+    assert result == {
+        "status": "completed",
+        "result": "lose",
+        "stage": "game_over",
+        "stale": False,
+        "in_battle": False,
+        "hp": 0,
+        "settle_text": "返回货币战争",
+        "game_over": True,
+        "end_reason": "global_battle_failed",
+        "restart_candidate": True,
+        "returned_home": False,
+    }
+    assert runtime.actions == ["return_home"]
+    assert "entry" not in session.scene_state["cw"]
+    assert session.scene_state["cw"]["stage"] == {"stale": True}
+
+
+def test_run_cw_battle_reads_game_over_return_summary_when_stage_detector_hits_game_over(
+    tmp_path: Path, monkeypatch
+):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(["game_over_return", "home"], sleep_advances_from=())
+    _patch_run_loop(monkeypatch, battle_scene, runtime)
+    monkeypatch.setattr(
+        battle_scene,
+        "build_cw_stage_detector",
+        lambda _runtime: lambda: "game_over" if runtime.state == "game_over_return" else runtime.detect_stage(),
+    )
+
+    result = battle_scene.run_cw_battle(session, runtime=runtime, timeout=15)
+
+    assert result == {
+        "status": "completed",
+        "result": "lose",
+        "stage": "game_over",
+        "stale": False,
+        "in_battle": False,
+        "hp": 0,
+        "settle_text": "返回货币战争",
+        "game_over": True,
+        "end_reason": "global_battle_failed",
+        "restart_candidate": True,
+        "returned_home": True,
+    }
+    assert runtime.actions == ["return_home"]
+    assert session.scene_state["cw"]["entry"] == {"page": "home"}
+    assert session.scene_state["cw"]["stage"] == {"stale": True}
 
 
 def test_classify_cw_battle_page_detects_game_over(tmp_path: Path):

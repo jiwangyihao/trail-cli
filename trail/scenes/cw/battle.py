@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from time import monotonic, sleep
 
 from trail.core.errors import TrailError
+from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.events import build_cw_battle_continuer, build_cw_battle_starter, build_cw_settle_continuer
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw.stage import _replace_stage_fields, build_cw_stage_detector, mark_cw_stage_stale
@@ -37,6 +38,12 @@ _CW_ACTION_OCR_REGION = {
     "to_y": 0.92,
 }
 LAYER_TRANSITION_CONTINUE_POINT = (960, 903)
+GAME_OVER_RETURN_TEXT = "返回货币战争"
+GAME_OVER_RETURN_POINT = (960, 908)
+GAME_OVER_RETURN_SETTLE_SECONDS = 1.0
+GAME_OVER_RETURN_HOME_WAIT_SECONDS = 3
+GAME_OVER_RETURN_HOME_WAIT_INTERVAL_SECONDS = 0.5
+GAME_OVER_RETURN_STILL_PAGE_KEYWORDS = (GAME_OVER_RETURN_TEXT, "对局未完成", "挑战失败", "伤害统计", "小队生命值")
 
 STABLE_BATTLE_RETURN_STAGES: frozenset[str] = frozenset(
     {
@@ -50,11 +57,15 @@ STABLE_BATTLE_RETURN_STAGES: frozenset[str] = frozenset(
 )
 _BATTLE_START_KEYWORDS: tuple[str, ...] = ("备战阶段", "开始战斗", "开始挑战", "出战")
 _SETTLEMENT_ENTRY_KEYWORDS: tuple[str, ...] = ("挑战成功", "挑战失败", "继续挑战")
-_SETTLEMENT_FOLLOWUP_KEYWORDS: tuple[str, ...] = ("下一步", "下一页")
-_GAME_OVER_KEYWORDS: tuple[str, ...] = ("游戏结束", "本局结束")
+_SETTLEMENT_FOLLOWUP_KEYWORDS: tuple[str, ...] = ("下一步", "下一页", "前往结算")
+_GAME_OVER_KEYWORDS: tuple[str, ...] = ("游戏结束", "本局结束", "对局未完成", "返回货币战争")
 _BATTLE_PROGRESS_KEYWORDS: tuple[str, ...] = ("自动战斗", "倍速", "暂停")
 CW_BATTLE_RUN_POLL_INTERVAL_SECONDS = 0.5
 _DETECTED_STAGE_UNSET = object()
+
+
+def _asset(alias: str) -> str:
+    return str(resolve_scene_asset("cw", alias))
 
 
 def _read_ocr_piece(item: object) -> str:
@@ -78,12 +89,20 @@ def _read_ocr_piece(item: object) -> str:
     return ""
 
 
+def _coerce_ocr_pieces(value: object) -> list[object]:
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, tuple):
+        return list(value)
+    return []
+
+
 def _joined_ocr_text(runtime, *, capture=None) -> str:
     ocr = getattr(runtime, "ocr", None)
     if not callable(ocr):
         return ""
     try:
-        pieces = ocr(capture=capture)
+        pieces = _coerce_ocr_pieces(ocr(capture=capture))
     except Exception:
         return ""
     return "".join(_read_ocr_piece(piece).strip() for piece in pieces or [])
@@ -120,9 +139,9 @@ def observe_cw_battle_page(runtime, *, detected_stage: object) -> BattleObservat
     pieces: list[object] = []
     if callable(ocr):
         try:
-            pieces = list(ocr() or [])
+            pieces = _coerce_ocr_pieces(ocr())
         except TypeError:
-            pieces = list(ocr(capture=None) or [])
+            pieces = _coerce_ocr_pieces(ocr(capture=None))
         except Exception:
             pieces = []
     page_text = "".join(_read_ocr_piece(piece).strip() for piece in pieces)
@@ -189,13 +208,63 @@ def _has_game_over(runtime, observation: BattleObservation | None = None) -> boo
     return _contains_any(_page_text(runtime, observation), _GAME_OVER_KEYWORDS)
 
 
+def _extract_game_over_hp(page_text: str) -> int | None:
+    if "小队生命值" not in page_text:
+        hp_match = re.search(r"(?:生命值|生命|血量|HP)\D{0,24}(\d+)", page_text, re.IGNORECASE)
+        if hp_match is not None:
+            return int(hp_match.group(1))
+        return None
+    before_economy = page_text.split("总经济", 1)[0]
+    digits = re.findall(r"\d+", before_economy.split("小队生命值", 1)[1])
+    if len(digits) == 1:
+        return int(digits[0])
+    return None
+
+
+def _read_game_over_summary(runtime, observation: BattleObservation | None = None) -> dict[str, object]:
+    page_text = _page_text(runtime, observation)
+    summary: dict[str, object] = {
+        "stage": "game_over",
+        "game_over": True,
+    }
+    hp_value = _extract_game_over_hp(page_text)
+    if "对局未完成" in page_text or "挑战失败" in page_text or "返回货币战争" in page_text:
+        if "对局未完成" in page_text:
+            settle_text = "对局未完成"
+        elif "挑战失败" in page_text:
+            settle_text = "挑战失败"
+        else:
+            settle_text = "返回货币战争"
+        summary.update(
+            {
+                "result": "lose",
+                "settle_text": settle_text,
+                "end_reason": "global_battle_failed",
+                "restart_candidate": True,
+            }
+        )
+    elif "游戏结束" in page_text or "本局结束" in page_text:
+        summary.update({"settle_text": "游戏结束", "end_reason": "game_over"})
+
+    round_match = re.search(r"(\d+-\d+)", page_text)
+    if round_match is not None:
+        summary["round"] = round_match.group(1)
+    if hp_value is not None:
+        summary["hp"] = hp_value
+    score_match = re.search(r"(?:积分|score)\D*(\d+)", page_text, re.IGNORECASE)
+    if score_match is not None:
+        summary["score"] = int(score_match.group(1))
+    promotion_match = re.search(r"晋升点\D*([\d+]+)", page_text)
+    if promotion_match is not None:
+        summary["promotion_points"] = promotion_match.group(1)
+    return summary
+
+
 def _has_positive_battle_anchor(runtime, observation: BattleObservation | None = None) -> bool:
     return _contains_any(_page_text(runtime, observation), _BATTLE_PROGRESS_KEYWORDS)
 
 
 def _classify_stage_without_ocr(detected_stage: object) -> str | None:
-    if detected_stage == "game_over":
-        return "game_over"
     if detected_stage == "preparation":
         return "battle_start"
     if detected_stage == "layer_transition":
@@ -265,12 +334,14 @@ def classify_cw_battle_page(
 
     if _has_battle_start(runtime, observation):
         return "battle_start"
-    if _has_settlement_entry(runtime, observation):
-        return "settle_entry"
+    if _has_game_over(runtime, observation):
+        if _has_settlement_followup(runtime, observation):
+            return "game_over_followup"
+        return "game_over"
     if _has_settlement_followup(runtime, observation):
         return "settle_followup"
-    if _has_game_over(runtime, observation):
-        return "game_over"
+    if _has_settlement_entry(runtime, observation):
+        return "settle_entry"
 
     if detected_stage is _DETECTED_STAGE_UNSET:
         detected_stage = build_cw_stage_detector(runtime)()
@@ -293,9 +364,9 @@ def classify_cw_battle_page(
     return "unknown"
 
 
-def parse_cw_settlement_summary(runtime, observation: BattleObservation | None = None) -> dict[str, str | int]:
+def parse_cw_settlement_summary(runtime, observation: BattleObservation | None = None) -> dict[str, object]:
     result, settle_text = _read_settle_headline(runtime, observation=observation)
-    summary: dict[str, str | int] = {
+    summary: dict[str, object] = {
         "result": result,
         "settle_text": settle_text,
     }
@@ -390,7 +461,7 @@ def _continue_after_settlement(runtime, observation: BattleObservation | None = 
 
 def _advance_settlement_page(runtime, observation: BattleObservation | None = None) -> None:
     if observation is not None:
-        button = _find_action_button_box_from_observation(observation, allowed_texts={"下一步", "下一页"})
+        button = _find_action_button_box_from_observation(observation, allowed_texts={"下一步", "下一页", "前往结算"})
         if button is not None:
             runtime.click_point(*_box_center(button))
             return
@@ -399,6 +470,60 @@ def _advance_settlement_page(runtime, observation: BattleObservation | None = No
 
 def _advance_layer_transition(runtime) -> None:
     runtime.click_point(*LAYER_TRANSITION_CONTINUE_POINT)
+
+
+def _wait_for_game_over_return_home(runtime) -> bool:
+    home_template_visible = False
+    wait_img = getattr(runtime, "wait_img", None)
+    if callable(wait_img):
+        try:
+            if wait_img(
+                _asset("entry.start"),
+                timeout=GAME_OVER_RETURN_HOME_WAIT_SECONDS,
+                interval=GAME_OVER_RETURN_HOME_WAIT_INTERVAL_SECONDS,
+            ) is not None:
+                home_template_visible = True
+        except Exception:
+            pass
+
+    if not home_template_visible:
+        locate = getattr(runtime, "locate", None)
+        if not callable(locate):
+            return False
+        for alias in ("entry.start", "entry.continue"):
+            try:
+                if locate(_asset(alias)) is not None:
+                    home_template_visible = True
+                    break
+            except Exception:
+                continue
+    if not home_template_visible:
+        return False
+
+    page_text = _joined_ocr_text(runtime)
+    return bool(page_text) and not _contains_any(page_text, GAME_OVER_RETURN_STILL_PAGE_KEYWORDS)
+
+
+def _return_from_game_over(runtime, observation: BattleObservation | None = None) -> bool:
+    if observation is not None:
+        button = _find_action_button_box_from_observation(observation, allowed_texts={GAME_OVER_RETURN_TEXT})
+        if button is not None:
+            runtime.click_point(*_box_center(button))
+            sleep(GAME_OVER_RETURN_SETTLE_SECONDS)
+            return _wait_for_game_over_return_home(runtime)
+    runtime.click_point(*GAME_OVER_RETURN_POINT)
+    sleep(GAME_OVER_RETURN_SETTLE_SECONDS)
+    return _wait_for_game_over_return_home(runtime)
+
+
+def _has_game_over_return(runtime, observation: BattleObservation | None = None) -> bool:
+    return GAME_OVER_RETURN_TEXT in _page_text(runtime, observation)
+
+
+def _mark_game_over_return_home(session: SessionModel, *, returned_home: bool) -> None:
+    if returned_home:
+        ensure_cw_state(session)["entry"] = {"page": "home"}
+    mark_cw_stage_stale(session)
 
 
 def _set_completed_stage(session: SessionModel, *, stage: str) -> None:
@@ -447,7 +572,7 @@ def _timeout_battle_run(
     session: SessionModel,
     *,
     timeout: int | float,
-    summary: dict[str, str | int],
+    summary: dict[str, object],
     settle_chain_seen: bool,
 ) -> dict[str, object]:
     mark_cw_stage_stale(session)
@@ -482,7 +607,7 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
     start_attempted = False
     resume_in_battle = _seed_resume_in_battle(session)
     settle_chain_seen = False
-    summary: dict[str, str | int] = {}
+    summary: dict[str, object] = {}
 
     try:
         while True:
@@ -512,7 +637,9 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
                 )
             if state in {"battle_progress", "settle_entry", "settle_followup", "layer_transition"}:
                 started_chain = True
-            if state in {"settle_entry", "settle_followup"}:
+            if state == "game_over_followup":
+                started_chain = True
+            if state in {"settle_entry", "settle_followup", "game_over_followup"}:
                 settle_chain_seen = True
 
             if state == "stable_stage":
@@ -532,7 +659,17 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
                 )
 
             if state == "game_over":
-                _set_completed_stage(session, stage="game_over")
+                has_return_button = _has_game_over_return(runtime, observation=observation)
+                if observation is not None:
+                    game_over_summary = _read_game_over_summary(runtime, observation=observation)
+                    if "result" not in summary or game_over_summary.get("result") == "lose" or has_return_button:
+                        summary.update(game_over_summary)
+                if has_return_button:
+                    returned_home = _return_from_game_over(runtime, observation=observation)
+                    summary["returned_home"] = returned_home
+                    _mark_game_over_return_home(session, returned_home=returned_home)
+                else:
+                    _set_completed_stage(session, stage="game_over")
                 return _finalize_battle_result(
                     session,
                     {
@@ -594,6 +731,12 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
                 continue
 
             if state == "settle_followup":
+                _advance_settlement_page(runtime, observation=observation)
+                continue
+
+            if state == "game_over_followup":
+                if observation is not None:
+                    summary.update(_read_game_over_summary(runtime, observation=observation))
                 _advance_settlement_page(runtime, observation=observation)
                 continue
 
