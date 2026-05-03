@@ -1230,7 +1230,7 @@ def test_input_click_drag_and_key_return_envelopes(cli_runner, fake_daemon_clien
     )
 
     click_result = cli_runner.invoke(app, ["input", "click", "10", "20"])
-    drag_result = cli_runner.invoke(app, ["input", "drag", "1", "2", "3", "4"])
+    drag_result = cli_runner.invoke(app, ["input", "drag", "1", "2", "3", "4", "--duration", "0.5"])
     key_result = cli_runner.invoke(app, ["input", "key", "space", "--presses", "2"])
 
     assert click_result.exit_code == 0
@@ -1258,7 +1258,7 @@ def test_input_click_drag_and_key_return_envelopes(cli_runner, fake_daemon_clien
         },
         {
             "method": "input.drag",
-            "payload": {"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4},
+            "payload": {"from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4, "duration": 0.5},
             "workspace_root": str(tmp_path),
             "session_id": None,
             "verbose": False,

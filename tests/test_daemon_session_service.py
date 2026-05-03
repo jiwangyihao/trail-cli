@@ -68,7 +68,7 @@ class StubRuntime:
     ):
         self._screenshot_path = screenshot_path
         self.clicks: list[tuple[int, int]] = []
-        self.drags: list[tuple[int, int, int, int]] = []
+        self.drags: list[tuple[int, int, int, int, float | None]] = []
         self.keys: list[tuple[str, int]] = []
         self.warnings: list[dict] = []
         self.references: list[dict] = []
@@ -100,10 +100,10 @@ class StubRuntime:
             raise self.click_error
         self.clicks.append((x, y))
 
-    def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int):
+    def drag_to(self, from_x: int, from_y: int, to_x: int, to_y: int, *, duration: float | None = None):
         if self.drag_error is not None:
             raise self.drag_error
-        self.drags.append((from_x, from_y, to_x, to_y))
+        self.drags.append((from_x, from_y, to_x, to_y, duration))
 
     def press_key(self, key: str, presses: int = 1):
         if self.key_error is not None:
@@ -973,7 +973,7 @@ def test_request_status_waits_for_record_write_to_finish(tmp_path: Path, monkeyp
         ("input.click", {"x": 10, "y": 20}, {"clicked": [10, 20]}),
         (
             "input.drag",
-            {"from_x": 10, "from_y": 20, "to_x": 30, "to_y": 40},
+            {"from_x": 10, "from_y": 20, "to_x": 30, "to_y": 40, "duration": 0.5},
             {"dragged": [10, 20, 30, 40]},
         ),
         ("input.key", {"key": "f", "presses": 2}, {"key": "f", "presses": 2}),
@@ -1006,6 +1006,8 @@ def test_handle_routes_input_mutations_through_journal_without_session(
     assert response["data"] == expected
     assert status["final_state"] == "completed"
     assert status["session_id"] is None
+    if method == "input.drag":
+        assert runtime.drags == [(10, 20, 30, 40, 0.5)]
 
 
 def test_handle_returns_captured_failure_envelope_for_input_mutation_error(tmp_path: Path):

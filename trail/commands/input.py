@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 import typer
 
 from trail.commands.helpers import call_daemon
@@ -15,8 +17,17 @@ def input_click(x: int, y: int) -> None:
 
 
 @input_app.command("drag")
-def input_drag(from_x: int, from_y: int, to_x: int, to_y: int) -> None:
-    print_output("input.drag", call_daemon("input.drag", {"from_x": from_x, "from_y": from_y, "to_x": to_x, "to_y": to_y}))
+def input_drag(
+    from_x: int,
+    from_y: int,
+    to_x: int,
+    to_y: int,
+    duration: Annotated[float | None, typer.Option("--duration")] = None,
+) -> None:
+    payload: dict[str, int | float] = {"from_x": from_x, "from_y": from_y, "to_x": to_x, "to_y": to_y}
+    if duration is not None:
+        payload["duration"] = duration
+    print_output("input.drag", call_daemon("input.drag", payload))
 
 
 @input_app.command("key")

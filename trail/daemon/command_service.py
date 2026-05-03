@@ -486,6 +486,7 @@ class CommandService:
                         from_y=request.payload["from_y"],
                         to_x=request.payload["to_x"],
                         to_y=request.payload["to_y"],
+                        duration=request.payload.get("duration"),
                     ),
                 ),
             )
@@ -1222,8 +1223,8 @@ class CommandService:
         runtime.click_point(x, y)
         return {"clicked": [x, y]}
 
-    def _drag(self, runtime, *, from_x: int, from_y: int, to_x: int, to_y: int) -> dict[str, Any]:
-        runtime.drag_to(from_x, from_y, to_x, to_y)
+    def _drag(self, runtime, *, from_x: int, from_y: int, to_x: int, to_y: int, duration: float | None = None) -> dict[str, Any]:
+        runtime.drag_to(from_x, from_y, to_x, to_y, duration=duration)
         return {"dragged": [from_x, from_y, to_x, to_y]}
 
     def _press_key(self, runtime, *, key: str, presses: int) -> dict[str, Any]:
