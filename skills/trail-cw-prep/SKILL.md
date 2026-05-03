@@ -49,7 +49,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 
 - `trail cw stage detect|wait`：确认当前 CW 阶段。
 - `trail cw slots read`：默认使用角色图标识别读取前台、后台、手牌和羁绊摘要，不再逐槽位点击详情读取姓名；Agent 可见槽位编号从 1 开始。带截图 success 后必须先读本次 `shot path` 指向的截图，再消费 `slot`、羁绊和装备/商店事实；羁绊 `档位` 中的 `*` 表示已激活档位；若出现 `CW_ROLE_MATCH_LOW_CONFIDENCE` 或 `SLOTS_RECOGNITION_UNCERTAIN`，先核对截图再做换位、出售或购买决策。
-- `trail cw shop scan|status|buy-slot|buy-exp|refresh|close`：读取和执行商店动作；`shop.scan` 有截图，`shop.status` 无截图。
+- `trail cw shop scan|status|buy-slot|buy-exp|refresh|close`：读取和执行商店动作；`shop.scan` 有截图，`shop.status` 无截图；`shop.buy-slot` 会要求已有 fresh 且 opened 的商店快照，成功后返回购买后 slots 差分验证与 `# 角色信息`，仍要先读截图再消费文本事实。
 - `trail cw equipment read --session <id>`：读取当前装备背包图标；返回截图时必须先读原始截图，再消费背包 `item`、`# 装备优先级` 的 `guide` 行、`# 角色装备需求` 的 `slot` 行或 `info todo=slots`。若看到 `info todo=slots`，先运行或刷新 `cw.slots.read`；这些分块位于 `warn`、`ref` 之前。需要诊断 `row/col` 时用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`。
 - `trail cw equipment compose --session <id> --name <进阶装备名> --slot front:1 --role <角色名>`：canonical command 为 `cw.equipment.compose`；刷新角色/装备快照，校验 `slot` + `role`，优先复用已有高置信目标装备，否则执行真实合成和装备，验证成功后写入 session；success 有截图，先读 `shot path=...` 对应原图和 `info read_image_first=1`，再消费 `# 综合信息`、`# 装备信息`、`# 角色信息`；材料不足时检查 `warn code=CW_EQUIPMENT_MATERIALS_MISSING 需求=... 持有=...`；不支持 YAML；slot 使用 Agent 可见 1-based。
 - `trail cw equipment prepare --session <id> [--refresh]`：默认只验证/汇总 bundle 装备资源，不下载图标；只有明确要刷新同版本 URL 变化或重建 workspace equipment override 时才使用 `--refresh`。
