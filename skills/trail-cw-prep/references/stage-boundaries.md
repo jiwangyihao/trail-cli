@@ -1,6 +1,6 @@
 # Stage Boundaries
 
-- `preparation` / `shop`：普通备战事实收集范围。
+- `preparation` / `shop`：普通备战事实收集范围；`cw.portal.select` 进入首轮普通备战或 `cw.battle.run` 返回 `status=completed result=win stage=preparation` 后，优先复用同次 handoff 附带的 stage/slots/equipment/shop facts。
 - `replenish` / `invest` / `encounter` / `fortune` / `event`：特殊事件范围，停止并交给后续专用 skill 或上游。
 - `boss_preview`：真正本场对局首领 / BOSS 前流程，停止并交给后续单独 skill。
 - `layer_transition`：整层结束后的点击空白 / 位面过场，仍属于 battle flow，默认继续 `trail cw battle run --session <id>`，不是普通稳定阶段，也不是手工中断点，不由本 skill 自治。

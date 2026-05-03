@@ -41,6 +41,7 @@ description: 当用户已经明确要进入《崩坏：星穹铁道》的货币�
 
 - 常规 battle / settle 流程默认使用 `trail cw battle run --session <id>`；默认 timeout 现在是 `90s`，不要再把长 timeout 当默认流程。
 - `trail cw battle run` 返回 `status=in_progress` 时，先读取本次截图；如果判断仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`。
+- `trail cw battle run` 返回 `status=completed result=win stage=preparation` 时会 handoff 到 `trail-cw-prep`，并已自动收集本轮普通备战的 stage/slots/equipment/shop/crystals/skill_info facts；先读截图和同次 facts，不要立即重复扫描。
 - 如果 `trail cw battle run` 返回 `status=completed result=lose stage=game_over stale=0 in_battle=0`，并带 `info game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1`，说明本局已失败结束且命令已点击 `返回货币战争` 回到货币战争主页；先读截图和 `round/hp/score/promotion_points/settle_text`，再决定是否重开，而不是继续重跑 battle flow。
 - battle flow 包含战斗中、结算页、结算翻页但未回到下一稳定阶段；结算页也属于 battle flow，仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`，不要因为看到结算页就切回旧 `settle next`。
 - `layer_transition` 表示整层结束后的“点击空白处继续 / 位面”过场；`layer_transition` 仍属于 battle flow，默认继续 `trail cw battle run --session <id>`，不要把它当成真正 `boss_preview`、普通稳定阶段或手工中断点。
@@ -55,6 +56,7 @@ description: 当用户已经明确要进入《崩坏：星穹铁道》的货币�
 - 是否允许刷开局只在 `攻略优先` 链路里确认；`环境优先` 链路把这件事留给投资环境页里的 `trail-cw-portal` 再决定。
 - 如果是从 `trail-cw-guide` 返回，说明当前 session 已经有当前攻略；默认继续 `cw enter` / `cw start` / `cw.portal.select` 这条开局链路，后续在投资环境页执行 `cw.portal.select` 成功后，会自动应用当前已选攻略，不要把 `cw guide apply` 当成默认第一步；只有自动应用失败或需要手动重试时，`cw guide apply` 才作为兜底。
 - `cw.portal.select` 成功进入普通备战后，会通过 handoff 进入 `trail-cw-prep`；该响应已经自动收集初始备战 stage/slots/equipment/shop facts，入口 skill 不需要再立即重复扫描相同事实。
+- `cw.battle.run` 成功进入下一轮普通备战后，同样会通过 `status=completed result=win stage=preparation` handoff 进入 `trail-cw-prep`；该响应已经自动收集下一轮备战 facts，入口 skill 不需要再立即重复扫描相同事实。
 - 消费 `cw.portal.select` 带截图 success 时必须先读原始截图；`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行。读完截图后，再消费这些标题下的事实：`# 综合信息` 下看 stage/status，`# 攻略提示` 下看 skill_info，`# 角色信息` 下看 slot，`# 羁绊信息` 下看 trait summary（`档位` 里的 `*` 表示已激活，不再有 `占比` / `已激活档位` 字段），`# 装备信息` 下看装备背包 item/summary info，`# 装备优先级` 下看装备推荐 guide，`# 角色装备需求` 下看角色装备需求 slot/info，`# 商店信息` 下看 item/coins/reserve facts。
 - `cw.portal.select` auto-collect 可能报告 `CW_SLOTS_AUTO_COLLECT_UNCERTAIN`；应继续基于 portal facts 行动，先读截图，只有 slots 缺失、stale、页面变化或需要核实时才刷新 slots。
 - 只有后续真的检测到未结束对局时，才补问继续还是结算，然后再决定 `cw start` 的走向。

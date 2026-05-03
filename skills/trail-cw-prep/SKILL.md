@@ -14,6 +14,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 ## When To Use
 
 - `cw.portal.select` 成功并返回 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`。
+- `cw.battle.run` 成功返回 `status=completed result=win stage=preparation` 并输出 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`。
 - 上游已经明确确认当前在普通备战、商店或槽位阶段，需要消费首帧事实并推进普通备战闭环。
 - 货币战争首页、投资环境页和攻略选择页仍由对应上游 skill 处理；其它阶段按 CLI 输出的 handoff、next_action 或 recover 指示继续。
 
@@ -26,17 +27,18 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 ## Required First Actions
 
 - 若上一条命令输出 `shot path=...` 和 `info read_image_first=1`，必须先读取原始截图。
-- 若上一条 `cw.portal.select` success 已经同时输出阶段、槽位、装备、商店、羁绊等普通备战首帧结构化事实，先结合截图消费这些事实；不要为了“重新确认”而立刻重复运行 `stage` / `slots` / `equipment` / `shop` 读命令。
-- 若上一条 `cw.portal.select` success 输出含 `info skill_info=运营思路 text=...`，必须先把它读作当前攻略的动态提醒；它不是已解析策略，必须不发明默认优先级。
-- 若上一条 `cw.portal.select` success 输出含 stage/slots/equipment/shop facts，说明它可能已经提供最新首帧快照；必须先读截图，再用这些文本事实制定第一步备战动作。
-- 接收 `cw.portal.select` handoff 时，优先复用该响应中标题下 facts；`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行。读完截图后，再消费这些标题下的事实：`# 综合信息` 下看 stage/status，`# 攻略提示` 下看 skill_info，`# 角色信息` 下看 slot，`# 羁绊信息` 下看 trait summary，`# 装备信息` 下看装备背包 item/summary info，`# 装备优先级` 下看装备推荐 guide，`# 角色装备需求` 下看角色装备需求 slot/info，`# 商店信息` 下看 item/coins/reserve facts；只有缺失、stale 或页面变化才重扫。
+- 若上一条 `cw.portal.select` 或 `cw.battle.run` preparation success 已经同时输出阶段、槽位、装备、商店、羁绊等普通备战首帧结构化事实，先结合截图消费这些事实；不要为了“重新确认”而立刻重复运行 `stage` / `slots` / `equipment` / `shop` 读命令。
+- 若上一条 `cw.portal.select` 或 `cw.battle.run` preparation success 输出含 `info skill_info=运营思路 text=...`，必须先把它读作当前攻略的动态提醒；它不是已解析策略，必须不发明默认优先级。
+- 若上一条 `cw.portal.select` success 输出含 stage/slots/equipment/shop facts，或上一条 `cw.battle.run` preparation success 输出同类 facts，说明它可能已经提供最新首帧快照；必须先读截图，再用这些文本事实制定第一步备战动作。
+- 接收 `cw.portal.select` handoff 时，优先复用该响应中标题下 facts；`cw.battle.run` preparation handoff 同理。`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行。读完截图后，再消费这些标题下的事实：`# 综合信息` 下看 stage/status，`# 攻略提示` 下看 skill_info，`# 角色信息` 下看 slot，`# 羁绊信息` 下看 trait summary，`# 装备信息` 下看装备背包 item/summary info，`# 装备优先级` 下看装备推荐 guide，`# 角色装备需求` 下看角色装备需求 slot/info，`# 商店信息` 下看 item/coins/reserve facts；只有缺失、stale 或页面变化才重扫。
+- `cw.battle.run` 的 preparation handoff 与 `cw.portal.select` 一样先复用同次 stage/slots/equipment/shop facts；差异只在 daemon 为节约时间使用不同读取顺序，Agent 消费输出时不需要按内部读取顺序重排。
 - 只有事实缺失、stale 或页面已变化时，才主动调用 `trail cw slots read`、`trail cw equipment read` 或 `trail cw shop scan` 刷新；不要在接收 handoff 后立刻重复扫描。优先复用同次 equipment facts；缺失/stale/page changed 时才重跑 `cw.equipment.read`。
 - `cw.slots.read` 默认使用角色图标识别，不再逐槽位点击详情读取姓名。带截图 success 后必须先读本次 `shot path` 指向的截图，再消费 `slot`、羁绊和装备/商店事实；若出现 `CW_ROLE_MATCH_LOW_CONFIDENCE` 或 `SLOTS_RECOGNITION_UNCERTAIN`，先核对截图再做换位、出售或购买决策。
 - `# 羁绊信息` 下的羁绊摘要使用 `info 羁绊=... 档位="2*,4,6" 当前角色=...`；`*` 表示该档位已激活，默认文本不再输出 `已激活档位` 或 `占比`。`cw.slots.read` 默认文本会过滤底层 status OCR 的 `OCR_LOW_CONFIDENCE`，但角色识别低置信 warning 仍必须按截图核对。
 - 若 `slots.read` 或 `shop.scan` 输出 `match_kind=low_confidence`、`raw_name` 或低置信度 `warn`，必须先读截图确认，再接受 canonicalized 名称。
 - `cw.equipment.read` 返回截图时必须先读原始截图，再消费 `item pos=equipment:<idx> center=x,y ...` 行、`# 装备优先级` 的 `guide` 行，以及 `# 角色装备需求` 的 `slot` 行或 `info todo=slots`；这些装备推荐分块位于 `warn`、`ref` 之前。若看到 `info todo=slots`，先运行或刷新 `cw.slots.read`，不要用 stale slots 推断角色缺口。需要排查 `row/col` 时，使用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`。
 - `cw.equipment.read` daemon 默认热路径使用 bundle recognizer，不调用 prepare/download/load icon cache；不要为普通装备读取先跑 `cw.equipment.prepare`。
-- 接收 `cw.portal.select` handoff 后，如果后续执行 `cw.equipment.read` 并看到装备推荐，仍要先读截图，再看 `# 装备优先级` 的基础装备 `have/need` 与需求角色，最后看 `# 角色装备需求` 的当前 canonical 角色缺口；不要为了低优先级装备过早消耗基础装备。
+- 接收 `cw.portal.select` 或 `cw.battle.run` preparation handoff 后，如果后续执行 `cw.equipment.read` 并看到装备推荐，仍要先读截图，再看 `# 装备优先级` 的基础装备 `have/need` 与需求角色，最后看 `# 角色装备需求` 的当前 canonical 角色缺口；不要为了低优先级装备过早消耗基础装备。
 - `# 角色装备需求` 当前只消费攻略 `优选装备` / `first_equipments`；不要因为攻略里有 `次选装备` / `second_equipments` 就提前合成。TODO：最后一层 BOSS 战前的备战阶段再考虑次选装备。
 - `cw.equipment.compose` / `trail cw equipment compose` 会刷新角色/装备快照、校验 `slot` + `role`，优先复用当前背包内已有的高置信目标进阶装备；若不存在可复用装备才执行真实合成并装备，验证成功后写入 session。slot 使用 `front:1`、`back:1`、`hand:1` 这种从 1 开始的位置，成功首行为 `ok cw.equipment.compose pos=... name=... 装备=... count=...`。该 success 会输出 `shot path=...` 和 `info read_image_first=1`，必须先读截图，再消费 `# 综合信息`、`# 装备信息`、`# 角色信息` 下的 action/item/slot facts；`action=equip_existing consumed=0` 表示直接装备已有目标装备，`# 装备信息` 输出 `item kind=existing phase=pre_equip ...`，不会输出 material 或 post_compose result；`action=compose consumed=2` 表示执行了合成，然后再看 `action=equip` 的装备落位事实。若材料不足，检查 `warn code=CW_EQUIPMENT_MATERIALS_MISSING 需求=... 持有=...`；该命令不支持 YAML。
 - 读完截图后，先判断本轮是否存在可收集晶矿奖励；这个信息不能只依赖结构化文本。
@@ -122,7 +124,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 - 确认继续买经验或刷新带来的利息损失已经不可接受，或继续花钱的收益不如保留经济。
 - 确认手牌压力已经处于可接受状态，不会阻碍后续关键购买或当前出战判断。
 - 最后再读当前截图，确认没有晶矿奖励或其它普通备战内明显待办动作。
-- 上述检查完成后，运行 `trail cw battle run --session <id>`；若命令输出 `status=in_progress` 和 `next_action=cw.battle.run`，先读截图，再按输出继续 `cw.battle.run`。若输出 `status=completed result=lose stage=game_over stale=0 in_battle=0` 且带 `game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1`，说明本局已失败结束且命令已点击 `返回货币战争` 回到货币战争主页；先读截图和结算事实，再交回上游判断是否重开。
+- 上述检查完成后，运行 `trail cw battle run --session <id>`；若命令输出 `status=in_progress` 和 `next_action=cw.battle.run`，先读截图，再按输出继续 `cw.battle.run`。若输出 `status=completed result=win stage=preparation`，说明已进入下一轮普通备战并会通过 handoff 重新进入本 skill；先读截图和同次备战 facts，再继续普通备战闭环。若输出 `status=completed result=lose stage=game_over stale=0 in_battle=0` 且带 `game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1`，说明本局已失败结束且命令已点击 `返回货币战争` 回到货币战争主页；先读截图和结算事实，再交回上游判断是否重开。
 
 ## Stop Conditions
 
