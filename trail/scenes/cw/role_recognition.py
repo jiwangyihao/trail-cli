@@ -283,6 +283,8 @@ def fee_color_from_crop(crop: Image.Image) -> str:
         return "blue"
     if 123 <= mean_hue <= 137:
         return "purple"
+    if 8 <= mean_hue <= 35:
+        return "gold"
     return "unknown"
 
 
@@ -534,7 +536,7 @@ def choose_role_candidate_by_fee(
     top, second = candidates[0], candidates[1]
     if top.score - second.score >= min_gap:
         return top
-    if fee_color in {"unknown", "gold"}:
+    if fee_color == "unknown":
         return top
     fee_matches = [candidate for candidate in candidates if _candidate_fee_color(candidate) == fee_color]
     if len(fee_matches) == 1 and fee_matches[0] is not top and top.score - fee_matches[0].score < min_gap:
@@ -563,14 +565,14 @@ def classify_role_confidence(
     second_score = second.score if second is not None else 0.0
     gap = best_score - second_score
     top_fee_color = _candidate_fee_color(top)
-    fee_conflict = fee_color not in {"unknown", "gold"} and top_fee_color not in {"unknown", fee_color}
+    fee_conflict = fee_color != "unknown" and top_fee_color not in {"unknown", fee_color}
     icon_clear = best_score >= min_score and gap >= min_gap
     if icon_clear and fee_conflict:
         return RoleConfidence(match_kind="low_confidence", confidence_reason="icon_fee_conflict")
     if icon_clear:
-        reason = "icon_fee_match" if fee_color not in {"unknown", "gold"} and top_fee_color == fee_color else "icon_score_clear"
+        reason = "icon_fee_match" if fee_color != "unknown" and top_fee_color == fee_color else "icon_score_clear"
         return RoleConfidence(match_kind="icon", confidence_reason=reason)
-    if fee_color not in {"unknown", "gold"} and top_fee_color == fee_color:
+    if fee_color != "unknown" and top_fee_color == fee_color:
         return RoleConfidence(match_kind="low_confidence", confidence_reason="icon_fee_match")
     if gap < min_gap:
         return RoleConfidence(match_kind="low_confidence", confidence_reason="role_score_gap_too_small")

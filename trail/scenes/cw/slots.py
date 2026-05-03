@@ -579,10 +579,16 @@ def _normalize_slot_value(raw: Any, *, authoritative_candidates: list[str], slot
 
 def _slot_value_from_catalog_match(value: Any, match) -> dict[str, Any]:
     stable: dict[str, Any] = {"name": match.name}
-    if match.role_id is not None:
-        stable["role_id"] = match.role_id
-    if isinstance(value, dict) and "star" in value:
-        stable["star"] = value.get("star")
+    value_dict = value if isinstance(value, dict) else {}
+    role_id = value_dict.get("role_id") if value_dict.get("role_id") is not None else match.role_id
+    if role_id is not None:
+        stable["role_id"] = role_id
+    if "star" in value_dict:
+        stable["star"] = value_dict.get("star")
+    if value_dict.get("rarity") is not None:
+        stable["rarity"] = value_dict.get("rarity")
+    if value_dict.get("cost") is not None:
+        stable["cost"] = value_dict.get("cost")
     if match.traits:
         stable["traits"] = list(match.traits)
     return stable

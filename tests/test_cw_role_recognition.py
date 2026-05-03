@@ -146,6 +146,7 @@ def test_fee_color_from_crop_classifies_known_strip_colors():
         "green": (53, 180, 159, 255),
         "blue": (50, 112, 190, 255),
         "purple": (95, 53, 180, 255),
+        "gold": (255, 212, 113, 255),
     }
     for expected, color in samples.items():
         assert fee_color_from_crop(_fill_fee_strip(Image.new("RGBA", (103, 120), (0, 0, 0, 255)), color)) == expected
@@ -362,6 +363,17 @@ def test_fee_tie_break_requires_unique_fee_match():
         RoleCandidate(name="C", role_id="c", score=0.54, rarity="4"),
     ]
     assert choose_role_candidate_by_fee(unique_second_match, fee_color="blue").role_id == "b"
+
+
+def test_fee_tie_break_handles_variable_cost_silver_wolf_lv999_variants():
+    variants = [
+        RoleCandidate(name="银狼LV.999", role_id="15061", score=0.80, rarity="3"),
+        RoleCandidate(name="银狼LV.999", role_id="15062", score=0.80, rarity="4"),
+        RoleCandidate(name="银狼LV.999", role_id="15063", score=0.80, rarity="5"),
+    ]
+
+    assert choose_role_candidate_by_fee(variants, fee_color="purple").role_id == "15062"
+    assert choose_role_candidate_by_fee(variants, fee_color="gold").role_id == "15063"
 
 
 def test_recognize_crop_fee_selected_second_never_returns_empty_match_kind(monkeypatch):

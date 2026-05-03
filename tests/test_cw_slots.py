@@ -1636,6 +1636,60 @@ def test_slots_read_uses_full_config_catalog_without_selected_guide(tmp_path):
     assert "match_kind" not in stored
 
 
+def test_slots_read_preserves_variable_cost_role_identity_from_icon_result(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    guide_config = {
+        "traits": [{"id": "2002", "name": "量子", "layers": [{"layer": 2}]}],
+        "roles": [
+            {"id": "1003", "name": "银狼", "trait_ids": ["2002"]},
+            {"id": "15061", "name": "银狼LV.999", "trait_ids": ["2002"]},
+            {"id": "15062", "name": "银狼LV.999", "trait_ids": ["2002"]},
+            {"id": "15063", "name": "银狼LV.999", "trait_ids": ["2002"]},
+        ],
+    }
+
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: (
+            [
+                {
+                    "name": "银狼LV.999",
+                    "role_id": "15063",
+                    "rarity": "5",
+                    "cost": "5",
+                    "star": 1,
+                },
+                {"name": "银狼", "role_id": "1003", "rarity": "4", "star": 1},
+                None,
+                None,
+            ],
+            [None] * 6,
+            [None] * 9,
+        ),
+        guide_config=guide_config,
+    )
+
+    assert refreshed.scene_state["cw"]["slots"]["front"][0] == {
+        "name": "银狼LV.999",
+        "role_id": "15063",
+        "star": 1,
+        "rarity": "5",
+        "cost": "5",
+        "traits": ["量子"],
+    }
+    assert refreshed.scene_state["cw"]["slots"]["front"][1] == {
+        "name": "银狼",
+        "role_id": "1003",
+        "star": 1,
+        "rarity": "4",
+        "traits": ["量子"],
+    }
+
+
 def test_slots_read_keeps_match_diagnostics_response_only(tmp_path):
     slots_module = load_cw_slots_module()
     read_cw_slots = getattr(slots_module, "read_cw_slots", None)
