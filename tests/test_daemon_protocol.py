@@ -7792,6 +7792,97 @@ def test_command_service_handles_cw_battle_run_and_persists_last_result(tmp_path
     assert runtime.capture_requests == [(False, "req-cw-battle-run")]
 
 
+def test_command_service_cw_battle_run_collects_prep_facts_after_completed_preparation(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+
+    class Runtime:
+        def __init__(self):
+            self.capture_requests: list[tuple[bool, str | None]] = []
+
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            self.capture_requests.append((optional, request_id))
+            return tmp_path / ".trail" / "shots" / "req-cw-battle-run-prep.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    events: list[str] = []
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state["cw"] = {
+        "guide": _complete_cw_guide_fixture(operation_guide="前期按攻略补强"),
+        "constraints": _complete_cw_constraints_fixture(),
+    }
+    service.save_session(session)
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+
+    def fake_run_cw_battle(session, *, runtime, timeout):
+        del runtime
+        events.append(f"battle.run({timeout})")
+        session.scene_state.setdefault("cw", {})["stage"] = {"value": "preparation", "stale": False}
+        return {
+            "status": "completed",
+            "result": "win",
+            "stage": "preparation",
+            "stale": False,
+            "in_battle": False,
+            "round": "1-2",
+        }
+
+    monkeypatch.setattr("trail.daemon.cw_service.run_cw_battle", fake_run_cw_battle)
+    _patch_cw_portal_select_auto_collect_success(monkeypatch, events)
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-battle-run-prep",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.battle.run",
+            payload={"session_id": session.session_id, "timeout": 45},
+        )
+    )
+
+    assert payload["ok"] is True
+    data = payload["data"]
+    assert data["status"] == "completed"
+    assert data["stage"] == "preparation"
+    assert data["crystals"] == {"last_crystal_collection": "done"}
+    assert data["slots"] == {"front": [{"name": "希儿"}], "back": [], "hand": [], "stale": False}
+    assert data["shop"]["items"] == [{"slot": 1, "name": "银狼", "price": 20}]
+    assert data["equipment"]["items"][0]["name"] == "基础装甲"
+    assert data["skill_info"] == [{"name": "运营思路", "text": "前期按攻略补强"}]
+    assert events == [
+        "battle.run(45)",
+        "crystal.collect",
+        "slots.dismiss",
+        "slots.reader({'targets': None, 'request_id': 'req-cw-battle-run-prep', 'dismiss_initial_overlay': False})",
+        "slots.read",
+        "shop.open",
+        "shop.scan",
+        "shop.project",
+        "shop.close",
+        "equipment.read",
+    ]
+    assert service.load_session(session.session_id).scene_state["cw"]["shop"] == {"opened": False, "stale": True}
+    assert runtime.capture_requests == [(False, "req-cw-battle-run-prep")]
+
+
 def _run_cw_battle_run_timeout_capture(tmp_path: Path, monkeypatch, raw_timeout=object()):
     from trail.daemon.cw_service import CwService
 
