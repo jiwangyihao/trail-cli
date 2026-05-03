@@ -99,7 +99,7 @@ def _markdown_section(document: str, heading: str) -> str:
     return document.split(marker, 1)[1].split("\n## ", 1)[0]
 
 
-def _stage_payload() -> dict:
+def _stage_payload() -> dict[str, object]:
     return {
         "ok": True,
         "data": {"value": "shop", "stale": False},
@@ -113,7 +113,7 @@ def _stage_payload() -> dict:
     }
 
 
-def _daemon_status_payload() -> dict:
+def _daemon_status_payload() -> dict[str, object]:
     return {
         "ok": True,
         "data": {
@@ -142,7 +142,9 @@ def _assert_text_contains_in_order(text: str, *snippets: str) -> None:
         cursor = index + len(snippet)
 
 
-def _ocr_failure_payload(*, code: str, message: str, screenshot: str | None = None, debug: dict | None = None) -> dict:
+def _ocr_failure_payload(
+    *, code: str, message: str, screenshot: str | None = None, debug: dict[str, object] | None = None
+) -> dict[str, object]:
     return {
         "ok": False,
         "data": {},
@@ -155,8 +157,10 @@ def _ocr_failure_payload(*, code: str, message: str, screenshot: str | None = No
     }
 
 
-def _cw_strategy_cards_payload(*, screenshot: str | None = None, cards: list[dict] | None = None) -> dict:
-    payload = {
+def _cw_strategy_cards_payload(
+    *, screenshot: str | None = None, cards: list[object] | None = None
+) -> dict[str, object]:
+    payload: dict[str, object] = {
         "ok": True,
         "data": {
             "cards": cards
@@ -192,8 +196,8 @@ def _cw_strategy_cards_payload(*, screenshot: str | None = None, cards: list[dic
     return payload
 
 
-def _cw_strategy_select_payload(*, screenshot: str | None = None) -> dict:
-    payload = {
+def _cw_strategy_select_payload(*, screenshot: str | None = None) -> dict[str, object]:
+    payload: dict[str, object] = {
         "ok": True,
         "data": {
             "card_idx": 2,
@@ -437,6 +441,10 @@ def test_readme_documents_battle_run_short_timeout_and_resume_contract() -> None
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
     stage_reference = (PROJECT_ROOT / "docs" / "cw-stage-reference" / "README.md").read_text(encoding="utf-8")
     entry_skill = CW_ENTRY_SKILL_PATH.read_text(encoding="utf-8")
+    prep_skill = (PROJECT_ROOT / "skills" / "trail-cw-prep" / "SKILL.md").read_text(encoding="utf-8")
+    prep_command_surface = (
+        PROJECT_ROOT / "skills" / "trail-cw-prep" / "references" / "command-surface.md"
+    ).read_text(encoding="utf-8")
     simple_surface = SIMPLE_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
     cw_flow_section = _markdown_section(readme, "货币战争流程")
     command_overview_section = _markdown_section(readme, "命令面概览")
@@ -486,12 +494,22 @@ def test_readme_documents_battle_run_short_timeout_and_resume_contract() -> None
     assert "默认 timeout 现在是 `90s`" in readme
     assert "结算页也属于 battle flow" in readme
     assert "info next_action=cw.battle.run why=battle_flow_not_finished" in readme
+    assert "status=completed result=lose stage=game_over stale=0 in_battle=0" in readme
+    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in readme
     assert "trail cw battle clear-in-progress --session <id>" in readme
     assert "cw.battle.clear_in_progress" in agents
     assert "不加入 YAML allowlist" in agents
+    assert "status=completed result=lose stage=game_over stale=0 in_battle=0" in agents
+    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in agents
     assert "结算页也属于 battle flow" in stage_reference
     assert "仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`" in entry_skill
+    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in entry_skill
+    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in prep_skill
+    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in prep_command_surface
+    assert "--timeout 570" not in prep_skill
+    assert "--timeout 570" not in prep_command_surface
     assert "battle in-progress" in simple_surface
+    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in simple_surface
 
 
 def test_docs_and_active_surfaces_split_layer_transition_from_boss_preview() -> None:
@@ -714,6 +732,43 @@ def test_render_output_cw_battle_run_timeout_in_settle_chain():
     ]
 
 
+def test_render_output_cw_battle_run_game_over_summary():
+    payload = {
+        "ok": True,
+        "data": {
+            "status": "completed",
+            "result": "lose",
+            "stage": "game_over",
+            "stale": False,
+            "in_battle": False,
+            "round": "3-1",
+            "hp": 0,
+            "settle_text": "对局未完成",
+            "game_over": True,
+            "end_reason": "global_battle_failed",
+            "restart_candidate": True,
+            "returned_home": True,
+            "score": 16800,
+            "promotion_points": "1710+1500",
+        },
+        "screenshot": ".trail/shots/req-cw-battle-run-game-over.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.battle.run", payload).splitlines() == [
+        "ok cw.battle.run status=completed result=lose stage=game_over stale=0 in_battle=0",
+        "shot path=.trail/shots/req-cw-battle-run-game-over.png",
+        "info read_image_first=1",
+        "info round=3-1 hp=0",
+        "info settle_text=对局未完成",
+        "info game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1 score=16800 promotion_points=1710+1500",
+    ]
+
+
 def test_render_output_cw_battle_run_timeout_in_battle_only():
     payload = {
         "ok": True,
@@ -856,7 +911,9 @@ def test_render_output_cw_battle_clear_in_progress_summary():
         ),
     ],
 )
-def test_render_output_cw_battle_run_omits_missing_result_and_stage(payload: dict, expected_lines: list[str]):
+def test_render_output_cw_battle_run_omits_missing_result_and_stage(
+    payload: dict[str, object], expected_lines: list[str]
+):
     rendered = render_output("cw.battle.run", payload).splitlines()
 
     assert rendered == expected_lines
@@ -1891,7 +1948,7 @@ def test_render_output_cw_equipment_compose_materials_missing_warning():
         ),
     ],
 )
-def test_render_output_preserves_must_keep_facts(command: str, payload: dict, expected_tokens: list[str]):
+def test_render_output_preserves_must_keep_facts(command: str, payload: dict[str, object], expected_tokens: list[str]):
     rendered = render_output(command, payload)
 
     for token in expected_tokens:
@@ -4764,7 +4821,7 @@ def test_render_output_renders_cw_slots_place_known_failure_without_recover():
         ),
     ],
 )
-def test_render_output_rejects_yaml_for_cw_scan_and_slots_read(command: str, payload: dict):
+def test_render_output_rejects_yaml_for_cw_scan_and_slots_read(command: str, payload: dict[str, object]):
     assert render_output(command, payload, output_format="yaml").splitlines() == [
         f"fail {command} code=OUTPUT_FORMAT_NOT_SUPPORTED",
         f"shot path={payload['screenshot']}",
@@ -5001,7 +5058,16 @@ def test_render_output_renders_ocr_read_from_rapidocr_tuple_items():
         "ok": True,
         "data": {
             "result": [
-                [[122, 88], [196, 88], [196, 108], [122, 108]],
+                [
+                    [[122, 88], [196, 88], [196, 108], [122, 108]],
+                    "点击进入",
+                    0.98,
+                ],
+                [
+                    [[410, 502], [530, 502], [530, 538], [410, 538]],
+                    "开始挑战",
+                    0.93,
+                ],
             ]
         },
         "screenshot": ".trail/shots/req-ocr-raw.png",
@@ -5011,19 +5077,6 @@ def test_render_output_renders_ocr_read_from_rapidocr_tuple_items():
         "debug": None,
         "error": None,
     }
-
-    payload["data"]["result"] = [
-        [
-            [[122, 88], [196, 88], [196, 108], [122, 108]],
-            "点击进入",
-            0.98,
-        ],
-        [
-            [[410, 502], [530, 502], [530, 538], [410, 538]],
-            "开始挑战",
-            0.93,
-        ],
-    ]
 
     assert render_output("ocr.read", payload).splitlines() == [
         "ok ocr.read hits=2",

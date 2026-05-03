@@ -5,7 +5,7 @@ from functools import lru_cache
 import os
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, TypedDict
 
 import yaml
 
@@ -17,7 +17,12 @@ class OutputFormat(StrEnum):
     YAML = "yaml"
 
 
-_OUTPUT_OPTIONS = {"format": OutputFormat.TEXT, "verbose": False}
+class _OutputOptions(TypedDict):
+    format: OutputFormat
+    verbose: bool
+
+
+_OUTPUT_OPTIONS: _OutputOptions = {"format": OutputFormat.TEXT, "verbose": False}
 YAML_ALLOWLIST = {"daemon.status", "state.dump", "guide.fetch.cw", "guide.config.cw", "cw.equipment.read"}
 
 
@@ -430,7 +435,7 @@ def _load_workflow_handoffs() -> dict[str, Any]:
     return _load_workflow_handoffs_from_path(str(workflow_handoffs_path()))
 
 
-_load_workflow_handoffs.cache_clear = _load_workflow_handoffs_from_path.cache_clear  # type: ignore[attr-defined]
+setattr(_load_workflow_handoffs, "cache_clear", _load_workflow_handoffs_from_path.cache_clear)
 
 
 def _select_workflow_handoff(command: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -799,6 +804,16 @@ def _render_cw_battle_run(command: str, payload: dict[str, Any]) -> list[str]:
         ("exp", data.get("exp") if "exp" in data else None),
     )
     _append_fact_line(lines, "info", ("settle_text", _non_empty(data.get("settle_text"))))
+    _append_fact_line(
+        lines,
+        "info",
+        ("game_over", bool(data.get("game_over")) if "game_over" in data else None),
+        ("end_reason", _non_empty(data.get("end_reason"))),
+        ("restart_candidate", bool(data.get("restart_candidate")) if "restart_candidate" in data else None),
+        ("returned_home", bool(data.get("returned_home")) if "returned_home" in data else None),
+        ("score", data.get("score") if "score" in data else None),
+        ("promotion_points", _non_empty(data.get("promotion_points"))),
+    )
     _append_fact_line(
         lines,
         "info",
