@@ -446,6 +446,7 @@ def test_readme_documents_battle_run_short_timeout_and_resume_contract() -> None
         PROJECT_ROOT / "skills" / "trail-cw-prep" / "references" / "command-surface.md"
     ).read_text(encoding="utf-8")
     simple_surface = SIMPLE_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
+    workflow_handoffs = (PROJECT_ROOT / "skills" / "registry" / "workflow-handoffs.yaml").read_text(encoding="utf-8")
     cw_flow_section = _markdown_section(readme, "货币战争流程")
     command_overview_section = _markdown_section(readme, "命令面概览")
     skill_boundary_section = _markdown_section(readme, "Skill 边界")
@@ -501,15 +502,23 @@ def test_readme_documents_battle_run_short_timeout_and_resume_contract() -> None
     assert "不加入 YAML allowlist" in agents
     assert "status=completed result=lose stage=game_over stale=0 in_battle=0" in agents
     assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in agents
+    assert "`cw.battle.run` 在 `status=completed stage=preparation` 时会自动收集普通备战 facts" in agents
+    assert "`cw.battle.run(status=completed, stage=preparation)` -> `trail-cw-prep`" in agents
     assert "结算页也属于 battle flow" in stage_reference
     assert "仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`" in entry_skill
+    assert "返回 `status=completed result=win stage=preparation` 时会 handoff 到 `trail-cw-prep`" in entry_skill
     assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in entry_skill
+    assert "`cw.battle.run` 的 preparation handoff 与 `cw.portal.select` 一样先复用同次 stage/slots/equipment/shop facts" in prep_skill
+    assert "接收 `cw.portal.select` 或 `cw.battle.run` 的 preparation handoff" in prep_command_surface
     assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in prep_skill
     assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in prep_command_surface
     assert "--timeout 570" not in prep_skill
     assert "--timeout 570" not in prep_command_surface
     assert "battle in-progress" in simple_surface
+    assert "status=completed result=win stage=preparation" in simple_surface
     assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in simple_surface
+    assert "cw.battle.run:" in workflow_handoffs
+    assert "preparation:" in workflow_handoffs
 
 
 def test_docs_and_active_surfaces_split_layer_transition_from_boss_preview() -> None:
@@ -695,6 +704,99 @@ def test_render_output_cw_battle_run_completed_summary():
         "info round=1-1 hp=82 coins=4 exp=2",
         "info settle_text=挑战成功",
     ]
+
+
+def test_render_output_cw_battle_run_preparation_appends_prep_sections_and_handoff():
+    payload = {
+        "ok": True,
+        "data": {
+            "status": "completed",
+            "result": "win",
+            "stage": "preparation",
+            "stale": False,
+            "in_battle": False,
+            "round": "1-2",
+            "skill_info": [{"name": "运营思路", "text": "前期按攻略补强"}],
+            "slots": {
+                "stage": "preparation",
+                "stage_stale": False,
+                "stage_status": {"level": 3, "exp": "0/8", "team_size": "1/2", "stale": False},
+                "stage_status_stale": False,
+                "front": [{"name": "希儿"}],
+                "back": [],
+                "hand": [],
+                "stale": False,
+            },
+            "equipment": {
+                "count": 0,
+                "uncertain": 0,
+                "empty": 60,
+                "backend": "vector",
+                "layout": "default",
+                "items": [],
+                "stale": False,
+            },
+            "shop": {
+                "items": [{"slot": 1, "name": "银狼", "price": 20}],
+                "coins": 40,
+                "reserve_full": False,
+            },
+        },
+        "screenshot": ".trail/shots/req-cw-battle-run-prep.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.battle.run", payload).splitlines() == [
+        "ok cw.battle.run status=completed result=win stage=preparation stale=0 in_battle=0",
+        "shot path=.trail/shots/req-cw-battle-run-prep.png",
+        "info read_image_first=1",
+        "info round=1-2",
+        "# 综合信息",
+        "info stage=preparation stale=0",
+        "info stage_level=3 stage_exp=0/8 stage_team_size=1/2 stage_status_stale=0",
+        "# 攻略提示",
+        "info skill_info=运营思路 text=前期按攻略补强",
+        "# 角色信息",
+        "slot pos=front:1 name=希儿",
+        "# 装备信息",
+        "info count=0 uncertain=0 empty=60 backend=vector layout=default",
+        "# 商店信息",
+        "item idx=1 slot=1 name=银狼 cost=20",
+        "info coins=40 reserve_full=0",
+        "info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered",
+    ]
+
+
+def test_render_output_cw_battle_run_game_over_does_not_handoff_to_prep():
+    payload = {
+        "ok": True,
+        "data": {
+            "status": "completed",
+            "result": "lose",
+            "stage": "game_over",
+            "stale": False,
+            "in_battle": False,
+            "game_over": True,
+            "end_reason": "global_battle_failed",
+            "restart_candidate": True,
+            "returned_home": True,
+        },
+        "screenshot": ".trail/shots/req-cw-battle-run-game-over-no-handoff.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.battle.run", payload).splitlines()
+
+    assert lines[-1] == "info game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1"
+    assert not any("handoff_skill=trail-cw-prep" in line for line in lines)
 
 
 def test_render_output_cw_battle_run_timeout_in_settle_chain():
@@ -4905,6 +5007,20 @@ def test_render_output_renders_cw_shop_buy_slot_summary_text():
             "items": [{"slot": 2, "name": "停云", "price": 10}, {"slot": 1, "name": "银狼", "price": 20}],
             "opened": True,
             "stale": False,
+            "role_verification": {
+                "name": "银狼",
+                "before_count": 8,
+                "after_count": 9,
+                "delta": 1,
+                "required": 1,
+                "verified": True,
+            },
+            "slots": {
+                "front": [{"name": "银狼", "star": 3}],
+                "back": [],
+                "hand": [],
+                "stale": False,
+            },
             "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         },
         "screenshot": ".trail/shots/req-buy-slot.png",
@@ -4920,8 +5036,13 @@ def test_render_output_renders_cw_shop_buy_slot_summary_text():
         "ok cw.shop.buy_slot opened=1 stale=0 count=2",
         "shot path=.trail/shots/req-buy-slot.png",
         "info read_image_first=1",
+        "# 综合信息",
+        "info action=buy_slot role=银狼 verified=1 before_count=8 after_count=9 delta=1 required=1",
+        "# 商店信息",
         "item idx=1 slot=1 name=银狼 cost=20",
         "item idx=2 slot=2 name=停云 cost=10",
+        "# 角色信息",
+        "slot pos=front:1 name=银狼 star=3",
     ]
 
 

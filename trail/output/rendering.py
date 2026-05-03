@@ -450,10 +450,18 @@ def _select_workflow_handoff(command: Any, payload: dict[str, Any]) -> dict[str,
     default_handoff = default if isinstance(default, dict) else {}
     status_handoffs = statuses if isinstance(statuses, dict) else {}
 
-    status = _first_string(_as_dict(payload.get("data")).get("status"))
+    data = _as_dict(payload.get("data"))
+    status = _first_string(data.get("status"))
+    stage = _first_string(data.get("stage"))
     if status is not None:
         status_handoff = status_handoffs.get(status)
         if isinstance(status_handoff, dict):
+            stage_handoffs = status_handoff.get("stages")
+            if stage is not None and isinstance(stage_handoffs, dict):
+                stage_handoff = stage_handoffs.get(stage)
+                if isinstance(stage_handoff, dict):
+                    return stage_handoff
+                return {}
             return status_handoff
 
     return default_handoff
@@ -768,6 +776,20 @@ def _merge_cw_status_projection(
     return {}
 
 
+def _append_cw_preparation_sections(lines: list[str], data: dict[str, Any]) -> dict[str, Any]:
+    slots = _as_dict(data.get("slots"))
+    shop = _as_dict(data.get("shop"))
+    status_source = _merge_cw_status_projection(slots, shop, data)
+    _append_cw_status_section(lines, status_source)
+    _append_skill_info_section(lines, data)
+    _append_cw_slot_section(lines, slots)
+    _append_cw_trait_section(lines, slots)
+    equipment = _as_dict(data.get("equipment"))
+    _append_cw_equipment_section(lines, equipment)
+    _append_cw_shop_section(lines, shop)
+    return equipment
+
+
 def _should_render_recover(payload: dict[str, Any]) -> bool:
     debug = payload.get("debug") or {}
     return isinstance(debug.get("last_known_stage"), str) and bool(debug.get("last_known_stage"))
@@ -826,6 +848,9 @@ def _render_cw_battle_run(command: str, payload: dict[str, Any]) -> list[str]:
             ("next_action", "cw.battle.run"),
             ("why", "battle_flow_not_finished"),
         )
+    if any(key in data for key in ("slots", "equipment", "shop", "skill_info")):
+        equipment = _append_cw_preparation_sections(lines, data)
+        _append_cw_equipment_low_confidence_warning(lines, payload, equipment)
     _append_warnings(lines, payload)
     _append_references(lines, payload)
     return lines
@@ -892,16 +917,7 @@ def _render_cw_portal_select(command: str, payload: dict[str, Any]) -> list[str]
         f"ok {command} {summary}" if summary else f"ok {command}"
     ]
     _append_success_capture_block(lines, payload)
-    slots = _as_dict(data.get("slots"))
-    shop = _as_dict(data.get("shop"))
-    status_source = _merge_cw_status_projection(slots, shop, data)
-    _append_cw_status_section(lines, status_source)
-    _append_skill_info_section(lines, data)
-    _append_cw_slot_section(lines, slots)
-    _append_cw_trait_section(lines, slots)
-    equipment = _as_dict(data.get("equipment"))
-    _append_cw_equipment_section(lines, equipment)
-    _append_cw_shop_section(lines, shop)
+    equipment = _append_cw_preparation_sections(lines, data)
     _append_cw_equipment_low_confidence_warning(lines, payload, equipment)
     equipment_stale = equipment.get("stale")
     equipment_is_fresh = equipment_stale is False or (
@@ -1200,6 +1216,24 @@ def _render_cw_shop_status(command: str, payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _append_cw_shop_buy_slot_verification(lines: list[str], data: dict[str, Any]) -> None:
+    verification = _as_dict(data.get("role_verification"))
+    if not verification:
+        return
+    _append_section(lines, "综合信息")
+    _append_fact_line(
+        lines,
+        "info",
+        ("action", "buy_slot"),
+        ("role", verification.get("name")),
+        ("verified", verification.get("verified")),
+        ("before_count", verification.get("before_count")),
+        ("after_count", verification.get("after_count")),
+        ("delta", verification.get("delta")),
+        ("required", verification.get("required")),
+    )
+
+
 def _render_cw_shop_action(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
     items = _as_list(data.get("items")) if isinstance(data.get("items"), list) else None
@@ -1232,6 +1266,13 @@ def _render_cw_shop_action(command: str, payload: dict[str, Any]) -> list[str]:
         else:
             _append_cw_shop_lines(lines, data)
             _append_cw_shop_buy_exp_status_lines(lines, data)
+    elif command == "cw.shop.buy_slot" and (_as_dict(data.get("role_verification")) or _as_dict(data.get("slots"))):
+        _append_cw_shop_buy_slot_verification(lines, data)
+        if items is not None:
+            _append_cw_shop_section(lines, data)
+        slots = _as_dict(data.get("slots"))
+        _append_cw_slot_section(lines, slots)
+        _append_cw_trait_section(lines, slots)
     elif items is not None:
         _append_cw_shop_items(lines, data)
     _append_cw_shop_warnings(lines, payload, data)
