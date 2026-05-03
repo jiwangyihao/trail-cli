@@ -41,6 +41,7 @@ description: 当用户已经明确要进入《崩坏：星穹铁道》的货币�
 
 - 常规 battle / settle 流程默认使用 `trail cw battle run --session <id>`；默认 timeout 现在是 `90s`，不要再把长 timeout 当默认流程。
 - `trail cw battle run` 返回 `status=in_progress` 时，先读取本次截图；如果判断仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`。
+- 如果 `trail cw battle run` 返回 `status=completed result=lose stage=game_over stale=0 in_battle=0`，并带 `info game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1`，说明本局已失败结束且命令已点击 `返回货币战争` 回到货币战争主页；先读截图和 `round/hp/score/promotion_points/settle_text`，再决定是否重开，而不是继续重跑 battle flow。
 - battle flow 包含战斗中、结算页、结算翻页但未回到下一稳定阶段；结算页也属于 battle flow，仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`，不要因为看到结算页就切回旧 `settle next`。
 - `layer_transition` 表示整层结束后的“点击空白处继续 / 位面”过场；`layer_transition` 仍属于 battle flow，默认继续 `trail cw battle run --session <id>`，不要把它当成真正 `boss_preview`、普通稳定阶段或手工中断点。
 - `trail cw battle clear-in-progress --session <id>` 只清 battle.run 的内部续跑提示位，不清 battle 摘要、截图或阶段事实。
