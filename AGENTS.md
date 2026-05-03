@@ -131,6 +131,7 @@
 - `cw.shop.buy_exp` 的 `team_size=null` 是 must-keep null fact；`cw.shop.buy_exp` 不在 YAML allowlist，`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`。
 - `cw.battle.run` 属于检测/状态摘要 renderer 家族；success 首行固定使用 `ok cw.battle.run status=... result=... stage=... stale=... in_battle=...` 的顺序，缺失语义值按默认省略规则处理。
 - `cw.battle.run` 的 `status=in_progress` success 必须输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，提示 Agent 先看截图并在仍处于 battle flow 时重跑 `cw.battle.run`。
+- `cw.battle.run` 的整局失败结算 success 固定收口为 `status=completed result=lose stage=game_over stale=0 in_battle=0`，会点击 `返回货币战争` 回到货币战争主页，并输出 `info game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1`；能识别到 `round/hp/score/promotion_points/settle_text` 时按既有 `info` 行补充，供 Agent 判断是否重开。
 - `cw.battle.clear_in_progress` canonical command 固定为 `cw.battle.clear_in_progress`，归入检测/状态摘要 renderer 家族；success 首行固定为 `ok cw.battle.clear_in_progress cleared=0|1`。
 - `cw.battle.clear_in_progress` 只清 battle.run 的内部续跑提示位，不清 battle 摘要、`last_result`、`last_screenshot` 或阶段事实；它不产出截图，不加入 YAML allowlist。
 - `cw.shop.scan|status` 的 stage 投影固定使用 `stage_level/stage_exp/stage_team_size/stage_status_stale`，属于既有 `info` 行，不新增正文前缀。
