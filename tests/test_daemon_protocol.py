@@ -4618,6 +4618,50 @@ def test_cw_mutation_scope_keeps_verbose_trace_for_unknown_side_effect_result(tm
     }
 
 
+def test_cw_mutation_unknown_side_effect_result_preserves_trail_error_data(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    session_service = registry.for_workspace(str(tmp_path))
+    session = session_service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ScopedDebugProtocolRuntime(tmp_path / "cw-start-side-effect-error-data.png")
+    runtime_service = ProtocolRuntimeService(runtime)
+    service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=service)
+
+    def fake_start_cw(session, *, runtime, mode: str, difficulty: str, battle_mode: str, workspace_root: str | None = None):
+        del session, mode, difficulty, battle_mode, workspace_root
+        runtime.click_point(10, 20)
+        error = TrailError("CW_EQUIPMENT_COMPOSE_EQUIP_VERIFY_FAILED", "装备给角色后背包验证失败")
+        error.data = {"expected_count": 7, "actual_count": 8, "target": "equipment:5"}
+        raise error
+
+    monkeypatch.setattr("trail.daemon.cw_service._start_cw", fake_start_cw)
+
+    payload = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-start-side-effect-error-data",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=True,
+            method="cw.start",
+            payload={
+                "session_id": session.session_id,
+                "mode": "new",
+                "difficulty": "lowest",
+                "battle_mode": "standard",
+            },
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == {"code": "DAEMON_UNAVAILABLE", "message": "mutation result unknown"}
+    assert payload["debug"]["detail"] == "TrailError: 装备给角色后背包验证失败"
+    assert payload["debug"]["last_known_stage"] == "side_effect_applied"
+    assert payload["debug"]["error_data"] == {"expected_count": 7, "actual_count": 8, "target": "equipment:5"}
+
+
 def test_cw_mutation_verbose_trace_is_jsonable_for_unknown_side_effect_result(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
 

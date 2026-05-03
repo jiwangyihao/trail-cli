@@ -1455,6 +1455,9 @@ def _unknown_result_envelope(
 ) -> dict:
     debug_payload = to_jsonable(debug or {})
     debug_payload["detail"] = _format_exception_detail(error)
+    error_data = _error_data(error)
+    if error_data:
+        debug_payload["error_data"] = error_data
     if isinstance(last_known_stage, str) and last_known_stage:
         debug_payload["last_known_stage"] = last_known_stage
     payload = {
@@ -1486,6 +1489,9 @@ def _unknown_result_envelope_from_response(
     screenshot = previous.get("screenshot")
     debug_payload = to_jsonable(previous.get("debug") or {})
     debug_payload["detail"] = _format_exception_detail(error)
+    error_data = _error_data(error)
+    if error_data:
+        debug_payload["error_data"] = error_data
     debug_payload["last_known_stage"] = last_known_stage
     payload = {
         "ok": False,
