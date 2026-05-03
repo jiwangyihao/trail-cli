@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 import os
@@ -16,6 +17,7 @@ from trail.scenes.cw.catalog import CwCatalog, build_cw_catalog, resolve_cw_role
 from trail.scenes.cw.guide import complete_cw_guide_or_none
 from trail.runtime.batch_ocr import BatchOcrTarget, run_batch_ocr
 from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.slots import SlotsSnapshotReader, read_cw_slots
 from trail.scenes.cw.stage import (
     CW_STATUS_EXP_REGION,
     CW_STATUS_LEVEL_REGION,
@@ -71,6 +73,7 @@ SHOP_SCAN_OPEN_SETTLE_SECONDS = 1.5
 SHOP_BUY_CONFIRM_RETRY_SECONDS = 0.5
 SHOP_BUY_CONFIRM_MAX_ATTEMPTS = 4
 SHOP_LEGACY_STAGE_FIELDS = {"level", "exp", "team_size", "role_count"}
+SHOP_ROLE_STAR_UNITS = {1: 1, 2: 3, 3: 9}
 
 ShopScanner = Callable[[], dict[str, Any]]
 ShopSnapshotReader = Callable[[], dict[str, Any]]
@@ -355,8 +358,9 @@ def _shop_item_from_catalog_match(item: dict[str, Any], match) -> dict[str, Any]
         stable["price"] = item.get("price")
     if item.get("cost") is not None:
         stable["cost"] = item.get("cost")
-    if match.role_id is not None:
-        stable["role_id"] = match.role_id
+    role_id = item.get("role_id") if item.get("role_id") is not None else match.role_id
+    if role_id is not None:
+        stable["role_id"] = role_id
     if match.traits:
         stable["traits"] = list(match.traits)
     return stable
@@ -557,6 +561,8 @@ def _shop_item_for_slot(items: list[dict[str, Any]], *, slot: int) -> dict[str, 
 
 def _require_fresh_shop_item(cw_state: dict, *, slot: int, expect: str, guide_config: dict[str, Any] | None = None) -> dict[str, Any]:
     shop_state = _shop_state(cw_state)
+    if shop_state.get("opened") is not True:
+        raise TrailError("SHOP_NOT_OPEN", "商店未打开，请先执行 trail cw shop scan")
     if shop_state.get("stale", True):
         raise TrailError("SHOP_STALE", "商店快照已失效，请先执行 trail cw shop scan")
 
@@ -608,6 +614,79 @@ def _decrement_remaining_purchase(cw_state: dict, *, expect: str) -> None:
         remaining = {}
         guide["remaining_purchases"] = remaining
     remaining[expect] = max(0, remaining.get(expect, 0) - 1)
+
+
+def _role_slot_name(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("name") or "").strip()
+    return str(value or "").strip()
+
+
+def _role_slot_star_units(value: Any) -> int:
+    if not isinstance(value, dict):
+        return 1
+    star = value.get("star")
+    if isinstance(star, bool):
+        return 1
+    if isinstance(star, int):
+        parsed = star
+    elif isinstance(star, str) and star.strip().isdigit():
+        parsed = int(star.strip())
+    else:
+        parsed = 1
+    return SHOP_ROLE_STAR_UNITS.get(parsed, 1)
+
+
+def _role_equivalent_count(slots_snapshot: dict[str, Any] | None, *, name: str) -> int:
+    if not isinstance(slots_snapshot, dict):
+        return 0
+    total = 0
+    for area in ("front", "back", "hand"):
+        values = slots_snapshot.get(area)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if _role_slot_name(value) == name:
+                total += _role_slot_star_units(value)
+    return total
+
+
+def _verified_role_purchase_delta(
+    *,
+    before_slots: dict[str, Any],
+    after_slots: dict[str, Any],
+    expect: str,
+) -> dict[str, Any]:
+    before_count = _role_equivalent_count(before_slots, name=expect)
+    after_count = _role_equivalent_count(after_slots, name=expect)
+    delta = after_count - before_count
+    verification = {
+        "name": expect,
+        "before_count": before_count,
+        "after_count": after_count,
+        "delta": delta,
+        "required": 1,
+        "verified": delta >= 1,
+    }
+    if not verification["verified"]:
+        error = TrailError(
+            "SHOP_BUY_ROLE_NOT_CONFIRMED",
+            f"shop purchase role delta not confirmed for {expect}: before={before_count} after={after_count}",
+        )
+        setattr(error, "known_failure_after_save", True)
+        raise error
+    return verification
+
+
+def _read_cw_slots_with_scope(
+    session: SessionModel,
+    *,
+    reader: SlotsSnapshotReader,
+    guide_config: dict[str, Any] | None,
+    read_scope: Callable[[], Any],
+):
+    with read_scope():
+        return read_cw_slots(session, reader=reader, guide_config=guide_config)
 
 
 def build_cw_shop_opener(runtime) -> ShopAction:
@@ -734,11 +813,20 @@ def buy_cw_shop_slot(
     expect: str,
     buyer: ShopBuyer,
     scanner: ShopScanner,
+    slots_reader: SlotsSnapshotReader | None = None,
+    preflight_read_scope: Callable[[], Any] | None = None,
     guide_config: dict[str, Any] | None = None,
 ) -> CwShopApplied:
     cw_state = ensure_cw_state(session)
     before_items, _, _ = _canonicalize_shop_items(_shop_state(cw_state).get("items"), guide_config=guide_config)
-    _require_fresh_shop_item(cw_state, slot=slot, expect=expect, guide_config=guide_config)
+    expected_item = _require_fresh_shop_item(cw_state, slot=slot, expect=expect, guide_config=guide_config)
+    expected_role = str(expected_item.get("name") or expect)
+    read_scope = preflight_read_scope or nullcontext
+    before_slots = (
+        _read_cw_slots_with_scope(session, reader=slots_reader, guide_config=guide_config, read_scope=read_scope).response_snapshot
+        if slots_reader is not None
+        else None
+    )
     buyer(slot=slot, expect=expect)
     updated_shop, response_shop = _scan_until_purchase_confirmed(
         cw_state,
@@ -748,12 +836,21 @@ def buy_cw_shop_slot(
         scanner=scanner,
         guide_config=guide_config,
     )
+    if slots_reader is not None and before_slots is not None:
+        after_slots = read_cw_slots(session, reader=slots_reader, guide_config=guide_config).response_snapshot
+        response_shop["role_verification"] = _verified_role_purchase_delta(
+            before_slots=before_slots,
+            after_slots=after_slots,
+            expect=expected_role,
+        )
+        response_shop["slots"] = deepcopy(after_slots)
     _decrement_remaining_purchase(cw_state, expect=expect)
     cw_state["shop"] = _sync_shop_guide_summary(cw_state, updated_shop, include_when_absent=True)
     response_shop = _sync_shop_guide_summary(cw_state, response_shop, include_when_absent=True)
-    cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
+    if slots_reader is None:
+        cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
+        mark_cw_stage_status_stale(session)
     cw_state["sell_plan"] = {}
-    mark_cw_stage_status_stale(session)
     return CwShopApplied(session=session, response_snapshot=response_shop)
 
 

@@ -763,6 +763,7 @@ class CwService:
                 buyer=shop_buyer_factory(runtime_instance),
                 scanner=shop_scanner_factory(runtime_instance),
                 slots_reader=slots_reader,
+                preflight_read_scope=getattr(runtime_instance, "suppress_side_effect_tracking", None),
                 guide_config=base_config,
             ).response_snapshot
 

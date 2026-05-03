@@ -47,6 +47,10 @@ def fake_shop_snapshot_after_purchase():
     }
 
 
+def _slots_snapshot(*, front=None, back=None, hand=None):
+    return list(front or []), list(back or []), list(hand or [])
+
+
 def fake_shop_snapshot_target_unchanged_other_changed():
     return {
         "items": [{"name": "银狼", "price": 20}, {"name": "阮·梅", "price": 30}],
@@ -1578,6 +1582,114 @@ def test_shop_buy_slot_mutates_guide_purchase_state(tmp_path):
     }
     assert refreshed.scene_state["cw"]["slots"]["stale"] is True
     assert refreshed.scene_state["cw"]["stage"]["status"] == {"stale": True, "level": 7, "role_count": {"total": 3}}
+
+
+def test_shop_buy_slot_rejects_closed_shop_before_clicking(tmp_path):
+    shop_module = load_cw_shop_module()
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["shop"] = {
+        "opened": False,
+        "stale": False,
+        "items": [{"slot": 1, "name": "银狼", "price": 20}],
+        "coins": 40,
+        "reserve_full": False,
+    }
+    buyer_calls: list[tuple[int, str]] = []
+
+    with pytest.raises(TrailError) as exc_info:
+        buy_cw_shop_slot(
+            session,
+            slot=1,
+            expect="银狼",
+            buyer=lambda *, slot, expect: buyer_calls.append((slot, expect)),
+            scanner=fake_shop_snapshot_after_purchase,
+        )
+
+    assert exc_info.value.code == "SHOP_NOT_OPEN"
+    assert buyer_calls == []
+
+
+def test_shop_buy_slot_verifies_purchase_with_role_equivalent_delta(tmp_path):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert scan_cw_shop is not None
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session, fake_buy_success
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    scan_cw_shop(session, scanner=fake_shop_snapshot)
+    reads = iter(
+        (
+            _slots_snapshot(
+                front=[{"name": "银狼", "star": 2}, {"name": "银狼", "star": 2}],
+                hand=[{"name": "银狼", "star": 1}, {"name": "银狼", "star": 1}],
+            ),
+            _slots_snapshot(front=[{"name": "银狼", "star": 3}]),
+        )
+    )
+
+    refreshed = buy_cw_shop_slot(
+        session,
+        slot=1,
+        expect="银狼",
+        buyer=fake_buy_success,
+        scanner=fake_shop_snapshot_after_purchase,
+        slots_reader=lambda: next(reads),
+    )
+
+    assert refreshed.response_snapshot["role_verification"] == {
+        "name": "银狼",
+        "before_count": 8,
+        "after_count": 9,
+        "delta": 1,
+        "required": 1,
+        "verified": True,
+    }
+    assert refreshed.response_snapshot["slots"]["front"] == [{"name": "银狼", "star": 3}]
+    assert refreshed.scene_state["cw"]["slots"]["stale"] is False
+    assert refreshed.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼": 0}
+
+
+def test_shop_buy_slot_rejects_changed_shop_without_role_delta(tmp_path):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert scan_cw_shop is not None
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session, fake_buy_success
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    scan_cw_shop(session, scanner=fake_shop_snapshot)
+    before_guide = deepcopy(session.scene_state["cw"]["guide"])
+    reads = iter(
+        (
+            _slots_snapshot(hand=[{"name": "银狼", "star": 1}]),
+            _slots_snapshot(hand=[{"name": "银狼", "star": 1}]),
+        )
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        buy_cw_shop_slot(
+            session,
+            slot=1,
+            expect="银狼",
+            buyer=fake_buy_success,
+            scanner=fake_shop_snapshot_after_purchase,
+            slots_reader=lambda: next(reads),
+        )
+
+    assert exc_info.value.code == "SHOP_BUY_ROLE_NOT_CONFIRMED"
+    assert session.scene_state["cw"]["guide"] == before_guide
 
 
 def test_shop_buy_slot_clears_sell_plan_and_marks_slots_stale(tmp_path):

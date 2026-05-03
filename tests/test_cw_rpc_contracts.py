@@ -603,6 +603,20 @@ def test_cw_shop_buy_slot_renders_purchase_summary_and_shot(cli_runner, fake_dae
                     ],
                     "opened": True,
                     "stale": False,
+                    "role_verification": {
+                        "name": "银狼",
+                        "before_count": 8,
+                        "after_count": 9,
+                        "delta": 1,
+                        "required": 1,
+                        "verified": True,
+                    },
+                    "slots": {
+                        "front": [{"name": "银狼", "star": 3}],
+                        "back": [],
+                        "hand": [],
+                        "stale": False,
+                    },
                     "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
                 },
                 screenshot=".trail/shots/req-cw-shop-buy-slot.png",
@@ -620,8 +634,13 @@ def test_cw_shop_buy_slot_renders_purchase_summary_and_shot(cli_runner, fake_dae
         "ok cw.shop.buy_slot opened=1 stale=0 count=2",
         screenshot=".trail/shots/req-cw-shop-buy-slot.png",
         body=[
+            "# 综合信息",
+            "info action=buy_slot role=银狼 verified=1 before_count=8 after_count=9 delta=1 required=1",
+            "# 商店信息",
             "item idx=1 slot=1 name=银狼 cost=20",
             "item idx=2 slot=2 name=停云 cost=10",
+            "# 角色信息",
+            "slot pos=front:1 name=银狼 star=3",
         ],
     )
     _assert_single_call(client, method="cw.shop.buy_slot", payload={"slot": 2, "expect": "希儿"}, tmp_path=tmp_path)
