@@ -18,4 +18,4 @@
 - `item traits=...` 是商品角色 canonicalization 结果，可在 slots 不 fresh 时仍出现；`field trait_summary` 不是默认文本 `item traits`，当前默认文本 renderer 不渲染 shop `trait_summary`，只在 fresh slots 的结构化/RPC 投影中可用。
 - 接收 `cw.portal.select` handoff 时，`trail-cw-prep` 优先复用同次 stage/slots/equipment/shop facts；带截图 success 先读原始截图，`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行：`# 综合信息`、`# 攻略提示`、`# 角色信息`、`# 羁绊信息`、`# 装备信息`、`# 装备优先级`、`# 角色装备需求`、`# 商店信息`。优先复用同次 equipment facts；缺失/stale/page changed 时才重跑 `cw.equipment.read`，不要在 handoff 后立刻重复扫描 slots/equipment/shop。
 - `# 羁绊信息` 下的羁绊摘要使用 `info 羁绊=... 档位="2*,4,6" 当前角色=...`；`*` 表示该档位已激活，默认文本不再输出 `已激活档位` 或 `占比`。
-- `trail cw battle run --session <id>`：战斗链；本 skill 不决定何时出战。
+- `trail cw battle run --session <id>`：战斗链；本 skill 不决定何时出战。返回 `status=in_progress` 时先读截图并按 `next_action=cw.battle.run` 续跑；返回 `status=completed result=lose stage=game_over stale=0 in_battle=0` 且带 `game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1` 时，说明本局已失败结束且命令已点击 `返回货币战争` 回到货币战争主页，先读结算截图和 `round/hp/score/promotion_points/settle_text`，再交回上游判断是否重开。

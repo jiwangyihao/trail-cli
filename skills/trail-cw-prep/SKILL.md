@@ -53,7 +53,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 - `trail cw equipment prepare --session <id> [--refresh]`：默认只验证/汇总 bundle 装备资源，不下载图标；只有明确要刷新同版本 URL 变化或重建 workspace equipment override 时才使用 `--refresh`。
 - `trail cw crystals collect`：截图确认本轮有可收晶矿时执行；收取后根据新截图判断手牌区是否变化。
 - `trail cw hand sell-plan|sell`：读取或执行卖牌动作。
-- `trail cw battle run --timeout 570`：出战前检查完成后执行出战和战斗链。
+- `trail cw battle run --session <id>`：出战前检查完成后执行出战和战斗链；默认 timeout 是 `90s`，不要再把旧长超时当默认流程。
 
 ## Autonomy Boundary
 
@@ -122,7 +122,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 - 确认继续买经验或刷新带来的利息损失已经不可接受，或继续花钱的收益不如保留经济。
 - 确认手牌压力已经处于可接受状态，不会阻碍后续关键购买或当前出战判断。
 - 最后再读当前截图，确认没有晶矿奖励或其它普通备战内明显待办动作。
-- 上述检查完成后，运行 `trail cw battle run --session <id> --timeout 570`；若命令输出 `status=in_progress` 和 `next_action=cw.battle.run`，先读截图，再按输出继续 `cw.battle.run`。
+- 上述检查完成后，运行 `trail cw battle run --session <id>`；若命令输出 `status=in_progress` 和 `next_action=cw.battle.run`，先读截图，再按输出继续 `cw.battle.run`。若输出 `status=completed result=lose stage=game_over stale=0 in_battle=0` 且带 `game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1`，说明本局已失败结束且命令已点击 `返回货币战争` 回到货币战争主页；先读截图和结算事实，再交回上游判断是否重开。
 
 ## Stop Conditions
 
