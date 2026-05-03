@@ -25,7 +25,7 @@ Trail 包含 Windows 命令行程序和配套 skills。安装后，Agent 可以�
 - `trail-cw-guide` 不是 scene entry、不是默认 owner、也不是整局 owner；真正进入开局流程仍要回到 `trail-cw-entry`。
 - `trail-cw-portal` 是 internal portal-page skill；主要在 `trail cw start` 或 `trail cw portal refresh` 成功停留在投资环境页后切入，不是 direct-user 公共入口、不是 scene entry、也不是 owner。
 - `trail-cw-portal` 在投资环境页负责 `portal detect/refresh/restart/select` 与环境优先逻辑；如果攻略还没定，就切到 `trail-cw-guide` 的无人值守模式按当前环境定攻略，再回到当前投资环境页流程。
-- `trail-cw-prep` 是 internal 普通备战阶段 skill；只在 `cw.portal.select` 成功后的 post-portal handoff 中切入，不是 public scene entry、不是 direct-user、不是 owner。
+- `trail-cw-prep` 是 internal 普通备战阶段 skill；只在 `cw.portal.select` 成功后的 post-portal handoff，或 `cw.battle.run` 以 `status=completed stage=preparation` 自然进入下一轮备战后的 handoff 中切入，不是 public scene entry、不是 direct-user、不是 owner。
 - `trail-hsr-advanced` 是内部恢复层，用于启动失败、窗口接管异常、daemon / session 恢复等底层问题。
 - `trail-hsr-advanced` 不作为用户入口；只有 `trail-hsr` 或当前 active 的 scene entry 需要恢复链路时才会内部升级到它。
 - 旧货币战争 archive skill 已归档，不再作为 active owner 或推荐入口。
@@ -51,6 +51,7 @@ Trail 包含 Windows 命令行程序和配套 skills。安装后，Agent 可以�
 - `trail cw enter --session <id>` 只负责把页面带到货币战争首页
 - `trail cw enter --session <id>` success 尾行会返回 `info handoff_skill=trail-cw-entry handoff_strength=strong handoff_reason=scene_entered`，表示下一步应优先切到 `trail-cw-entry`
 - `trail cw portal select --session <id> --card-idx <n>` success 尾行会返回 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`，表示进入普通备战阶段后应切到 `trail-cw-prep`
+- `trail cw battle run --session <id>` 若返回 `status=completed result=win stage=preparation`，success 尾行同样会返回 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`，表示战斗结束自然进入下一轮普通备战后应切到 `trail-cw-prep`
 - 当用户明确要先选攻略，或 `trail-cw-entry` 走到“攻略优先 / 先定攻略”时，应切到 `trail-cw-guide`；真正进入开局流程仍要回到 `trail-cw-entry`
 - 到首页后先确认本局偏好：
   - `攻略优先` / `环境优先`
@@ -75,7 +76,7 @@ Trail 包含 Windows 命令行程序和配套 skills。安装后，Agent 可以�
   - `trail cw portal restart --session <id>`
 - 先用：`trail guide fetch cw <lineup_url_or_id> --select --session <id>` 将完整攻略写入当前 session；这一步不执行 UI 应用，也不创建当前攻略快照或额外追踪产物
 - 回到开局链路后，`trail cw portal select --session <id> --card-idx <n>` 成功后会自动应用当前已选攻略
-- `cw.portal.select` 成功进入普通备战后会 handoff 到 internal 的 `trail-cw-prep`，由它先读截图和收集普通备战事实
+- `cw.portal.select` 成功进入普通备战后会 handoff 到 internal 的 `trail-cw-prep`，由它先读截图和收集普通备战事实；`cw.battle.run` 在 `status=completed result=win stage=preparation` 时也会 handoff 到同一个 skill
 - `trail cw guide apply --session <id>` 只作为手动兜底；如需回顾当前已选攻略：`trail cw guide current --session <id>`
 - `trail cw guide` 只负责当前对局已选攻略的 current/apply；筛攻略和拉攻略继续使用顶层 `trail guide ... cw`
 - `stage=invest` 时，不要默认走 `trail cw invest.*`
@@ -88,6 +89,7 @@ Trail 包含 Windows 命令行程序和配套 skills。安装后，Agent 可以�
 - 这两类命令都严格保序、遇错即停；只要中途失败且前面动作可能已生效，就应重新执行 `trail cw slots read`
 - 常规 battle / settle 流程默认执行：`trail cw battle run --session <id>`；默认 timeout 现在是 `90s`
 - `trail cw battle run` 设计上依赖短等待、`status=in_progress` 与重跑续跑；看到 `info next_action=cw.battle.run why=battle_flow_not_finished` 时，Agent 必须先看截图，若仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`
+- `trail cw battle run` 若输出 `status=completed result=win stage=preparation`，说明战斗已结束并自然进入下一轮普通备战；命令会自动收集 stage/slots/shop/equipment/crystals/skill_info facts，并在尾行 handoff 到 `trail-cw-prep`
 - `trail cw battle run` 若输出 `status=completed result=lose stage=game_over stale=0 in_battle=0` 与 `info game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1`，说明整局已失败结束，且命令已点击 `返回货币战争` 回到货币战争主页；Agent 应先读截图和结算事实，再判断是否重开
 - battle flow 包含战斗中、结算页、结算翻页但未回到下一稳定阶段；结算页也属于 battle flow，不要因为到结算页就切回旧 `trail cw settle next`
 - 对外 stage token `layer_transition` 表示整层结束后的“点击空白处继续 / 位面”过场；`layer_transition` 仍属于 battle flow，默认继续 `trail cw battle run --session <id>`，不要把它当成真正 `boss_preview`、普通稳定阶段或手工中断点
@@ -117,7 +119,7 @@ Trail 包含 Windows 命令行程序和配套 skills。安装后，Agent 可以�
 - `image`：进阶模板识别与等待
 - `input`：点击、拖拽、按键
 - `state`：进阶读取 session 与 scene state
-- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`portal` 负责开局投资环境页的识别/选择/刷新/重开；`strategy` 负责局内“请选择投资策略”页的识别/单卡刷新/选择；常规 battle / settle 默认入口是 `trail cw battle run --session <id>`，默认 timeout 现在是 `90s`，`status=in_progress` 时输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，先看截图，仍在 battle flow 就重跑；整局失败结算会点击 `返回货币战争` 回到首页，收口为 `status=completed result=lose stage=game_over stale=0 in_battle=0` 并输出 `game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1`，供 Agent 判断是否重开；结算页也属于 battle flow，且 `layer_transition` 层切换过场也属于 battle flow；`trail cw battle clear-in-progress --session <id>` 只清内部提示位；`battle` / `settle` 分组仍保留兼容原子命令，但只建议在内部 fallback 流程使用；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口；其余分组处理局内阶段与资源，包含 `portal`、`strategy`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
+- `cw`：货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页；`portal` 负责开局投资环境页的识别/选择/刷新/重开；`strategy` 负责局内“请选择投资策略”页的识别/单卡刷新/选择；常规 battle / settle 默认入口是 `trail cw battle run --session <id>`，默认 timeout 现在是 `90s`，`status=in_progress` 时输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，先看截图，仍在 battle flow 就重跑；`status=completed result=win stage=preparation` 时说明已自然进入下一轮普通备战，会自动收集备战 facts 并 handoff 到 `trail-cw-prep`；整局失败结算会点击 `返回货币战争` 回到首页，收口为 `status=completed result=lose stage=game_over stale=0 in_battle=0` 并输出 `game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1`，供 Agent 判断是否重开；结算页也属于 battle flow，且 `layer_transition` 层切换过场也属于 battle flow；`trail cw battle clear-in-progress --session <id>` 只清内部提示位；`battle` / `settle` 分组仍保留兼容原子命令，但只建议在内部 fallback 流程使用；`stage` 只用于已进入货币战争后的内部阶段快速检测/等待；`invest` 只保留普通局内 invest 事件的兼容/粗粒度入口；其余分组处理局内阶段与资源，包含 `portal`、`strategy`、`guide`、`stage`、`slots`、`shop`、`crystals`、`hand`、`replenish`、`invest`、`encounter`、`fortune`、`boss-preview`、`battle`、`settle`、`event`
 
 ## Window Launch
 
@@ -324,7 +326,7 @@ recover action=daemon.request_status request=req-42
 - `trail cw slots place` 用重复 `--action <source,target>` 显式批量上场；`trail cw hand sell` 用重复 `--slot <n>` 显式批量卖牌
 - 这两类批量命令都严格保序、遇错即停；如果中途失败且前面动作可能已生效，先重新执行 `trail cw slots read --session <id>` 再继续后续判断
 - `trail-hsr` 负责 session、窗口检查与场景切换，并在没有已上线 scene entry 时继续承担总入口 owner
-- 当前 scene entry 一旦命中并接管某个具体场景，该 scene entry 就成为该场景内的唯一编排 owner；常规 battle / settle 链默认执行 `trail cw battle run --session <id>`，默认 timeout 现在是 `90s`，`status=in_progress` 输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，先看截图，仍在 battle flow 就重跑；整局失败结算输出 `game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1` 时，说明命令已点击 `返回货币战争` 回到首页，先读截图和结算事实，再由 scene entry 判断是否重开；结算页也属于 battle flow，且 `layer_transition` 层切换过场也属于 battle flow；`trail cw battle clear-in-progress --session <id>` 只清内部提示位
+- 当前 scene entry 一旦命中并接管某个具体场景，该 scene entry 就成为该场景内的唯一编排 owner；常规 battle / settle 链默认执行 `trail cw battle run --session <id>`，默认 timeout 现在是 `90s`，`status=in_progress` 输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，先看截图，仍在 battle flow 就重跑；`status=completed result=win stage=preparation` 时说明命令已自然进入下一轮普通备战，会自动收集备战 facts 并 handoff 到 `trail-cw-prep`；整局失败结算输出 `game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1` 时，说明命令已点击 `返回货币战争` 回到首页，先读截图和结算事实，再由 scene entry 判断是否重开；结算页也属于 battle flow，且 `layer_transition` 层切换过场也属于 battle flow；`trail cw battle clear-in-progress --session <id>` 只清内部提示位
 - `trail-hsr-advanced` 是内部恢复层，继续负责 daemon / request-status / reconcile-session / window / session / screen / image / state 这类 control-plane 与恢复链路；如果 `trail cw battle run` 的 stdout 丢失但 `session=<id>` 还在，立刻执行 `trail state dump --session <id> --format yaml`
 - `trail-hsr-advanced` 不作为用户入口；它完成恢复后必须把控制权交回调用它的上层 active skill
 - 归档 skill 不再作为 active owner 或推荐入口

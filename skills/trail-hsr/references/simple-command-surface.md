@@ -8,6 +8,7 @@
 - `trail input` 用来执行点击、按键、拖拽等动作，前提是总入口或当前 scene entry 已经决定了下一步动作。
 - 通用场景判断继续走 `trail start` / `trail ocr read` / `trail input ...`，不要把 `trail cw stage` 当成登录页、大世界等非 CW 场景检测器。
 - battle in-progress 当前只是场景/命令说明，不实现新的 skill 本体：当 `trail cw battle run --session <id>` 返回 `status=in_progress` 和 `info next_action=cw.battle.run why=battle_flow_not_finished` 时，先读截图；若仍在 battle flow 中，就继续运行 `trail cw battle run --session <id>`。
+- 当 `trail cw battle run --session <id>` 返回 `status=completed result=win stage=preparation` 时，说明已经进入下一轮普通备战；响应会自动追加 stage/slots/equipment/shop/crystals/skill_info facts，并通过 handoff 交给 `trail-cw-prep`。先读截图和同次 facts，不要立即重复扫描。
 - 当 `trail cw battle run --session <id>` 返回 `status=completed result=lose stage=game_over stale=0 in_battle=0`，并输出 `info game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1` 时，说明整局已失败结束且命令已点击 `返回货币战争` 回到货币战争主页；先读截图和结算事实，再由当前 scene entry 判断是否重开。
 - battle flow 包含战斗中、结算页、结算翻页但未回到下一稳定阶段；结算页也属于 battle flow，不要因为看到结算页就默认改用旧 `trail cw settle next`。
 - `layer_transition` 表示整层结束后的“点击空白处继续 / 位面”过场；`layer_transition` 仍属于 battle flow，默认继续 `trail cw battle run --session <id>`，不要把它当成真正 `boss_preview`、普通稳定阶段或手工中断点。

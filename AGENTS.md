@@ -132,6 +132,8 @@
 - `cw.battle.run` 属于检测/状态摘要 renderer 家族；success 首行固定使用 `ok cw.battle.run status=... result=... stage=... stale=... in_battle=...` 的顺序，缺失语义值按默认省略规则处理。
 - `cw.battle.run` 的 `status=in_progress` success 必须输出 `info next_action=cw.battle.run why=battle_flow_not_finished`，提示 Agent 先看截图并在仍处于 battle flow 时重跑 `cw.battle.run`。
 - `cw.battle.run` 的整局失败结算 success 固定收口为 `status=completed result=lose stage=game_over stale=0 in_battle=0`，会点击 `返回货币战争` 回到货币战争主页，并输出 `info game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1`；能识别到 `round/hp/score/promotion_points/settle_text` 时按既有 `info` 行补充，供 Agent 判断是否重开。
+- `cw.battle.run` 在 `status=completed stage=preparation` 时会自动收集普通备战 facts，追加与 `cw.portal.select` 同类的 stage/slots/equipment/shop/crystals/skill_info 信息；为节约时间，`cw.battle.run` 使用 `crystals -> slots -> shop -> equipment` 顺序，`cw.portal.select` 保持 `crystals -> slots -> equipment -> shop` 顺序。
+- `cw.battle.run` 只有 `status=completed stage=preparation` 才命中 workflow handoff；`game_over`、`settle`、`layer_transition` 或 `in_progress` 不得触发 `trail-cw-prep`。
 - `cw.battle.clear_in_progress` canonical command 固定为 `cw.battle.clear_in_progress`，归入检测/状态摘要 renderer 家族；success 首行固定为 `ok cw.battle.clear_in_progress cleared=0|1`。
 - `cw.battle.clear_in_progress` 只清 battle.run 的内部续跑提示位，不清 battle 摘要、`last_result`、`last_screenshot` 或阶段事实；它不产出截图，不加入 YAML allowlist。
 - `cw.shop.scan|status` 的 stage 投影固定使用 `stage_level/stage_exp/stage_team_size/stage_status_stale`，属于既有 `info` 行，不新增正文前缀。
@@ -160,11 +162,11 @@
 - `trail-cw-portal` 是当前 active internal 的投资环境页 skill，主要在 `trail cw start` 或 `trail cw portal refresh` 成功停留在投资环境页后由 scene entry 内部切入。
 - `trail-cw-portal` 不是 direct-user 公共入口、不是 scene entry、也不是 owner；它负责 `portal detect/refresh/restart/select` 与环境优先逻辑，若攻略未定则切到 `trail-cw-guide` 的无人值守模式。
 - `trail-cw-portal` 默认 portal 输出无动态攻略摘要时，不得使用攻略互动数据作为刷新条件；需要互动数据时先显式获取攻略列表或详情。
-- `trail-cw-prep` 是当前 active internal 的普通备战阶段 skill，只能由 `cw.portal.select` success 后的 workflow handoff 或上游内部阶段切入。
-- `trail-cw-prep` 不是 public scene entry、不是 direct-user、不是 owner；`cw.portal.select` success final handoff 固定指向 `trail-cw-prep`。
-- `trail-cw-prep` 接收 `cw.portal.select` handoff 时，应先读截图并消费该响应自动收集的 stage/slots/equipment/shop facts；只有事实缺失、stale 或页面已变化时才重跑 slots/equipment/shop 扫描。
+- `trail-cw-prep` 是当前 active internal 的普通备战阶段 skill，只能由 `cw.portal.select` success、`cw.battle.run(status=completed, stage=preparation)` success 后的 workflow handoff 或上游内部阶段切入。
+- `trail-cw-prep` 不是 public scene entry、不是 direct-user、不是 owner；`cw.portal.select` 与 `cw.battle.run(status=completed, stage=preparation)` success final handoff 固定指向 `trail-cw-prep`。
+- `trail-cw-prep` 接收 `cw.portal.select` handoff 或 `cw.battle.run` preparation handoff 时，应先读截图并消费该响应自动收集的 stage/slots/equipment/shop facts；只有事实缺失、stale 或页面已变化时才重跑 slots/equipment/shop 扫描。
 - 只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口出现在 active 文档与测试中。
-- 当命令 success 输出 `info handoff_skill=... handoff_strength=strong ...` 时，Agent 应把它视为推荐的下一步 skill 切换信号；当前固定映射包括 `cw.enter -> trail-cw-entry` 与 `cw.portal.select -> trail-cw-prep`。
+- 当命令 success 输出 `info handoff_skill=... handoff_strength=strong ...` 时，Agent 应把它视为推荐的下一步 skill 切换信号；当前固定映射包括 `cw.enter -> trail-cw-entry`、`cw.portal.select -> trail-cw-prep` 与 `cw.battle.run(status=completed, stage=preparation)` -> `trail-cw-prep`。
 - `AGENTS.md` 的 active 拓扑说明不得出现 archive skill 名称或 legacy 场景 skill 名称。
 - 任何 active skill 都不得直接或间接调用 archive skill。
 - 仍然禁止 legacy 货币战争 archive skill 回流为 active owner、默认 owner 或推荐入口。
