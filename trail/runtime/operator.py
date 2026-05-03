@@ -391,11 +391,38 @@ class RuntimeOperator:
         self._finish_debug_action(action, ok=True, source="raw")
         return image
 
-    def capture_image(self, *, from_x=None, from_y=None, to_x=None, to_y=None, normalize: bool = True):
-        capture_image = getattr(self.window, "capture_image", None)
-        if not callable(capture_image):
-            raise TrailError("SCREENSHOT_FAILED", "window controller does not support capture_image")
-        return capture_image(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y, normalize=normalize)
+    def capture_image(
+        self,
+        *,
+        from_x: int | float | None = None,
+        from_y: int | float | None = None,
+        to_x: int | float | None = None,
+        to_y: int | float | None = None,
+        normalize: bool = True,
+    ) -> object:
+        capture_payload: dict[str, object] = {
+            key: value
+            for key, value in {
+                "from_x": from_x,
+                "from_y": from_y,
+                "to_x": to_x,
+                "to_y": to_y,
+            }.items()
+            if value is not None
+        }
+        capture_payload["normalize"] = bool(normalize)
+        action = self._begin_debug_action("capture_image", capture=capture_payload)
+        try:
+            capture_image = getattr(self.window, "capture_image", None)
+            if not callable(capture_image):
+                raise TrailError("SCREENSHOT_FAILED", "window controller does not support capture_image")
+            self._wait_for_post_input_settle()
+            image = capture_image(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y, normalize=normalize)
+        except Exception as error:
+            self._finish_debug_action(action, ok=False, **self._debug_error_payload(error))
+            raise
+        self._finish_debug_action(action, ok=True, source="raw")
+        return image
 
     def save_capture_image_to_workspace(self, image, request_id: str | None = None):
         save = getattr(self.window, "save_capture_image_to_workspace", None)
@@ -1359,6 +1386,9 @@ class RapidOcrAdapter:
 
 
 class PyAutoGuiInputDriver:
+    DRAG_START_SETTLE_SECONDS = 0.1
+    DRAG_HOLD_SETTLE_SECONDS = 0.1
+
     MOUSEEVENTF_LEFTDOWN = 0x0002
     MOUSEEVENTF_LEFTUP = 0x0004
     KEYEVENTF_KEYUP = 0x0002
@@ -1396,7 +1426,9 @@ class PyAutoGuiInputDriver:
     def _virtual_drag(from_x: float, from_y: float, to_x: float, to_y: float, *, duration: float | None = None) -> None:
         user32 = ctypes.windll.user32
         user32.SetCursorPos(round(from_x), round(from_y))
+        sleep(PyAutoGuiInputDriver.DRAG_START_SETTLE_SECONDS)
         user32.mouse_event(PyAutoGuiInputDriver.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+        sleep(PyAutoGuiInputDriver.DRAG_HOLD_SETTLE_SECONDS)
         if duration is None:
             sleep(0.1)
             user32.SetCursorPos(round(to_x), round(to_y))

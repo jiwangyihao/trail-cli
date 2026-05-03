@@ -5642,6 +5642,51 @@ def test_runtime_operator_capture_after_action_waits_after_recent_input(monkeypa
     assert delay_event["seconds"] == pytest.approx(0.75, rel=0.001)
 
 
+def test_runtime_operator_capture_image_waits_after_recent_input(monkeypatch):
+    import trail.runtime.operator as operator_module
+
+    sleep_calls: list[float] = []
+    capture_calls: list[dict[str, object]] = []
+    monotonic_values = iter([100.0, 100.25])
+
+    monkeypatch.setattr(operator_module, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(operator_module, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    runtime = operator_module.RuntimeOperator(
+        window=SimpleNamespace(
+            prepare_input=lambda: None,
+            is_foreground=lambda: True,
+            to_screen_point=lambda x, y: (x, y),
+            capture_image=lambda **kwargs: capture_calls.append(dict(kwargs)) or Image.new("RGBA", (1920, 1080), "black"),
+            capture_to_workspace=lambda request_id=None: Path("shot.png"),
+        ),
+        matcher=SimpleNamespace(locate=lambda template, image: None),
+        ocr_engine=SimpleNamespace(run=lambda image: []),
+        input_driver=SimpleNamespace(
+            ensure_available=lambda: None,
+            click=lambda *args, **kwargs: None,
+            drag=lambda *args, **kwargs: None,
+            press=lambda key: None,
+            hotkey=lambda *keys: None,
+            type_text=lambda text: None,
+        ),
+    )
+
+    runtime.click_point(10, 20)
+    image = runtime.capture_image(normalize=True)
+
+    assert image.size == (1920, 1080)
+    assert capture_calls == [{"from_x": None, "from_y": None, "to_x": None, "to_y": None, "normalize": True}]
+    assert sleep_calls == [pytest.approx(0.75, rel=0.001)]
+    trace = runtime.consume_debug_trace()
+    delay_event = _find_trace_event(trace, "capture_settle_delay")
+    _assert_finalized_trace_event(delay_event, step="capture_settle_delay", ok=1)
+    assert delay_event["seconds"] == pytest.approx(0.75, rel=0.001)
+    capture_event = _find_trace_event(trace, "capture_image")
+    _assert_finalized_trace_event(capture_event, step="capture_image", ok=1)
+    assert capture_event["capture"] == {"normalize": True}
+
+
 def test_runtime_operator_collect_warnings_includes_window_warnings():
     import trail.runtime.operator as operator_module
 
@@ -6268,32 +6313,42 @@ def test_pyautogui_input_driver_drag_uses_win32_cursor_for_primary_coords_on_win
 def test_pyautogui_input_driver_drag_respects_explicit_duration_on_windows(monkeypatch):
     import trail.runtime.operator as operator_module
 
+    events: list[tuple[str, tuple[int, ...] | float]] = []
+
     class User32:
         def __init__(self):
             self.calls: list[tuple[str, tuple[int, ...]]] = []
 
         def SetCursorPos(self, x: int, y: int):
             self.calls.append(("SetCursorPos", (x, y)))
+            events.append(("SetCursorPos", (x, y)))
             return 1
 
         def mouse_event(self, flags: int, dx: int, dy: int, data: int, extra: int):
             self.calls.append(("mouse_event", (flags, dx, dy, data, extra)))
+            events.append(("mouse_event", (flags, dx, dy, data, extra)))
             return 1
 
     sleep_calls: list[float] = []
     user32 = User32()
     monkeypatch.setattr(operator_module.sys, "platform", "win32")
     monkeypatch.setattr(operator_module.ctypes, "windll", SimpleNamespace(user32=user32))
-    monkeypatch.setattr(operator_module, "sleep", lambda seconds: sleep_calls.append(seconds))
+    monkeypatch.setattr(operator_module, "sleep", lambda seconds: (sleep_calls.append(seconds), events.append(("sleep", seconds))))
 
     driver = operator_module.PyAutoGuiInputDriver()
     driver.drag(960, 1014, 1000, 1020, duration=0.2)
 
+    assert events[:4] == [
+        ("SetCursorPos", (960, 1014)),
+        ("sleep", 0.1),
+        ("mouse_event", (0x0002, 0, 0, 0, 0)),
+        ("sleep", 0.1),
+    ]
     cursor_positions = [args for name, args in user32.calls if name == "SetCursorPos"]
     assert cursor_positions[0] == (960, 1014)
     assert cursor_positions[-1] == (1000, 1020)
     assert len(cursor_positions) > 2
-    assert sum(sleep_calls) == pytest.approx(0.2)
+    assert sum(sleep_calls) == pytest.approx(0.4)
 
 
 def test_pyautogui_input_driver_press_uses_win32_key_events_on_windows(monkeypatch):
