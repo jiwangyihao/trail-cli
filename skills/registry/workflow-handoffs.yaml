@@ -9,3 +9,11 @@ commands:
       handoff_skill: trail-cw-prep
       handoff_strength: strong
       handoff_reason: preparation_stage_entered
+  cw.battle.run:
+    statuses:
+      completed:
+        stages:
+          preparation:
+            handoff_skill: trail-cw-prep
+            handoff_strength: strong
+            handoff_reason: preparation_stage_entered

@@ -400,7 +400,7 @@ def test_workflow_handoff_registry_has_expected_scene_and_stage_mappings() -> No
     registry = yaml.safe_load(WORKFLOW_HANDOFFS.read_text(encoding="utf-8"))
 
     assert set(registry) == {"commands"}
-    assert set(registry["commands"]) == {"cw.enter", "cw.portal.select"}
+    assert set(registry["commands"]) == {"cw.enter", "cw.portal.select", "cw.battle.run"}
     assert registry["commands"]["cw.enter"]["default"] == {
         "handoff_skill": "trail-cw-entry",
         "handoff_strength": "strong",
@@ -413,6 +413,11 @@ def test_workflow_handoff_registry_has_expected_scene_and_stage_mappings() -> No
     }
     assert "statuses" not in registry["commands"]["cw.enter"]
     assert "statuses" not in registry["commands"]["cw.portal.select"]
+    assert registry["commands"]["cw.battle.run"]["statuses"]["completed"]["stages"]["preparation"] == {
+        "handoff_skill": "trail-cw-prep",
+        "handoff_strength": "strong",
+        "handoff_reason": "preparation_stage_entered",
+    }
 
 
 def test_routing_review_keeps_auditable_methodology_and_complete_rows() -> None:
