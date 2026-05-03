@@ -1745,11 +1745,27 @@ def _equipment_raw_config_for_recommendations():
 
 
 class _ComposeRuntime:
-    def __init__(self):
+    def __init__(self, *, wait_box=None):
+        from trail.runtime.model import Box
+
         self.drags = []
+        self.waits = []
+        self.clicks = []
+        self.events = []
+        self.wait_box = wait_box if wait_box is not None else Box(left=1807, top=412, width=46, height=35)
 
     def drag_to(self, from_x, from_y, to_x, to_y, **kwargs):
         self.drags.append((from_x, from_y, to_x, to_y, kwargs))
+        self.events.append(("drag_to", from_x, from_y, to_x, to_y, kwargs))
+
+    def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+        self.waits.append((template, timeout, interval))
+        self.events.append(("wait_img", template, timeout, interval))
+        return self.wait_box
+
+    def click_point(self, x, y, **kwargs):
+        self.clicks.append((x, y, kwargs))
+        self.events.append(("click_point", x, y, kwargs))
 
 
 def _equipment_item(idx, name, equipment_id, cache_key, *, uncertain=False, score=0.99, gap=0.50):
@@ -2199,8 +2215,8 @@ def test_compose_and_equip_cw_equipment_drags_compose_then_equip_and_writes_sess
                 _equipment_item(6, "备用零件", "spare", "basic-spare"),
             ),
             _equipment_snapshot(
-                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
                 _equipment_item(5, "备用零件", "spare", "basic-spare"),
+                _equipment_item(6, "高周波电锯", "saw", "advanced-saw"),
             ),
             _equipment_snapshot(
                 _equipment_item(5, "备用零件", "spare", "basic-spare"),
@@ -2213,10 +2229,10 @@ def test_compose_and_equip_cw_equipment_drags_compose_then_equip_and_writes_sess
 
     assert [drag[:4] for drag in runtime.drags] == [
         (*equipment_slot_center("equipment:5"), *equipment_slot_center("equipment:2")),
-        (*equipment_slot_center("equipment:2"), *slots_module.SLOT_POINTS_BY_AREA["front"][0]),
+        (*equipment_slot_center("equipment:6"), *slots_module.SLOT_POINTS_BY_AREA["front"][0]),
     ]
     assert result["compose_action"] == {"drag_from": "equipment:5", "drag_to": "equipment:2"}
-    assert result["equip_action"] == {"drag_from": "equipment:2", "drag_to": "front:1"}
+    assert result["equip_action"] == {"drag_from": "equipment:6", "drag_to": "front:1"}
     assert result["verified_shift"] == 1
     assert result["post_compose_equipment_count"] == 2
     assert result["post_equip_equipment_count"] == 1
@@ -2224,6 +2240,106 @@ def test_compose_and_equip_cw_equipment_drags_compose_then_equip_and_writes_sess
     assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册", "高周波电锯"]
     assert ensure_cw_state(session)["equipment"]["stale"] is True
     assert "recommendations" not in ensure_cw_state(session)["equipment"]
+
+
+def test_compose_and_equip_cw_equipment_confirms_compose_popup_before_reading_result(tmp_path, monkeypatch):
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+            ),
+            _equipment_snapshot(_equipment_item(2, "高周波电锯", "saw", "advanced-saw")),
+            _equipment_snapshot(recommendations={"priority": []}),
+        ],
+    )
+
+    _compose_and_equip(equipment, session, runtime)
+
+    assert len(runtime.waits) == 1
+    template, timeout, interval = runtime.waits[0]
+    assert template.endswith("equipment_compose_confirm.png")
+    assert timeout == 3
+    assert interval == pytest.approx(0.2)
+    assert runtime.clicks == [(1830, 429, {})]
+    assert [event[0] for event in runtime.events] == ["drag_to", "wait_img", "click_point", "drag_to"]
+
+
+def test_compose_and_equip_uses_last_post_confirm_equipment_slot(tmp_path, monkeypatch):
+    from trail.scenes.cw import slots as slots_module
+    from trail.scenes.cw.equipment_grid import equipment_slot_center
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+            ),
+            _equipment_snapshot(_equipment_item(5, "高周波电锯", "saw", "advanced-saw")),
+            _equipment_snapshot(recommendations={"priority": []}),
+        ],
+    )
+
+    result = _compose_and_equip(equipment, session, runtime)
+
+    assert [drag[:4] for drag in runtime.drags] == [
+        (*equipment_slot_center("equipment:5"), *equipment_slot_center("equipment:2")),
+        (*equipment_slot_center("equipment:5"), *slots_module.SLOT_POINTS_BY_AREA["front"][0]),
+    ]
+    assert result["compose_action"] == {"drag_from": "equipment:5", "drag_to": "equipment:2"}
+    assert result["equip_action"] == {"drag_from": "equipment:5", "drag_to": "front:1"}
+    assert result["result_item"]["idx"] == 5
+
+
+def test_compose_and_equip_rejects_target_match_that_is_not_last_post_confirm_slot(tmp_path, monkeypatch):
+    from trail.scenes.cw.equipment_grid import equipment_slot_center
+    from trail.scenes.cw.models import ensure_cw_state
+
+    equipment = load_equipment_module()
+    session = _cw_session_with_equipment_guide(tmp_path)
+    runtime = _ComposeRuntime()
+    _install_compose_equipment_reads(
+        monkeypatch,
+        equipment,
+        session,
+        [
+            _equipment_snapshot(
+                _equipment_item(2, "基础装甲", "armor", "basic-armor"),
+                _equipment_item(5, "光能电池", "battery", "basic-battery"),
+                _equipment_item(6, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
+                _equipment_item(5, "备用零件", "spare", "basic-spare"),
+            ),
+            _equipment_snapshot(
+                _equipment_item(5, "备用零件", "spare", "basic-spare"),
+                recommendations={"priority": []},
+            ),
+        ],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        _compose_and_equip(equipment, session, runtime)
+
+    assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_COMPOSE_VERIFY_FAILED"
+    assert [drag[:4] for drag in runtime.drags] == [
+        (*equipment_slot_center("equipment:5"), *equipment_slot_center("equipment:2"))
+    ]
+    assert getattr(exc_info.value, "data", {}).get("actual_target") == "equipment:5"
+    assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
 
 
 def test_compose_and_equip_existing_target_equips_without_composing(tmp_path, monkeypatch):
@@ -2626,8 +2742,8 @@ def test_compose_and_equip_post_compose_uncertain_target_fails_without_write(tmp
                 _equipment_item(6, "备用零件", "spare", "basic-spare"),
             ),
             _equipment_snapshot(
-                _equipment_item(2, "高周波电锯", "saw", "advanced-saw", uncertain=True, score=0.62, gap=0.01),
                 _equipment_item(5, "备用零件", "spare", "basic-spare"),
+                _equipment_item(6, "高周波电锯", "saw", "advanced-saw", uncertain=True, score=0.62, gap=0.01),
             ),
         ],
     )
@@ -2660,9 +2776,9 @@ def test_compose_and_equip_shift_unproven_keeps_verified_shift_zero(tmp_path, mo
                 _equipment_item(7, "备用零件", "spare", "basic-spare"),
             ),
             _equipment_snapshot(
-                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
                 _equipment_item(5, "备用零件", "spare", "basic-spare"),
                 _equipment_item(6, "备用零件", "spare", "basic-spare"),
+                _equipment_item(7, "高周波电锯", "saw", "advanced-saw"),
             ),
             _equipment_snapshot(
                 _equipment_item(5, "备用零件", "spare", "basic-spare"),
@@ -2696,8 +2812,8 @@ def test_compose_and_equip_post_compose_shift_mismatch_fails_without_writing_rol
                 _equipment_item(6, "备用零件", "spare", "basic-spare"),
             ),
             _equipment_snapshot(
-                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
                 _equipment_item(6, "备用零件", "spare", "basic-spare"),
+                _equipment_item(7, "高周波电锯", "saw", "advanced-saw"),
             ),
             _equipment_snapshot(_equipment_item(6, "备用零件", "spare", "basic-spare")),
         ],
@@ -2731,8 +2847,8 @@ def test_compose_and_equip_post_compose_shift_wrong_idx_fails_without_writing_ro
                 _equipment_item(6, "备用零件", "spare", "basic-spare"),
             ),
             _equipment_snapshot(
-                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
                 _equipment_item(4, "备用零件", "spare", "basic-spare"),
+                _equipment_item(7, "高周波电锯", "saw", "advanced-saw"),
             ),
             _equipment_snapshot(_equipment_item(4, "备用零件", "spare", "basic-spare")),
         ],
@@ -2765,8 +2881,8 @@ def test_compose_and_equip_uncertain_existing_target_still_composes(tmp_path, mo
                 _equipment_item(6, "高周波电锯", "saw", "advanced-saw", uncertain=True, score=0.61, gap=0.01),
             ),
             _equipment_snapshot(
-                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
                 _equipment_item(5, "高周波电锯", "saw", "advanced-saw"),
+                _equipment_item(6, "高周波电锯", "saw", "advanced-saw"),
             ),
             _equipment_snapshot(_equipment_item(5, "高周波电锯", "saw", "advanced-saw")),
         ],
@@ -2802,12 +2918,12 @@ def test_compose_and_equip_post_equip_verify_failure_does_not_write_role(tmp_pat
                 _equipment_item(6, "备用零件", "spare", "basic-spare"),
             ),
             _equipment_snapshot(
-                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
                 _equipment_item(5, "备用零件", "spare", "basic-spare"),
+                _equipment_item(6, "高周波电锯", "saw", "advanced-saw"),
             ),
             _equipment_snapshot(
-                _equipment_item(2, "高周波电锯", "saw", "advanced-saw"),
                 _equipment_item(5, "备用零件", "spare", "basic-spare"),
+                _equipment_item(6, "高周波电锯", "saw", "advanced-saw"),
             ),
         ],
     )
@@ -2818,7 +2934,7 @@ def test_compose_and_equip_post_equip_verify_failure_does_not_write_role(tmp_pat
     assert getattr(exc_info.value, "code", None) == "CW_EQUIPMENT_COMPOSE_EQUIP_VERIFY_FAILED"
     assert [drag[:4] for drag in runtime.drags] == [
         (*equipment_slot_center("equipment:5"), *equipment_slot_center("equipment:2")),
-        (*equipment_slot_center("equipment:2"), *slots_module.SLOT_POINTS_BY_AREA["front"][0]),
+        (*equipment_slot_center("equipment:6"), *slots_module.SLOT_POINTS_BY_AREA["front"][0]),
     ]
     assert ensure_cw_state(session)["slots"]["front"][0]["equipments"] == ["战场手册"]
 

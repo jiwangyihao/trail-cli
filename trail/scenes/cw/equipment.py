@@ -38,6 +38,12 @@ from trail.scenes.cw.slots import (
     parse_cw_slot_reference,
     read_cw_slots,
 )
+from trail.runtime.model import Box
+from trail.runtime.resources import resolve_scene_asset
+
+
+COMPOSE_CONFIRM_WAIT_TIMEOUT_SECONDS = 3
+COMPOSE_CONFIRM_WAIT_INTERVAL_SECONDS = 0.2
 
 
 def prepare_cw_equipment(*, workspace_root: str | Path | None = None, refresh: bool = False) -> dict[str, Any]:
@@ -741,6 +747,13 @@ def _verify_cw_equipment_post_compose_shift(
     return verified_shift
 
 
+def _last_cw_equipment_item(snapshot: dict[str, Any]) -> Mapping[str, Any] | None:
+    items = [item for item in _snapshot_items(snapshot) if isinstance(item, Mapping)]
+    if not items:
+        return None
+    return max(items, key=_equipment_item_idx)
+
+
 def _verify_cw_equipment_post_compose(
     *,
     initial_snapshot: dict[str, Any],
@@ -749,9 +762,10 @@ def _verify_cw_equipment_post_compose(
     recipe,
     to_idx: int,
 ) -> tuple[Mapping[str, Any], int]:
-    result_item = _item_at_equipment_idx(post_compose_snapshot, to_idx)
-    if result_item is not None and _item_matches_target_recipe(result_item, recipe) and result_item.get("uncertain") is True:
-        error = TrailError("CW_EQUIPMENT_COMPOSE_VERIFY_UNCERTAIN", f"合成结果识别低置信: equipment:{to_idx}")
+    result_item = _last_cw_equipment_item(post_compose_snapshot)
+    if result_item is not None and result_item.get("uncertain") is True:
+        result_idx = _equipment_item_idx(result_item)
+        error = TrailError("CW_EQUIPMENT_COMPOSE_VERIFY_UNCERTAIN", f"合成结果识别低置信: equipment:{result_idx}")
         error.data = {"item": dict(result_item)}
         raise error
 
@@ -768,7 +782,9 @@ def _verify_cw_equipment_post_compose(
         error.data = {
             "expected_count": expected_count,
             "actual_count": _snapshot_count(post_compose_snapshot),
-            "target": f"equipment:{to_idx}",
+            "target": "equipment:last",
+            "drag_target": f"equipment:{to_idx}",
+            "actual_target": None if result_item is None else f"equipment:{_equipment_item_idx(result_item)}",
         }
         raise error
 
@@ -816,6 +832,26 @@ def _verify_cw_equipment_existing_target_removed(
             "result_item": dict(existing_item),
         }
         raise error
+
+
+def _click_cw_equipment_compose_confirm(runtime) -> None:
+    wait_img = getattr(runtime, "wait_img", None)
+    click_point = getattr(runtime, "click_point", None)
+    if not callable(wait_img) or not callable(click_point):
+        raise TrailError("CW_EQUIPMENT_COMPOSE_CONFIRM_UNAVAILABLE", "equipment compose confirm requires image locate and click support")
+
+    template = str(resolve_scene_asset("cw", "equipment.compose_confirm"))
+    box = wait_img(
+        template,
+        timeout=COMPOSE_CONFIRM_WAIT_TIMEOUT_SECONDS,
+        interval=COMPOSE_CONFIRM_WAIT_INTERVAL_SECONDS,
+    )
+    if box is None:
+        raise TrailError("CW_EQUIPMENT_COMPOSE_CONFIRM_NOT_FOUND", "未找到装备合成确认按钮")
+    if not isinstance(box, Box):
+        raise TrailError("CW_EQUIPMENT_COMPOSE_CONFIRM_INVALID", "equipment compose confirm locate returned invalid box")
+
+    click_point(*box.center)
 
 
 def compose_and_equip_cw_equipment(
@@ -909,6 +945,7 @@ def compose_and_equip_cw_equipment(
     drag_from = f"equipment:{from_idx}"
     drag_to = f"equipment:{to_idx}"
     runtime.drag_to(*equipment_slot_center(drag_from), *equipment_slot_center(drag_to))
+    _click_cw_equipment_compose_confirm(runtime)
 
     post_compose_snapshot = apply_cw_equipment_read(
         session,
@@ -927,7 +964,7 @@ def compose_and_equip_cw_equipment(
         to_idx=to_idx,
     )
 
-    equip_from = f"equipment:{to_idx}"
+    equip_from = f"equipment:{_equipment_item_idx(result_item)}"
     equip_to = preflight["agent_slot"]
     runtime.drag_to(*equipment_slot_center(equip_from), *SLOT_POINTS_BY_AREA[preflight["area"]][preflight["index"]])
 
