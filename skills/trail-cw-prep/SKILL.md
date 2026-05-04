@@ -49,12 +49,14 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 
 - `trail cw stage detect|wait`：确认当前 CW 阶段。
 - `trail cw slots read`：默认使用角色图标识别读取前台、后台、手牌和羁绊摘要，不再逐槽位点击详情读取姓名；Agent 可见槽位编号从 1 开始。带截图 success 后必须先读本次 `shot path` 指向的截图，再消费 `slot`、羁绊和装备/商店事实；羁绊 `档位` 中的 `*` 表示已激活档位；若出现 `CW_ROLE_MATCH_LOW_CONFIDENCE` 或 `SLOTS_RECOGNITION_UNCERTAIN`，先核对截图再做换位、出售或购买决策。
-- `trail cw shop scan|status|buy-slot|buy-exp|refresh|close`：读取和执行商店动作；`shop.scan` 有截图，`shop.status` 无截图；`shop.buy-slot` 会要求已有 fresh 且 opened 的商店快照，成功后返回购买后 slots 差分验证与 `# 角色信息`，仍要先读截图再消费文本事实。
+- `trail cw shop scan|status|buy-slot|buy-exp|refresh|close`：读取和执行商店动作；`shop.scan` 有截图，`shop.status` 无截图；`shop.buy-slot` 会要求已有 fresh 且 opened 的商店快照，成功后返回购买后 slots 差分验证与 `# 角色信息`，仍要先读截图再消费文本事实。普通角色的 `info action=buy_slot` 带 `before_count/after_count/delta/required`；`银狼LV.999` / LV999 按同 cost 槽位验证，默认 info 行只带 `role=银狼LV.999 verified=1`，cost 只在 `item`/`slot` 行出现。
+- `银狼LV.999 默认文本身份使用 name + cost + star`；它与普通 `银狼` 是不同角色，`cost 是 slots/shop/sell_plan 的 must-keep 事实`，但只能作为默认文本既有 `slot`/`item` 行字段输出；`role_id 只作内部资源/诊断，不作 Agent 业务身份`。Agent 做购买、出售和换位判断时以默认文本的 `name`、`cost`、`star` 为业务身份，不把 `role_id` 当成可直接执行的业务事实。
 - `trail cw equipment read --session <id>`：读取当前装备背包图标；返回截图时必须先读原始截图，再消费背包 `item`、`# 装备优先级` 的 `guide` 行、`# 角色装备需求` 的 `slot` 行或 `info todo=slots`。若看到 `info todo=slots`，先运行或刷新 `cw.slots.read`；这些分块位于 `warn`、`ref` 之前。需要诊断 `row/col` 时用 `trail --format yaml cw equipment read --session <id>` 或 `trail --format yaml state dump --session <id>`。
 - `trail cw equipment compose --session <id> --name <进阶装备名> --slot front:1 --role <角色名>`：canonical command 为 `cw.equipment.compose`；刷新角色/装备快照，校验 `slot` + `role`，优先复用已有高置信目标装备，否则执行真实合成和装备，验证成功后写入 session；success 有截图，先读 `shot path=...` 对应原图和 `info read_image_first=1`，再消费 `# 综合信息`、`# 装备信息`、`# 角色信息`；材料不足时检查 `warn code=CW_EQUIPMENT_MATERIALS_MISSING 需求=... 持有=...`；不支持 YAML；slot 使用 Agent 可见 1-based。
 - `trail cw equipment prepare --session <id> [--refresh]`：默认只验证/汇总 bundle 装备资源，不下载图标；只有明确要刷新同版本 URL 变化或重建 workspace equipment override 时才使用 `--refresh`。
 - `trail cw crystals collect`：截图确认本轮有可收晶矿时执行；收取后根据新截图判断手牌区是否变化。
 - `trail cw hand sell-plan|sell`：读取或执行卖牌动作。
+- `trail cw event handle --session <id> --variable-cost-choice cost_up|equipment`：LV999 显式选择事件入口；CLI 会把 `variable_cost_choice` 发送给 daemon，供 `cost_up` 或装备选择后同步当前 `银狼LV.999` 状态。
 - `trail cw battle run --session <id>`：出战前检查完成后执行出战和战斗链；默认 timeout 是 `90s`，不要再把旧长超时当默认流程。
 
 ## Autonomy Boundary

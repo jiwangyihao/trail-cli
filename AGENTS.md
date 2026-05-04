@@ -140,8 +140,9 @@
 - `cw.shop.scan|status` 必须保留 `stage_status_stale=0|1`；只有 `stage_status_stale=0` 时才允许输出 `stage_level/stage_exp/stage_team_size`，stale 或缺失时不得把旧值渲染成有效事实。
 - `cw.shop.status 不产出截图`，也不输出 `info read_image_first=1`；它只读取 session / artifact 汇总，不得为了 status 补图。
 - `cw.shop.buy_slot` 真实购买角色前必须要求 session 中商店快照 `opened=1` 且 `stale=0`，否则不得点击商品槽位；daemon 热路径会在点击前后各刷新一次 slots，并用角色等价数量差分验证购买结果。
-- `cw.shop.buy_slot` 购买角色的差分验证按星级折算：1 星=1、2 星=3、3 星=9；只要购买后目标角色等价数量比购买前至少多 1，才算 `verified=1`。`银狼LV.999` 与 `银狼` 是不同角色，差分按 canonical 角色名区分，不得混淆。
-- `cw.shop.buy_slot` success 首行继续固定为 `ok cw.shop.buy_slot opened=1 stale=0 count=<n>`；带截图 success 仍必须先输出 `shot path=...` 与紧随其后的 `info read_image_first=1`，随后按 `# 综合信息` 输出 `info action=buy_slot role=... verified=1 before_count=... after_count=... delta=... required=1`，再按 `# 商店信息` 输出商店 `item` 行，最后按 `# 角色信息` 输出购买后 slots `slot` 行。
+- `cw.shop.buy_slot` 普通角色的差分验证按星级折算：1 星=1、2 星=3、3 星=9；只要购买后目标角色等价数量比购买前至少多 1，才算 `verified=1`。`银狼LV.999 与普通 银狼 完全无关`，不得混淆；`银狼LV.999 不使用普通 star-equivalent 1/3/9` 作为完整购买验证或 sell_plan 判断，购买前还必须要求 fresh shop item 带已知 `cost in {3,4,5}`，并按同 canonical name + 同 cost 的 slots 差分验证。
+- `银狼LV.999` 默认文本身份使用 `name + cost + star`；`cost 是 slots/shop/sell_plan 的 must-keep 事实`，`cost 只能作为默认文本既有 slot/item 行字段输出`，`guide/info/role_verification 默认文本不得输出 cost`；`role_id` 只作内部资源/诊断，不作 Agent 业务身份。
+- `cw.shop.buy_slot` success 首行继续固定为 `ok cw.shop.buy_slot opened=1 stale=0 count=<n>`；带截图 success 仍必须先输出 `shot path=...` 与紧随其后的 `info read_image_first=1`。普通角色随后按 `# 综合信息` 输出 `info action=buy_slot role=... verified=1 before_count=... after_count=... delta=... required=1`；`银狼LV.999` 默认 `info action=buy_slot` 只输出 `role=银狼LV.999 verified=1`，不输出 cost/count，cost 只在 `item`/`slot` 行出现。之后再按 `# 商店信息` 输出商店 `item` 行，最后按 `# 角色信息` 输出购买后 slots `slot` 行；若购买后 slots 带 `trait_summary`，继续按 `# 羁绊信息` 输出羁绊摘要。
 - `cw.slots.read` 会刷新 `cw_state.stage.status`；`cw.shop.scan` 只扫描商店页商品/金币切片，并只投影 session 中已有的 `cw_state.stage.status`，不得重新 OCR 全局状态。
 - `cw.slots.read` 与 `cw.shop.scan` 的角色名默认按 CW config canonicalize；低置信度结果必须保留 `raw_name`、`score=0.50` 这类诊断事实，Agent 需要先读截图再接受该匹配。
 - `cw.slots.read` 多板块输出按 `# 综合信息`、`# 角色信息`、`# 羁绊信息` 组织；`cw.shop.scan|status` 多板块输出按 `# 商店信息`、`# 综合信息` 组织，单一事实组不强制加标题。

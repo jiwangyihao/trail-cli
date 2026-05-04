@@ -2,6 +2,7 @@ from collections import Counter
 from pathlib import Path
 import json
 import re
+from typing import Any
 
 import yaml
 
@@ -169,7 +170,7 @@ CW_PREP_TRIGGERS = (
 )
 
 
-def _frontmatter_markdown(path: Path) -> tuple[dict, str]:
+def _frontmatter_markdown(path: Path) -> tuple[dict[str, Any], str]:
     text = path.read_text(encoding="utf-8")
     match = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.DOTALL)
     assert match, f"missing frontmatter in {path}"
@@ -229,11 +230,11 @@ def _assert_text_contains_in_order(text: str, *snippets: str) -> None:
         cursor = index + len(snippet)
 
 
-def _load_triggers() -> list[dict]:
+def _load_triggers() -> list[dict[str, Any]]:
     return json.loads(TRIGGERS.read_text(encoding="utf-8"))
 
 
-def _load_registry() -> dict:
+def _load_registry() -> dict[str, Any]:
     return yaml.safe_load(REGISTRY.read_text(encoding="utf-8"))
 
 
@@ -1773,6 +1774,10 @@ def test_cw_prep_reference_files_exist_with_required_content() -> None:
     ):
         assert command in command_surface
     assert "trail cw shop buy-slot --session <id> --slot <n> --expect <name>" in command_surface
+    assert "trail cw event handle --session <id> --variable-cost-choice cost_up|equipment" in command_surface
+    assert "银狼LV.999" in command_surface
+    assert "cost 只在 `item`/`slot` 行" in command_surface
+    assert "LV999" in CW_PREP_SKILL.read_text(encoding="utf-8")
     for fragment in (
         "preparation",
         "shop",
@@ -1802,6 +1807,29 @@ def test_cw_prep_reference_files_exist_with_required_content() -> None:
     assert not any("本场对局首领" in line for line in layer_transition_lines)
     for forbidden in ("优先买", "必须刷新", "默认卖", "直接出战"):
         assert forbidden not in command_surface
+
+
+def test_trail_cw_prep_documents_lv999_cost_protocol() -> None:
+    agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    text = CW_PREP_SKILL.read_text(encoding="utf-8")
+    surface = CW_PREP_COMMAND_SURFACE.read_text(encoding="utf-8")
+
+    assert "银狼LV.999 与普通 银狼 完全无关" in agents
+    assert "cost 是 slots/shop/sell_plan 的 must-keep 事实" in agents
+    assert "cost 只能作为默认文本既有 slot/item 行字段输出" in agents
+    assert "guide/info/role_verification 默认文本不得输出 cost" in agents
+    assert "银狼LV.999 不使用普通 star-equivalent 1/3/9" in agents
+    assert "银狼LV.999 默认文本身份使用 name + cost + star" in text
+    assert "cost 是 slots/shop/sell_plan 的 must-keep 事实" in text
+    assert "role_id 只作内部资源/诊断，不作 Agent 业务身份" in text
+    assert "银狼LV.999 不使用普通 star-equivalent 1/3/9" in surface
+    assert "确认升费后确定性同步当前 shop snapshot，不刷新商店、不标 stale" in surface
+    assert "trail cw event handle --session <id> --variable-cost-choice cost_up|equipment" in surface
+    assert "variable_cost_choice" in surface
+    combined = agents + "\n" + text + "\n" + surface
+    lv999_lines = [line for line in combined.splitlines() if "银狼LV.999" in line]
+    assert lv999_lines
+    assert all("1/3/9" not in line or "不使用普通 star-equivalent 1/3/9" in line for line in lv999_lines)
 
 
 def test_cw_prep_stage_boundaries_keep_boss_preview_and_layer_transition_split() -> None:
