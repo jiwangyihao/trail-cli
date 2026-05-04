@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 import typer
 
@@ -91,6 +92,11 @@ class BattleMode(StrEnum):
     OVERCLOCK = "overclock"
 
 
+class VariableCostChoice(StrEnum):
+    COST_UP = "cost_up"
+    EQUIPMENT = "equipment"
+
+
 cw_app.add_typer(cw_guide_app, name="guide")
 cw_app.add_typer(portal_app, name="portal")
 cw_app.add_typer(strategy_app, name="strategy")
@@ -110,22 +116,22 @@ cw_app.add_typer(settle_app, name="settle")
 cw_app.add_typer(event_app, name="event")
 
 
-def _rpc_cw(method: str, *, session_id: str, payload: dict | None = None) -> dict:
+def _rpc_cw(method: str, *, session_id: str, payload: dict[str, object] | None = None) -> dict[str, Any]:
     return call_daemon(method, {"session_id": session_id, **(payload or {})}, session_id=session_id)
 
 
-def _print_cw(method: str, *, session_id: str, payload: dict | None = None) -> None:
+def _print_cw(method: str, *, session_id: str, payload: dict[str, object] | None = None) -> None:
     print_output(method, _rpc_cw(method, session_id=session_id, payload=payload))
 
 
-def _cw_input_invalid_response(message: str) -> dict:
+def _cw_input_invalid_response(message: str) -> dict[str, Any]:
     return _with_auto_capture(
         None,
         lambda: (_ for _ in ()).throw(TrailError("CW_OPTION_INVALID", message)),
     )
 
 
-def _output_format_not_supported_response(command: str) -> dict:
+def _output_format_not_supported_response(command: str) -> dict[str, Any]:
     return {
         "ok": False,
         "data": {},
@@ -516,5 +522,11 @@ def cw_settle_next(session: str = typer.Option(..., "--session")) -> None:
 
 
 @event_app.command("handle")
-def cw_event_handle(session: str = typer.Option(..., "--session")) -> None:
-    _print_cw("cw.event.handle", session_id=session)
+def cw_event_handle(
+    session: str = typer.Option(..., "--session"),
+    variable_cost_choice: VariableCostChoice | None = typer.Option(None, "--variable-cost-choice"),
+) -> None:
+    payload: dict[str, object] | None = None
+    if variable_cost_choice is not None:
+        payload = {"variable_cost_choice": {"role_name": "银狼LV.999", "choice": variable_cost_choice.value}}
+    _print_cw("cw.event.handle", session_id=session, payload=payload)

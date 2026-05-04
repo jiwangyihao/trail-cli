@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import pytest
 
@@ -12,12 +13,12 @@ from tests.support.fake_daemon import build_success_response as _build_success_r
 SESSION_ID = "a" * 32
 
 
-def build_success_response(*, request_id: str, data: dict, screenshot: str | None = None) -> dict:
+def build_success_response(*, request_id: str, data: dict[str, Any], screenshot: str | None = None) -> dict[str, Any]:
     response = _build_success_response(request_id=request_id, data=data, screenshot=screenshot)
     if screenshot is not None:
         response["image_guidance"] = {"read_image_first": True}
     return response
-def _assert_single_call(client, *, method: str, payload: dict, tmp_path) -> None:
+def _assert_single_call(client, *, method: str, payload: dict[str, Any], tmp_path) -> None:
     assert client.calls == [
         {
             "method": method,
@@ -509,7 +510,16 @@ def test_cw_portal_detect_renders_portal_cards_family(cli_runner, fake_daemon_cl
         ),
     ],
 )
-def test_cw_strategy_rpc_contracts(cli_runner, fake_daemon_client, tmp_path, args, method: str, payload: dict, response_data: dict, screenshot: str):
+def test_cw_strategy_rpc_contracts(
+    cli_runner,
+    fake_daemon_client,
+    tmp_path,
+    args,
+    method: str,
+    payload: dict[str, Any],
+    response_data: dict[str, Any],
+    screenshot: str,
+):
     client = fake_daemon_client(
         {
             method: build_success_response(
@@ -644,6 +654,62 @@ def test_cw_shop_buy_slot_renders_purchase_summary_and_shot(cli_runner, fake_dae
         ],
     )
     _assert_single_call(client, method="cw.shop.buy_slot", payload={"slot": 2, "expect": "希儿"}, tmp_path=tmp_path)
+
+
+def test_cw_shop_buy_slot_renders_lv999_purchase_without_verification_cost_info(
+    cli_runner,
+    fake_daemon_client,
+    tmp_path,
+):
+    client = fake_daemon_client(
+        {
+            "cw.shop.buy_slot": build_success_response(
+                request_id="req-cw-shop-buy-slot-lv999",
+                data={
+                    "items": [
+                        {"slot": 1, "name": "银狼LV.999", "cost": 3},
+                    ],
+                    "opened": True,
+                    "stale": False,
+                    "role_verification": {
+                        "name": "银狼LV.999",
+                        "cost": 3,
+                        "star": 2,
+                        "verified": True,
+                        "choice_available": False,
+                        "choice_pending_after_fielding": True,
+                    },
+                    "slots": {
+                        "front": [],
+                        "back": [],
+                        "hand": [{"name": "银狼LV.999", "star": 2, "cost": 3}],
+                        "stale": False,
+                    },
+                },
+                screenshot=".trail/shots/req-cw-shop-buy-slot-lv999.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        ["cw", "shop", "buy-slot", "--session", SESSION_ID, "--slot", "1", "--expect", "银狼LV999"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.shop.buy_slot opened=1 stale=0 count=1",
+        screenshot=".trail/shots/req-cw-shop-buy-slot-lv999.png",
+        body=[
+            "# 综合信息",
+            "info action=buy_slot role=银狼LV.999 verified=1",
+            "# 商店信息",
+            "item idx=1 slot=1 name=银狼LV.999 cost=3",
+            "# 角色信息",
+            "slot pos=hand:1 name=银狼LV.999 star=2 cost=3",
+        ],
+    )
+    _assert_single_call(client, method="cw.shop.buy_slot", payload={"slot": 1, "expect": "银狼LV999"}, tmp_path=tmp_path)
 
 
 def test_cw_shop_buy_exp_maps_to_canonical_command(cli_runner, fake_daemon_client, tmp_path) -> None:
@@ -1517,6 +1583,37 @@ def test_cw_event_handle_renders_event_result(cli_runner, fake_daemon_client, tm
     _assert_single_call(client, method="cw.event.handle", payload={}, tmp_path=tmp_path)
 
 
+def test_cw_event_handle_sends_variable_cost_choice(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.event.handle": build_success_response(
+                request_id="req-cw-event-handle-variable-cost-choice",
+                data={
+                    "event_type": "special",
+                    "handled_action": "confirm",
+                    "variable_cost_choice": {"role_name": "银狼LV.999", "choice": "cost_up"},
+                },
+            )
+        }
+    )
+
+    result = cli_runner.invoke(
+        app,
+        ["cw", "event", "handle", "--session", SESSION_ID, "--variable-cost-choice", "cost_up"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "ok cw.event.handle event_type=special handled_action=confirm variable_cost_choice=cost_up"
+    ]
+    _assert_single_call(
+        client,
+        method="cw.event.handle",
+        payload={"variable_cost_choice": {"role_name": "银狼LV.999", "choice": "cost_up"}},
+        tmp_path=tmp_path,
+    )
+
+
 def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path):
     client = fake_daemon_client(
         {
@@ -1789,8 +1886,8 @@ def test_cw_rpc_wrapper_matrix(
     tmp_path,
     args,
     method: str,
-    payload: dict,
-    response_data: dict,
+    payload: dict[str, Any],
+    response_data: dict[str, Any],
     screenshot: str | None,
     expected_lines: list[str],
 ):
