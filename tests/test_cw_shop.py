@@ -101,6 +101,26 @@ def load_cw_shop_module():
         pytest.fail(f"missing trail.scenes.cw.shop: {exc}")
 
 
+def _build_cw_shop_variable_cost_session(tmp_path):
+    from tests.conftest import build_fake_cw_session
+
+    return build_fake_cw_session(tmp_path)
+
+
+def _scan_cw_shop_variable_cost(session, *, scanner, guide_config=None):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    assert scan_cw_shop is not None
+    return scan_cw_shop(session, scanner=scanner, guide_config=guide_config)
+
+
+def _buy_cw_shop_slot_variable_cost(session, **kwargs):
+    shop_module = load_cw_shop_module()
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert buy_cw_shop_slot is not None
+    return buy_cw_shop_slot(session, **kwargs)
+
+
 def _complete_guide_state(*, purchases: dict | None = None) -> dict:
     from tests.conftest import complete_cw_guide_state
 
@@ -994,6 +1014,163 @@ def test_shop_scan_canonicalizes_items_and_keeps_diagnostics_out_of_status(tmp_p
     assert "match_kind" not in status_item
 
 
+def test_shop_scan_binds_lv999_cost_from_current_variable_phase(tmp_path):
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles"] = {
+        "银狼LV.999": {"cost": 4, "star": 1, "choice_available": False}
+    }
+
+    result = _scan_cw_shop_variable_cost(
+        session,
+        scanner=lambda: {
+            "opened": True,
+            "stale": False,
+            "items": [{"name": "银狼LV.999"}],
+            "coins": 2,
+            "reserve_full": False,
+        },
+    )
+
+    assert result.response_snapshot["items"][0]["name"] == "银狼LV.999"
+    assert result.response_snapshot["items"][0]["cost"] == 4
+    assert session.scene_state["cw"]["shop"]["items"][0]["cost"] == 4
+
+
+def test_shop_scan_canonicalizes_lv999_alias_without_guide_config(tmp_path):
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles"] = {
+        "银狼LV.999": {"cost": 4, "star": 1, "choice_available": False}
+    }
+
+    result = _scan_cw_shop_variable_cost(
+        session,
+        scanner=lambda: {
+            "opened": True,
+            "stale": False,
+            "items": [{"name": "银狼LV999"}],
+            "coins": 2,
+            "reserve_full": False,
+        },
+    )
+
+    assert result.response_snapshot["items"][0] == {"name": "银狼LV.999", "cost": 4}
+    assert session.scene_state["cw"]["shop"]["items"][0] == {"name": "银狼LV.999", "cost": 4}
+
+
+def test_shop_scan_keeps_lv999_name_when_role_id_conflicts_with_plain_silver_wolf(tmp_path):
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles"] = {
+        "银狼LV.999": {"cost": 4, "star": 1, "choice_available": False}
+    }
+    guide_config = {
+        "roles": [
+            {"id": "1006", "name": "银狼", "trait_ids": []},
+            {"id": "15062", "name": "银狼LV.999", "trait_ids": []},
+        ],
+        "traits": [],
+    }
+
+    result = _scan_cw_shop_variable_cost(
+        session,
+        scanner=lambda: {
+            "opened": True,
+            "stale": False,
+            "items": [{"name": "银狼LV.999", "role_id": "1006"}],
+            "coins": 2,
+            "reserve_full": False,
+        },
+        guide_config=guide_config,
+    )
+
+    item = result.response_snapshot["items"][0]
+    assert item["name"] == "银狼LV.999"
+    assert item["cost"] == 4
+
+
+def test_shop_scan_marks_lv999_without_known_cost_uncertain(tmp_path):
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+
+    result = _scan_cw_shop_variable_cost(
+        session,
+        scanner=lambda: {
+            "opened": True,
+            "stale": False,
+            "items": [{"name": "银狼LV.999"}],
+            "coins": 2,
+            "reserve_full": False,
+        },
+    )
+
+    item = result.response_snapshot["items"][0]
+    assert item["name"] == "银狼LV.999"
+    assert item["uncertain"] is True
+    assert item["stale"] is True
+    assert "cost" not in item
+    assert session.scene_state["cw"]["shop"]["items"][0]["uncertain"] is True
+    assert session.scene_state["cw"]["shop"]["items"][0]["stale"] is True
+    assert "cost" not in session.scene_state["cw"]["shop"]["items"][0]
+    assert result.response_snapshot["warnings"][0]["code"] == "CW_SHOP_LV999_COST_UNKNOWN"
+
+
+def test_shop_scan_marks_lv999_with_price_without_known_cost_uncertain(tmp_path):
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+
+    result = _scan_cw_shop_variable_cost(
+        session,
+        scanner=lambda: {
+            "opened": True,
+            "stale": False,
+            "items": [{"name": "银狼LV.999", "price": 4}],
+            "coins": 2,
+            "reserve_full": False,
+        },
+    )
+
+    item = result.response_snapshot["items"][0]
+    persisted = session.scene_state["cw"]["shop"]["items"][0]
+    assert item["name"] == "银狼LV.999"
+    assert item["uncertain"] is True
+    assert item["stale"] is True
+    assert "cost" not in item
+    assert "price" not in item
+    assert persisted["uncertain"] is True
+    assert persisted["stale"] is True
+    assert "cost" not in persisted
+    assert "price" not in persisted
+
+
+def test_shop_buy_slot_rebinds_previous_unknown_lv999_shop_item_when_cost_becomes_known(tmp_path):
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+    cw_state = session.scene_state["cw"]
+    cw_state["variable_cost_roles"] = {"银狼LV.999": {"cost": 3, "star": 1, "choice_available": False}}
+    cw_state["guide"] = _complete_guide_state(purchases={"银狼LV.999": 2})
+    cw_state["shop"] = {
+        "opened": True,
+        "stale": False,
+        "items": [{"slot": 1, "name": "银狼LV.999", "uncertain": True, "stale": True}],
+        "coins": 2,
+        "reserve_full": False,
+    }
+    reads = iter(
+        [
+            ([], [], [{"name": "银狼LV.999", "cost": 3, "star": 1}]),
+            ([], [], [{"name": "银狼LV.999", "cost": 3, "star": 2}]),
+        ]
+    )
+
+    result = _buy_cw_shop_slot_variable_cost(
+        session,
+        slot=1,
+        expect="银狼LV.999",
+        buyer=lambda **_: None,
+        scanner=lambda: {"opened": True, "stale": False, "items": [], "coins": 0, "reserve_full": False},
+        slots_reader=lambda: next(reads),
+    )
+
+    assert result.response_snapshot["role_verification"]["verified"] is True
+    assert result.response_snapshot["role_verification"]["cost"] == 3
+
+
 def test_shop_scan_unslotted_low_confidence_warning_uses_item_idx(tmp_path):
     shop_module = load_cw_shop_module()
     scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
@@ -1611,6 +1788,235 @@ def test_shop_buy_slot_rejects_closed_shop_before_clicking(tmp_path):
         )
 
     assert exc_info.value.code == "SHOP_NOT_OPEN"
+    assert buyer_calls == []
+
+
+def test_shop_buy_slot_keeps_fixed_cost_role_equivalent_count(tmp_path):
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+    session.scene_state["cw"]["shop"] = {
+        "opened": True,
+        "stale": False,
+        "items": [{"slot": 1, "name": "银狼", "cost": 4}],
+        "coins": 2,
+        "reserve_full": False,
+    }
+    before_slots = {"front": [], "back": [], "hand": [{"name": "希儿", "star": 1}]}
+    after_slots = {"front": [], "back": [], "hand": [{"name": "希儿", "star": 1}, {"name": "银狼", "star": 1}]}
+    reads = iter(
+        [
+            (before_slots["front"], before_slots["back"], before_slots["hand"]),
+            (after_slots["front"], after_slots["back"], after_slots["hand"]),
+        ]
+    )
+
+    result = _buy_cw_shop_slot_variable_cost(
+        session,
+        slot=1,
+        expect="银狼",
+        buyer=lambda **_: None,
+        scanner=lambda: {"opened": True, "stale": False, "items": [], "coins": 0, "reserve_full": False},
+        slots_reader=lambda: next(reads),
+    )
+
+    assert result.response_snapshot["role_verification"] == {
+        "name": "银狼",
+        "before_count": 0,
+        "after_count": 1,
+        "delta": 1,
+        "required": 1,
+        "verified": True,
+    }
+
+
+def test_shop_buy_slot_verifies_lv999_by_name_cost_and_choice_state(tmp_path):
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+    cw_state = session.scene_state["cw"]
+    cw_state["variable_cost_roles"] = {"银狼LV.999": {"cost": 3, "star": 1, "choice_available": False}}
+    cw_state["guide"] = _complete_guide_state(purchases={"银狼LV.999": 2, "银狼": 4})
+    cw_state["shop"] = {
+        "opened": True,
+        "stale": False,
+        "items": [{"slot": 1, "name": "银狼LV.999", "cost": 3}],
+        "coins": 2,
+        "reserve_full": False,
+    }
+    before_slots = {"front": [], "back": [], "hand": [{"name": "银狼LV.999", "cost": 3, "star": 1}]}
+    after_slots = {"front": [], "back": [], "hand": [{"name": "银狼LV.999", "cost": 3, "star": 2}]}
+    reads = iter(
+        [
+            (before_slots["front"], before_slots["back"], before_slots["hand"]),
+            (after_slots["front"], after_slots["back"], after_slots["hand"]),
+        ]
+    )
+
+    result = _buy_cw_shop_slot_variable_cost(
+        session,
+        slot=1,
+        expect="银狼LV.999",
+        buyer=lambda **_: None,
+        scanner=lambda: {"opened": True, "stale": False, "items": [], "coins": 0, "reserve_full": False},
+        slots_reader=lambda: next(reads),
+    )
+
+    verification = result.response_snapshot["role_verification"]
+    assert verification == {
+        "name": "银狼LV.999",
+        "cost": 3,
+        "star": 2,
+        "verified": True,
+        "choice_available": False,
+        "choice_pending_after_fielding": True,
+    }
+    assert "role_id" not in verification
+    assert session.scene_state["cw"]["guide"]["remaining_purchases"] == {"银狼LV.999": 1, "银狼": 4}
+
+
+def test_shop_buy_slot_verifies_lv999_when_guide_config_only_knows_plain_silver_wolf(tmp_path):
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+    cw_state = session.scene_state["cw"]
+    cw_state["variable_cost_roles"] = {"银狼LV.999": {"cost": 3, "star": 1, "choice_available": False}}
+    cw_state["guide"] = _complete_guide_state(purchases={"银狼LV.999": 2, "银狼": 4})
+    cw_state["shop"] = {
+        "opened": True,
+        "stale": False,
+        "items": [{"slot": 1, "name": "银狼LV.999", "cost": 3}],
+        "coins": 2,
+        "reserve_full": False,
+    }
+    reads = iter(
+        [
+            ([], [], [{"name": "银狼LV.999", "cost": 3, "star": 1}]),
+            ([], [], [{"name": "银狼LV.999", "cost": 3, "star": 2}]),
+        ]
+    )
+
+    result = _buy_cw_shop_slot_variable_cost(
+        session,
+        slot=1,
+        expect="银狼LV.999",
+        buyer=lambda **_: None,
+        scanner=lambda: {"opened": True, "stale": False, "items": [], "coins": 0, "reserve_full": False},
+        slots_reader=lambda: next(reads),
+        guide_config=_shop_catalog_config(),
+    )
+
+    assert result.response_snapshot["role_verification"] == {
+        "name": "银狼LV.999",
+        "cost": 3,
+        "star": 2,
+        "verified": True,
+        "choice_available": False,
+        "choice_pending_after_fielding": True,
+    }
+
+
+def test_shop_buy_slot_marks_lv999_mixed_field_and_hand_two_star_as_pending(tmp_path):
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+    cw_state = session.scene_state["cw"]
+    cw_state["variable_cost_roles"] = {"银狼LV.999": {"cost": 3, "star": 1, "choice_available": False}}
+    cw_state["guide"] = _complete_guide_state(purchases={"银狼LV.999": 2, "银狼": 4})
+    cw_state["shop"] = {
+        "opened": True,
+        "stale": False,
+        "items": [{"slot": 1, "name": "银狼LV.999", "cost": 3}],
+        "coins": 2,
+        "reserve_full": False,
+    }
+    reads = iter(
+        [
+            ([{"name": "银狼LV.999", "cost": 3, "star": 1}], [], []),
+            ([{"name": "银狼LV.999", "cost": 3, "star": 1}], [], [{"name": "银狼LV.999", "cost": 3, "star": 2}]),
+        ]
+    )
+
+    result = _buy_cw_shop_slot_variable_cost(
+        session,
+        slot=1,
+        expect="银狼LV.999",
+        buyer=lambda **_: None,
+        scanner=lambda: {"opened": True, "stale": False, "items": [], "coins": 0, "reserve_full": False},
+        slots_reader=lambda: next(reads),
+    )
+
+    assert result.response_snapshot["role_verification"] == {
+        "name": "银狼LV.999",
+        "cost": 3,
+        "star": 2,
+        "verified": True,
+        "choice_available": False,
+        "choice_pending_after_fielding": True,
+    }
+
+
+def test_shop_buy_slot_rejects_lv999_mismatched_after_cost_without_consuming_purchase(tmp_path):
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+    cw_state = session.scene_state["cw"]
+    cw_state["variable_cost_roles"] = {"银狼LV.999": {"cost": 3, "star": 1, "choice_available": False}}
+    cw_state["guide"] = _complete_guide_state(purchases={"银狼LV.999": 2, "银狼": 4})
+    cw_state["shop"] = {
+        "opened": True,
+        "stale": False,
+        "items": [{"slot": 1, "name": "银狼LV.999", "cost": 3}],
+        "coins": 2,
+        "reserve_full": False,
+    }
+    before_guide = deepcopy(cw_state["guide"])
+    before_shop = deepcopy(cw_state["shop"])
+    reads = iter(
+        [
+            ([], [], [{"name": "银狼LV.999", "cost": 3, "star": 1}]),
+            ([], [], [{"name": "银狼LV.999", "cost": 4, "star": 2}]),
+        ]
+    )
+    buyer_calls: list[tuple[int, str]] = []
+
+    with pytest.raises(TrailError) as exc_info:
+        _buy_cw_shop_slot_variable_cost(
+            session,
+            slot=1,
+            expect="银狼LV.999",
+            buyer=lambda *, slot, expect: buyer_calls.append((slot, expect)),
+            scanner=lambda: {"opened": True, "stale": False, "items": [], "coins": 0, "reserve_full": False},
+            slots_reader=lambda: next(reads),
+        )
+
+    assert exc_info.value.code == "SHOP_BUY_ROLE_NOT_CONFIRMED"
+    assert buyer_calls == [(1, "银狼LV.999")]
+    assert session.scene_state["cw"]["guide"] == before_guide
+    assert session.scene_state["cw"]["shop"] == before_shop
+
+
+def test_shop_buy_slot_rejects_lv999_unknown_cost_before_clicking(tmp_path):
+    shop_module = load_cw_shop_module()
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert buy_cw_shop_slot is not None
+
+    session = _build_cw_shop_variable_cost_session(tmp_path)
+    session.scene_state["cw"]["shop"] = {
+        "opened": True,
+        "stale": False,
+        "items": [{"slot": 1, "name": "银狼LV.999", "uncertain": True, "stale": True}],
+        "coins": 40,
+        "reserve_full": False,
+    }
+    buyer_calls: list[tuple[int, str]] = []
+
+    with pytest.raises(TrailError) as exc_info:
+        buy_cw_shop_slot(
+            session,
+            slot=1,
+            expect="银狼LV.999",
+            buyer=lambda *, slot, expect: buyer_calls.append((slot, expect)),
+            scanner=lambda: {
+                "opened": True,
+                "stale": False,
+                "items": [],
+                "coins": 40,
+                "reserve_full": False,
+            },
+        )
+
+    assert exc_info.value.code == "SHOP_LV999_COST_UNKNOWN"
     assert buyer_calls == []
 
 

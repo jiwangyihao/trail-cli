@@ -28,6 +28,13 @@ from trail.scenes.cw.stage import (
     parse_cw_stage_level as _shared_parse_cw_stage_level,
     parse_cw_stage_team_size as _shared_parse_cw_stage_team_size,
 )
+from trail.scenes.cw.variable_cost import (
+    VARIABLE_COST_ROLE_NAME,
+    _parse_star,
+    _parse_variable_cost,
+    bind_cw_variable_cost_shop_item,
+    is_cw_variable_cost_role,
+)
 from trail.session.models import SessionModel
 
 CW_WIDTH = 1920
@@ -135,6 +142,8 @@ def _maybe_dump_shop_capture(runtime: "RuntimeOperator", *, name: str, capture: 
         return None
     try:
         payload = runtime.screenshot(**capture)
+        if payload is None:
+            return None
         path.write_bytes(payload)
         return path
     except Exception:
@@ -272,7 +281,7 @@ _parse_shop_exp = _shared_parse_cw_stage_exp
 _parse_shop_team_size = _shared_parse_cw_stage_team_size
 
 
-def _guide_state(cw_state: dict) -> dict | None:
+def _guide_state(cw_state: dict[str, Any]) -> dict[str, Any] | None:
     guide = cw_state.get("guide")
     if not isinstance(guide, dict):
         return None
@@ -281,7 +290,7 @@ def _guide_state(cw_state: dict) -> dict | None:
     return guide
 
 
-def _remaining_purchases(cw_state: dict) -> dict[str, Any]:
+def _remaining_purchases(cw_state: dict[str, Any]) -> dict[str, Any]:
     guide = _guide_state(cw_state)
     if guide is None:
         return {}
@@ -289,14 +298,14 @@ def _remaining_purchases(cw_state: dict) -> dict[str, Any]:
     return remaining if isinstance(remaining, dict) else {}
 
 
-def _stable_constraints_summary(cw_state: dict) -> dict[str, Any]:
+def _stable_constraints_summary(cw_state: dict[str, Any]) -> dict[str, Any]:
     constraints = cw_state.get("constraints")
     if not isinstance(constraints, dict):
         return {}
     return {key: deepcopy(constraints.get(key)) for key in SHOP_SUMMARY_CONSTRAINT_KEYS if key in constraints}
 
 
-def _guide_summary(cw_state: dict) -> dict[str, Any] | None:
+def _guide_summary(cw_state: dict[str, Any]) -> dict[str, Any] | None:
     if _guide_state(cw_state) is None:
         return None
     return {
@@ -305,7 +314,7 @@ def _guide_summary(cw_state: dict) -> dict[str, Any] | None:
     }
 
 
-def _sync_shop_guide_summary(cw_state: dict, shop_state: dict[str, Any], *, include_when_absent: bool) -> dict[str, Any]:
+def _sync_shop_guide_summary(cw_state: dict[str, Any], shop_state: dict[str, Any], *, include_when_absent: bool) -> dict[str, Any]:
     guide_summary = _guide_summary(cw_state)
     if guide_summary is None:
         shop_state.pop("guide_summary", None)
@@ -315,7 +324,7 @@ def _sync_shop_guide_summary(cw_state: dict, shop_state: dict[str, Any], *, incl
     return shop_state
 
 
-def _shop_state(cw_state: dict) -> dict[str, Any]:
+def _shop_state(cw_state: dict[str, Any]) -> dict[str, Any]:
     shop_state = cw_state.get("shop")
     return shop_state if isinstance(shop_state, dict) else {}
 
@@ -331,6 +340,35 @@ def _strip_shop_match_diagnostics(item: Any) -> Any:
     if isinstance(item, dict):
         return {key: deepcopy(value) for key, value in item.items() if key not in SHOP_MATCH_DIAGNOSTIC_KEYS}
     return deepcopy(item)
+
+
+def _lv999_shop_unknown_cost_warning(item: dict[str, Any], *, idx: int | None) -> dict[str, Any]:
+    position: dict[str, Any] = {"kind": "shop"}
+    if item.get("slot") is not None:
+        position["slot"] = item.get("slot")
+    elif idx is not None:
+        position["idx"] = idx
+    return {
+        "code": "CW_SHOP_LV999_COST_UNKNOWN",
+        "position": position,
+        "message": "银狼LV.999 费用阶段未知，请先确认当前变费阶段",
+    }
+
+
+def _bind_variable_cost_shop_item(
+    item: dict[str, Any],
+    *,
+    cw_state: dict[str, Any] | None,
+    idx: int | None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if cw_state is None or not is_cw_variable_cost_role(item.get("name")):
+        return item, []
+    bound = bind_cw_variable_cost_shop_item(item, cw_state)
+    warnings: list[dict[str, Any]] = []
+    if bound.get("uncertain") is True and bound.get("stale") is True and bound.get("cost") is None:
+        bound.pop("price", None)
+        warnings.append(_lv999_shop_unknown_cost_warning(bound, idx=idx))
+    return bound, warnings
 
 
 def _stable_shop_item(item: Any) -> dict[str, Any] | None:
@@ -388,6 +426,13 @@ def _canonicalize_shop_item(
     name = stable.get("name")
     if catalog is None or not isinstance(name, str) or not name.strip():
         return stable, deepcopy(stable), []
+    if is_cw_variable_cost_role(name):
+        match = resolve_cw_role_name(name, catalog, position={"kind": "shop", "idx": idx} if idx is not None else None)
+        if match is not None and is_cw_variable_cost_role(match.name):
+            warnings = [match.warning] if isinstance(match.warning, dict) else []
+            return _shop_item_from_catalog_match(stable, match), _shop_item_response_from_catalog_match(stable, match), warnings
+        stable["name"] = VARIABLE_COST_ROLE_NAME
+        return stable, deepcopy(stable), []
     position: dict[str, Any] = {"kind": "shop"}
     if stable.get("slot") is not None:
         position["slot"] = stable.get("slot")
@@ -400,7 +445,12 @@ def _canonicalize_shop_item(
     return _shop_item_from_catalog_match(stable, match), _shop_item_response_from_catalog_match(stable, match), warnings
 
 
-def _canonicalize_shop_items(items: Any, *, guide_config: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+def _canonicalize_shop_items(
+    items: Any,
+    *,
+    guide_config: dict[str, Any] | None = None,
+    cw_state: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     normalized: list[dict[str, Any]] = []
     response: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
@@ -411,13 +461,16 @@ def _canonicalize_shop_items(items: Any, *, guide_config: dict[str, Any] | None 
         stable_item, response_item, item_warnings = _canonicalize_shop_item(item, catalog=catalog, idx=idx)
         if stable_item is None or response_item is None:
             continue
+        stable_item, _ = _bind_variable_cost_shop_item(stable_item, cw_state=cw_state, idx=idx)
+        response_item, variable_warnings = _bind_variable_cost_shop_item(response_item, cw_state=cw_state, idx=idx)
         normalized.append(stable_item)
         response.append(response_item)
         warnings.extend(item_warnings)
+        warnings.extend(variable_warnings)
     return normalized, response, warnings
 
 
-def sanitize_cw_shop_state(cw_state: dict) -> dict[str, Any]:
+def sanitize_cw_shop_state(cw_state: dict[str, Any]) -> dict[str, Any]:
     shop_state = cw_state.get("shop")
     if not isinstance(shop_state, dict):
         shop_state = {"stale": True}
@@ -428,11 +481,11 @@ def sanitize_cw_shop_state(cw_state: dict) -> dict[str, Any]:
     shop_state.pop("warnings", None)
     shop_state.pop("trait_summary", None)
     if "items" in shop_state:
-        shop_state["items"] = _normalized_shop_items(shop_state.get("items"))
+        shop_state["items"] = _normalized_shop_items(shop_state.get("items"), cw_state=cw_state)
     return shop_state
 
 
-def _preserved_shop_flags(cw_state: dict) -> dict[str, Any]:
+def _preserved_shop_flags(cw_state: dict[str, Any]) -> dict[str, Any]:
     shop_state = _shop_state(cw_state)
     if "opened" not in shop_state:
         return {}
@@ -440,7 +493,7 @@ def _preserved_shop_flags(cw_state: dict) -> dict[str, Any]:
 
 
 def _build_shop_snapshot(
-    cw_state: dict,
+    cw_state: dict[str, Any],
     *,
     items: list[Any],
     coins: int | None,
@@ -473,16 +526,16 @@ def _apply_scanned_shop_flags(snapshot: dict[str, Any], scanned: dict[str, Any])
 
 
 def _scan_shop_snapshot_pair(
-    cw_state: dict,
+    cw_state: dict[str, Any],
     *,
     scanner: ShopSnapshotSource,
     include_stage_fields: bool = False,
     guide_config: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    scanned = scanner()
+    scanned: Any = scanner()
     if isinstance(scanned, dict):
         stage_fields = scanned if include_stage_fields else None
-        stable_items, response_items, warnings = _canonicalize_shop_items(scanned.get("items"), guide_config=guide_config)
+        stable_items, response_items, warnings = _canonicalize_shop_items(scanned.get("items"), guide_config=guide_config, cw_state=cw_state)
         snapshot = _build_shop_snapshot(
             cw_state,
             items=stable_items,
@@ -505,7 +558,7 @@ def _scan_shop_snapshot_pair(
 
     items, coins, level, reserve_full, team_size = scanned
     stage_fields = {"level": level, "team_size": team_size} if include_stage_fields else None
-    stable_items, response_items, warnings = _canonicalize_shop_items(items, guide_config=guide_config)
+    stable_items, response_items, warnings = _canonicalize_shop_items(items, guide_config=guide_config, cw_state=cw_state)
     snapshot = _build_shop_snapshot(
         cw_state,
         items=stable_items,
@@ -526,7 +579,7 @@ def _scan_shop_snapshot_pair(
 
 
 def _scan_shop_snapshot(
-    cw_state: dict,
+    cw_state: dict[str, Any],
     *,
     scanner: ShopSnapshotSource,
     include_stage_fields: bool = False,
@@ -541,8 +594,8 @@ def _scan_shop_snapshot(
     return snapshot
 
 
-def _normalized_shop_items(items: Any) -> list[dict[str, Any]]:
-    normalized, _, _ = _canonicalize_shop_items(items)
+def _normalized_shop_items(items: Any, *, cw_state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    normalized, _, _ = _canonicalize_shop_items(items, cw_state=cw_state)
     return normalized
 
 
@@ -559,14 +612,31 @@ def _shop_item_for_slot(items: list[dict[str, Any]], *, slot: int) -> dict[str, 
     return None
 
 
-def _require_fresh_shop_item(cw_state: dict, *, slot: int, expect: str, guide_config: dict[str, Any] | None = None) -> dict[str, Any]:
+def _is_unavailable_variable_cost_shop_item(item: dict[str, Any]) -> bool:
+    if not is_cw_variable_cost_role(item.get("name")):
+        return False
+    return item.get("uncertain") is True or item.get("stale") is True or item.get("cost") is None
+
+
+def _canonical_buy_expect(expect: str) -> str:
+    return VARIABLE_COST_ROLE_NAME if is_cw_variable_cost_role(expect) else expect
+
+
+def _require_lv999_shop_item_cost(item: dict[str, Any], *, slot: int) -> int:
+    cost = _parse_variable_cost(item.get("cost"))
+    if cost is None or item.get("uncertain") is True or item.get("stale") is True:
+        raise TrailError("SHOP_LV999_COST_UNKNOWN", f"shop slot {slot} expected 银狼LV.999, got unknown variable cost")
+    return cost
+
+
+def _require_fresh_shop_item(cw_state: dict[str, Any], *, slot: int, expect: str, guide_config: dict[str, Any] | None = None) -> dict[str, Any]:
     shop_state = _shop_state(cw_state)
     if shop_state.get("opened") is not True:
         raise TrailError("SHOP_NOT_OPEN", "商店未打开，请先执行 trail cw shop scan")
     if shop_state.get("stale", True):
         raise TrailError("SHOP_STALE", "商店快照已失效，请先执行 trail cw shop scan")
 
-    items, _, _ = _canonicalize_shop_items(shop_state.get("items"), guide_config=guide_config)
+    items, _, _ = _canonicalize_shop_items(shop_state.get("items"), guide_config=guide_config, cw_state=cw_state)
     current = _shop_item_for_slot(items, slot=slot)
     if current is None:
         raise TrailError("SHOP_SLOT_MISMATCH", f"shop slot {slot} expected {expect}, got: empty")
@@ -574,6 +644,8 @@ def _require_fresh_shop_item(cw_state: dict, *, slot: int, expect: str, guide_co
     if current.get("name") != expect:
         actual = current.get("name") or "empty"
         raise TrailError("SHOP_SLOT_MISMATCH", f"shop slot {slot} expected {expect}, got: {actual}")
+    if _is_unavailable_variable_cost_shop_item(current):
+        raise TrailError("SHOP_LV999_COST_UNKNOWN", f"shop slot {slot} expected {expect}, got unknown variable cost")
     return current
 
 
@@ -585,7 +657,7 @@ def _purchase_confirmed(*, before_items: list[dict[str, Any]], after_items: list
 
 
 def _scan_until_purchase_confirmed(
-    cw_state: dict,
+    cw_state: dict[str, Any],
     *,
     before_items: list[dict[str, Any]],
     slot: int,
@@ -599,13 +671,13 @@ def _scan_until_purchase_confirmed(
         if attempt > 0:
             sleep(SHOP_BUY_CONFIRM_RETRY_SECONDS)
         updated_shop, response_shop = _scan_shop_snapshot_pair(cw_state, scanner=scanner, guide_config=guide_config)
-        after_items = _normalized_shop_items(updated_shop.get("items"))
+        after_items = _normalized_shop_items(updated_shop.get("items"), cw_state=cw_state)
         if _purchase_confirmed(before_items=before_items, after_items=after_items, slot=slot, expect=expect):
             return updated_shop, response_shop
     raise TrailError("SHOP_BUY_NOT_CONFIRMED", f"shop purchase not confirmed for slot {slot}: {expect}")
 
 
-def _decrement_remaining_purchase(cw_state: dict, *, expect: str) -> None:
+def _decrement_remaining_purchase(cw_state: dict[str, Any], *, expect: str) -> None:
     guide = _guide_state(cw_state)
     if guide is None:
         return
@@ -651,6 +723,49 @@ def _role_equivalent_count(slots_snapshot: dict[str, Any] | None, *, name: str) 
     return total
 
 
+def _matching_lv999_slot_values(slots_snapshot: dict[str, Any] | None, *, cost: int) -> list[tuple[str, dict[str, Any]]]:
+    if not isinstance(slots_snapshot, dict):
+        return []
+    values: list[tuple[str, dict[str, Any]]] = []
+    for area in ("front", "back", "hand"):
+        area_values = slots_snapshot.get(area)
+        if not isinstance(area_values, list):
+            continue
+        for value in area_values:
+            if not isinstance(value, dict):
+                continue
+            if not is_cw_variable_cost_role(value.get("name")):
+                continue
+            if _parse_variable_cost(value.get("cost")) != cost:
+                continue
+            values.append((area, value))
+    return values
+
+
+def _lv999_equivalent_count(slots_snapshot: dict[str, Any] | None, *, cost: int) -> int:
+    return sum(_role_slot_star_units(value) for _area, value in _matching_lv999_slot_values(slots_snapshot, cost=cost))
+
+
+def _lv999_after_star(slots_snapshot: dict[str, Any] | None, *, cost: int) -> int | None:
+    stars = [_parse_star(value.get("star")) for _area, value in _matching_lv999_slot_values(slots_snapshot, cost=cost)]
+    known = [star for star in stars if star is not None]
+    return max(known, default=None)
+
+
+def _lv999_choice_available_after_fielding(slots_snapshot: dict[str, Any] | None, *, cost: int) -> bool:
+    return any(
+        area != "hand" and _parse_star(value.get("star")) == 2
+        for area, value in _matching_lv999_slot_values(slots_snapshot, cost=cost)
+    )
+
+
+def _lv999_choice_pending_after_fielding(slots_snapshot: dict[str, Any] | None, *, cost: int) -> bool:
+    matches = _matching_lv999_slot_values(slots_snapshot, cost=cost)
+    fielded_two_star = any(area != "hand" and _parse_star(value.get("star")) == 2 for area, value in matches)
+    hand_two_star = any(area == "hand" and _parse_star(value.get("star")) == 2 for area, value in matches)
+    return hand_two_star and not fielded_two_star
+
+
 def _verified_role_purchase_delta(
     *,
     before_slots: dict[str, Any],
@@ -676,6 +791,32 @@ def _verified_role_purchase_delta(
         setattr(error, "known_failure_after_save", True)
         raise error
     return verification
+
+
+def _verified_lv999_purchase_delta(
+    *,
+    before_slots: dict[str, Any],
+    after_slots: dict[str, Any],
+    cost: int,
+) -> dict[str, Any]:
+    before_count = _lv999_equivalent_count(before_slots, cost=cost)
+    after_count = _lv999_equivalent_count(after_slots, cost=cost)
+    star = _lv999_after_star(after_slots, cost=cost)
+    if after_count - before_count < 1:
+        error = TrailError(
+            "SHOP_BUY_ROLE_NOT_CONFIRMED",
+            f"shop purchase role delta not confirmed for 银狼LV.999 cost={cost}: before={before_count} after={after_count}",
+        )
+        setattr(error, "known_failure_after_save", True)
+        raise error
+    return {
+        "name": VARIABLE_COST_ROLE_NAME,
+        "cost": cost,
+        "star": star,
+        "verified": True,
+        "choice_available": _lv999_choice_available_after_fielding(after_slots, cost=cost),
+        "choice_pending_after_fielding": _lv999_choice_pending_after_fielding(after_slots, cost=cost),
+    }
 
 
 def _read_cw_slots_with_scope(
@@ -818,9 +959,11 @@ def buy_cw_shop_slot(
     guide_config: dict[str, Any] | None = None,
 ) -> CwShopApplied:
     cw_state = ensure_cw_state(session)
-    before_items, _, _ = _canonicalize_shop_items(_shop_state(cw_state).get("items"), guide_config=guide_config)
-    expected_item = _require_fresh_shop_item(cw_state, slot=slot, expect=expect, guide_config=guide_config)
-    expected_role = str(expected_item.get("name") or expect)
+    canonical_expect = _canonical_buy_expect(expect)
+    before_items, _, _ = _canonicalize_shop_items(_shop_state(cw_state).get("items"), guide_config=guide_config, cw_state=cw_state)
+    expected_item = _require_fresh_shop_item(cw_state, slot=slot, expect=canonical_expect, guide_config=guide_config)
+    expected_role = str(expected_item.get("name") or canonical_expect)
+    lv999_cost = _require_lv999_shop_item_cost(expected_item, slot=slot) if is_cw_variable_cost_role(expected_role) else None
     read_scope = preflight_read_scope or nullcontext
     before_slots = (
         _read_cw_slots_with_scope(session, reader=slots_reader, guide_config=guide_config, read_scope=read_scope).response_snapshot
@@ -832,19 +975,26 @@ def buy_cw_shop_slot(
         cw_state,
         before_items=before_items,
         slot=slot,
-        expect=expect,
+        expect=canonical_expect,
         scanner=scanner,
         guide_config=guide_config,
     )
     if slots_reader is not None and before_slots is not None:
         after_slots = read_cw_slots(session, reader=slots_reader, guide_config=guide_config).response_snapshot
-        response_shop["role_verification"] = _verified_role_purchase_delta(
-            before_slots=before_slots,
-            after_slots=after_slots,
-            expect=expected_role,
-        )
+        if lv999_cost is None:
+            response_shop["role_verification"] = _verified_role_purchase_delta(
+                before_slots=before_slots,
+                after_slots=after_slots,
+                expect=expected_role,
+            )
+        else:
+            response_shop["role_verification"] = _verified_lv999_purchase_delta(
+                before_slots=before_slots,
+                after_slots=after_slots,
+                cost=lv999_cost,
+            )
         response_shop["slots"] = deepcopy(after_slots)
-    _decrement_remaining_purchase(cw_state, expect=expect)
+    _decrement_remaining_purchase(cw_state, expect=expected_role)
     cw_state["shop"] = _sync_shop_guide_summary(cw_state, updated_shop, include_when_absent=True)
     response_shop = _sync_shop_guide_summary(cw_state, response_shop, include_when_absent=True)
     if slots_reader is None:
@@ -900,16 +1050,18 @@ def close_cw_shop(session: SessionModel, *, closer: ShopAction | None = None) ->
     return session
 
 
-def _fresh_cw_field_slots(cw_state: dict) -> tuple[list[Any], list[Any]] | None:
+def _fresh_cw_field_slots(cw_state: dict[str, Any]) -> tuple[list[Any], list[Any]] | None:
     slots = cw_state.get("slots")
     if not isinstance(slots, dict) or slots.get("stale", True) is not False:
         return None
-    front = slots.get("front") if isinstance(slots.get("front"), list) else []
-    back = slots.get("back") if isinstance(slots.get("back"), list) else []
+    front_value = slots.get("front")
+    back_value = slots.get("back")
+    front: list[Any] = front_value if isinstance(front_value, list) else []
+    back: list[Any] = back_value if isinstance(back_value, list) else []
     return front, back
 
 
-def _field_trait_summary(cw_state: dict, *, guide_config: dict[str, Any] | None) -> list[dict[str, Any]]:
+def _field_trait_summary(cw_state: dict[str, Any], *, guide_config: dict[str, Any] | None) -> list[dict[str, Any]]:
     field_slots = _fresh_cw_field_slots(cw_state)
     if field_slots is None or not isinstance(guide_config, dict):
         return []
@@ -956,7 +1108,7 @@ def shop_cw_status(
     guide_config: dict[str, Any] | None = None,
     *,
     include_field_trait_summary: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     cw_state = ensure_cw_state(session)
     status = project_cw_shop_snapshot(
         session,
