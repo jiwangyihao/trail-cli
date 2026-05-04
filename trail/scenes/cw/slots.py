@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 from io import BytesIO
 from pathlib import Path
 from time import sleep
-from typing import Any
+from typing import Any, cast
 
 from PIL import Image
 
@@ -17,6 +17,13 @@ from trail.scenes.cw import stage
 from trail.scenes.cw.catalog import CwCatalog, build_cw_catalog, resolve_cw_role_name, summarize_cw_field_traits
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw.role_recognition import CANONICAL_SCREENSHOT_SIZE, iter_slot_specs, warp_slot_crop
+from trail.scenes.cw.variable_cost import (
+    VARIABLE_COST_ROLE_NAME,
+    _choice_for_cost,
+    _parse_star,
+    _parse_variable_cost,
+    is_cw_variable_cost_role,
+)
 from trail.runtime.resources import resolve_scene_asset
 from trail.session.models import SessionModel
 
@@ -38,7 +45,7 @@ class CwSlotsReadResult:
 
 
 class CwSlotsRecognitionUncertainError(TrailError):
-    def __init__(self, code: str, message: str, *, screenshot: str | None = None, warnings: list[dict] | None = None):
+    def __init__(self, code: str, message: str, *, screenshot: str | None = None, warnings: list[dict[str, Any]] | None = None):
         super().__init__(code, message)
         self.screenshot = screenshot
         self.warnings = deepcopy(warnings or [])
@@ -140,7 +147,7 @@ SLOT_MATCH_DIAGNOSTIC_KEYS = {
 }
 
 
-def _clear_sell_plan(cw_state: dict) -> None:
+def _clear_sell_plan(cw_state: dict[str, Any]) -> None:
     cw_state["sell_plan"] = {}
 
 
@@ -446,6 +453,151 @@ def _collect_unknown_slot_warnings(
     return warnings
 
 
+def _variable_cost_role_state(cw_state: dict[str, Any]) -> dict[str, Any] | None:
+    roles = cw_state.get("variable_cost_roles")
+    if not isinstance(roles, dict):
+        return None
+    state = roles.get(VARIABLE_COST_ROLE_NAME)
+    return state if isinstance(state, dict) else None
+
+
+def _known_variable_cost_phase(cw_state: dict[str, Any]) -> int | None:
+    state = _variable_cost_role_state(cw_state)
+    return _parse_variable_cost(state.get("cost") if state is not None else None)
+
+
+def _lv999_unknown_cost_warning(area: str, index: int) -> dict[str, Any]:
+    return {
+        "code": "CW_SLOTS_LV999_COST_UNKNOWN",
+        "position": {"kind": "slot", "area": area, "index": index},
+        "message": "银狼LV.999 费用阶段未知，请先确认当前变费阶段",
+    }
+
+
+def _normalize_variable_cost_slot_value(
+    value: Any,
+    *,
+    cw_state: dict[str, Any],
+    area: str,
+    index: int,
+    warnings: list[dict[str, Any]] | None,
+) -> Any:
+    normalized: dict[str, Any]
+    if isinstance(value, dict):
+        if not is_cw_variable_cost_role(value.get("name")):
+            return value
+        normalized = deepcopy(value)
+    elif is_cw_variable_cost_role(value):
+        normalized = {"name": VARIABLE_COST_ROLE_NAME}
+    else:
+        return value
+
+    normalized["name"] = VARIABLE_COST_ROLE_NAME
+    cost = _parse_variable_cost(normalized.get("cost"))
+    if cost is None:
+        cost = _known_variable_cost_phase(cw_state)
+    if cost is None:
+        normalized.pop("cost", None)
+        normalized["uncertain"] = True
+        normalized["stale"] = True
+        if warnings is not None:
+            warnings.append(_lv999_unknown_cost_warning(area, index))
+        return normalized
+
+    normalized["cost"] = cost
+    normalized.pop("uncertain", None)
+    normalized.pop("stale", None)
+    return normalized
+
+
+def _normalize_variable_cost_area(
+    values: list[Any],
+    *,
+    cw_state: dict[str, Any],
+    area: str,
+    emit_warnings: bool,
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    warnings: list[dict[str, Any]] = []
+    normalized = [
+        _normalize_variable_cost_slot_value(
+            value,
+            cw_state=cw_state,
+            area=area,
+            index=index,
+            warnings=warnings if emit_warnings else None,
+        )
+        for index, value in enumerate(values)
+    ]
+    return normalized, warnings
+
+
+def _normalized_confirmed_variable_cost_choices(value: Any) -> dict[object, object]:
+    if not isinstance(value, dict):
+        return {}
+    confirmed: dict[object, object] = {}
+    for raw_cost, choice in value.items():
+        cost = _parse_variable_cost(raw_cost)
+        if cost is None or not isinstance(choice, str) or not choice:
+            continue
+        confirmed[cost] = choice
+    return confirmed
+
+
+def _iter_reliable_variable_cost_slots(*areas: tuple[str, list[Any]]) -> list[tuple[str, int, int | None]]:
+    entries: list[tuple[str, int, int | None]] = []
+    for area, values in areas:
+        for value in values:
+            if not isinstance(value, dict) or not is_cw_variable_cost_role(value.get("name")):
+                continue
+            if value.get("uncertain") is True or value.get("stale") is True:
+                continue
+            cost = _parse_variable_cost(value.get("cost"))
+            if cost is None:
+                continue
+            entries.append((area, cost, _parse_star(value.get("star"))))
+    return entries
+
+
+def _update_variable_cost_roles_from_slots(cw_state: dict[str, Any], front: list[Any], back: list[Any], hand: list[Any]) -> None:
+    entries = _iter_reliable_variable_cost_slots(("front", front), ("back", back), ("hand", hand))
+    if not entries:
+        return
+
+    fielded = next((entry for entry in entries if entry[0] != "hand"), None)
+    _chosen_area, cost, _chosen_star = fielded or entries[0]
+    same_cost_entries = [entry for entry in entries if entry[1] == cost]
+    known_stars = [entry_star for _area, _cost, entry_star in same_cost_entries if entry_star is not None]
+    star = max(known_stars, default=None)
+    roles = cw_state.setdefault("variable_cost_roles", {})
+    if not isinstance(roles, dict):
+        roles = {}
+        cw_state["variable_cost_roles"] = roles
+    state = roles.get(VARIABLE_COST_ROLE_NAME)
+    if not isinstance(state, dict):
+        state = {}
+        roles[VARIABLE_COST_ROLE_NAME] = state
+
+    confirmed_choices = _normalized_confirmed_variable_cost_choices(state.get("confirmed_choices_by_cost"))
+    if confirmed_choices or isinstance(state.get("confirmed_choices_by_cost"), dict):
+        state["confirmed_choices_by_cost"] = confirmed_choices
+    confirmed_choice = _choice_for_cost(confirmed_choices, cost)
+    fielded_two_star = any(area != "hand" and entry_star == 2 for area, _cost, entry_star in same_cost_entries)
+    hand_pending = any(area == "hand" and entry_star == 2 for area, _cost, entry_star in same_cost_entries) and not fielded_two_star
+
+    state.update(
+        {
+            "cost": cost,
+            "star": star,
+            "choice_available": fielded_two_star and confirmed_choice is None,
+            "choice_confirmed": confirmed_choice is not None,
+            "choice_pending_after_fielding": hand_pending and confirmed_choice is None,
+        }
+    )
+    if confirmed_choice is not None:
+        state.setdefault("last_confirmed_choice", confirmed_choice)
+        state.setdefault("last_confirmed_choice_cost", cost)
+
+
 def _replace_unknown_targets_with_previous(
     current: list[Any],
     previous: Any,
@@ -512,11 +664,13 @@ def _dedupe_slot_name_candidates(candidates: list[str]) -> list[str]:
 
 
 def _session_slot_name_candidates(cw_state: dict[str, Any]) -> tuple[list[str], list[str]]:
-    guide = cw_state.get("guide") if isinstance(cw_state.get("guide"), dict) else {}
+    guide_value = cw_state.get("guide")
+    guide: dict[str, Any] = guide_value if isinstance(guide_value, dict) else {}
     authoritative_candidates = _collect_role_stage_name_candidates(guide)
 
     slot_candidates: list[str] = []
-    slots = cw_state.get("slots") if isinstance(cw_state.get("slots"), dict) else {}
+    slots_value = cw_state.get("slots")
+    slots: dict[str, Any] = slots_value if isinstance(slots_value, dict) else {}
     if slots.get("stale") is False:
         for area in ("front", "back", "hand"):
             for value in slots.get(area, []) or []:
@@ -616,6 +770,8 @@ def _resolve_catalog_slot_value(
 
     match = resolve_cw_role_name(name, catalog, position=position)
     if match is None:
+        return None, None, []
+    if is_cw_variable_cost_role(name) and not is_cw_variable_cost_role(match.name):
         return None, None, []
 
     warnings = [match.warning] if isinstance(match.warning, dict) else []
@@ -829,7 +985,7 @@ def _save_reused_slots_screenshot(runtime, image: Image.Image, *, request_id: st
 
 def _candidate_payload(candidate: Any) -> dict[str, Any]:
     if is_dataclass(candidate):
-        payload = asdict(candidate)
+        payload = asdict(cast(Any, candidate))
     elif isinstance(candidate, dict):
         payload = dict(candidate)
     else:
@@ -1009,7 +1165,7 @@ def build_cw_slot_roles_reader(runtime, targets: list[str] | None = None) -> Cal
                     **_capture_slot_panel_images(runtime, point=points[index]),
                 }
                 captures.append(capture)
-                batch_targets.append(BatchOcrTarget(("slot", area, index), capture["name_image"]))
+                batch_targets.append(BatchOcrTarget(("slot", area, index), cast(Image.Image, capture["name_image"])))
 
         batch_result = run_batch_ocr(runtime, batch_targets, trace_prefix="cw_slots_batch_ocr")
         names_by_slot = {
@@ -1071,7 +1227,7 @@ def read_cw_slots(
         if exc.code == "STAGE_AMBIGUOUS":
             stage._invalidate_cw_stage(session, code=exc.code, message=str(exc))
             session.last_stage = None
-            exc.known_failure_after_save = True
+            setattr(exc, "known_failure_after_save", True)
         raise
     if isinstance(result, CwSlotsReadResult):
         front, back, hand = result.front, result.back, result.hand
@@ -1084,7 +1240,8 @@ def read_cw_slots(
         detected_stage = None
         screenshot = None
     cw_state = ensure_cw_state(session)
-    previous = cw_state.get("slots") if isinstance(cw_state.get("slots"), dict) else {}
+    previous_value = cw_state.get("slots")
+    previous: dict[str, Any] = previous_value if isinstance(previous_value, dict) else {}
     parsed_targets = _parse_slot_targets(targets)
     preserved_unknowns = False
     unknown_warnings = _collect_unknown_slot_warnings(front, back, hand, parsed_targets=parsed_targets)
@@ -1189,24 +1346,48 @@ def read_cw_slots(
         size=len(HAND_SLOT_POINTS),
         targets=None if parsed_targets is None else parsed_targets["hand"],
     )
-    cw_state["slots"] = {
+    merged_front, _ = _normalize_variable_cost_area(merged_front, cw_state=cw_state, area="front", emit_warnings=False)
+    merged_back, _ = _normalize_variable_cost_area(merged_back, cw_state=cw_state, area="back", emit_warnings=False)
+    merged_hand, _ = _normalize_variable_cost_area(merged_hand, cw_state=cw_state, area="hand", emit_warnings=False)
+    output_front, front_variable_warnings = _normalize_variable_cost_area(
+        output_front,
+        cw_state=cw_state,
+        area="front",
+        emit_warnings=True,
+    )
+    output_back, back_variable_warnings = _normalize_variable_cost_area(
+        output_back,
+        cw_state=cw_state,
+        area="back",
+        emit_warnings=True,
+    )
+    output_hand, hand_variable_warnings = _normalize_variable_cost_area(
+        output_hand,
+        cw_state=cw_state,
+        area="hand",
+        emit_warnings=True,
+    )
+    match_warnings.extend([*front_variable_warnings, *back_variable_warnings, *hand_variable_warnings])
+    _update_variable_cost_roles_from_slots(cw_state, merged_front, merged_back, merged_hand)
+    slots_state: dict[str, Any] = {
         "front": deepcopy(merged_front),
         "back": deepcopy(merged_back),
         "hand": deepcopy(merged_hand),
         "stale": _next_slots_stale(previous, parsed_targets=parsed_targets),
     }
-    response_snapshot = {
+    cw_state["slots"] = slots_state
+    response_snapshot: dict[str, Any] = {
         "front": deepcopy(output_front),
         "back": deepcopy(output_back),
         "hand": deepcopy(output_hand),
-        "stale": cw_state["slots"]["stale"],
+        "stale": slots_state["stale"],
     }
     if screenshot is not None:
         response_snapshot["_screenshot"] = screenshot
     if catalog is not None:
         trait_summary = summarize_cw_field_traits(front=fact_front, back=fact_back, catalog=catalog)
         if trait_summary:
-            cw_state["slots"]["trait_summary"] = deepcopy(trait_summary)
+            slots_state["trait_summary"] = deepcopy(trait_summary)
             response_snapshot["trait_summary"] = deepcopy(trait_summary)
     if match_warnings:
         response_snapshot["warnings"] = deepcopy(match_warnings)
@@ -1217,11 +1398,12 @@ def read_cw_slots(
             session.last_stage = {"scene": "cw", "value": detected_stage}
         else:
             stage._replace_stage_fields(session, status=status_with_role_count)
-        cw_stage = cw_state.get("stage") if isinstance(cw_state.get("stage"), dict) else {}
-        cw_state["slots"]["stage"] = detected_stage
-        cw_state["slots"]["stage_stale"] = False if detected_stage is not None else bool(cw_stage.get("stale", True))
-        cw_state["slots"]["stage_status"] = deepcopy(status_with_role_count)
-        cw_state["slots"]["stage_status_stale"] = bool(status_with_role_count.get("stale", True))
+        cw_stage_value = cw_state.get("stage")
+        cw_stage: dict[str, Any] = cw_stage_value if isinstance(cw_stage_value, dict) else {}
+        slots_state["stage"] = detected_stage
+        slots_state["stage_stale"] = False if detected_stage is not None else bool(cw_stage.get("stale", True))
+        slots_state["stage_status"] = deepcopy(status_with_role_count)
+        slots_state["stage_status_stale"] = bool(status_with_role_count.get("stale", True))
         if detected_stage is not None:
             response_snapshot["stage"] = detected_stage
             response_snapshot["stage_stale"] = False
@@ -1269,7 +1451,7 @@ def swap_cw_slots(session: SessionModel, *, source: str, target: str, swapper: S
             swapper(source, target)
     except TrailError as error:
         _mark_slots_stale(session)
-        error.known_failure_after_save = True
+        setattr(error, "known_failure_after_save", True)
         raise
     del source, target
     return _mark_slots_stale(session)
@@ -1283,7 +1465,7 @@ def place_cw_slots(session: SessionModel, *, actions: list[dict[str, str]], plac
                 placer(source, target)
         except TrailError as error:
             _mark_slots_stale(session)
-            error.known_failure_after_save = True
+            setattr(error, "known_failure_after_save", True)
             raise
     return _mark_slots_stale(session)
 
@@ -1294,7 +1476,7 @@ def place_one_cw_slot(session: SessionModel, *, source: str, target: str, placer
             placer(source, target)
     except TrailError as error:
         _mark_slots_stale(session)
-        error.known_failure_after_save = True
+        setattr(error, "known_failure_after_save", True)
         raise
     del source, target
     return _mark_slots_stale(session)
@@ -1332,6 +1514,12 @@ def _slot_star(value: Any) -> int | None:
     if parsed in {1, 2, 3}:
         return parsed
     return None
+
+
+def _slot_cost(value: Any) -> int | None:
+    if not isinstance(value, dict):
+        return None
+    return _parse_variable_cost(value.get("cost"))
 
 
 def _iter_stage_roles(stage: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1473,7 +1661,7 @@ def _sell_plan_recommendation(category: str, *, layer: int | None, boss_preview:
     return "不推荐"
 
 
-def _field_star_status(slots: dict[str, Any], *, name: str) -> tuple[bool, int | None]:
+def _field_star_status(slots: dict[str, Any], *, name: str, cost: int | None = None) -> tuple[bool, int | None]:
     field_present = False
     stars: list[int] = []
     for area in ("front", "back"):
@@ -1482,6 +1670,8 @@ def _field_star_status(slots: dict[str, Any], *, name: str) -> tuple[bool, int |
             continue
         for value in values:
             if _slot_value_name(value) != name:
+                continue
+            if is_cw_variable_cost_role(name) and cost is not None and _slot_cost(value) != cost:
                 continue
             field_present = True
             star = _slot_star(value)
@@ -1508,7 +1698,7 @@ def _sell_plan_reason(category: str, *, protected: bool, layer: int | None, unde
     return f"{category}角色"
 
 
-def plan_cw_hand_sell(session: SessionModel) -> dict:
+def plan_cw_hand_sell(session: SessionModel) -> dict[str, Any]:
     cw_state = ensure_cw_state(session)
     slots = cw_state.get("slots")
     if not isinstance(slots, dict) or slots.get("stale") is not False:
@@ -1518,11 +1708,13 @@ def plan_cw_hand_sell(session: SessionModel) -> dict:
         hand = []
 
     todos: list[str] = []
-    guide = cw_state.get("guide") if isinstance(cw_state.get("guide"), dict) else {}
+    guide_value = cw_state.get("guide")
+    guide: dict[str, Any] = guide_value if isinstance(guide_value, dict) else {}
     role_categories, final_targets = _sell_plan_stage_reference(guide, todos=todos)
     layer, boss_preview = _parse_sell_plan_stage(cw_state, todos=todos)
 
-    shop = cw_state.get("shop") if isinstance(cw_state.get("shop"), dict) else {}
+    shop_value = cw_state.get("shop")
+    shop: dict[str, Any] = shop_value if isinstance(shop_value, dict) else {}
     team_size = _parse_team_size(shop.get("team_size")) if shop.get("stale") is False else None
     if team_size is None:
         _add_sell_plan_todo(todos, "team_size")
@@ -1536,8 +1728,9 @@ def plan_cw_hand_sell(session: SessionModel) -> dict:
         if not name:
             continue
         star = _slot_star(value)
+        cost = _slot_cost(value)
         target_star = final_targets.get(name)
-        field_present, current_star = _field_star_status(slots, name=name)
+        field_present, current_star = _field_star_status(slots, name=name, cost=cost)
         protected = False
         category = role_categories.get(name, "非攻略")
 
@@ -1559,6 +1752,10 @@ def plan_cw_hand_sell(session: SessionModel) -> dict:
             else:
                 category = "后期超买"
 
+        if is_cw_variable_cost_role(name) and cost in {4, 5}:
+            protected = True
+            category = "后期"
+
         recommendation = _sell_plan_recommendation(category, layer=layer, boss_preview=boss_preview)
         if protected or under_team_size:
             recommendation = "不推荐"
@@ -1567,6 +1764,7 @@ def plan_cw_hand_sell(session: SessionModel) -> dict:
             {
                 "slot": index,
                 "name": name,
+                "cost": cost,
                 "star": star,
                 "target_star": target_star,
                 "current_star": current_star,
@@ -1596,7 +1794,7 @@ def sell_cw_hand_slots(session: SessionModel, *, slots: list[int], seller: HandS
                 seller(slot)
         except TrailError as error:
             _mark_slots_stale(session)
-            error.known_failure_after_save = True
+            setattr(error, "known_failure_after_save", True)
             raise
     return _mark_slots_stale(session)
 
@@ -1607,7 +1805,7 @@ def sell_one_cw_hand(session: SessionModel, *, slot: int, seller: HandSeller | N
             seller(slot)
     except TrailError as error:
         _mark_slots_stale(session)
-        error.known_failure_after_save = True
+        setattr(error, "known_failure_after_save", True)
         raise
     del slot
     return _mark_slots_stale(session)

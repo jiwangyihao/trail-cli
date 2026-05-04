@@ -340,6 +340,81 @@ def load_cw_guide_module():
         pytest.fail(f"missing trail.scenes.cw.guide: {exc}")
 
 
+def _build_cw_guide_variable_cost_session(tmp_path):
+    from tests.conftest import build_fake_cw_session
+
+    return build_fake_cw_session(tmp_path)
+
+
+def _project_cw_guide_progress_variable_cost(cw_state):
+    guide_module = load_cw_guide_module()
+    project_cw_guide_progress = getattr(guide_module, "project_cw_guide_progress", None)
+    assert project_cw_guide_progress is not None
+    return project_cw_guide_progress(cw_state)
+
+
+def test_guide_role_filter_keeps_plain_silver_wolf_and_lv999_separate():
+    guide_module = load_cw_guide_module()
+    resolve_filters = getattr(guide_module, "_resolve_guide_role_filters", None)
+    assert resolve_filters is not None
+    raw_config = {
+        "role_list": [
+            {"id": "1006", "name": "银狼", "trait_ids": []},
+            {"id": "15061", "name": "银狼LV.999", "trait_ids": []},
+        ],
+        "trait_info_list": [],
+    }
+
+    plain = resolve_filters(raw_config=raw_config, role="银狼")
+    lv999 = resolve_filters(raw_config=raw_config, role="银狼LV.999")
+
+    assert plain["role_ids"] == ["1006"]
+    assert lv999["role_ids"] == ["15061"]
+
+
+def test_guide_progress_records_lv999_cost_phase_and_choice_state(tmp_path):
+    session = _build_cw_guide_variable_cost_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles"] = {
+        "银狼LV.999": {
+            "cost": 5,
+            "star": 1,
+            "choice_available": False,
+            "last_confirmed_choice": "cost_up",
+            "last_confirmed_choice_cost": 4,
+            "confirmed_choices_by_cost": {3: "cost_up", 4: "cost_up"},
+        }
+    }
+
+    progress = _project_cw_guide_progress_variable_cost(session.scene_state["cw"])
+
+    assert progress["银狼LV.999"] == {
+        "cost": 5,
+        "star": 1,
+        "choice_available": False,
+        "choice_confirmed": False,
+        "last_confirmed_choice": "cost_up",
+        "last_confirmed_choice_cost": 4,
+    }
+
+
+def test_guide_progress_normalizes_persisted_choice_cost_keys(tmp_path):
+    session = _build_cw_guide_variable_cost_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles"] = {
+        "银狼LV.999": {
+            "cost": 4,
+            "star": 2,
+            "choice_available": False,
+            "last_confirmed_choice": "equipment",
+            "last_confirmed_choice_cost": 4,
+            "confirmed_choices_by_cost": {"4": "equipment"},
+        }
+    }
+
+    progress = _project_cw_guide_progress_variable_cost(session.scene_state["cw"])
+
+    assert progress["银狼LV.999"]["choice_confirmed"] is True
+
+
 def force_missing_cw_resource_bundle(monkeypatch, guide_module):
     calls = {"count": 0}
 

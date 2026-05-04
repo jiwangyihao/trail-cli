@@ -30,6 +30,20 @@ def fake_reader():
     return ["希儿"], ["佩拉"], ["银狼", None, "阮·梅"]
 
 
+def _read_cw_slots_variable_cost(session, snapshot, **kwargs):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+    return read_cw_slots(session, reader=lambda: snapshot, **kwargs)
+
+
+def _plan_cw_hand_sell_variable_cost(session):
+    slots_module = load_cw_slots_module()
+    plan_cw_hand_sell = getattr(slots_module, "plan_cw_hand_sell", None)
+    assert plan_cw_hand_sell is not None
+    return plan_cw_hand_sell(session)
+
+
 def build_fake_cw_session(tmp_path):
     session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
     state = ensure_cw_state(session)
@@ -326,6 +340,201 @@ def test_canonical_cw_role_slots_deduplicates_front_back_hand_order():
         ("back:1", "佩拉"),
         ("hand:2", "银狼"),
     ]
+
+
+def test_read_cw_slots_records_lv999_variable_cost_state(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    snapshot = ([{"name": "银狼LV.999", "cost": 4, "star": 1}], [], [])
+
+    result = _read_cw_slots_variable_cost(session, snapshot)
+
+    assert result.response_snapshot["front"][0]["cost"] == 4
+    state = session.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]
+    assert state["cost"] == 4
+    assert state["star"] == 1
+    assert state["choice_available"] is False
+
+
+def test_read_cw_slots_marks_fielded_lv999_two_star_choice_available(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    snapshot = ([{"name": "银狼LV.999", "cost": 4, "star": 2}], [], [])
+
+    _read_cw_slots_variable_cost(session, snapshot)
+
+    state = session.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]
+    assert state["cost"] == 4
+    assert state["star"] == 2
+    assert state["choice_available"] is True
+    assert state["choice_pending_after_fielding"] is False
+
+
+def test_read_cw_slots_marks_hand_lv999_two_star_pending_only(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    snapshot = ([], [], [{"name": "银狼LV.999", "cost": 4, "star": 2}])
+
+    _read_cw_slots_variable_cost(session, snapshot)
+
+    state = session.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]
+    assert state["cost"] == 4
+    assert state["star"] == 2
+    assert state["choice_available"] is False
+    assert state["choice_pending_after_fielding"] is True
+
+
+def test_read_cw_slots_marks_mixed_field_one_star_and_hand_two_star_pending(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    snapshot = (
+        [{"name": "银狼LV.999", "cost": 4, "star": 1}],
+        [],
+        [{"name": "银狼LV.999", "cost": 4, "star": 2}],
+    )
+
+    _read_cw_slots_variable_cost(session, snapshot)
+
+    state = session.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]
+    assert state["cost"] == 4
+    assert state["star"] == 2
+    assert state["choice_available"] is False
+    assert state["choice_pending_after_fielding"] is True
+
+
+def test_read_cw_slots_fills_missing_lv999_cost_from_known_current_phase(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles"] = {"银狼LV.999": {"cost": 4, "star": 1, "choice_available": False}}
+    snapshot = ([{"name": "银狼LV.999", "star": 1}], [], [])
+
+    result = _read_cw_slots_variable_cost(session, snapshot)
+
+    role = result.response_snapshot["front"][0]
+    assert role["name"] == "银狼LV.999"
+    assert role["cost"] == 4
+    assert role["star"] == 1
+    assert session.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]["cost"] == 4
+
+
+def test_read_cw_slots_marks_lv999_missing_cost_uncertain_without_reliable_state(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    snapshot = ([{"name": "银狼LV.999", "star": 1}], [], [])
+
+    result = _read_cw_slots_variable_cost(session, snapshot)
+
+    role = result.response_snapshot["front"][0]
+    assert role["name"] == "银狼LV.999"
+    assert role["uncertain"] is True
+    assert role["stale"] is True
+    assert "cost" not in role
+    assert "银狼LV.999" not in session.scene_state["cw"].get("variable_cost_roles", {})
+
+
+def test_read_cw_slots_fills_invalid_lv999_cost_from_known_current_phase(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles"] = {"银狼LV.999": {"cost": 4, "star": 1, "choice_available": False}}
+    snapshot = ([{"name": "银狼LV.999", "cost": 2, "star": 1}], [], [])
+
+    result = _read_cw_slots_variable_cost(session, snapshot)
+
+    role = result.response_snapshot["front"][0]
+    assert role["name"] == "银狼LV.999"
+    assert role["cost"] == 4
+    assert role["star"] == 1
+    assert session.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]["cost"] == 4
+
+
+def test_read_cw_slots_marks_invalid_lv999_cost_uncertain_without_reliable_state(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    snapshot = ([{"name": "银狼LV.999", "cost": "bad", "star": 1}], [], [])
+
+    result = _read_cw_slots_variable_cost(session, snapshot)
+
+    role = result.response_snapshot["front"][0]
+    assert role["name"] == "银狼LV.999"
+    assert role["uncertain"] is True
+    assert role["stale"] is True
+    assert "cost" not in role
+    assert "银狼LV.999" not in session.scene_state["cw"].get("variable_cost_roles", {})
+
+
+def test_read_cw_slots_allows_new_cost_phase_choice_after_previous_cost_confirmed(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles"] = {
+        "银狼LV.999": {
+            "cost": 4,
+            "star": 1,
+            "choice_available": False,
+            "last_confirmed_choice": "cost_up",
+            "last_confirmed_choice_cost": 3,
+            "confirmed_choices_by_cost": {3: "cost_up"},
+        }
+    }
+    snapshot = ([{"name": "银狼LV.999", "cost": 4, "star": 2}], [], [])
+
+    _read_cw_slots_variable_cost(session, snapshot)
+
+    state = session.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]
+    assert state["choice_available"] is True
+    assert state["choice_confirmed"] is False
+
+
+def test_read_cw_slots_does_not_reopen_same_cost_confirmed_choice(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles"] = {
+        "银狼LV.999": {
+            "cost": 4,
+            "star": 2,
+            "choice_available": False,
+            "last_confirmed_choice": "equipment",
+            "last_confirmed_choice_cost": 4,
+            "confirmed_choices_by_cost": {4: "equipment"},
+        }
+    }
+    snapshot = ([{"name": "银狼LV.999", "cost": 4, "star": 2}], [], [])
+
+    _read_cw_slots_variable_cost(session, snapshot)
+
+    state = session.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]
+    assert state["choice_available"] is False
+    assert state["choice_confirmed"] is True
+
+
+def test_read_cw_slots_normalizes_persisted_choice_cost_keys(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles"] = {
+        "银狼LV.999": {
+            "cost": 4,
+            "star": 2,
+            "choice_available": False,
+            "last_confirmed_choice": "equipment",
+            "last_confirmed_choice_cost": 4,
+            "confirmed_choices_by_cost": {"4": "equipment"},
+        }
+    }
+    snapshot = ([{"name": "银狼LV.999", "cost": 4, "star": 2}], [], [])
+
+    _read_cw_slots_variable_cost(session, snapshot)
+
+    state = session.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]
+    assert state["choice_available"] is False
+    assert state["choice_confirmed"] is True
+    assert state["confirmed_choices_by_cost"] == {4: "equipment"}
+
+
+def test_read_cw_slots_keeps_lv999_name_when_role_id_conflicts_with_plain_silver_wolf(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    guide_config = {
+        "roles": [
+            {"id": "1006", "name": "银狼", "trait_ids": []},
+            {"id": "15062", "name": "银狼LV.999", "trait_ids": []},
+        ],
+        "traits": [],
+    }
+    snapshot = ([{"name": "银狼LV.999", "role_id": "1006", "cost": 4, "star": 1}], [], [])
+
+    result = _read_cw_slots_variable_cost(session, snapshot, guide_config=guide_config)
+
+    role = result.response_snapshot["front"][0]
+    assert role["name"] == "银狼LV.999"
+    assert role["cost"] == 4
+    assert role["star"] == 1
 
 
 def test_read_cw_slots_preserves_equipments_for_new_canonical_only(tmp_path):
@@ -1678,7 +1887,7 @@ def test_slots_read_preserves_variable_cost_role_identity_from_icon_result(tmp_p
         "role_id": "15063",
         "star": 1,
         "rarity": "5",
-        "cost": "5",
+        "cost": 5,
         "traits": ["量子"],
     }
     assert refreshed.scene_state["cw"]["slots"]["front"][1] == {
@@ -2527,6 +2736,29 @@ def test_sell_plan_protects_final_role_when_missing_from_field(tmp_path):
     assert item["recommendation"] == "不推荐"
     assert item["target_star"] == 3
     assert item["current_star"] is None
+
+
+def test_sell_plan_protects_upgraded_lv999_one_star(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    cw_state = session.scene_state["cw"]
+    cw_state["slots"] = {
+        "front": [{"name": "银狼LV.999", "cost": 4, "star": 1}],
+        "back": [],
+        "hand": [{"name": "银狼LV.999", "cost": 4, "star": 1}],
+        "stale": False,
+    }
+    cw_state["variable_cost_roles"] = {"银狼LV.999": {"cost": 4, "star": 1, "choice_available": False}}
+    cw_state["guide"] = {
+        "role_stages": [
+            {"stage": "Final", "front_roles": [{"name": "银狼LV.999", "cost": 4, "star": 1}], "back_roles": []}
+        ]
+    }
+
+    result = _plan_cw_hand_sell_variable_cost(session)
+
+    lv999_items = [item for item in result["items"] if item["name"] == "银狼LV.999"]
+    assert lv999_items
+    assert all(item["protected"] is True for item in lv999_items)
 
 
 def test_sell_plan_protects_final_role_when_field_star_below_target(tmp_path):

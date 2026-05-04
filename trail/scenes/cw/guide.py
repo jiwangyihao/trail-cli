@@ -8,6 +8,7 @@ import math
 import re
 from pathlib import Path
 from time import monotonic, sleep
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
@@ -19,6 +20,13 @@ from trail.scenes.cw.catalog import clean_cw_trait_entry, merge_cw_trait_entries
 from trail.scenes.cw.models import CwSceneState, ensure_cw_state
 from trail.scenes.cw.stage import _replace_stage_fields
 from trail.scenes.cw.static_resources import allow_cw_resource_dev_fallback, load_default_cw_resource_bundle
+from trail.scenes.cw.variable_cost import (
+    VARIABLE_COST_ROLE_NAME,
+    _choice_for_cost,
+    _parse_star,
+    _parse_variable_cost,
+    is_cw_variable_cost_role,
+)
 from trail.session.models import SessionModel
 
 
@@ -1928,6 +1936,38 @@ def apply_cw_guide(session: SessionModel, guide_data: dict, *, reset_dependent_s
 
 def select_cw_guide(session: SessionModel, *, guide_data: dict) -> SessionModel:
     return apply_cw_guide(session, guide_data=guide_data, reset_dependent_state=False)
+
+
+def project_cw_guide_progress(cw_state: Mapping[str, object]) -> dict[str, dict[str, object]]:
+    roles_value = cw_state.get("variable_cost_roles")
+    if not isinstance(roles_value, dict):
+        return {}
+
+    progress: dict[str, dict[str, object]] = {}
+    for name, value in roles_value.items():
+        if not is_cw_variable_cost_role(name) or not isinstance(value, dict):
+            continue
+        cost = _parse_variable_cost(value.get("cost"))
+        if cost is None:
+            continue
+        confirmed_value = value.get("confirmed_choices_by_cost")
+        confirmed_by_cost = cast(dict[object, object], confirmed_value) if isinstance(confirmed_value, dict) else {}
+        item: dict[str, object] = {
+            "cost": cost,
+            "choice_available": value.get("choice_available") is True,
+            "choice_confirmed": _choice_for_cost(confirmed_by_cost, cost) is not None,
+        }
+        star = _parse_star(value.get("star"))
+        if star is not None:
+            item["star"] = star
+        last_choice = value.get("last_confirmed_choice")
+        if isinstance(last_choice, str) and last_choice:
+            item["last_confirmed_choice"] = last_choice
+        last_choice_cost = _parse_variable_cost(value.get("last_confirmed_choice_cost"))
+        if last_choice_cost is not None:
+            item["last_confirmed_choice_cost"] = last_choice_cost
+        progress[VARIABLE_COST_ROLE_NAME] = item
+    return progress
 
 
 def require_complete_cw_guide(cw_state: dict) -> dict:
