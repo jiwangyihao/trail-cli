@@ -1013,9 +1013,11 @@ class CwService:
                 session,
                 continuer=settle_continuer_factory(runtime()),
             ).scene_state["cw"]["stage"],
-            "cw.event.handle": lambda: handle_cw_event(
+            "cw.event.handle": lambda: _call_with_supported_keywords(
+                handle_cw_event,
                 session,
                 handler=event_handler_factory(runtime()),
+                variable_cost_choice=payload.get("variable_cost_choice"),
             ),
         }
         if method not in handlers:

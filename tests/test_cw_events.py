@@ -4,6 +4,7 @@ import importlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -23,7 +24,7 @@ def load_cw_events_module():
         pytest.fail(f"missing trail.scenes.cw.events: {exc}")
 
 
-def _ocr_piece(text: str, *, left: int = 400, top: int = 500, width: int = 120, height: int = 36) -> dict:
+def _ocr_piece(text: str, *, left: int = 400, top: int = 500, width: int = 120, height: int = 36) -> dict[str, object]:
     return {
         "text": text,
         "box": {"left": left, "top": top, "width": width, "height": height},
@@ -140,7 +141,7 @@ def test_build_cw_battle_starter_cancels_team_count_confirm_dialog(monkeypatch, 
     events_module = load_cw_events_module()
     monkeypatch.setattr(events_module, "_asset", lambda alias: alias, raising=False)
     fake_runtime.wait_result = {"left": 100, "top": 200, "width": 60, "height": 20}
-    ocr_calls: list[dict] = []
+    ocr_calls: list[dict[str, object]] = []
 
     def fake_ocr(**kwargs):
         ocr_calls.append(kwargs)
@@ -189,6 +190,70 @@ def test_cw_event_handle_flows_through_command_service_journal(tmp_path: Path, m
     assert persisted.scene_state["cw"]["stage"] == {"stale": True}
 
 
+def test_cw_event_handle_payload_confirmed_lv999_choice_updates_persisted_shop_snapshot(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    del registry, cw_service
+    cw_state = ensure_cw_state(session)
+    cw_state["variable_cost_roles"] = {
+        "银狼LV.999": {"cost": 3, "star": 2, "choice_available": True, "confirmed_choices_by_cost": {}}
+    }
+    cw_state["shop"] = {"opened": True, "stale": False, "items": [{"name": "银狼LV.999", "cost": 3}]}
+    service.save_session(session)
+    monkeypatch.setattr("trail.daemon.cw_service.event_handler_factory", lambda runtime: lambda: ("special", "confirm"))
+
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-event-handle-choice",
+        method="cw.event.handle",
+        payload={"variable_cost_choice": {"role_name": "银狼LV.999", "choice": "cost_up"}},
+    )
+    persisted = service.load_session(session.session_id)
+
+    data = envelope.get("data")
+    assert isinstance(data, dict)
+    assert data["variable_cost_choice"] == {"role_name": "银狼LV.999", "choice": "cost_up"}
+    persisted_cw_state = cast(dict[str, object], persisted.scene_state["cw"])
+    persisted_roles = cast(dict[str, object], persisted_cw_state["variable_cost_roles"])
+    persisted_role_state = cast(dict[str, object], persisted_roles["银狼LV.999"])
+    persisted_shop = cast(dict[str, object], persisted_cw_state["shop"])
+    persisted_items = cast(list[dict[str, object]], persisted_shop["items"])
+    assert persisted_role_state["cost"] == 4
+    assert persisted_role_state["star"] == 1
+    assert persisted_shop["stale"] is False
+    assert persisted_items[0]["cost"] == 4
+
+
+def test_cw_event_handle_payload_without_variable_choice_keeps_legacy_behavior(tmp_path: Path, monkeypatch):
+    registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
+    del registry, cw_service
+    cw_state = ensure_cw_state(session)
+    cw_state["variable_cost_roles"] = {"银狼LV.999": {"cost": 3, "star": 2, "choice_available": True}}
+    cw_state["shop"] = {"opened": True, "stale": False, "items": [{"name": "银狼LV.999", "cost": 3}]}
+    service.save_session(session)
+    monkeypatch.setattr("trail.daemon.cw_service.event_handler_factory", lambda runtime: lambda: ("special", "confirm"))
+
+    envelope = _run_cw_mutation(
+        command_service=command_service,
+        session=session,
+        workspace_root=tmp_path,
+        request_id="req-event-handle-no-choice",
+        method="cw.event.handle",
+        payload={},
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert envelope.get("data") == {"event_type": "special", "handled_action": "confirm"}
+    persisted_cw_state = cast(dict[str, object], persisted.scene_state["cw"])
+    persisted_roles = cast(dict[str, object], persisted_cw_state["variable_cost_roles"])
+    persisted_role_state = cast(dict[str, object], persisted_roles["银狼LV.999"])
+    persisted_shop = cast(dict[str, object], persisted_cw_state["shop"])
+    persisted_items = cast(list[dict[str, object]], persisted_shop["items"])
+    assert persisted_role_state["cost"] == 3
+    assert persisted_items[0]["cost"] == 3
+
+
 @pytest.mark.parametrize(
     ("builder_name", "expected_wait_calls", "expected_locate_calls", "ocr_text", "expected_click"),
     [
@@ -233,7 +298,7 @@ def test_cw_action_buttons_use_ocr_box_when_template_misses(
 ):
     events_module = load_cw_events_module()
     monkeypatch.setattr(events_module, "_asset", lambda alias: alias, raising=False)
-    ocr_calls: list[dict] = []
+    ocr_calls: list[dict[str, object]] = []
 
     def fake_ocr(**kwargs):
         ocr_calls.append(kwargs)
@@ -317,30 +382,33 @@ def _build_cw_harness(tmp_path: Path):
     return registry, service, session, cw_service, command_service
 
 
-def _run_cw_mutation(*, command_service, session, workspace_root: Path, request_id: str, method: str, payload: dict):
+def _run_cw_mutation(*, command_service, session, workspace_root: Path, request_id: str, method: str, payload: dict[str, object]) -> dict[str, Any]:
     from trail.daemon.models import DaemonRequest
     from trail.daemon.protocol import PROTOCOL_VERSION
 
-    return command_service.handle(
-        DaemonRequest(
-            request_id=request_id,
-            protocol_version=PROTOCOL_VERSION,
-            workspace_root=str(workspace_root),
-            session_id=session.session_id,
-            verbose=False,
-            method=method,
-            payload={"session_id": session.session_id, **payload},
+    return cast(
+        dict[str, Any],
+        command_service.handle(
+            DaemonRequest(
+                request_id=request_id,
+                protocol_version=PROTOCOL_VERSION,
+                workspace_root=str(workspace_root),
+                session_id=session.session_id,
+                verbose=False,
+                method=method,
+                payload={"session_id": session.session_id, **payload},
+            )
         )
     )
 
 
-def _set_stage(session, stage: dict):
+def _set_stage(session, stage: dict[str, object]):
     session.scene_state.setdefault("cw", {})["stage"] = dict(stage)
     session.last_stage = None
     return session
 
 
-def _set_event_result(session, result: dict):
+def _set_event_result(session, result: dict[str, object]):
     session.scene_state.setdefault("cw", {})["stage"] = {"stale": True}
     session.last_stage = None
     return result
@@ -473,9 +541,9 @@ def test_cw_event_mutation_services_return_expected_data(
     monkeypatch,
     method: str,
     request_id: str,
-    payload: dict,
+    payload: dict[str, object],
     setup_patches,
-    expected_data: dict,
+    expected_data: dict[str, object],
 ):
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path)
     del registry, command_service, request_id

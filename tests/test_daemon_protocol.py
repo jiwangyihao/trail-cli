@@ -1070,6 +1070,49 @@ def test_command_service_tracks_cw_portal_select_request_status_with_top_level_s
     assert status["session_id"] == session_a.session_id
 
 
+def test_command_service_cw_event_handle_accepts_variable_cost_choice_payload(tmp_path: Path):
+    from trail.daemon.cw_service import CwService
+    from trail.scenes.cw.models import ensure_cw_state
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    cw_state = ensure_cw_state(session)
+    cw_state["variable_cost_roles"] = {
+        "银狼LV.999": {"cost": 3, "star": 2, "choice_available": True, "confirmed_choices_by_cost": {}}
+    }
+    cw_state["shop"] = {"opened": True, "stale": False, "items": [{"name": "银狼LV.999", "cost": 3}]}
+    service.save_session(session)
+    runtime = ProtocolRuntime(tmp_path / ".trail" / "shots" / "req-cw-event-choice.png")
+    runtime_service = ProtocolRuntimeService(runtime)
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+
+    response = command_service.handle(
+        DaemonRequest(
+            request_id="req-cw-event-choice",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.event.handle",
+            payload={"session_id": session.session_id, "variable_cost_choice": {"role_name": "银狼LV.999", "choice": "cost_up"}},
+        )
+    )
+    persisted = service.load_session(session.session_id)
+
+    assert isinstance(response, dict)
+    assert response["ok"] is True
+    data = response.get("data")
+    assert isinstance(data, dict)
+    assert data["variable_cost_choice"] == {"role_name": "银狼LV.999", "choice": "cost_up"}
+    assert persisted.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]["cost"] == 4
+    assert persisted.scene_state["cw"]["shop"]["items"][0]["cost"] == 4
+
+
 def _run_cw_portal_select_with_operation_guide(tmp_path: Path, monkeypatch, *, operation_guide: str) -> dict:
     from trail.daemon.cw_service import CwService
 

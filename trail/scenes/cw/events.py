@@ -5,6 +5,7 @@ from collections.abc import Callable, Mapping
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
 from trail.scenes.cw.stage import mark_cw_stage_stale
+from trail.scenes.cw.variable_cost import apply_cw_variable_cost_choice
 from trail.session.models import SessionModel
 
 OptionChooser = Callable[[int], object]
@@ -40,9 +41,13 @@ def _box_center(box: object) -> tuple[int, int]:
     if isinstance(center, tuple) and len(center) == 2:
         return int(center[0]), int(center[1])
     if isinstance(box, Mapping):
+        values = _extract_box_values(box)
+        if values is None:
+            raise ValueError("invalid box")
+        left, top, width, height = values
         return (
-            int(float(box["left"]) + float(box["width"]) / 2.0),
-            int(float(box["top"]) + float(box["height"]) / 2.0),
+            int(left + width / 2.0),
+            int(top + height / 2.0),
         )
     return int(getattr(box, "left") + getattr(box, "width") / 2.0), int(getattr(box, "top") + getattr(box, "height") / 2.0)
 
@@ -82,10 +87,10 @@ def _joined_ocr_text(runtime, *, capture: Mapping[str, float] | None = None) -> 
 
 def _extract_box_values(box: Mapping[object, object]) -> tuple[float, float, float, float] | None:
     try:
-        left = float(box["left"])
-        top = float(box["top"])
-        width = float(box["width"])
-        height = float(box["height"])
+        left = float(str(box["left"]))
+        top = float(str(box["top"]))
+        width = float(str(box["width"]))
+        height = float(str(box["height"]))
     except (KeyError, TypeError, ValueError):
         return None
     return left, top, width, height
@@ -118,8 +123,8 @@ def _extract_box_from_mapping(piece: Mapping[object, object]) -> tuple[float, fl
     center = piece.get("center")
     if isinstance(center, Mapping):
         try:
-            center_x = float(center["x"])
-            center_y = float(center["y"])
+            center_x = float(str(center["x"]))
+            center_y = float(str(center["y"]))
         except (KeyError, TypeError, ValueError):
             return None
         return center_x, center_y, 0.0, 0.0
@@ -235,7 +240,7 @@ BATTLE_CONTINUE_POINT = _point(0.5, 0.824)
 BATTLE_TEAM_COUNT_CANCEL_POINT = _point(0.43, 0.572)
 
 
-def _build_option_chooser(runtime, *, option_points: dict[int, tuple[float, float]], confirm_point: tuple[float, float]):
+def _build_option_chooser(runtime, *, option_points: Mapping[int, tuple[int, int]], confirm_point: tuple[int, int]):
     def chooser(option: int) -> None:
         point = option_points.get(option)
         if point is None:
@@ -314,8 +319,8 @@ def _fail_if_battle_team_count_confirm_dialog(runtime) -> None:
     else:
         runtime.click_point(*BATTLE_TEAM_COUNT_CANCEL_POINT)
     error = TrailError("CW_BATTLE_TEAM_COUNT_INSUFFICIENT", "可出战角色人数未达上限，请先检查场上人数")
-    error.known_failure_after_save = True
-    error.data = {"reason": "team_count_insufficient"}
+    setattr(error, "known_failure_after_save", True)
+    setattr(error, "data", {"reason": "team_count_insufficient"})
     raise error
 
 
@@ -329,7 +334,7 @@ def build_cw_battle_continuer(runtime) -> SceneAction:
     )
 
 
-def read_cw_replenish(session: SessionModel) -> dict:
+def read_cw_replenish(session: SessionModel) -> dict[str, list[int]]:
     del session
     return {"options": [1, 2, 3]}
 
@@ -340,7 +345,7 @@ def choose_cw_replenish(session: SessionModel, *, option: int, chooser: OptionCh
     return session
 
 
-def read_cw_invest(session: SessionModel) -> dict:
+def read_cw_invest(session: SessionModel) -> dict[str, list[int]]:
     del session
     return {"options": [1, 2, 3]}
 
@@ -351,7 +356,7 @@ def choose_cw_invest(session: SessionModel, *, option: int, chooser: OptionChoos
     return session
 
 
-def read_cw_encounter(session: SessionModel) -> dict:
+def read_cw_encounter(session: SessionModel) -> dict[str, list[int]]:
     del session
     return {"options": [1, 2]}
 
@@ -362,7 +367,7 @@ def choose_cw_encounter(session: SessionModel, *, option: int, chooser: OptionCh
     return session
 
 
-def read_cw_fortune(session: SessionModel) -> dict:
+def read_cw_fortune(session: SessionModel) -> dict[str, list[int]]:
     del session
     return {"options": [1, 2]}
 
@@ -397,7 +402,19 @@ def continue_cw_battle(session: SessionModel, *, continuer: SceneAction) -> Sess
     return session
 
 
-def handle_cw_event(session: SessionModel, *, handler: EventHandler) -> dict:
+def handle_cw_event(session: SessionModel, *, handler: EventHandler, variable_cost_choice: Mapping[str, object] | None = None) -> dict[str, object]:
     event_type, handled_action = handler()
+    if variable_cost_choice is not None:
+        role_name = variable_cost_choice.get("role_name")
+        choice = variable_cost_choice.get("choice")
+        if not isinstance(role_name, str) or not isinstance(choice, str):
+            raise ValueError("invalid variable cost choice")
+        cw_state = session.scene_state.get("cw")
+        if not isinstance(cw_state, dict):
+            raise ValueError("银狼LV.999 current cost is unknown")
+        apply_cw_variable_cost_choice(cw_state, role_name=role_name, choice=choice)
     mark_cw_stage_stale(session)
-    return {"event_type": event_type, "handled_action": handled_action}
+    result: dict[str, object] = {"event_type": event_type, "handled_action": handled_action}
+    if variable_cost_choice is not None:
+        result["variable_cost_choice"] = dict(variable_cost_choice)
+    return result
