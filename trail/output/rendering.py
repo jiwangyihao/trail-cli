@@ -101,6 +101,8 @@ def _append_warnings(lines: list[str], payload: dict[str, Any]) -> None:
             continue
         if _append_cw_equipment_material_missing_warning(lines, warning):
             continue
+        if _append_cw_shop_lv999_cost_unknown_warning(lines, warning):
+            continue
         if warning.get("portal") is not None:
             lines.append(
                 f"warn portal={_encode_value(warning.get('portal'))} score={_encode_value(_format_score_value(warning.get('score')))}"
@@ -180,6 +182,21 @@ def _append_cw_equipment_material_missing_warning(lines: list[str], warning: dic
         ("code", warning.get("code")),
         ("需求", warning.get("需求")),
         ("持有", warning.get("持有")),
+        ("msg", warning.get("message")),
+    )
+    return True
+
+
+def _append_cw_shop_lv999_cost_unknown_warning(lines: list[str], warning: dict[str, Any]) -> bool:
+    if warning.get("code") != "CW_SHOP_LV999_COST_UNKNOWN":
+        return False
+    position = _as_dict(warning.get("position"))
+    _append_fact_line(
+        lines,
+        "warn",
+        ("code", warning.get("code")),
+        ("slot", position.get("slot") if position.get("kind") == "shop" else None),
+        ("idx", position.get("idx") if position.get("kind") == "shop" else None),
         ("msg", warning.get("message")),
     )
     return True
@@ -376,7 +393,7 @@ def _compact_role_card(value: Any) -> str | None:
     if item.get("is_carry") is True:
         parts.append("carry:1")
 
-    for key in ("star", "rarity", "cost"):
+    for key in ("star", "rarity"):
         if item.get(key) is not None:
             parts.append(f"{key}:{item.get(key)}")
     return "/".join(parts)
@@ -609,11 +626,14 @@ def _append_cw_shop_items(lines: list[str], data: dict[str, Any]) -> None:
         name = item.get("name")
         if name is not None:
             facts.append(("name", name))
-        cost = item.get("price") if item.get("price") is not None else item.get("cost")
+        suppress_fallback_cost = item.get("uncertain") is True and item.get("stale") is True
+        cost = item.get("cost") if item.get("cost") is not None else (None if suppress_fallback_cost else item.get("price"))
         if cost is not None:
             facts.append(("cost", cost))
         elif name is None and slot is not None:
             facts.append(("empty", True))
+        facts.append(("uncertain", True if item.get("uncertain") is True else None))
+        facts.append(("stale", True if item.get("stale") is True else None))
         facts.append(("traits", _compact_text_or_sequence(item.get("traits"))))
         facts.append(("raw_name", item.get("raw_name")))
         facts.append(("score", _format_score_value(_match_score_value(item))))
@@ -1038,6 +1058,8 @@ def _append_cw_slot_lines(lines: list[str], data: dict[str, Any]) -> None:
                 facts.append(("rarity", item.get("rarity")))
                 facts.append(("carry", True if item.get("is_carry") is True else None))
                 facts.append(("cost", cost))
+                facts.append(("uncertain", True if item.get("uncertain") is True else None))
+                facts.append(("stale", True if item.get("stale") is True else None))
                 lines.append("slot " + _format_fact_sequence(*facts))
                 continue
 
@@ -1602,6 +1624,7 @@ def _render_cw_sell_plan(command: str, payload: dict[str, Any]) -> list[str]:
             + _format_fact_sequence(
                 ("pos", _format_agent_slot_pos("hand", slot)),
                 ("name", entry.get("name")),
+                ("cost", entry.get("cost")),
                 ("star", entry.get("star")),
                 ("target_star", entry.get("target_star")),
                 ("current_star", entry.get("current_star")),
@@ -1643,11 +1666,15 @@ def _render_cw_options(command: str, payload: dict[str, Any]) -> list[str]:
 
 def _render_cw_event_result(command: str, payload: dict[str, Any]) -> list[str]:
     data = _as_dict(payload.get("data"))
+    choice_value = data.get("variable_cost_choice")
+    if isinstance(choice_value, dict):
+        choice_value = choice_value.get("choice")
     return _render_success_summary(
         command,
         payload,
         ("event_type", data.get("event_type")),
         ("handled_action", data.get("handled_action")),
+        ("variable_cost_choice", choice_value),
     )
 
 

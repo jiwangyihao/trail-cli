@@ -1234,6 +1234,138 @@ def test_render_cw_slots_trait_summary_marks_active_tiers_without_ratio():
     assert "占比=" not in rendered
 
 
+def test_render_output_keeps_lv999_slot_cost():
+    envelope = {
+        "ok": True,
+        "data": {
+            "front": [{"name": "银狼LV.999", "cost": 4, "star": 1}],
+            "back": [],
+            "hand": [],
+            "stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.slots.read", envelope).splitlines()
+
+    assert any(
+        line.startswith("slot ") and "name=银狼LV.999" in line and "cost=4" in line and "star=1" in line
+        for line in lines
+    )
+
+
+def test_render_output_marks_lv999_slot_without_cost_uncertain():
+    envelope = {
+        "ok": True,
+        "data": {
+            "front": [{"name": "银狼LV.999", "star": 1, "uncertain": True, "stale": True}],
+            "back": [],
+            "hand": [],
+            "stale": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.slots.read", envelope).splitlines()
+
+    assert any(
+        line.startswith("slot ")
+        and "name=银狼LV.999" in line
+        and "uncertain=1" in line
+        and "stale=1" in line
+        and "cost=" not in line
+        for line in lines
+    )
+
+
+def test_render_output_keeps_lv999_shop_cost():
+    envelope = {
+        "ok": True,
+        "data": {
+            "opened": True,
+            "stale": False,
+            "items": [{"idx": 1, "name": "银狼LV.999", "cost": 4}],
+            "coins": 2,
+            "reserve_full": False,
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.shop.scan", envelope).splitlines()
+
+    assert any(line.startswith("item ") and "name=银狼LV.999" in line and "cost=4" in line for line in lines)
+
+
+def test_render_output_marks_lv999_shop_item_without_cost_uncertain():
+    envelope = {
+        "ok": True,
+        "data": {
+            "opened": True,
+            "stale": False,
+            "items": [{"idx": 1, "name": "银狼LV.999", "uncertain": True, "stale": True}],
+            "coins": 2,
+            "reserve_full": False,
+        },
+        "timing": {},
+        "warnings": [{"code": "CW_SHOP_LV999_COST_UNKNOWN", "message": "银狼LV.999 cost unknown"}],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.shop.scan", envelope).splitlines()
+
+    assert any(
+        line.startswith("item ")
+        and "name=银狼LV.999" in line
+        and "uncertain=1" in line
+        and "stale=1" in line
+        and "cost=" not in line
+        for line in lines
+    )
+
+
+def test_render_output_marks_lv999_shop_item_with_price_without_cost_uncertain():
+    envelope = {
+        "ok": True,
+        "data": {
+            "opened": True,
+            "stale": False,
+            "items": [{"idx": 1, "name": "银狼LV.999", "price": 4, "uncertain": True, "stale": True}],
+            "coins": 2,
+            "reserve_full": False,
+        },
+        "timing": {},
+        "warnings": [{"code": "CW_SHOP_LV999_COST_UNKNOWN", "message": "银狼LV.999 cost unknown"}],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.shop.scan", envelope).splitlines()
+
+    assert any(
+        line.startswith("item ")
+        and "name=银狼LV.999" in line
+        and "uncertain=1" in line
+        and "stale=1" in line
+        and "cost=" not in line
+        for line in lines
+    )
+
+
 def test_render_output_renders_shop_stage_status_projection():
     payload = {
         "ok": True,
@@ -2299,6 +2431,33 @@ def test_render_output_guide_list_omits_next_when_not_paginated():
     assert "攻略标签=" not in "\n".join(lines)
 
 
+def test_guide_list_does_not_leak_lv999_cost_from_final_role_cards():
+    envelope = {
+        "ok": True,
+        "data": {
+            "list": [
+                {
+                    "lineup_id": "guide-lv999",
+                    "carry_roles": ["银狼LV.999"],
+                    "final_role_cards": [{"name": "银狼LV.999", "cost": 4, "star": 1, "rarity": 4, "is_carry": True}],
+                }
+            ],
+            "next_page_token": "",
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("guide.list.cw", envelope).splitlines()
+
+    guide_or_info = [line for line in lines if line.startswith(("guide ", "info "))]
+    assert guide_or_info
+    assert all("cost=" not in line and "cost:" not in line for line in guide_or_info)
+
+
 def test_render_output_guide_list_falls_back_to_boolean_tags_when_labels_missing():
     payload = {
         "ok": True,
@@ -2813,6 +2972,42 @@ def test_render_output_renders_guide_fetch_summary_text():
         "guide 阶段=最终阵容 角色=希儿 优选装备=高周波电锯|战场进化手册 次选装备=胜利之旗",
         'guide 运营思路="前期：过渡\\n中期：D牌\\n后期：补强"',
     ]
+
+
+def test_guide_and_info_lines_do_not_leak_lv999_cost_from_structured_progress():
+    envelope = {
+        "ok": True,
+        "data": {
+            "攻略标题": "测试攻略",
+            "攻略码": "TEST",
+            "版本": "v1",
+            "最低金币": 0,
+            "最低等级": 1,
+            "中期等级": 4,
+            "role_stages": [
+                {"stage": "Final", "front_roles": [{"name": "银狼LV.999", "cost": 5, "star": 1}], "back_roles": []}
+            ],
+            "guide_progress": {
+                "银狼LV.999": {
+                    "cost": 5,
+                    "star": 1,
+                    "choice_available": False,
+                    "choice_confirmed": True,
+                }
+            },
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("guide.fetch.cw", envelope).splitlines()
+
+    guide_or_info = [line for line in lines if line.startswith(("guide ", "info "))]
+    assert guide_or_info
+    assert all("cost=" not in line and "cost:" not in line for line in guide_or_info)
 
 
 def test_render_output_allows_yaml_for_guide_fetch():
@@ -5280,6 +5475,31 @@ def test_render_output_renders_cw_hand_sell_plan_text():
         "slot pos=hand:1 name=阮·梅 star=1 分类=非攻略 推荐度=不推荐 priority=10 protected=0 reason=缺少当前阶段，仅提供参考",
         "info todo=stage",
     ]
+
+
+def test_rendered_sell_plan_slot_keeps_lv999_cost_without_new_prefix():
+    envelope = {
+        "ok": True,
+        "data": {
+            "items": [{"slot": 0, "name": "银狼LV.999", "cost": 4, "star": 1, "protected": True}],
+            "count": 1,
+            "reference_only": True,
+            "candidates": 1,
+            "todos": [],
+        },
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    lines = render_output("cw.hand.sell_plan", envelope).splitlines()
+
+    assert any(
+        line.startswith("slot ") and "pos=hand:1" in line and "name=银狼LV.999" in line and "cost=4" in line
+        for line in lines
+    )
 
 
 def test_render_output_filters_malformed_cw_hand_sell_plan_payload():
