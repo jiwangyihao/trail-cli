@@ -1942,7 +1942,7 @@ def test_slots_read_preserves_unmatched_role_id_identity(tmp_path):
         "role_id": "15063",
         "star": 1,
         "rarity": "5",
-        "cost": "5",
+        "cost": 5,
     }
 
 

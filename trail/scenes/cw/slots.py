@@ -769,7 +769,7 @@ def _resolve_catalog_slot_value(
         return None, None, []
     if isinstance(value, dict) and value.get("role_id") is not None:
         id_match = resolve_cw_role_id(value.get("role_id"), catalog)
-        if id_match is None:
+        if id_match is None or (is_cw_variable_cost_role(name) and not is_cw_variable_cost_role(id_match.name)):
             stable = _strip_slot_match_diagnostics(value)
             return stable, deepcopy(stable), []
         return _slot_value_from_catalog_match(value, id_match), _slot_response_from_catalog_match(value, id_match), []
