@@ -75,7 +75,7 @@ def _shop_catalog_config() -> dict:
             {"id": "1502", "name": "爻光", "trait_ids": ["1007"]},
             {"id": "1001", "name": "希儿", "trait_ids": ["2002"]},
             {"id": "1002", "name": "佩拉", "trait_ids": ["2002"]},
-            {"id": "1003", "name": "银狼", "trait_ids": ["2002"]},
+            {"id": "1006", "name": "银狼", "trait_ids": ["2002"]},
             {"id": "9001", "name": "商店角色", "trait_ids": ["3001"]},
             {"id": "1013", "name": "黑塔", "trait_ids": ["4001", "4002"]},
         ],
@@ -2029,7 +2029,7 @@ def test_shop_buy_slot_verifies_purchase_with_role_equivalent_delta(tmp_path):
 
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
-    session = build_fake_cw_session(tmp_path)
+    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
     session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
     scan_cw_shop(session, scanner=fake_shop_snapshot)
     reads = iter(
@@ -2073,9 +2073,10 @@ def test_shop_buy_slot_rejects_changed_shop_without_role_delta(tmp_path):
 
     from tests.conftest import build_fake_cw_session, fake_buy_success
 
-    session = build_fake_cw_session(tmp_path)
+    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
     session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
     scan_cw_shop(session, scanner=fake_shop_snapshot)
+    session.scene_state["cw"]["sell_plan"] = {"items": [{"slot": 0, "name": "银狼"}]}
     before_guide = deepcopy(session.scene_state["cw"]["guide"])
     reads = iter(
         (
@@ -2095,7 +2096,82 @@ def test_shop_buy_slot_rejects_changed_shop_without_role_delta(tmp_path):
         )
 
     assert exc_info.value.code == "SHOP_BUY_ROLE_NOT_CONFIRMED"
+    assert getattr(exc_info.value, "known_failure_after_save") is True
     assert session.scene_state["cw"]["guide"] == before_guide
+    assert session.scene_state["cw"]["shop"] == {
+        "opened": True,
+        "items": [{"name": "阮·梅", "price": 30}],
+        "coins": 22,
+        "reserve_full": False,
+        "stale": False,
+        "guide_summary": {"remaining_purchases": {"银狼": 1}, "constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
+    }
+    assert session.scene_state["cw"]["slots"]["stale"] is False
+    assert session.scene_state["cw"]["sell_plan"] == {}
+
+
+def test_shop_buy_slot_marks_known_failure_when_post_click_slots_read_fails(tmp_path):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    buy_cw_shop_slot = getattr(shop_module, "buy_cw_shop_slot", None)
+    assert scan_cw_shop is not None
+    assert buy_cw_shop_slot is not None
+
+    from tests.conftest import build_fake_cw_session, fake_buy_success
+
+    session = build_fake_cw_session(tmp_path, purchases={"银狼": 1})
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    scan_cw_shop(session, scanner=fake_shop_snapshot)
+    reads = iter((_slots_snapshot(hand=[{"name": "银狼", "star": 1}]), TrailError("SLOTS_READ_FAILED", "slots boom")))
+
+    def slots_reader():
+        result = next(reads)
+        if isinstance(result, TrailError):
+            raise result
+        return result
+
+    with pytest.raises(TrailError) as exc_info:
+        buy_cw_shop_slot(
+            session,
+            slot=1,
+            expect="银狼",
+            buyer=fake_buy_success,
+            scanner=fake_shop_snapshot_after_purchase,
+            slots_reader=slots_reader,
+        )
+
+    assert exc_info.value.code == "SLOTS_READ_FAILED"
+    assert getattr(exc_info.value, "known_failure_after_save") is True
+
+
+def test_shop_scan_preserves_unmatched_role_id_identity(tmp_path):
+    shop_module = load_cw_shop_module()
+    scan_cw_shop = getattr(shop_module, "scan_cw_shop", None)
+    assert scan_cw_shop is not None
+
+    from tests.conftest import build_fake_cw_session
+
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["shop"] = {"opened": True, "stale": True}
+    refreshed = scan_cw_shop(
+        session,
+        scanner=lambda: {
+            "items": [{"name": "银狼LV.999", "role_id": "15063", "rarity": "5", "cost": "5", "price": 20}],
+            "coins": 40,
+            "reserve_full": False,
+        },
+        guide_config={
+            "traits": [
+                {"id": "1002", "name": "星核猎手", "layers": [{"layer": 1}, {"layer": 2}]},
+                {"id": "2009", "name": "量子同频", "layers": [{"layer": 1}, {"layer": 2}]},
+            ],
+            "roles": [{"id": "1006", "name": "银狼", "trait_ids": ["1002", "2009"]}],
+        },
+    )
+
+    assert refreshed.scene_state["cw"]["shop"]["items"] == [
+        {"name": "银狼LV.999", "price": 20, "cost": "5", "role_id": "15063"}
+    ]
 
 
 def test_shop_buy_slot_clears_sell_plan_and_marks_slots_stale(tmp_path):
@@ -2314,6 +2390,7 @@ def test_shop_buy_slot_confirmation_canonicalizes_before_expect_compare(tmp_path
         )
 
     assert exc_info.value.code == "SHOP_BUY_NOT_CONFIRMED"
+    assert getattr(exc_info.value, "known_failure_after_save") is True
     assert len(scanner_calls) == shop_module.SHOP_BUY_CONFIRM_MAX_ATTEMPTS
     persisted_item = session.scene_state["cw"]["shop"]["items"][0]
     assert persisted_item == {"slot": 2, "name": "爻光", "role_id": "1502", "price": 1, "traits": ["仙舟"]}
@@ -2937,12 +3014,13 @@ def test_cw_service_shop_status_does_not_fetch_enriched_config_when_slots_missin
 
 
 @pytest.mark.parametrize("method", ["cw.shop.buy_slot", "cw.shop.buy_exp"])
-def test_cw_service_shop_buy_actions_use_base_catalog_without_field_trait_summary(
+def test_cw_service_shop_buy_actions_do_not_add_field_trait_summary(
     tmp_path: Path,
     monkeypatch,
     method: str,
 ):
-    registry, service, session, cw_service, _ = _build_cw_harness(tmp_path)
+    runtime = SimpleNamespace(locate=lambda *args, **kwargs: None, capture_image=lambda **kwargs: None)
+    registry, service, session, cw_service, _ = _build_cw_harness(tmp_path, runtime=runtime)
     del registry
     loaded = service.load_session(session.session_id)
     cw_state = loaded.scene_state.setdefault("cw", {})
@@ -2968,6 +3046,13 @@ def test_cw_service_shop_buy_actions_use_base_catalog_without_field_trait_summar
         return _shop_catalog_config()
 
     monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", fake_fetch_config)
+    slot_reads = iter(
+        (
+            _slots_snapshot(front=[{"name": "希儿", "star": 1}]),
+            _slots_snapshot(front=[{"name": "希儿", "star": 1}], hand=[{"name": "爻光", "star": 1}]),
+        )
+    )
+    monkeypatch.setattr("trail.daemon.cw_service.slots_reader_factory", lambda runtime, **kwargs: lambda: next(slot_reads))
     monkeypatch.setattr("trail.daemon.cw_service.shop_buyer_factory", lambda runtime: lambda slot, expect: None)
     monkeypatch.setattr("trail.daemon.cw_service.shop_exp_buyer_factory", lambda runtime: lambda: None)
     monkeypatch.setattr(
@@ -3004,9 +3089,42 @@ def test_cw_service_shop_buy_actions_use_base_catalog_without_field_trait_summar
         session_service=service,
     )
 
-    assert fetch_calls == [False]
+    assert fetch_calls == ([True] if method == "cw.shop.buy_slot" else [False])
     assert "trait_summary" not in result
     assert result["items"]
+
+
+def test_cw_service_shop_buy_slot_requires_slots_reader_runtime_support(
+    tmp_path: Path,
+    monkeypatch,
+):
+    registry, service, session, cw_service, _ = _build_cw_harness(tmp_path)
+    del registry
+    loaded = service.load_session(session.session_id)
+    loaded.scene_state.setdefault("cw", {})["shop"] = {
+        "opened": True,
+        "stale": False,
+        "items": [{"slot": 1, "name": "银狼", "price": 20}],
+        "coins": 40,
+        "reserve_full": False,
+    }
+    service.save_session(loaded)
+    buyer_calls: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.shop_buyer_factory",
+        lambda runtime: lambda slot, expect: buyer_calls.append((slot, expect)),
+    )
+
+    with pytest.raises(TrailError) as exc_info:
+        cw_service.handle(
+            method="cw.shop.buy_slot",
+            payload={"session_id": session.session_id, "slot": 1, "expect": "银狼"},
+            workspace_root=str(tmp_path),
+            session_service=service,
+        )
+
+    assert exc_info.value.code == "SLOTS_READER_UNAVAILABLE"
+    assert buyer_calls == []
 
 
 @pytest.mark.parametrize(
@@ -3727,7 +3845,7 @@ def test_cw_shop_scan_ignores_metadata_boom_after_persist(
     assert persisted.scene_state["cw"]["shop"] == expected_shop_snapshot
 
 
-def test_cw_shop_buy_slot_marks_applied_but_not_persisted_when_confirmation_fails_after_purchase(
+def test_cw_shop_buy_slot_persists_known_failure_when_confirmation_fails_after_purchase(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -3738,6 +3856,14 @@ def test_cw_shop_buy_slot_marks_applied_but_not_persisted_when_confirmation_fail
         def click_point(self, x: int, y: int, **kwargs):
             del kwargs
             self.clicks.append((x, y))
+
+        def locate(self, *args, **kwargs):
+            del args, kwargs
+            return None
+
+        def capture_image(self, **kwargs):
+            del kwargs
+            return None
 
     runtime = Runtime()
     registry, service, session, cw_service, command_service = _build_cw_harness(tmp_path, runtime=runtime)
@@ -3761,8 +3887,10 @@ def test_cw_shop_buy_slot_marks_applied_but_not_persisted_when_confirmation_fail
         "trail.daemon.cw_service.shop_buyer_factory",
         lambda runtime: lambda slot, expect: runtime.click_point(111, 222),
     )
-    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None: {})
+    monkeypatch.setattr("trail.daemon.cw_service.fetch_cw_guide_config", lambda workspace_root=None, enrich_traits=False: {})
     monkeypatch.setattr("trail.daemon.cw_service.shop_scanner_factory", lambda runtime: fake_shop_snapshot)
+    slot_reads = iter((_slots_snapshot(hand=[{"name": "银狼", "star": 1}]),))
+    monkeypatch.setattr("trail.daemon.cw_service.slots_reader_factory", lambda runtime, **kwargs: lambda: next(slot_reads))
     monkeypatch.setattr("trail.scenes.cw.shop.sleep", lambda seconds: None)
 
     envelope = _run_cw_mutation(
@@ -3779,11 +3907,10 @@ def test_cw_shop_buy_slot_marks_applied_but_not_persisted_when_confirmation_fail
     assert runtime.clicks == [(111, 222)]
     assert envelope["ok"] is False
     assert envelope["error"] == {
-        "code": "DAEMON_UNAVAILABLE",
-        "message": "mutation result unknown",
+        "code": "SHOP_BUY_NOT_CONFIRMED",
+        "message": "shop purchase not confirmed for slot 1: 银狼",
     }
-    assert "shop purchase not confirmed for slot 1: 银狼" in envelope["debug"]["detail"]
-    assert status["final_state"] == "applied_but_not_persisted"
-    assert status["tainted"] is True
+    assert status["final_state"] == "completed"
+    assert status["tainted"] is False
     assert persisted.scene_state["cw"]["guide"] == before_guide
     assert persisted.scene_state["cw"]["shop"]["items"] == [{"name": "银狼", "price": 20}]

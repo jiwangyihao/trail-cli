@@ -743,11 +743,12 @@ class CwService:
 
         def run_shop_buy_slot() -> dict:
             runtime_instance = runtime()
-            base_config = guide_config()
             slots_reader: SlotsSnapshotReader | None = None
-            if _callable_accepts_keyword(buy_cw_shop_slot, "slots_reader") and _runtime_supports_slot_snapshot_read(runtime_instance):
-                base_config = guide_config(enrich_traits=True)
-                slots_reader, _trait_config = _build_slots_reader_for_service(
+            should_verify_slots = _callable_accepts_keyword(buy_cw_shop_slot, "slots_reader")
+            if should_verify_slots and not _runtime_supports_slot_snapshot_read(runtime_instance):
+                raise TrailError("SLOTS_READER_UNAVAILABLE", "cw.shop.buy_slot requires slots verification support")
+            if should_verify_slots:
+                slots_reader, base_config = _build_slots_reader_for_service(
                     runtime_instance,
                     targets=None,
                     workspace_root=workspace_root,
@@ -755,6 +756,8 @@ class CwService:
                     request_id=request_id,
                     dismiss_initial_overlay=False,
                 )
+            else:
+                base_config = guide_config()
             return _call_with_supported_keywords(
                 buy_cw_shop_slot,
                 session,

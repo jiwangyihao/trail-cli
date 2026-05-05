@@ -13,7 +13,7 @@ from time import sleep
 from typing import Any
 
 from trail.core.errors import TrailError
-from trail.scenes.cw.catalog import CwCatalog, build_cw_catalog, resolve_cw_role_name, summarize_cw_field_traits
+from trail.scenes.cw.catalog import CwCatalog, build_cw_catalog, resolve_cw_role_id, resolve_cw_role_name, summarize_cw_field_traits
 from trail.scenes.cw.guide import complete_cw_guide_or_none
 from trail.runtime.batch_ocr import BatchOcrTarget, run_batch_ocr
 from trail.scenes.cw.models import ensure_cw_state
@@ -426,6 +426,12 @@ def _canonicalize_shop_item(
     name = stable.get("name")
     if catalog is None or not isinstance(name, str) or not name.strip():
         return stable, deepcopy(stable), []
+    if stable.get("role_id") is not None:
+        id_match = resolve_cw_role_id(stable.get("role_id"), catalog)
+        if id_match is None:
+            return stable, deepcopy(stable), []
+        warnings = [id_match.warning] if isinstance(id_match.warning, dict) else []
+        return _shop_item_from_catalog_match(stable, id_match), _shop_item_response_from_catalog_match(stable, id_match), warnings
     if is_cw_variable_cost_role(name):
         match = resolve_cw_role_name(name, catalog, position={"kind": "shop", "idx": idx} if idx is not None else None)
         if match is not None and is_cw_variable_cost_role(match.name):
@@ -784,12 +790,7 @@ def _verified_role_purchase_delta(
         "verified": delta >= 1,
     }
     if not verification["verified"]:
-        error = TrailError(
-            "SHOP_BUY_ROLE_NOT_CONFIRMED",
-            f"shop purchase role delta not confirmed for {expect}: before={before_count} after={after_count}",
-        )
-        setattr(error, "known_failure_after_save", True)
-        raise error
+        return verification
     return verification
 
 
@@ -817,6 +818,15 @@ def _verified_lv999_purchase_delta(
         "choice_available": _lv999_choice_available_after_fielding(after_slots, cost=cost),
         "choice_pending_after_fielding": _lv999_choice_pending_after_fielding(after_slots, cost=cost),
     }
+
+
+def _raise_unconfirmed_role_purchase(verification: dict[str, Any]) -> None:
+    error = TrailError(
+        "SHOP_BUY_ROLE_NOT_CONFIRMED",
+        f"shop purchase role delta not confirmed for {verification['name']}: before={verification['before_count']} after={verification['after_count']}",
+    )
+    setattr(error, "known_failure_after_save", True)
+    raise error
 
 
 def _read_cw_slots_with_scope(
@@ -971,36 +981,45 @@ def buy_cw_shop_slot(
         else None
     )
     buyer(slot=slot, expect=expect)
-    updated_shop, response_shop = _scan_until_purchase_confirmed(
-        cw_state,
-        before_items=before_items,
-        slot=slot,
-        expect=canonical_expect,
-        scanner=scanner,
-        guide_config=guide_config,
-    )
-    if slots_reader is not None and before_slots is not None:
-        after_slots = read_cw_slots(session, reader=slots_reader, guide_config=guide_config).response_snapshot
-        if lv999_cost is None:
-            response_shop["role_verification"] = _verified_role_purchase_delta(
-                before_slots=before_slots,
-                after_slots=after_slots,
-                expect=expected_role,
-            )
-        else:
-            response_shop["role_verification"] = _verified_lv999_purchase_delta(
-                before_slots=before_slots,
-                after_slots=after_slots,
-                cost=lv999_cost,
-            )
-        response_shop["slots"] = deepcopy(after_slots)
+    try:
+        updated_shop, response_shop = _scan_until_purchase_confirmed(
+            cw_state,
+            before_items=before_items,
+            slot=slot,
+            expect=canonical_expect,
+            scanner=scanner,
+            guide_config=guide_config,
+        )
+        role_verification: dict[str, Any] | None = None
+        if slots_reader is not None and before_slots is not None:
+            after_slots = read_cw_slots(session, reader=slots_reader, guide_config=guide_config).response_snapshot
+            if lv999_cost is None:
+                role_verification = _verified_role_purchase_delta(
+                    before_slots=before_slots,
+                    after_slots=after_slots,
+                    expect=expected_role,
+                )
+            else:
+                role_verification = _verified_lv999_purchase_delta(
+                    before_slots=before_slots,
+                    after_slots=after_slots,
+                    cost=lv999_cost,
+                )
+            response_shop["role_verification"] = role_verification
+            response_shop["slots"] = deepcopy(after_slots)
+        cw_state["shop"] = _sync_shop_guide_summary(cw_state, updated_shop, include_when_absent=True)
+        if slots_reader is None:
+            cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
+            mark_cw_stage_status_stale(session)
+        cw_state["sell_plan"] = {}
+        if role_verification is not None and not role_verification["verified"]:
+            _raise_unconfirmed_role_purchase(role_verification)
+    except TrailError as error:
+        setattr(error, "known_failure_after_save", True)
+        raise
     _decrement_remaining_purchase(cw_state, expect=expected_role)
-    cw_state["shop"] = _sync_shop_guide_summary(cw_state, updated_shop, include_when_absent=True)
+    cw_state["shop"] = _sync_shop_guide_summary(cw_state, cw_state["shop"], include_when_absent=True)
     response_shop = _sync_shop_guide_summary(cw_state, response_shop, include_when_absent=True)
-    if slots_reader is None:
-        cw_state["slots"] = {**cw_state.get("slots", {}), "stale": True}
-        mark_cw_stage_status_stale(session)
-    cw_state["sell_plan"] = {}
     return CwShopApplied(session=session, response_snapshot=response_shop)
 
 
