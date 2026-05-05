@@ -71,7 +71,9 @@ def bind_cw_variable_cost_shop_item(item: ObjectDict, cw_state: ObjectDict) -> O
         return bound
     bound["name"] = VARIABLE_COST_ROLE_NAME
     state = _variable_state(cw_state, VARIABLE_COST_ROLE_NAME)
-    cost = _parse_variable_cost(state.get("cost") if state else None)
+    cost = _parse_variable_cost(bound.get("cost"))
+    if cost is None:
+        cost = _parse_variable_cost(state.get("cost") if state else None)
     if cost is None:
         _ = bound.pop("cost", None)
         bound["uncertain"] = True

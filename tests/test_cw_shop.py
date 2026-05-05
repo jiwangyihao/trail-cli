@@ -2170,7 +2170,7 @@ def test_shop_scan_preserves_unmatched_role_id_identity(tmp_path):
     )
 
     assert refreshed.scene_state["cw"]["shop"]["items"] == [
-        {"name": "银狼LV.999", "price": 20, "cost": "5", "role_id": "15063"}
+        {"name": "银狼LV.999", "cost": 5, "role_id": "15063"}
     ]
 
 
