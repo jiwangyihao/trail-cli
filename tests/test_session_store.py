@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -60,3 +61,20 @@ def test_create_session_deep_copies_window_binding(tmp_path):
         "bounds": {"left": 100, "top": 200},
         "tags": ["game"],
     }
+
+
+def test_save_relative_workspace_paths_avoids_resolve_for_direct_workspace_children(monkeypatch, tmp_path):
+    store = SessionStore(tmp_path / ".trail" / "sessions")
+    session = store.create(window_binding={"title": "崩坏：星穹铁道"})
+    session.last_screenshot = str(tmp_path / ".trail" / "shots" / "req.png")
+
+    def fail_resolve(self: Path):
+        raise AssertionError(f"unexpected resolve for {self}")
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+
+    store.save(session)
+
+    payload = (tmp_path / ".trail" / "sessions" / f"{session.session_id}.json").read_text(encoding="utf-8")
+    assert '"workspace": ".trail/sessions"' in payload
+    assert '"last_screenshot": ".trail/shots/req.png"' in payload

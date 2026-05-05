@@ -16,8 +16,16 @@ def _to_workspace_relative(path_value: Path | str | None, *, workspace_root: Pat
         return path.as_posix()
     if workspace_root is None:
         return str(path)
+    workspace_path = Path(workspace_root)
     try:
-        return path.resolve().relative_to(workspace_root.resolve()).as_posix()
+        relative = path.relative_to(workspace_path)
+    except ValueError:
+        pass
+    else:
+        if ".." not in relative.parts:
+            return relative.as_posix()
+    try:
+        return path.resolve().relative_to(workspace_path.resolve()).as_posix()
     except ValueError:
         return str(path)
 
