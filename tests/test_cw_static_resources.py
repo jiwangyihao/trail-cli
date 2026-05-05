@@ -18,9 +18,13 @@ from trail.scenes.cw.static_resources import (
 )
 
 
-def _write_json(path: Path, payload: dict) -> None:
+def _write_json_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    path.write_text(text, encoding="utf-8")
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    _write_json_text(path, json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
 def _sha256(path: Path) -> str:
@@ -115,6 +119,11 @@ def _valid_feature_payload(cache_key: str = "icon-a") -> dict:
     }
 
 
+@lru_cache(maxsize=None)
+def _valid_feature_payload_json(cache_key: str = "icon-a") -> str:
+    return json.dumps(_valid_feature_payload(cache_key), ensure_ascii=False, separators=(",", ":"))
+
+
 def _light_feature_payload(cache_key: str = "icon-a", *, min_score: float = 0.72) -> dict:
     return {"items": [{"cache_key": cache_key}], "min_score": min_score}
 
@@ -195,6 +204,11 @@ def _valid_role_features() -> dict:
     }
 
 
+@lru_cache(maxsize=1)
+def _valid_role_features_json() -> str:
+    return json.dumps(_valid_role_features(), ensure_ascii=False, separators=(",", ":"))
+
+
 def _write_valid_equipment_manifest_item(root: Path, cache_key: str = "icon-a") -> None:
     icon_relative = f"equipment/icons/{cache_key}.png"
     icon_path = root / icon_relative
@@ -253,9 +267,12 @@ def _bundle_files_root(tmp_path: Path, *, equipment_features: dict | None = None
     _write_json(root / "guide_config_enriched.json", guide_config)
     _write_json(root / "indexes.json", _valid_indexes())
     _write_valid_equipment_manifest_item(root)
-    _write_json(root / "equipment" / "features.json", equipment_features or _valid_feature_payload())
+    if equipment_features is None:
+        _write_json_text(root / "equipment" / "features.json", _valid_feature_payload_json())
+    else:
+        _write_json(root / "equipment" / "features.json", equipment_features)
     _write_json(root / "roles" / "manifest.json", _valid_role_manifest(root))
-    _write_json(root / "roles" / "features.json", _valid_role_features())
+    _write_json_text(root / "roles" / "features.json", _valid_role_features_json())
     return root
 
 
@@ -292,7 +309,7 @@ def _manifest_writer_root(tmp_path: Path) -> Path:
     ):
         _write_json(root / relative, {})
     _write_json(root / "roles" / "manifest.json", _valid_role_manifest(root))
-    _write_json(root / "roles" / "features.json", _valid_role_features())
+    _write_json_text(root / "roles" / "features.json", _valid_role_features_json())
     return root
 
 
