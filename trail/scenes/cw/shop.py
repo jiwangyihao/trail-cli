@@ -428,7 +428,7 @@ def _canonicalize_shop_item(
         return stable, deepcopy(stable), []
     if stable.get("role_id") is not None:
         id_match = resolve_cw_role_id(stable.get("role_id"), catalog)
-        if id_match is None:
+        if id_match is None or (is_cw_variable_cost_role(name) and not is_cw_variable_cost_role(id_match.name)):
             return stable, deepcopy(stable), []
         warnings = [id_match.warning] if isinstance(id_match.warning, dict) else []
         return _shop_item_from_catalog_match(stable, id_match), _shop_item_response_from_catalog_match(stable, id_match), warnings
