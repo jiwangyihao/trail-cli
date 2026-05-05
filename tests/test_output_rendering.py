@@ -5215,6 +5215,9 @@ def test_render_output_renders_cw_shop_buy_slot_summary_text():
                 "back": [],
                 "hand": [],
                 "stale": False,
+                "trait_summary": [
+                    {"trait": "量子", "tiers": [1, 2], "owned_roles": 1, "active_tier": 1, "total_tiers": 2, "ratio": 0.5}
+                ],
             },
             "guide_summary": {"constraints": {"min_coins": 40, "min_level": 7, "mid_level": 7}},
         },
@@ -5238,6 +5241,8 @@ def test_render_output_renders_cw_shop_buy_slot_summary_text():
         "item idx=2 slot=2 name=停云 cost=10",
         "# 角色信息",
         "slot pos=front:1 name=银狼 star=3",
+        "# 羁绊信息",
+        'info 羁绊=量子 档位="1*,2" 当前角色=1',
     ]
 
 
