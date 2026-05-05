@@ -14,7 +14,7 @@ from PIL import Image
 from trail.core.errors import TrailError
 from trail.runtime.batch_ocr import BatchOcrTarget, run_batch_ocr
 from trail.scenes.cw import stage
-from trail.scenes.cw.catalog import CwCatalog, build_cw_catalog, resolve_cw_role_name, summarize_cw_field_traits
+from trail.scenes.cw.catalog import CwCatalog, build_cw_catalog, resolve_cw_role_id, resolve_cw_role_name, summarize_cw_field_traits
 from trail.scenes.cw.models import ensure_cw_state
 from trail.scenes.cw.role_recognition import CANONICAL_SCREENSHOT_SIZE, iter_slot_specs, warp_slot_crop
 from trail.scenes.cw.variable_cost import (
@@ -767,6 +767,12 @@ def _resolve_catalog_slot_value(
     name = _slot_value_name(value)
     if catalog is None or not catalog.roles or not name:
         return None, None, []
+    if isinstance(value, dict) and value.get("role_id") is not None:
+        id_match = resolve_cw_role_id(value.get("role_id"), catalog)
+        if id_match is None:
+            stable = _strip_slot_match_diagnostics(value)
+            return stable, deepcopy(stable), []
+        return _slot_value_from_catalog_match(value, id_match), _slot_response_from_catalog_match(value, id_match), []
 
     match = resolve_cw_role_name(name, catalog, position=position)
     if match is None:

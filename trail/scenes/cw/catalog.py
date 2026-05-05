@@ -224,6 +224,25 @@ def _rank_role_matches(query: str, catalog: CwCatalog) -> list[tuple[float, str,
     return ranked
 
 
+def resolve_cw_role_id(role_id: object, catalog: CwCatalog) -> CwRoleMatch | None:
+    if role_id is None:
+        return None
+    role_id_text = str(role_id).strip()
+    if not role_id_text:
+        return None
+    for role in catalog.roles:
+        if role.get("id") != role_id_text:
+            continue
+        return CwRoleMatch(
+            name=str(role["name"]),
+            role_id=role_id_text,
+            traits=list(role.get("traits") or []),
+            match_kind="exact",
+            match_score=1.0,
+        )
+    return None
+
+
 def _role_warning(
     *,
     code: str,

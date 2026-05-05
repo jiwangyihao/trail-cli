@@ -1852,12 +1852,17 @@ def test_slots_read_preserves_variable_cost_role_identity_from_icon_result(tmp_p
 
     session = build_fake_cw_session(tmp_path)
     guide_config = {
-        "traits": [{"id": "2002", "name": "量子", "layers": [{"layer": 2}]}],
+        "traits": [
+            {"id": "1002", "name": "星核猎手", "layers": [{"layer": 1}, {"layer": 2}]},
+            {"id": "2009", "name": "量子同频", "layers": [{"layer": 1}, {"layer": 2}]},
+            {"id": "2012", "name": "欢愉", "layers": [{"layer": 1}, {"layer": 2}]},
+            {"id": "3006", "name": "头号玩家", "layers": [{"layer": 1}, {"layer": 2}]},
+        ],
         "roles": [
-            {"id": "1003", "name": "银狼", "trait_ids": ["2002"]},
-            {"id": "15061", "name": "银狼LV.999", "trait_ids": ["2002"]},
-            {"id": "15062", "name": "银狼LV.999", "trait_ids": ["2002"]},
-            {"id": "15063", "name": "银狼LV.999", "trait_ids": ["2002"]},
+            {"id": "1006", "name": "银狼", "trait_ids": ["1002", "2009"]},
+            {"id": "15061", "name": "银狼LV.999", "trait_ids": ["1002", "2012", "3006"]},
+            {"id": "15062", "name": "银狼LV.999", "trait_ids": ["1002", "2012", "3006"]},
+            {"id": "15063", "name": "银狼LV.999", "trait_ids": ["1002", "2012", "3006"]},
         ],
     }
 
@@ -1872,7 +1877,7 @@ def test_slots_read_preserves_variable_cost_role_identity_from_icon_result(tmp_p
                     "cost": "5",
                     "star": 1,
                 },
-                {"name": "银狼", "role_id": "1003", "rarity": "4", "star": 1},
+                {"name": "银狼", "role_id": "1006", "rarity": "4", "star": 1},
                 None,
                 None,
             ],
@@ -1888,14 +1893,56 @@ def test_slots_read_preserves_variable_cost_role_identity_from_icon_result(tmp_p
         "star": 1,
         "rarity": "5",
         "cost": 5,
-        "traits": ["量子"],
+        "traits": ["星核猎手", "欢愉", "头号玩家"],
     }
     assert refreshed.scene_state["cw"]["slots"]["front"][1] == {
         "name": "银狼",
-        "role_id": "1003",
+        "role_id": "1006",
         "star": 1,
         "rarity": "4",
-        "traits": ["量子"],
+        "traits": ["星核猎手", "量子同频"],
+    }
+
+
+def test_slots_read_preserves_unmatched_role_id_identity(tmp_path):
+    slots_module = load_cw_slots_module()
+    read_cw_slots = getattr(slots_module, "read_cw_slots", None)
+    assert read_cw_slots is not None
+
+    session = build_fake_cw_session(tmp_path)
+    refreshed = read_cw_slots(
+        session,
+        reader=lambda: (
+            [
+                {
+                    "name": "银狼LV.999",
+                    "role_id": "15063",
+                    "rarity": "5",
+                    "cost": "5",
+                    "star": 1,
+                },
+                None,
+                None,
+                None,
+            ],
+            [None] * 6,
+            [None] * 9,
+        ),
+        guide_config={
+            "traits": [
+                {"id": "1002", "name": "星核猎手", "layers": [{"layer": 1}, {"layer": 2}]},
+                {"id": "2009", "name": "量子同频", "layers": [{"layer": 1}, {"layer": 2}]},
+            ],
+            "roles": [{"id": "1006", "name": "银狼", "trait_ids": ["1002", "2009"]}],
+        },
+    )
+
+    assert refreshed.scene_state["cw"]["slots"]["front"][0] == {
+        "name": "银狼LV.999",
+        "role_id": "15063",
+        "star": 1,
+        "rarity": "5",
+        "cost": "5",
     }
 
 
