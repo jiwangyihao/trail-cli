@@ -180,6 +180,25 @@ def test_shop_item_with_known_lv999_cost_canonicalizes_alias_and_clears_unknown_
     assert item == {"name": "银狼LV.999", "cost": 4}
 
 
+def test_bind_variable_cost_shop_item_does_not_backfill_when_roles_stale() -> None:
+    cw_state: ObjectDict = {"variable_cost_roles_stale": True, "variable_cost_roles": {"银狼LV.999": {"cost": 4}}}
+
+    item = bind_cw_variable_cost_shop_item({"name": "银狼LV999"}, cw_state)
+
+    assert item["name"] == "银狼LV.999"
+    assert item["uncertain"] is True
+    assert item["stale"] is True
+    assert "cost" not in item
+
+
+def test_bind_variable_cost_shop_item_ignores_nested_stale_flags_for_backfill() -> None:
+    cw_state: ObjectDict = {"variable_cost_roles": {"stale": True, "银狼LV.999": {"cost": 4, "stale": True}}}
+
+    item = bind_cw_variable_cost_shop_item({"name": "银狼LV999"}, cw_state)
+
+    assert item == {"name": "银狼LV.999", "cost": 4}
+
+
 def test_cost_up_syncs_shop_items_to_next_cost_and_clears_unknown_flags() -> None:
     cw_state: ObjectDict = {
         "variable_cost_roles": {"银狼LV.999": {"cost": 3, "star": 2, "choice_available": True, "confirmed_choices_by_cost": {}}},

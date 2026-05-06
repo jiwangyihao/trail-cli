@@ -65,6 +65,10 @@ def _variable_state(cw_state: ObjectDict, role_name: str) -> ObjectDict | None:
     return cast(ObjectDict, state) if isinstance(state, dict) else None
 
 
+def is_variable_cost_roles_stale(cw_state: ObjectDict) -> bool:
+    return cw_state.get("variable_cost_roles_stale") is True
+
+
 def bind_cw_variable_cost_shop_item(item: ObjectDict, cw_state: ObjectDict) -> ObjectDict:
     bound = dict(item)
     if not is_cw_variable_cost_role(bound.get("name")):
@@ -72,7 +76,7 @@ def bind_cw_variable_cost_shop_item(item: ObjectDict, cw_state: ObjectDict) -> O
     bound["name"] = VARIABLE_COST_ROLE_NAME
     state = _variable_state(cw_state, VARIABLE_COST_ROLE_NAME)
     cost = _parse_variable_cost(bound.get("cost"))
-    if cost is None:
+    if cost is None and not is_variable_cost_roles_stale(cw_state):
         cost = _parse_variable_cost(state.get("cost") if state else None)
     if cost is None:
         _ = bound.pop("cost", None)
