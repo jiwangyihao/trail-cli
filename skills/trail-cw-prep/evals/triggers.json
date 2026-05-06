@@ -27,5 +27,6 @@
   {"prompt":"货币战争普通备战页，让我先看当前攻略运营提醒和可用命令","sample_type":"competition","candidates":["trail-cw-guide","trail-cw-prep"],"expected_winner":"trail-cw-prep"},
   {"prompt":"补给事件页出现三个选项，trail-cw-prep 能不能直接选","sample_type":"competition","candidates":["trail-cw-prep"],"expected_winner":"none"},
   {"prompt":"BOSS 前最后一次备战要决定站位，普通 prep skill 不应接管","sample_type":"competition","candidates":["trail-cw-prep"],"expected_winner":"none"},
-  {"prompt":"unknown 阶段且 session tainted=1，prep 应停止自治并交回上游","sample_type":"competition","candidates":["trail-cw-prep"],"expected_winner":"none"}
+  {"prompt":"unknown 阶段且 session tainted=1，prep 应停止自治并交回上游","sample_type":"competition","candidates":["trail-cw-prep"],"expected_winner":"none"},
+  {"prompt":"cw.event.handle event_type=unknown next_action=manual，trail-cw-prep 应让 trail-cw-event-unknown 接管并等待 cw.event.reconcile","sample_type":"competition","candidates":["trail-cw-prep","trail-cw-event-unknown"],"expected_winner":"trail-cw-event-unknown"}
 ]

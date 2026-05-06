@@ -22,13 +22,15 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 
 - 普通备战和商店阶段由本 skill 消费事实并推进闭环。
 - 补给、投资、遭遇、命运卜者、通用事件、投资策略页、BOSS 前备战、结算和 game over 不由本 skill 预设策略；遇到这些页面时，按相关 CLI 输出的 handoff、next_action 或 recover 指示继续。
-- unknown、tainted、request-status、daemon 恢复问题同样以 CLI 输出为准；本 skill 不直接 handoff 到 `trail-hsr-advanced`，也不自行编造恢复层路径。
+- `cw.event.handle` 若输出 `event_type=unknown`、`next_action=manual` 或 `handoff_skill=trail-cw-event-unknown`，普通备战自治立即停止，切到 unknown 手工处理 skill；该路径手工处理后必须通过 `cw.event.reconcile` 恢复可验证事实。
+- tainted、request-status、daemon 恢复问题同样以 CLI 输出为准；本 skill 不直接 handoff 到 `trail-hsr-advanced`，也不自行编造恢复层路径。
 
 ## Required First Actions
 
 - 若上一条命令输出 `shot path=...` 和 `info read_image_first=1`，必须先读取原始截图。
 - 若上一条 `cw.portal.select` 或 `cw.battle.run` preparation success 已经同时输出阶段、槽位、装备、商店、羁绊等普通备战首帧结构化事实，先结合截图消费这些事实；不要为了“重新确认”而立刻重复运行 `stage` / `slots` / `equipment` / `shop` 读命令。
 - 若上一条 `cw.portal.select` 或 `cw.battle.run` preparation success 输出含 `info skill_info=运营思路 text=...`，必须先把它读作当前攻略的动态提醒；它不是已解析策略，必须不发明默认优先级。
+- 若上一条 `cw.event.handle` 输出 `event_type=unknown`、`next_action=manual`、`stale_facts=stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles` 或 `crystals_stale=0`，本 skill 只记录事实已 stale，不继续做普通备战动作；按 handoff 切到 `trail-cw-event-unknown`，手工处理后再运行 `trail cw event reconcile --session <id>`。
 - 若上一条 `cw.portal.select` success 输出含 stage/slots/equipment/shop facts，或上一条 `cw.battle.run` preparation success 输出同类 facts，说明它可能已经提供最新首帧快照；必须先读截图，再用这些文本事实制定第一步备战动作。
 - 接收 `cw.portal.select` handoff 时，优先复用该响应中标题下 facts；`cw.battle.run` preparation handoff 同理。`# ` 行只是板块标题，不是 action/prefix/fact，Agent 只消费实体行。读完截图后，再消费这些标题下的事实：`# 综合信息` 下看 stage/status，`# 攻略提示` 下看 skill_info，`# 角色信息` 下看 slot，`# 羁绊信息` 下看 trait summary，`# 装备信息` 下看装备背包 item/summary info，`# 装备优先级` 下看装备推荐 guide，`# 角色装备需求` 下看角色装备需求 slot/info，`# 商店信息` 下看 item/coins/reserve facts；只有缺失、stale 或页面变化才重扫。
 - `cw.battle.run` 的 preparation handoff 与 `cw.portal.select` 一样先复用同次 stage/slots/equipment/shop facts；差异只在 daemon 为节约时间使用不同读取顺序，Agent 消费输出时不需要按内部读取顺序重排。
@@ -57,6 +59,8 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 - `trail cw crystals collect`：截图确认本轮有可收晶矿时执行；收取后根据新截图判断手牌区是否变化。
 - `trail cw hand sell-plan|sell`：读取或执行卖牌动作。
 - `trail cw event handle --session <id> --variable-cost-choice cost_up|equipment`：LV999 显式选择事件入口；CLI 会把 `variable_cost_choice` 发送给 daemon，供 `cost_up` 或装备选择后同步当前 `银狼LV.999` 状态。
+- `trail cw event handle --session <id>` 返回 `event_type=unknown` / `next_action=manual` 时，按 `handoff_skill=trail-cw-event-unknown` 离开本 skill；unknown 路径会标记 `stale_facts=stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles` 且保留 `crystals_stale=0`。若出现 `CW_EVENT_LV999_STATE_STALE`，等 reconcile 或补扫恢复 LV999 cost / star / slot 事实后再继续买卖判断。
+- `trail cw event reconcile --session <id>`：未知事件手工处理后的恢复入口；它用于确认 stale facts 是否已经恢复。若仍提示 strategy / sell_plan / slots / shop / equipment stale，先补跑对应读命令；确认回到普通备战或商店后再继续本 skill。
 - `trail cw battle run --session <id>`：出战前检查完成后执行出战和战斗链；默认 timeout 是 `90s`，不要再把旧长超时当默认流程。
 
 ## Autonomy Boundary
@@ -131,7 +135,7 @@ description: 当上游已经进入货币战争普通备战阶段，并且需要�
 ## Stop Conditions
 
 - 本 skill 不维护额外人工停止清单；普通备战内应持续自治直到完成出战判断。
-- 如果命令输出 `handoff_skill`、`next_action`、`recover`、`request id=...`、`tainted=1` 或明确错误码，按输出协议继续，不用本 skill 猜测替代路径。
+- 如果命令输出 `handoff_skill`、`next_action`、`recover`、`request id=...`、`tainted=1` 或明确错误码，按输出协议继续，不用本 skill 猜测替代路径；`cw.event.handle(event_type=unknown)` 固定切到 `trail-cw-event-unknown`，不要在 prep 内手工处理未知事件。
 - 如果当前攻略缺失或不完整，避免推进依赖攻略推荐角色、攻略等级节点或攻略阵容的判断；先按现有命令输出补齐或重新选择攻略。
 
 ## Reference Map
