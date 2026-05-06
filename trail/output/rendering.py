@@ -468,6 +468,13 @@ def _select_workflow_handoff(command: Any, payload: dict[str, Any]) -> dict[str,
     status_handoffs = statuses if isinstance(statuses, dict) else {}
 
     data = _as_dict(payload.get("data"))
+    event_type = _first_string(data.get("event_type"))
+    event_type_handoffs = command_handoff.get("event_types")
+    if event_type is not None and isinstance(event_type_handoffs, dict):
+        event_type_handoff = event_type_handoffs.get(event_type)
+        if isinstance(event_type_handoff, dict):
+            return event_type_handoff
+
     status = _first_string(data.get("status"))
     stage = _first_string(data.get("stage"))
     if status is not None:
@@ -1669,13 +1676,50 @@ def _render_cw_event_result(command: str, payload: dict[str, Any]) -> list[str]:
     choice_value = data.get("variable_cost_choice")
     if isinstance(choice_value, dict):
         choice_value = choice_value.get("choice")
-    return _render_success_summary(
-        command,
-        payload,
+    summary = _format_fact_sequence(
         ("event_type", data.get("event_type")),
+        ("handled", bool(data.get("handled")) if "handled" in data else None),
         ("handled_action", data.get("handled_action")),
+        ("next_action", data.get("next_action")),
         ("variable_cost_choice", choice_value),
     )
+    lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
+    _append_success_capture_block(lines, payload)
+    _append_fact_line(
+        lines,
+        "info",
+        ("stale", bool(data.get("stale")) if "stale" in data else None),
+        ("stale_facts", data.get("stale_facts") if "stale_facts" in data else None),
+        ("crystals_stale", bool(data.get("crystals_stale")) if "crystals_stale" in data else None),
+        ("reconcile_action", data.get("reconcile_action") if "reconcile_action" in data else None),
+    )
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
+
+
+def _render_cw_event_reconcile_result(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    summary = _format_fact_sequence(
+        ("stage", data.get("stage") if "stage" in data else None),
+        ("stale", bool(data.get("stale")) if "stale" in data else None),
+        ("reconciled", data.get("reconciled") if "reconciled" in data else None),
+        ("stale_facts", data.get("stale_facts") if "stale_facts" in data else None),
+        ("next_action", data.get("next_action") if "next_action" in data else None),
+    )
+    lines = [f"ok {command} {summary}" if summary else f"ok {command}"]
+    _append_success_capture_block(lines, payload)
+    _append_fact_line(
+        lines,
+        "info",
+        ("stale", bool(data.get("stale")) if "stale" in data else None),
+        ("stale_facts", data.get("stale_facts") if "stale_facts" in data else None),
+        ("todo", data.get("todo") if "todo" in data else None),
+        ("why", data.get("why") if "why" in data else None),
+    )
+    _append_warnings(lines, payload)
+    _append_references(lines, payload)
+    return lines
 
 
 def _extract_ocr_points(value: Any) -> list[tuple[float, float]]:
@@ -2227,6 +2271,7 @@ TEXT_RENDERERS = {
     "cw.battle.clear_in_progress": _render_cw_battle_clear_in_progress,
     "cw.settle.next": _render_cw_stage,
     "cw.event.handle": _render_cw_event_result,
+    "cw.event.reconcile": _render_cw_event_reconcile_result,
     "window.attach": _render_window_attach,
     "window.launch": _render_window_launch,
     "session.create": _render_session_create,

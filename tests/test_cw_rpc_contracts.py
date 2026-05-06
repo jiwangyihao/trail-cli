@@ -1571,7 +1571,7 @@ def test_cw_event_handle_renders_event_result(cli_runner, fake_daemon_client, tm
         {
             "cw.event.handle": build_success_response(
                 request_id="req-cw-event-handle",
-                data={"event_type": "special", "handled_action": "confirm"},
+                data={"event_type": "special_confirm", "handled": True, "handled_action": "confirm"},
             )
         }
     )
@@ -1579,7 +1579,9 @@ def test_cw_event_handle_renders_event_result(cli_runner, fake_daemon_client, tm
     result = cli_runner.invoke(app, ["cw", "event", "handle", "--session", SESSION_ID])
 
     assert result.exit_code == 0
-    assert result.stdout.splitlines() == ["ok cw.event.handle event_type=special handled_action=confirm"]
+    assert result.stdout.splitlines() == [
+        "ok cw.event.handle event_type=special_confirm handled=1 handled_action=confirm"
+    ]
     _assert_single_call(client, method="cw.event.handle", payload={}, tmp_path=tmp_path)
 
 
@@ -1589,7 +1591,8 @@ def test_cw_event_handle_sends_variable_cost_choice(cli_runner, fake_daemon_clie
             "cw.event.handle": build_success_response(
                 request_id="req-cw-event-handle-variable-cost-choice",
                 data={
-                    "event_type": "special",
+                    "event_type": "lv999_choice",
+                    "handled": True,
                     "handled_action": "confirm",
                     "variable_cost_choice": {"role_name": "银狼LV.999", "choice": "cost_up"},
                 },
@@ -1604,7 +1607,7 @@ def test_cw_event_handle_sends_variable_cost_choice(cli_runner, fake_daemon_clie
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
-        "ok cw.event.handle event_type=special handled_action=confirm variable_cost_choice=cost_up"
+        "ok cw.event.handle event_type=lv999_choice handled=1 handled_action=confirm variable_cost_choice=cost_up"
     ]
     _assert_single_call(
         client,
@@ -1612,6 +1615,102 @@ def test_cw_event_handle_sends_variable_cost_choice(cli_runner, fake_daemon_clie
         payload={"variable_cost_choice": {"role_name": "银狼LV.999", "choice": "cost_up"}},
         tmp_path=tmp_path,
     )
+
+
+def test_cw_event_handle_unknown_renders_stale_info_and_handoff(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.event.handle": build_success_response(
+                request_id="req-cw-event-handle-unknown",
+                data={
+                    "event_type": "unknown",
+                    "handled": False,
+                    "next_action": "manual",
+                    "stale": True,
+                    "stale_facts": "stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles",
+                    "crystals_stale": False,
+                    "reconcile_action": "cw.event.reconcile",
+                },
+                screenshot=".trail/shots/req-cw-event-handle-unknown.png",
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "event", "handle", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == _expected_lines(
+        "ok cw.event.handle event_type=unknown handled=0 next_action=manual",
+        screenshot=".trail/shots/req-cw-event-handle-unknown.png",
+        body=[
+            "info stale=1 stale_facts=stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles crystals_stale=0 reconcile_action=cw.event.reconcile",
+            "info handoff_skill=trail-cw-event-unknown handoff_strength=strong handoff_reason=event_unknown_manual_required",
+        ],
+    )
+    assert result.stdout.rstrip().endswith(
+        "info handoff_skill=trail-cw-event-unknown handoff_strength=strong handoff_reason=event_unknown_manual_required"
+    )
+    _assert_single_call(client, method="cw.event.handle", payload={}, tmp_path=tmp_path)
+
+
+def test_cw_event_handle_rejects_yaml_output_without_rpc(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {
+            "cw.event.handle": build_success_response(
+                request_id="req-cw-event-handle-yaml",
+                data={"event_type": "unknown", "handled": False},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["--format", "yaml", "cw", "event", "handle", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.event.handle code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        'why msg="yaml not supported for cw.event.handle"',
+    ]
+    assert client.calls == []
+
+
+def test_cw_event_reconcile_cli_calls_daemon_with_empty_payload(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client(
+        {
+            "cw.event.reconcile": build_success_response(
+                request_id="req-cw-event-reconcile",
+                data={"stage": "preparation", "stale": False, "reconciled": "stage", "stale_facts": "none"},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["cw", "event", "reconcile", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "ok cw.event.reconcile stage=preparation stale=0 reconciled=stage stale_facts=none",
+        "info stale=0 stale_facts=none",
+    ]
+    _assert_single_call(client, method="cw.event.reconcile", payload={}, tmp_path=tmp_path)
+
+
+def test_cw_event_reconcile_rejects_yaml_output_without_rpc(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {
+            "cw.event.reconcile": build_success_response(
+                request_id="req-cw-event-reconcile-yaml",
+                data={"stage": "preparation", "stale": False, "reconciled": "stage", "stale_facts": "none"},
+            )
+        }
+    )
+
+    result = cli_runner.invoke(app, ["--format", "yaml", "cw", "event", "reconcile", "--session", SESSION_ID])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "fail cw.event.reconcile code=OUTPUT_FORMAT_NOT_SUPPORTED",
+        'why msg="yaml not supported for cw.event.reconcile"',
+    ]
+    assert client.calls == []
 
 
 def test_cw_invest_read_renders_options(cli_runner, fake_daemon_client, tmp_path):

@@ -5445,6 +5445,75 @@ def test_render_output_renders_cw_event_handle_summary_text():
     ]
 
 
+def test_render_cw_event_handle_unknown_handoff_is_last_line(monkeypatch):
+    monkeypatch.setattr(
+        rendering_module,
+        "_load_workflow_handoffs",
+        lambda: {
+            "cw.event.handle": {
+                "event_types": {
+                    "unknown": {
+                        "handoff_skill": "trail-cw-event-unknown",
+                        "handoff_strength": "strong",
+                        "handoff_reason": "event_unknown_manual_required",
+                    }
+                }
+            }
+        },
+    )
+    payload = {
+        "ok": True,
+        "data": {
+            "event_type": "unknown",
+            "handled": False,
+            "next_action": "manual",
+            "stale": True,
+            "stale_facts": "stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles",
+            "crystals_stale": False,
+            "reconcile_action": "cw.event.reconcile",
+        },
+        "screenshot": ".trail/shots/req-cw-event-handle-unknown.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.event.handle", payload).splitlines() == [
+        "ok cw.event.handle event_type=unknown handled=0 next_action=manual",
+        "shot path=.trail/shots/req-cw-event-handle-unknown.png",
+        "info read_image_first=1",
+        "info stale=1 stale_facts=stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles crystals_stale=0 reconcile_action=cw.event.reconcile",
+        "info handoff_skill=trail-cw-event-unknown handoff_strength=strong handoff_reason=event_unknown_manual_required",
+    ]
+
+
+def test_render_cw_event_reconcile_outputs_capture_and_falsy_fields_by_key_presence():
+    payload = {
+        "ok": True,
+        "data": {
+            "stage": "preparation",
+            "stale": False,
+            "reconciled": "stage|slots|shop|equipment",
+            "stale_facts": "none",
+        },
+        "screenshot": ".trail/shots/req-cw-event-reconcile.png",
+        "timing": {},
+        "warnings": [],
+        "references": [],
+        "debug": None,
+        "error": None,
+    }
+
+    assert render_output("cw.event.reconcile", payload).splitlines() == [
+        "ok cw.event.reconcile stage=preparation stale=0 reconciled=stage|slots|shop|equipment stale_facts=none",
+        "shot path=.trail/shots/req-cw-event-reconcile.png",
+        "info read_image_first=1",
+        "info stale=0 stale_facts=none",
+    ]
+
+
 def test_render_output_renders_cw_hand_sell_plan_text():
     payload = {
         "ok": True,
