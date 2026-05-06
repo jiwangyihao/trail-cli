@@ -23,6 +23,7 @@ from trail.scenes.cw.variable_cost import (
     _parse_star,
     _parse_variable_cost,
     is_cw_variable_cost_role,
+    is_variable_cost_roles_stale,
 )
 from trail.runtime.resources import resolve_scene_asset
 from trail.session.models import SessionModel
@@ -325,6 +326,16 @@ def _merge_area_snapshot(previous: Any, current: list[Any], *, size: int, target
     return merged
 
 
+def _covered_area_snapshot(current: list[Any], *, size: int, targets: set[int] | None) -> list[Any]:
+    if targets is None:
+        return list(current)
+    covered = [None] * size
+    for index in targets:
+        if index < len(current):
+            covered[index] = current[index]
+    return covered
+
+
 def _normalized_slot_equipments(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return []
@@ -462,6 +473,8 @@ def _variable_cost_role_state(cw_state: dict[str, Any]) -> dict[str, Any] | None
 
 
 def _known_variable_cost_phase(cw_state: dict[str, Any]) -> int | None:
+    if is_variable_cost_roles_stale(cw_state):
+        return None
     state = _variable_cost_role_state(cw_state)
     return _parse_variable_cost(state.get("cost") if state is not None else None)
 
@@ -531,6 +544,30 @@ def _normalize_variable_cost_area(
     return normalized, warnings
 
 
+def _mask_unread_stale_variable_cost_values(
+    values: list[Any],
+    *,
+    cw_state: dict[str, Any],
+    targets: set[int] | None,
+    variable_cost_roles_stale: bool | None = None,
+) -> list[Any]:
+    stale = is_variable_cost_roles_stale(cw_state) if variable_cost_roles_stale is None else variable_cost_roles_stale
+    if targets is None or not stale:
+        return values
+    output: list[Any] = []
+    for index, value in enumerate(values):
+        if index in targets or not isinstance(value, dict) or not is_cw_variable_cost_role(value.get("name")):
+            output.append(value)
+            continue
+        masked = deepcopy(value)
+        masked.pop("cost", None)
+        masked.pop("star", None)
+        masked["uncertain"] = True
+        masked["stale"] = True
+        output.append(masked)
+    return output
+
+
 def _normalized_confirmed_variable_cost_choices(value: Any) -> dict[object, object]:
     if not isinstance(value, dict):
         return {}
@@ -562,6 +599,7 @@ def _update_variable_cost_roles_from_slots(cw_state: dict[str, Any], front: list
     entries = _iter_reliable_variable_cost_slots(("front", front), ("back", back), ("hand", hand))
     if not entries:
         return
+    cw_state["variable_cost_roles_stale"] = False
 
     fielded = next((entry for entry in entries if entry[0] != "hand"), None)
     _chosen_area, cost, _chosen_star = fielded or entries[0]
@@ -1352,9 +1390,64 @@ def read_cw_slots(
         size=len(HAND_SLOT_POINTS),
         targets=None if parsed_targets is None else parsed_targets["hand"],
     )
+    observed_front = _covered_area_snapshot(
+        front,
+        size=len(FRONT_SLOT_POINTS),
+        targets=None if parsed_targets is None else parsed_targets["front"],
+    )
+    observed_back = _covered_area_snapshot(
+        back,
+        size=len(BACK_SLOT_POINTS),
+        targets=None if parsed_targets is None else parsed_targets["back"],
+    )
+    observed_hand = _covered_area_snapshot(
+        hand,
+        size=len(HAND_SLOT_POINTS),
+        targets=None if parsed_targets is None else parsed_targets["hand"],
+    )
+    variable_cost_roles_was_stale = is_variable_cost_roles_stale(cw_state)
+    output_front = _mask_unread_stale_variable_cost_values(
+        output_front,
+        cw_state=cw_state,
+        targets=None if parsed_targets is None else parsed_targets["front"],
+        variable_cost_roles_stale=variable_cost_roles_was_stale,
+    )
+    output_back = _mask_unread_stale_variable_cost_values(
+        output_back,
+        cw_state=cw_state,
+        targets=None if parsed_targets is None else parsed_targets["back"],
+        variable_cost_roles_stale=variable_cost_roles_was_stale,
+    )
+    output_hand = _mask_unread_stale_variable_cost_values(
+        output_hand,
+        cw_state=cw_state,
+        targets=None if parsed_targets is None else parsed_targets["hand"],
+        variable_cost_roles_stale=variable_cost_roles_was_stale,
+    )
     merged_front, _ = _normalize_variable_cost_area(merged_front, cw_state=cw_state, area="front", emit_warnings=False)
     merged_back, _ = _normalize_variable_cost_area(merged_back, cw_state=cw_state, area="back", emit_warnings=False)
     merged_hand, _ = _normalize_variable_cost_area(merged_hand, cw_state=cw_state, area="hand", emit_warnings=False)
+    merged_front = _mask_unread_stale_variable_cost_values(
+        merged_front,
+        cw_state=cw_state,
+        targets=None if parsed_targets is None else parsed_targets["front"],
+        variable_cost_roles_stale=variable_cost_roles_was_stale,
+    )
+    merged_back = _mask_unread_stale_variable_cost_values(
+        merged_back,
+        cw_state=cw_state,
+        targets=None if parsed_targets is None else parsed_targets["back"],
+        variable_cost_roles_stale=variable_cost_roles_was_stale,
+    )
+    merged_hand = _mask_unread_stale_variable_cost_values(
+        merged_hand,
+        cw_state=cw_state,
+        targets=None if parsed_targets is None else parsed_targets["hand"],
+        variable_cost_roles_stale=variable_cost_roles_was_stale,
+    )
+    observed_front, _ = _normalize_variable_cost_area(observed_front, cw_state=cw_state, area="front", emit_warnings=False)
+    observed_back, _ = _normalize_variable_cost_area(observed_back, cw_state=cw_state, area="back", emit_warnings=False)
+    observed_hand, _ = _normalize_variable_cost_area(observed_hand, cw_state=cw_state, area="hand", emit_warnings=False)
     output_front, front_variable_warnings = _normalize_variable_cost_area(
         output_front,
         cw_state=cw_state,
@@ -1374,7 +1467,7 @@ def read_cw_slots(
         emit_warnings=True,
     )
     match_warnings.extend([*front_variable_warnings, *back_variable_warnings, *hand_variable_warnings])
-    _update_variable_cost_roles_from_slots(cw_state, merged_front, merged_back, merged_hand)
+    _update_variable_cost_roles_from_slots(cw_state, observed_front, observed_back, observed_hand)
     slots_state: dict[str, Any] = {
         "front": deepcopy(merged_front),
         "back": deepcopy(merged_back),

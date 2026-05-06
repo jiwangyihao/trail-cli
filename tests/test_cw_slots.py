@@ -412,6 +412,80 @@ def test_read_cw_slots_fills_missing_lv999_cost_from_known_current_phase(tmp_pat
     assert session.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]["cost"] == 4
 
 
+def test_read_cw_slots_does_not_backfill_lv999_cost_when_variable_cost_roles_stale(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles_stale"] = True
+    session.scene_state["cw"]["variable_cost_roles"] = {"银狼LV.999": {"cost": 4, "star": 1}}
+    snapshot = ([{"name": "银狼LV.999", "star": 1}], [], [])
+
+    result = _read_cw_slots_variable_cost(session, snapshot)
+
+    role = result.response_snapshot["front"][0]
+    assert role["name"] == "银狼LV.999"
+    assert role["uncertain"] is True
+    assert role["stale"] is True
+    assert "cost" not in role
+    assert result.response_snapshot["warnings"][0]["code"] == "CW_SLOTS_LV999_COST_UNKNOWN"
+    variable_roles = session.scene_state["cw"]["variable_cost_roles"]
+    assert isinstance(variable_roles, dict)
+    variable_role = variable_roles["银狼LV.999"]
+    assert isinstance(variable_role, dict)
+    assert session.scene_state["cw"]["variable_cost_roles_stale"] is True
+    assert variable_role["cost"] == 4
+
+
+def test_read_cw_slots_clears_variable_cost_roles_stale_after_reliable_lv999_observation(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles_stale"] = True
+    session.scene_state["cw"]["variable_cost_roles"] = {"银狼LV.999": {"cost": 4, "star": 1}}
+    snapshot = ([{"name": "银狼LV.999", "cost": 4, "star": 1}], [], [])
+
+    _read_cw_slots_variable_cost(session, snapshot)
+
+    assert session.scene_state["cw"]["variable_cost_roles_stale"] is False
+
+
+def test_read_cw_slots_keeps_variable_cost_roles_stale_without_reliable_lv999_observation(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    session.scene_state["cw"]["variable_cost_roles_stale"] = True
+    session.scene_state["cw"]["variable_cost_roles"] = {"银狼LV.999": {"cost": 4, "star": 1}}
+    snapshot = ([{"name": "希儿"}], [], [])
+
+    _read_cw_slots_variable_cost(session, snapshot)
+
+    assert session.scene_state["cw"]["variable_cost_roles_stale"] is True
+
+
+def test_read_cw_slots_targeted_read_does_not_refresh_lv999_from_unread_previous_snapshot(tmp_path):
+    session = build_fake_cw_session(tmp_path)
+    cw_state = session.scene_state["cw"]
+    cw_state["variable_cost_roles_stale"] = True
+    cw_state["variable_cost_roles"] = {"银狼LV.999": {"cost": 4, "star": 1}}
+    cw_state["slots"] = {
+        "front": [{"name": "银狼LV.999", "cost": 4, "star": 1}, None, None, None],
+        "back": [None] * 6,
+        "hand": [None] * 9,
+        "stale": False,
+    }
+    snapshot = ([None, {"name": "希儿"}, None, None], [None] * 6, [None] * 9)
+
+    result = _read_cw_slots_variable_cost(session, snapshot, targets=["front:1"])
+
+    assert session.scene_state["cw"]["variable_cost_roles_stale"] is True
+    response_lv999 = result.response_snapshot["front"][0]
+    assert response_lv999["name"] == "银狼LV.999"
+    assert response_lv999["uncertain"] is True
+    assert response_lv999["stale"] is True
+    assert "cost" not in response_lv999
+    assert "star" not in response_lv999
+    persisted_lv999 = session.scene_state["cw"]["slots"]["front"][0]
+    assert persisted_lv999["name"] == "银狼LV.999"
+    assert persisted_lv999["uncertain"] is True
+    assert persisted_lv999["stale"] is True
+    assert "cost" not in persisted_lv999
+    assert "star" not in persisted_lv999
+
+
 def test_read_cw_slots_marks_lv999_missing_cost_uncertain_without_reliable_state(tmp_path):
     session = build_fake_cw_session(tmp_path)
     snapshot = ([{"name": "银狼LV.999", "star": 1}], [], [])
