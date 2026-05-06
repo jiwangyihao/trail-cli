@@ -1,16 +1,54 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from typing import Literal, NoReturn, NotRequired, TypedDict, cast
 
 from trail.core.errors import TrailError
 from trail.runtime.resources import resolve_scene_asset
-from trail.scenes.cw.stage import mark_cw_stage_stale
-from trail.scenes.cw.variable_cost import apply_cw_variable_cost_choice
+from trail.scenes.cw.models import ensure_cw_state
+from trail.scenes.cw.stage import mark_cw_stage_stale, mark_cw_stage_status_stale
+from trail.scenes.cw.variable_cost import (
+    VARIABLE_COST_ROLE_NAME,
+    VARIABLE_COST_ROLE_COSTS,
+    _choice_for_cost,
+    _parse_star,
+    _parse_variable_cost,
+    apply_cw_variable_cost_choice,
+    is_cw_variable_cost_role,
+    is_variable_cost_roles_stale,
+)
 from trail.session.models import SessionModel
 
 OptionChooser = Callable[[int], object]
 EventHandler = Callable[[], tuple[str, str]]
 SceneAction = Callable[[], object]
+CwEventType = Literal["lv999_choice", "special_confirm", "replenish", "invest", "encounter", "fortune", "unknown"]
+
+
+class CwEventOption(TypedDict):
+    role_name: str
+    choice: str
+
+
+class CwEventDetection(TypedDict):
+    event_type: CwEventType
+    text: str
+
+
+class CwEventResult(TypedDict):
+    event_type: CwEventType
+    handled: bool
+    next_action: NotRequired[str]
+    handled_action: NotRequired[str]
+    variable_cost_choice: NotRequired[dict[str, object]]
+
+
+CwEventRouter = Callable[[CwEventOption | None], CwEventResult]
+
+LV999_EVENT_CHOICE_TEXTS: dict[str, set[str]] = {
+    "cost_up": {"提升费用", "费用提升", "升费"},
+    "equipment": {"获得装备", "选择装备", "装备"},
+}
 
 CW_WIDTH = 1920
 CW_HEIGHT = 1080
@@ -25,6 +63,12 @@ CW_BATTLE_TEAM_COUNT_CONFIRM_REGION = {
     "from_y": 0.25,
     "to_x": 0.75,
     "to_y": 0.75,
+}
+CW_EVENT_NEXT_ACTIONS: dict[CwEventType, str] = {
+    "replenish": "cw.replenish.choose",
+    "invest": "cw.invest.choose",
+    "encounter": "cw.encounter.choose",
+    "fortune": "cw.fortune.choose",
 }
 
 
@@ -276,6 +320,56 @@ def build_cw_event_handler(runtime) -> EventHandler:
     return handler
 
 
+def _cw_event_type_from_text(text: str) -> CwEventType | None:
+    normalized = _normalized_action_text(text)
+    normalized_lv = normalized.replace(".", "").lower()
+    if "银狼" in normalized and "lv999" in normalized_lv:
+        return "lv999_choice"
+    if "特殊事件" in normalized or ("特殊" in normalized and "确认" in normalized):
+        return "special_confirm"
+    if "补给" in normalized:
+        return "replenish"
+    if "投资" in normalized:
+        return "invest"
+    if "遭遇" in normalized:
+        return "encounter"
+    if "命运卜者" in normalized or "命运" in normalized:
+        return "fortune"
+    return None
+
+
+def detect_cw_event(runtime) -> CwEventDetection:
+    text = _joined_ocr_text(runtime)
+    event_type = _cw_event_type_from_text(text)
+    if event_type is not None:
+        return {"event_type": event_type, "text": text}
+    return {"event_type": "unknown", "text": text}
+
+
+def build_cw_event_router(runtime) -> CwEventRouter:
+    legacy_handler = build_cw_event_handler(runtime)
+
+    def router(variable_cost_choice: CwEventOption | None = None) -> CwEventResult:
+        event_type = detect_cw_event(runtime)["event_type"]
+        if variable_cost_choice is not None:
+            if event_type != "lv999_choice":
+                raise TrailError("CW_EVENT_CHOICE_MISMATCH", "variable cost choice can only be applied to 银狼LV.999 event")
+            choice = variable_cost_choice["choice"]
+            target = _find_ocr_button_box(runtime, allowed_texts=LV999_EVENT_CHOICE_TEXTS[choice], capture=None)
+            if target is None:
+                raise TrailError("CW_EVENT_CHOICE_TARGET_MISSING", "未找到银狼LV.999 事件选项位置")
+            runtime.click_point(*_box_center(target))
+            return {"event_type": "lv999_choice", "handled": True, "handled_action": "confirm"}
+        if event_type == "special_confirm":
+            _, handled_action = legacy_handler()
+            return {"event_type": "special_confirm", "handled": True, "handled_action": handled_action}
+        if event_type in CW_EVENT_NEXT_ACTIONS:
+            return {"event_type": event_type, "handled": False, "next_action": CW_EVENT_NEXT_ACTIONS[event_type]}
+        return {"event_type": event_type, "handled": False, "next_action": "manual"}
+
+    return router
+
+
 def build_cw_boss_preview_confirmer(runtime) -> SceneAction:
     return lambda: runtime.click_point(*BOSS_PREVIEW_CONFIRM_POINT)
 
@@ -402,19 +496,96 @@ def continue_cw_battle(session: SessionModel, *, continuer: SceneAction) -> Sess
     return session
 
 
-def handle_cw_event(session: SessionModel, *, handler: EventHandler, variable_cost_choice: Mapping[str, object] | None = None) -> dict[str, object]:
-    event_type, handled_action = handler()
-    if variable_cost_choice is not None:
-        role_name = variable_cost_choice.get("role_name")
-        choice = variable_cost_choice.get("choice")
-        if not isinstance(role_name, str) or not isinstance(choice, str):
-            raise ValueError("invalid variable cost choice")
+def _coerce_cw_event_option(variable_cost_choice: Mapping[str, object] | None) -> CwEventOption | None:
+    if variable_cost_choice is None:
+        return None
+    role_name = variable_cost_choice.get("role_name")
+    choice = variable_cost_choice.get("choice")
+    if not isinstance(role_name, str) or not isinstance(choice, str):
+        raise TrailError("CW_EVENT_CHOICE_MISMATCH", "invalid variable cost choice")
+    if not is_cw_variable_cost_role(role_name) or choice not in LV999_EVENT_CHOICE_TEXTS:
+        raise TrailError("CW_EVENT_CHOICE_MISMATCH", "invalid variable cost choice")
+    return {"role_name": role_name, "choice": choice}
+
+
+def mark_cw_event_unknown_stale(session: SessionModel) -> None:
+    cw_state = ensure_cw_state(session)
+    mark_cw_stage_stale(session)
+    mark_cw_stage_status_stale(session)
+    for key in ("slots", "shop", "equipment", "sell_plan"):
+        value = cw_state.get(key)
+        if isinstance(value, dict):
+            value["stale"] = True
+        else:
+            cw_state[key] = {"stale": True}
+    strategy = cw_state.get("strategy")
+    if isinstance(strategy, dict):
+        strategy["stale"] = True
+    else:
+        cw_state["strategy"] = {"cards": [], "stale": True}
+    cw_state["variable_cost_roles_stale"] = True
+
+
+def _raise_lv999_state_stale() -> NoReturn:
+    raise TrailError("CW_EVENT_LV999_STATE_STALE", "银狼LV.999 状态已过期，请先运行 cw.event.reconcile")
+
+
+def _raise_lv999_choice_mismatch(message: str = "invalid variable cost choice") -> NoReturn:
+    raise TrailError("CW_EVENT_CHOICE_MISMATCH", message)
+
+
+def _validate_cw_event_option_state(session: SessionModel, event_option: CwEventOption) -> None:
+    cw_state = ensure_cw_state(session)
+    if is_variable_cost_roles_stale(cw_state):
+        _raise_lv999_state_stale()
+    roles_value = cw_state.get("variable_cost_roles")
+    roles = roles_value if isinstance(roles_value, dict) else {}
+    state = roles.get(VARIABLE_COST_ROLE_NAME)
+    if not isinstance(state, dict):
+        _raise_lv999_choice_mismatch("银狼LV.999 current state is unknown")
+    state = cast(dict[str, object], state)
+    current_cost = _parse_variable_cost(state.get("cost"))
+    if current_cost is None:
+        _raise_lv999_choice_mismatch("银狼LV.999 current cost is unknown")
+    if _parse_star(state.get("star")) != 2 or state.get("choice_available") is not True:
+        _raise_lv999_choice_mismatch("银狼LV.999 choice is not available")
+    confirmed_value = state.get("confirmed_choices_by_cost")
+    confirmed_by_cost = confirmed_value if isinstance(confirmed_value, dict) else {}
+    if _choice_for_cost(confirmed_by_cost, current_cost) is not None:
+        _raise_lv999_choice_mismatch("银狼LV.999 choice already confirmed for current cost")
+    if event_option["choice"] == "cost_up" and current_cost == max(VARIABLE_COST_ROLE_COSTS):
+        _raise_lv999_choice_mismatch("银狼LV.999 already at max cost")
+
+
+def handle_cw_event(
+    session: SessionModel,
+    *,
+    router: CwEventRouter | None = None,
+    handler: EventHandler | None = None,
+    variable_cost_choice: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    event_option = _coerce_cw_event_option(variable_cost_choice)
+    used_router = router is not None
+    if event_option is not None and used_router:
+        _validate_cw_event_option_state(session, event_option)
+    if router is not None:
+        result: dict[str, object] = dict(router(event_option))
+    else:
+        if handler is None:
+            raise ValueError("cw event router is required")
+        event_type, handled_action = handler()
+        result = {"event_type": event_type, "handled": True, "handled_action": handled_action}
+
+    if event_option is not None:
+        if used_router and result.get("handled") is not True:
+            raise ValueError("unhandled cw event cannot apply variable cost choice")
         cw_state = session.scene_state.get("cw")
         if not isinstance(cw_state, dict):
             raise ValueError("银狼LV.999 current cost is unknown")
-        apply_cw_variable_cost_choice(cw_state, role_name=role_name, choice=choice)
-    mark_cw_stage_stale(session)
-    result: dict[str, object] = {"event_type": event_type, "handled_action": handled_action}
-    if variable_cost_choice is not None:
-        result["variable_cost_choice"] = dict(variable_cost_choice)
+        apply_cw_variable_cost_choice(cw_state, role_name=event_option["role_name"], choice=event_option["choice"])
+        result["variable_cost_choice"] = dict(event_option)
+    if result.get("event_type") == "unknown" and result.get("handled") is not True:
+        mark_cw_event_unknown_stale(session)
+    if result.get("handled") is True:
+        mark_cw_stage_stale(session)
     return result

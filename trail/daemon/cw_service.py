@@ -31,7 +31,7 @@ from trail.scenes.cw.events import (
     build_cw_battle_starter,
     build_cw_boss_preview_confirmer,
     build_cw_encounter_chooser,
-    build_cw_event_handler,
+    build_cw_event_router,
     build_cw_fortune_chooser,
     build_cw_invest_chooser,
     build_cw_replenish_chooser,
@@ -103,7 +103,7 @@ from trail.scenes.cw.slots import (
     SlotsSnapshotReader,
     swap_cw_slots,
 )
-from trail.scenes.cw.stage import build_cw_stage_detector, detect_cw_stage, wait_cw_stage
+from trail.scenes.cw.stage import build_cw_stage_detector, detect_cw_stage, mark_cw_stage_stale, mark_cw_stage_status_stale, wait_cw_stage
 from trail.scenes.cw.role_recognition import VectorRoleIconRecognizer
 from trail.scenes.cw.static_resources import load_default_cw_resource_bundle
 from trail.scenes.cw.strategy import detect_cw_strategy, refresh_cw_strategy, select_cw_strategy
@@ -127,7 +127,7 @@ replenish_chooser_factory = build_cw_replenish_chooser
 invest_chooser_factory = build_cw_invest_chooser
 encounter_chooser_factory = build_cw_encounter_chooser
 fortune_chooser_factory = build_cw_fortune_chooser
-event_handler_factory = build_cw_event_handler
+event_router_factory = build_cw_event_router
 boss_preview_confirmer_factory = build_cw_boss_preview_confirmer
 battle_starter_factory = build_cw_battle_starter
 battle_continuer_factory = build_cw_battle_continuer
@@ -872,6 +872,117 @@ class CwService:
                 order=CW_BATTLE_RUN_PREP_COLLECT_ORDER,
             )
 
+        def run_event_handle() -> dict[str, object]:
+            result = _call_with_supported_keywords(
+                handle_cw_event,
+                session,
+                router=event_router_factory(runtime()),
+                variable_cost_choice=payload.get("variable_cost_choice"),
+            )
+            if result.get("event_type") == "unknown" and result.get("handled") is not True:
+                stale_facts = _stale_fact_names(ensure_cw_state(session))
+                result["stale"] = bool(stale_facts)
+                result["stale_facts"] = _join_fact_names(stale_facts)
+                result["crystals_stale"] = False
+                result["reconcile_action"] = "cw.event.reconcile"
+            return result
+
+        def run_event_reconcile() -> dict[str, Any]:
+            current_runtime = runtime()
+            previous_cw_state = deepcopy(ensure_cw_state(session))
+            previous_strategy = previous_cw_state.get("strategy")
+            previous_sell_plan = previous_cw_state.get("sell_plan")
+            previous_variable_cost_stale = previous_cw_state.get("variable_cost_roles_stale") is True
+            detected_stage = stage_detector_factory(current_runtime)()
+            response_data: dict[str, Any] = {}
+            attempted: list[str] = []
+
+            if not isinstance(detected_stage, str) or not detected_stage:
+                mark_cw_stage_stale(session)
+                mark_cw_stage_status_stale(session)
+                return _finalize_reconcile_payload(
+                    session,
+                    stage="unknown",
+                    response_data=response_data,
+                    attempted=attempted,
+                    previous_variable_cost_stale=previous_variable_cost_stale,
+                    next_action="manual",
+                )
+
+            detect_cw_stage(session, detector=lambda: detected_stage)
+            if detected_stage == "preparation":
+                attempted = list(RECONCILE_PREPARATION_FACT_ORDER)
+                try:
+                    response_data = _collect_cw_preparation_facts(
+                        session,
+                        runtime=current_runtime,
+                        workspace_root=workspace_root,
+                        cw_resource_service=self.cw_resource_service,
+                        request_id=request_id,
+                        order=RECONCILE_PREPARATION_FACT_ORDER,
+                        include_crystals=False,
+                    )
+                except TrailError:
+                    attempted = ["slots"]
+                    response_data = {}
+                _restore_reconcile_reference_facts(
+                    session,
+                    previous_strategy=previous_strategy,
+                    previous_sell_plan=previous_sell_plan,
+                )
+                return _finalize_reconcile_payload(
+                    session,
+                    stage=detected_stage,
+                    response_data=response_data,
+                    attempted=attempted,
+                    previous_variable_cost_stale=previous_variable_cost_stale,
+                )
+
+            if detected_stage == "shop":
+                attempted = ["shop"]
+                try:
+                    base_config = _cached_cw_guide_config(
+                        workspace_root=workspace_root,
+                        cw_resource_service=self.cw_resource_service,
+                        enrich_traits=True,
+                    )
+                    shop_result = scan_cw_shop(
+                        session,
+                        scanner=shop_page_snapshot_reader_factory(current_runtime),
+                        guide_config=base_config,
+                    )
+                    shop_response = _response_snapshot_or_fallback(shop_result, {})
+                    shop_warnings = _pop_response_snapshot_warnings(shop_response)
+                    close_cw_shop(session, closer=shop_closer_factory(current_runtime))
+                    closed_shop = {**project_cw_shop_snapshot(session), **shop_response, "opened": False, "stale": False}
+                    ensure_cw_state(session)["shop"] = deepcopy(closed_shop)
+                    response_data["shop"] = closed_shop
+                    if shop_warnings:
+                        response_data["warnings"] = shop_warnings
+                except TrailError:
+                    shop_state = ensure_cw_state(session).get("shop")
+                    if isinstance(shop_state, dict):
+                        shop_state["stale"] = True
+                    else:
+                        ensure_cw_state(session)["shop"] = {"stale": True}
+                return _finalize_reconcile_payload(
+                    session,
+                    stage=detected_stage,
+                    response_data=response_data,
+                    attempted=attempted,
+                    previous_variable_cost_stale=previous_variable_cost_stale,
+                )
+
+            next_action = _next_action_for_reconcile_stage(detected_stage)
+            return _finalize_reconcile_payload(
+                session,
+                stage=detected_stage,
+                response_data=response_data,
+                attempted=attempted,
+                previous_variable_cost_stale=previous_variable_cost_stale,
+                next_action=next_action,
+            )
+
         handlers = {
             "cw.enter": lambda: validated_enter_payload() and enter_cw(session, runtime=runtime()).scene_state["cw"]["entry"],
             "cw.start": run_start,
@@ -1016,12 +1127,8 @@ class CwService:
                 session,
                 continuer=settle_continuer_factory(runtime()),
             ).scene_state["cw"]["stage"],
-            "cw.event.handle": lambda: _call_with_supported_keywords(
-                handle_cw_event,
-                session,
-                handler=event_handler_factory(runtime()),
-                variable_cost_choice=payload.get("variable_cost_choice"),
-            ),
+            "cw.event.handle": run_event_handle,
+            "cw.event.reconcile": run_event_reconcile,
         }
         if method not in handlers:
             raise TrailError("DAEMON_METHOD_NOT_SUPPORTED", f"unsupported method: {method}")
@@ -1089,8 +1196,139 @@ def _fresh_previous_slots_snapshot(session) -> dict | None:
     return deepcopy(slots)
 
 
+
+RECONCILE_FACT_ORDER: tuple[str, ...] = (
+    "stage",
+    "stage/status",
+    "slots",
+    "shop",
+    "equipment",
+    "strategy",
+    "sell_plan",
+    "variable_cost_roles",
+)
+RECONCILE_PREPARATION_FACT_ORDER: tuple[str, ...] = ("slots", "shop", "equipment")
+
+
+def _ordered_fact_names(names: list[str] | tuple[str, ...] | set[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for preferred in RECONCILE_FACT_ORDER:
+        if preferred in names and preferred not in seen:
+            ordered.append(preferred)
+            seen.add(preferred)
+    for name in names:
+        if name not in seen:
+            ordered.append(name)
+            seen.add(name)
+    return ordered
+
+
+def _join_fact_names(names: list[str] | tuple[str, ...] | set[str]) -> str:
+    ordered = _ordered_fact_names(names)
+    return "|".join(ordered) if ordered else "none"
+
+
+def _is_fresh_mapping(value: object) -> bool:
+    return isinstance(value, dict) and value.get("stale") is False
+
+
+def _stale_fact_names(cw_state: dict[str, Any]) -> list[str]:
+    stale: list[str] = []
+    stage = cw_state.get("stage")
+    status = stage.get("status") if isinstance(stage, dict) else None
+    if not isinstance(stage, dict) or stage.get("stale") is not False or not isinstance(status, dict) or status.get("stale") is not False:
+        stale.append("stage/status")
+    for key in ("slots", "shop", "equipment"):
+        if not _is_fresh_mapping(cw_state.get(key)):
+            stale.append(key)
+    strategy = cw_state.get("strategy")
+    if not isinstance(strategy, dict) or strategy.get("stale") is not False:
+        stale.append("strategy")
+    sell_plan = cw_state.get("sell_plan")
+    if not isinstance(sell_plan, dict) or sell_plan.get("stale") is not False:
+        stale.append("sell_plan")
+    if cw_state.get("variable_cost_roles_stale") is True:
+        stale.append("variable_cost_roles")
+    return _ordered_fact_names(stale)
+
+
+def _fresh_reconciled_fact_names(cw_state: dict[str, Any], *, response_data: dict[str, Any], attempted: list[str], previous_variable_cost_stale: bool) -> list[str]:
+    fresh: list[str] = []
+    stage = cw_state.get("stage")
+    if isinstance(stage, dict) and stage.get("value") and stage.get("stale") is False:
+        fresh.append("stage")
+    for key in ("slots", "shop", "equipment"):
+        if key in response_data and _is_fresh_mapping(cw_state.get(key)):
+            fresh.append(key)
+    if previous_variable_cost_stale and any(name in attempted for name in ("slots", "shop")) and cw_state.get("variable_cost_roles_stale") is not True:
+        fresh.append("variable_cost_roles")
+    return _ordered_fact_names(fresh)
+
+
+def _restore_reconcile_reference_facts(session, *, previous_sell_plan: object, previous_strategy: object) -> None:
+    cw_state = ensure_cw_state(session)
+    if isinstance(previous_strategy, dict):
+        strategy = deepcopy(previous_strategy)
+        strategy["stale"] = True
+        cw_state["strategy"] = strategy
+    else:
+        cw_state["strategy"] = {"cards": [], "stale": True}
+    if isinstance(previous_sell_plan, dict) and previous_sell_plan:
+        sell_plan = deepcopy(previous_sell_plan)
+        sell_plan["stale"] = True
+        cw_state["sell_plan"] = sell_plan
+    else:
+        current = cw_state.get("sell_plan")
+        if isinstance(current, dict):
+            current["stale"] = True
+        else:
+            cw_state["sell_plan"] = {"stale": True}
+
+
+def _next_action_for_reconcile_stage(stage: str) -> str | None:
+    if stage in {"settle", "layer_transition", "battle", "game_over"}:
+        return "cw.battle.run"
+    if stage in {"replenish", "invest", "encounter", "fortune", "event"}:
+        return "cw.event.handle"
+    return None
+
+
+def _finalize_reconcile_payload(
+    session,
+    *,
+    stage: str,
+    response_data: dict[str, Any],
+    attempted: list[str],
+    previous_variable_cost_stale: bool,
+    next_action: str | None = None,
+) -> dict[str, Any]:
+    cw_state = ensure_cw_state(session)
+    response_data.pop("crystals", None)
+    response_data["stage"] = stage
+    stale_facts = _stale_fact_names(cw_state)
+    response_data["stale"] = bool(stale_facts)
+    response_data["reconciled"] = _join_fact_names(
+        _fresh_reconciled_fact_names(
+            cw_state,
+            response_data=response_data,
+            attempted=attempted,
+            previous_variable_cost_stale=previous_variable_cost_stale,
+        )
+    )
+    response_data["stale_facts"] = _join_fact_names(stale_facts)
+    if attempted:
+        response_data["attempted"] = _join_fact_names(attempted)
+    if stale_facts:
+        response_data["todo"] = _join_fact_names(stale_facts)
+        response_data["why"] = "stale_after_reconcile"
+    if next_action:
+        response_data["next_action"] = next_action
+    return response_data
+
+
 def _has_fresh_auto_collect_equipment(method: str, result: object) -> bool:
-    if method not in {"cw.portal.select", "cw.battle.run"} or not isinstance(result, dict):
+    if method not in {"cw.portal.select", "cw.battle.run", "cw.event.reconcile"} or not isinstance(result, dict):
         return False
     equipment = result.get("equipment")
     if not isinstance(equipment, dict):
@@ -1219,6 +1457,7 @@ def _collect_cw_preparation_facts(
     response_data: dict[str, Any] | None = None,
     order: tuple[str, ...] = PORTAL_SELECT_PREP_COLLECT_ORDER,
     previous_slots_snapshot: dict[str, Any] | None = None,
+    include_crystals: bool = True,
 ) -> dict[str, Any]:
     data = dict(response_data) if isinstance(response_data, dict) else {}
     slots_reader: SlotsSnapshotReader | None = None
@@ -1305,17 +1544,19 @@ def _collect_cw_preparation_facts(
         close_cw_shop(session, closer=shop_closer_factory(runtime))
 
     actions: dict[str, Callable[[], None]] = {
-        "crystals": collect_crystals,
         "slots": collect_slots,
         "equipment": collect_equipment,
         "shop": collect_shop,
     }
+    if include_crystals:
+        actions["crystals"] = collect_crystals
     for step in order:
         action = actions.get(step)
         if action is not None:
             action()
 
-    data["crystals"] = deepcopy(ensure_cw_state(session).get("metrics") or {})
+    if include_crystals:
+        data["crystals"] = deepcopy(ensure_cw_state(session).get("metrics") or {})
     if slots_snapshot is not None:
         data["slots"] = slots_snapshot
     if equipment_snapshot is not None:
