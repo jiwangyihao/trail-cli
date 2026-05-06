@@ -686,6 +686,12 @@ def test_command_service_routes_cw_equipment_compose_through_journaled_mutation(
     assert "cw.equipment.compose" not in CW_SESSION_ONLY_MUTATION_METHODS
 
 
+def test_command_service_cw_event_reconcile_is_mutating_method():
+    from trail.daemon.command_service import CW_MUTATING_METHODS
+
+    assert "cw.event.reconcile" in CW_MUTATING_METHODS
+
+
 def test_command_service_guide_fetch_select_stores_complete_guide_no_artifact(tmp_path: Path, monkeypatch):
     registry = SessionServiceRegistry()
     service = registry.for_workspace(str(tmp_path))
@@ -1070,7 +1076,7 @@ def test_command_service_tracks_cw_portal_select_request_status_with_top_level_s
     assert status["session_id"] == session_a.session_id
 
 
-def test_command_service_cw_event_handle_accepts_variable_cost_choice_payload(tmp_path: Path):
+def test_command_service_cw_event_handle_accepts_variable_cost_choice_payload(tmp_path: Path, monkeypatch):
     from trail.daemon.cw_service import CwService
     from trail.scenes.cw.models import ensure_cw_state
 
@@ -1085,6 +1091,10 @@ def test_command_service_cw_event_handle_accepts_variable_cost_choice_payload(tm
     service.save_session(session)
     runtime = ProtocolRuntime(tmp_path / ".trail" / "shots" / "req-cw-event-choice.png")
     runtime_service = ProtocolRuntimeService(runtime)
+    monkeypatch.setattr(
+        "trail.daemon.cw_service.event_router_factory",
+        lambda runtime: lambda choice: {"event_type": "lv999_choice", "handled": True, "handled_action": "confirm"},
+    )
     command_service = CommandService(
         runtime_service=runtime_service,
         session_service=registry,
@@ -1108,6 +1118,7 @@ def test_command_service_cw_event_handle_accepts_variable_cost_choice_payload(tm
     assert response["ok"] is True
     data = response.get("data")
     assert isinstance(data, dict)
+    assert data["handled_action"] == "confirm"
     assert data["variable_cost_choice"] == {"role_name": "银狼LV.999", "choice": "cost_up"}
     assert persisted.scene_state["cw"]["variable_cost_roles"]["银狼LV.999"]["cost"] == 4
     assert persisted.scene_state["cw"]["shop"]["items"][0]["cost"] == 4

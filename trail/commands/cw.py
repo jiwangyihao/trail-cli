@@ -143,6 +143,13 @@ def _output_format_not_supported_response(command: str) -> dict[str, Any]:
     }
 
 
+def _reject_yaml_for_cw_mutation(command: str) -> bool:
+    if current_output_format() is not OutputFormat.YAML:
+        return False
+    print_output(command, _output_format_not_supported_response(command))
+    return True
+
+
 def _parse_agent_slot_ref(value: str) -> str:
     area, separator, raw_index = value.partition(":")
     if separator != ":" or area not in {"front", "back", "hand"} or not raw_index.isdecimal():
@@ -526,7 +533,16 @@ def cw_event_handle(
     session: str = typer.Option(..., "--session"),
     variable_cost_choice: VariableCostChoice | None = typer.Option(None, "--variable-cost-choice"),
 ) -> None:
+    if _reject_yaml_for_cw_mutation("cw.event.handle"):
+        return
     payload: dict[str, object] | None = None
     if variable_cost_choice is not None:
         payload = {"variable_cost_choice": {"role_name": "银狼LV.999", "choice": variable_cost_choice.value}}
     _print_cw("cw.event.handle", session_id=session, payload=payload)
+
+
+@event_app.command("reconcile")
+def cw_event_reconcile(session: str = typer.Option(..., "--session")) -> None:
+    if _reject_yaml_for_cw_mutation("cw.event.reconcile"):
+        return
+    _print_cw("cw.event.reconcile", session_id=session, payload={})

@@ -50,6 +50,7 @@ CW_MUTATING_METHODS = {
     "cw.equipment.compose",
     "cw.settle.next",
     "cw.event.handle",
+    "cw.event.reconcile",
 }
 
 CW_CAPTURE_METHODS = {
