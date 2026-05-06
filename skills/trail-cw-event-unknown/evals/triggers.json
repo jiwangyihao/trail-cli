@@ -1,0 +1,65 @@
+[
+  {
+    "prompt": "cw.event.handle 返回 event_type=unknown next_action=manual，需要按 handoff_reason=event_unknown_manual_required 手工处理未知事件",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-event-unknown"
+  },
+  {
+    "prompt": "unknown 事件页已有 shot path=... 和 info read_image_first=1，先读截图再手工处理未知事件",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-event-unknown"
+  },
+  {
+    "prompt": "next_action=manual 后 unknown 已经手工处理，接下来运行 cw.event.reconcile 并在需要时回到 trail-cw-prep",
+    "sample_type": "should-trigger",
+    "expected_winner": "trail-cw-event-unknown"
+  },
+  {
+    "prompt": "普通备战页已经有 stage/slots/shop facts，继续由 trail-cw-prep 消费",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "投资环境页三张卡已出现，应该由 trail-cw-portal 判断 refresh 还是 select",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "daemon.request_status 返回 applied_but_not_persisted，需要恢复请求状态",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "trail-cw-entry 还在货币战争首页，需要先决定开局路线",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "trail-hsr-advanced 正在处理窗口或 session 恢复，不是 unknown event manual path",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "攻略选择页打开了，需要 trail-cw-guide 选择攻略",
+    "sample_type": "should-not-trigger",
+    "expected_winner": "none"
+  },
+  {
+    "prompt": "cw.event.handle event_type=unknown next_action=manual 后，在 trail-cw-event-unknown 和 trail-cw-prep 之间应由未知事件手工处理接管",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-event-unknown", "trail-cw-prep"],
+    "expected_winner": "trail-cw-event-unknown"
+  },
+  {
+    "prompt": "货币战争首页还没进入事件页，trail-cw-entry 与 trail-cw-event-unknown 竞争时入口先接管",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-event-unknown", "trail-cw-entry"],
+    "expected_winner": "trail-cw-entry"
+  },
+  {
+    "prompt": "投资环境页卡片出现，trail-cw-portal 与 trail-cw-event-unknown 竞争时 portal 继续接管",
+    "sample_type": "competition",
+    "candidates": ["trail-cw-event-unknown", "trail-cw-portal"],
+    "expected_winner": "trail-cw-portal"
+  }
+]
