@@ -168,6 +168,17 @@ CW_PREP_STAGE_BOUNDARIES = (
 CW_PREP_TRIGGERS = (
     PROJECT_ROOT / "skills" / "trail-cw-prep" / "evals" / "triggers.json"
 )
+CW_EVENT_UNKNOWN_SKILL = PROJECT_ROOT / "skills" / "trail-cw-event-unknown" / "SKILL.md"
+CW_EVENT_UNKNOWN_MANUAL_GUIDE = (
+    PROJECT_ROOT
+    / "skills"
+    / "trail-cw-event-unknown"
+    / "references"
+    / "manual-resolution-guide.md"
+)
+CW_EVENT_UNKNOWN_TRIGGERS = (
+    PROJECT_ROOT / "skills" / "trail-cw-event-unknown" / "evals" / "triggers.json"
+)
 
 
 def _frontmatter_markdown(path: Path) -> tuple[dict[str, Any], str]:
@@ -1775,6 +1786,10 @@ def test_cw_prep_reference_files_exist_with_required_content() -> None:
         assert command in command_surface
     assert "trail cw shop buy-slot --session <id> --slot <n> --expect <name>" in command_surface
     assert "trail cw event handle --session <id> --variable-cost-choice cost_up|equipment" in command_surface
+    assert "trail cw event reconcile --session <id>" in command_surface
+    assert "stale_facts=stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles" in command_surface
+    assert "crystals_stale=0" in command_surface
+    assert "CW_EVENT_LV999_STATE_STALE" in command_surface
     assert "银狼LV.999" in command_surface
     assert "cost 只在 `item`/`slot` 行" in command_surface
     assert "LV999" in CW_PREP_SKILL.read_text(encoding="utf-8")
@@ -1805,8 +1820,94 @@ def test_cw_prep_reference_files_exist_with_required_content() -> None:
     assert any("trail cw battle run --session <id>" in line for line in layer_transition_lines)
     assert any("不是普通稳定阶段" in line or "手工中断点" in line for line in layer_transition_lines)
     assert not any("本场对局首领" in line for line in layer_transition_lines)
+    unknown_lines = _lines_with_tokens(stage_boundaries, "unknown")
+    assert unknown_lines
+    assert any("trail-cw-event-unknown" in line for line in unknown_lines)
+    assert any("cw.event.reconcile" in line or "event reconcile" in line for line in unknown_lines)
     for forbidden in ("优先买", "必须刷新", "默认卖", "直接出战"):
         assert forbidden not in command_surface
+
+
+def test_cw_event_unknown_skill_has_required_sections_and_internal_boundary() -> None:
+    assert CW_EVENT_UNKNOWN_SKILL.exists(), f"missing skill file: {CW_EVENT_UNKNOWN_SKILL}"
+    frontmatter, text = _frontmatter_markdown(CW_EVENT_UNKNOWN_SKILL)
+
+    assert frontmatter["name"] == "trail-cw-event-unknown"
+    assert "cw.event.handle" in frontmatter["description"]
+    assert "event_type=unknown" in frontmatter["description"]
+    assert "direct-user" not in frontmatter["description"]
+    for section in (
+        "## Role",
+        "## When To Use",
+        "## Required First Actions",
+        "## Manual Resolution Loop",
+        "## Reconcile Contract",
+        "## Stop Conditions",
+        "## Reference Map",
+    ):
+        assert section in text
+    assert "active internal" in text
+    assert "不是 scene entry" in text
+    assert "不是 direct-user" in text
+    assert "不是 owner" in text
+    assert "handoff_reason=event_unknown_manual_required" in text
+    assert "stale_facts=stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles" in text
+    assert "crystals_stale=0" in text
+    assert "trail cw event reconcile --session <id>" in text
+    assert "不得直接或间接调用 archive skill" in text
+
+
+def test_cw_event_unknown_reference_and_triggers_cover_manual_reconcile_contract() -> None:
+    assert CW_EVENT_UNKNOWN_MANUAL_GUIDE.exists(), f"missing reference file: {CW_EVENT_UNKNOWN_MANUAL_GUIDE}"
+    assert CW_EVENT_UNKNOWN_TRIGGERS.exists(), f"missing trigger fixture: {CW_EVENT_UNKNOWN_TRIGGERS}"
+
+    guide = CW_EVENT_UNKNOWN_MANUAL_GUIDE.read_text(encoding="utf-8")
+    data = json.loads(CW_EVENT_UNKNOWN_TRIGGERS.read_text(encoding="utf-8"))
+    counts = Counter(item["sample_type"] for item in data)
+
+    for fragment in (
+        "shot path=...",
+        "info read_image_first=1",
+        "next_action=manual",
+        "手工处理未知事件",
+        "trail cw event reconcile --session <id>",
+        "stale_facts=stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles",
+        "crystals_stale=0",
+        "CW_EVENT_LV999_STATE_STALE",
+        "strategy",
+        "sell_plan",
+    ):
+        assert fragment in guide
+
+    assert counts["should-trigger"] >= 3
+    assert counts["should-not-trigger"] >= 6
+    assert counts["competition"] >= 3
+    for item in data:
+        assert {"prompt", "sample_type", "expected_winner"} <= item.keys()
+        assert item["sample_type"] in {"should-trigger", "should-not-trigger", "competition"}
+        if item["sample_type"] == "should-trigger":
+            assert item["expected_winner"] == "trail-cw-event-unknown"
+            assert "unknown" in item["prompt"] or "next_action=manual" in item["prompt"]
+        elif item["sample_type"] == "should-not-trigger":
+            assert item["expected_winner"] == "none"
+        else:
+            assert "candidates" in item
+            assert "trail-cw-event-unknown" in item["candidates"]
+            if item["expected_winner"] != "none":
+                assert item["expected_winner"] in item["candidates"]
+
+    prompts = "\n".join(item["prompt"] for item in data)
+    for fragment in (
+        "cw.event.handle",
+        "event_type=unknown",
+        "next_action=manual",
+        "cw.event.reconcile",
+        "trail-cw-prep",
+        "trail-cw-entry",
+        "trail-cw-portal",
+        "trail-hsr-advanced",
+    ):
+        assert fragment in prompts
 
 
 def test_trail_cw_prep_documents_lv999_cost_protocol() -> None:

@@ -169,8 +169,10 @@
 - `trail-cw-prep` 是当前 active internal 的普通备战阶段 skill，只能由 `cw.portal.select` success、`cw.battle.run(status=completed, stage=preparation)` success 后的 workflow handoff 或上游内部阶段切入。
 - `trail-cw-prep` 不是 public scene entry、不是 direct-user、不是 owner；`cw.portal.select` 与 `cw.battle.run(status=completed, stage=preparation)` success final handoff 固定指向 `trail-cw-prep`。
 - `trail-cw-prep` 接收 `cw.portal.select` handoff 或 `cw.battle.run` preparation handoff 时，应先读截图并消费该响应自动收集的 stage/slots/equipment/shop facts；只有事实缺失、stale 或页面已变化时才重跑 slots/equipment/shop 扫描。
+- `trail-cw-event-unknown` 是当前 active internal 的未知事件手工处理 skill，只能在 `cw.event.handle` 返回 `event_type=unknown` / `handled=0` / `next_action=manual` 后由内部流程注入；它不是 public scene entry、不是 direct-user 用户入口、不是 owner。
+- `trail-cw-event-unknown` 的 unknown 路径应先读截图并手工处理未知事件；`cw.event.handle` 会将 `stale_facts=stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles` 标为 stale，且保留 `crystals_stale=0`，手工处理后必须运行 `cw.event.reconcile` / `trail cw event reconcile --session <id>` 解除或确认 stale，再按输出补跑缺失事实。
 - 只有 registry 中 `status=active` 且 `exposure=public` 的 scene entry 才能作为当前入口出现在 active 文档与测试中。
-- 当命令 success 输出 `info handoff_skill=... handoff_strength=strong ...` 时，Agent 应把它视为推荐的下一步 skill 切换信号；当前固定映射包括 `cw.enter -> trail-cw-entry`、`cw.portal.select -> trail-cw-prep` 与 `cw.battle.run(status=completed, stage=preparation)` -> `trail-cw-prep`。
+- 当命令 success 输出 `info handoff_skill=... handoff_strength=strong ...` 时，Agent 应把它视为推荐的下一步 skill 切换信号；当前固定映射包括 `cw.enter -> trail-cw-entry`、`cw.portal.select -> trail-cw-prep`、`cw.battle.run(status=completed, stage=preparation)` -> `trail-cw-prep` 与 `cw.event.handle(event_type=unknown) -> trail-cw-event-unknown`（`handoff_reason=event_unknown_manual_required`）。
 - `AGENTS.md` 的 active 拓扑说明不得出现 archive skill 名称或 legacy 场景 skill 名称。
 - 任何 active skill 都不得直接或间接调用 archive skill。
 - 仍然禁止 legacy 货币战争 archive skill 回流为 active owner、默认 owner 或推荐入口。

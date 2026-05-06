@@ -17,3 +17,9 @@ commands:
             handoff_skill: trail-cw-prep
             handoff_strength: strong
             handoff_reason: preparation_stage_entered
+  cw.event.handle:
+    event_types:
+      unknown:
+        handoff_skill: trail-cw-event-unknown
+        handoff_strength: strong
+        handoff_reason: event_unknown_manual_required

@@ -19,6 +19,9 @@ CW_GUIDE_CONFIRMATION_CHECKLIST = (
     PROJECT_ROOT / "skills" / "trail-cw-guide" / "references" / "confirmation-checklist.md"
 )
 CW_PORTAL_TRIGGERS = PROJECT_ROOT / "skills" / "trail-cw-portal" / "evals" / "triggers.json"
+CW_EVENT_UNKNOWN_TRIGGERS = (
+    PROJECT_ROOT / "skills" / "trail-cw-event-unknown" / "evals" / "triggers.json"
+)
 COMPETITION = PROJECT_ROOT / "skills" / "registry" / "routing-competition.json"
 ESCALATION_CONTRACT = PROJECT_ROOT / "skills" / "shared" / "escalation-contract.md"
 OUTPUT_RENDERING_TEST = PROJECT_ROOT / "tests" / "test_output_rendering.py"
@@ -39,7 +42,7 @@ LEGACY_DOC_PATTERNS = (
     r"skills/trail-cw-replenish\b",
     r"skills/trail-cw-shop\b",
     r"skills/trail-cw-slots\b",
-    r"trail-cw(?!(?:-(?:entry|guide|portal|prep)(?![-\w])))\b",
+    r"trail-cw(?!(?:-(?:entry|guide|portal|prep|event-unknown)(?![-\w])))\b",
     r"trail-cw-battle-advanced\b",
     r"trail-cw-events\b",
     r"trail-cw-replenish\b",
@@ -66,14 +69,14 @@ ROUTING_REVIEW_METHOD_LINES = (
 )
 LEGACY_CW_SKILL_PATH_PATTERNS = (
     r"skills/trail-cw/SKILL\.md\b",
-    r"skills/trail-cw(?!(?:-(?:entry|guide|portal|prep)(?:/|$)))[^/]*(?:/|\b)",
+    r"skills/trail-cw(?!(?:-(?:entry|guide|portal|prep|event-unknown)(?:/|$)))[^/]*(?:/|\b)",
     r"skills/trail-cw-battle-advanced(?:/|\b)",
     r"skills/trail-cw-events(?:/|\b)",
     r"skills/trail-cw-replenish(?:/|\b)",
     r"skills/trail-cw-shop(?:/|\b)",
     r"skills/trail-cw-slots(?:/|\b)",
 )
-LEGACY_ACTIVE_CW_PATTERN = r"trail-cw(?!(?:-(?:entry|guide|portal|prep)(?![-\w])))\b"
+LEGACY_ACTIVE_CW_PATTERN = r"trail-cw(?!(?:-(?:entry|guide|portal|prep|event-unknown)(?![-\w])))\b"
 
 
 def _lines_with_token(text: str, token: str) -> list[str]:
@@ -120,9 +123,24 @@ def _assert_cw_portal_mentions_are_scoped(text: str) -> None:
     )
 
 
+def _assert_cw_event_unknown_mentions_are_scoped(text: str) -> None:
+    lines = _lines_with_token(text, "trail-cw-event-unknown")
+
+    assert lines
+    assert any("internal" in line and ("未知事件" in line or "unknown" in line) for line in lines)
+    assert any("scene entry" in line and "不是" in line for line in lines)
+    assert any("owner" in line and "不是" in line for line in lines)
+    assert any(
+        ("direct-user" in line or "用户入口" in line) and ("不是" in line or "不作为" in line)
+        for line in lines
+    )
+
+
 def _assert_expected_workflow_handoff_doc_smoke(text: str) -> None:
     assert "cw.enter -> trail-cw-entry" in text
     assert "cw.portal.select -> trail-cw-prep" in text
+    assert "cw.event.handle" in text and "trail-cw-event-unknown" in text
+    assert "handoff_reason=event_unknown_manual_required" in text
     assert "handoff_skill=trail-cw-prep" in text
     assert "handoff_reason=preparation_stage_entered" in text
     assert "handoff_skill=trail-cw-guide" not in text
@@ -336,6 +354,35 @@ def test_cw_portal_trigger_artifacts_cover_internal_only_and_guide_handoff_bound
     )
 
 
+def test_cw_event_unknown_trigger_artifacts_cover_manual_handoff_boundary() -> None:
+    should_trigger = _trigger_rows(CW_EVENT_UNKNOWN_TRIGGERS, "should-trigger")
+    should_not_trigger = _trigger_rows(CW_EVENT_UNKNOWN_TRIGGERS, "should-not-trigger")
+    event_vs_prep = _competition_rows(
+        CW_EVENT_UNKNOWN_TRIGGERS, "trail-cw-event-unknown", "trail-cw-prep"
+    )
+    event_vs_entry = _competition_rows(
+        CW_EVENT_UNKNOWN_TRIGGERS, "trail-cw-event-unknown", "trail-cw-entry"
+    )
+    event_vs_portal = _competition_rows(
+        CW_EVENT_UNKNOWN_TRIGGERS, "trail-cw-event-unknown", "trail-cw-portal"
+    )
+
+    assert any(
+        row["expected_winner"] == "trail-cw-event-unknown"
+        and "cw.event.handle" in row["prompt"]
+        and "event_type=unknown" in row["prompt"]
+        for row in should_trigger
+    )
+    assert any("next_action=manual" in row["prompt"] for row in should_trigger)
+    assert all(row["expected_winner"] == "none" for row in should_not_trigger)
+    assert any("普通备战" in row["prompt"] for row in should_not_trigger)
+    assert any("投资环境页" in row["prompt"] for row in should_not_trigger)
+    assert any("daemon.request_status" in row["prompt"] for row in should_not_trigger)
+    assert any(row["expected_winner"] == "trail-cw-event-unknown" for row in event_vs_prep)
+    assert any(row["expected_winner"] == "trail-cw-entry" for row in event_vs_entry)
+    assert any(row["expected_winner"] == "trail-cw-portal" for row in event_vs_portal)
+
+
 def _scene_entry_skill() -> str:
     registry = yaml.safe_load(REGISTRY.read_text(encoding="utf-8"))
     return registry["entries"][0]["entry_skill"]
@@ -400,7 +447,12 @@ def test_workflow_handoff_registry_has_expected_scene_and_stage_mappings() -> No
     registry = yaml.safe_load(WORKFLOW_HANDOFFS.read_text(encoding="utf-8"))
 
     assert set(registry) == {"commands"}
-    assert set(registry["commands"]) == {"cw.enter", "cw.portal.select", "cw.battle.run"}
+    assert set(registry["commands"]) == {
+        "cw.enter",
+        "cw.portal.select",
+        "cw.battle.run",
+        "cw.event.handle",
+    }
     assert registry["commands"]["cw.enter"]["default"] == {
         "handoff_skill": "trail-cw-entry",
         "handoff_strength": "strong",
@@ -417,6 +469,11 @@ def test_workflow_handoff_registry_has_expected_scene_and_stage_mappings() -> No
         "handoff_skill": "trail-cw-prep",
         "handoff_strength": "strong",
         "handoff_reason": "preparation_stage_entered",
+    }
+    assert registry["commands"]["cw.event.handle"]["event_types"]["unknown"] == {
+        "handoff_skill": "trail-cw-event-unknown",
+        "handoff_strength": "strong",
+        "handoff_reason": "event_unknown_manual_required",
     }
 
 
@@ -451,6 +508,7 @@ def test_new_skill_topology_is_documented_in_agents() -> None:
     _assert_cw_entry_mentions_are_scoped(text)
     _assert_cw_guide_mentions_are_scoped(text)
     _assert_cw_portal_mentions_are_scoped(text)
+    _assert_cw_event_unknown_mentions_are_scoped(text)
     assert "scene entry" in text and "status=active" in text and "exposure=public" in text
     assert "`info handoff_skill=... handoff_strength=strong ...`" in text
     assert "下一步 skill 切换信号" in text
@@ -462,6 +520,9 @@ def test_new_skill_topology_is_documented_in_agents() -> None:
     assert "不得被 Agent 当作 action/prefix 消费" in text
     assert "trail-cw-prep` 接收 `cw.portal.select` handoff" in text
     assert "equipment" in text and "只有事实缺失、stale 或页面已变化" in text
+    assert "stale_facts=stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles" in text
+    assert "crystals_stale=0" in text
+    assert "cw.event.reconcile" in text
     assert "任何 active skill 都不得直接或间接调用 archive skill" in text
     _assert_expected_workflow_handoff_doc_smoke(text)
     _assert_no_legacy_cw_skill_mentions(text)
@@ -473,13 +534,19 @@ def test_active_skill_guidance_only_mentions_current_active_cw_topology() -> Non
 
     assert 'PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md"' in text
     assert 'PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md"' in text
-    assert not re.search(r'skills"\s*/\s*"trail-cw(?!(?:-(?:entry|guide|portal|prep)(?![-\w])))[^\"]*"', text)
-    assert not re.search(r"trail-cw(?!(?:-(?:entry|guide|portal|prep)(?![-\w])))\b", text)
+    assert not re.search(r'skills"\s*/\s*"trail-cw(?!(?:-(?:entry|guide|portal|prep|event-unknown)(?![-\w])))[^\"]*"', text)
+    assert not re.search(r"trail-cw(?!(?:-(?:entry|guide|portal|prep|event-unknown)(?![-\w])))\b", text)
 
 
 def test_legacy_doc_patterns_do_not_misclassify_active_cw_topology_names() -> None:
-    active_names = ["trail-cw-entry", "trail-cw-guide", "trail-cw-portal", "trail-cw-prep"]
-    invalid_names = ["trail-cw-prep-extra", "trail-cw-guide-old"]
+    active_names = [
+        "trail-cw-entry",
+        "trail-cw-guide",
+        "trail-cw-portal",
+        "trail-cw-prep",
+        "trail-cw-event-unknown",
+    ]
+    invalid_names = ["trail-cw-prep-extra", "trail-cw-guide-old", "trail-cw-event-unknown-old"]
 
     for pattern in LEGACY_DOC_PATTERNS:
         regex = re.compile(pattern)
@@ -496,6 +563,8 @@ def test_legacy_path_patterns_do_not_misclassify_active_cw_skill_paths() -> None
         "skills/trail-cw-portal/evals/triggers.json",
         "skills/trail-cw-prep/SKILL.md",
         "skills/trail-cw-prep/evals/triggers.json",
+        "skills/trail-cw-event-unknown/SKILL.md",
+        "skills/trail-cw-event-unknown/references/manual-resolution-guide.md",
     ]
     legacy_paths = [
         "skills/trail-cw/SKILL.md",
@@ -506,6 +575,7 @@ def test_legacy_path_patterns_do_not_misclassify_active_cw_skill_paths() -> None
         "skills/trail-cw-slots/SKILL.md",
         "skills/trail-cw-prep-extra/SKILL.md",
         "skills/trail-cw-guide-old/SKILL.md",
+        "skills/trail-cw-event-unknown-old/SKILL.md",
     ]
 
     for path in active_paths:
