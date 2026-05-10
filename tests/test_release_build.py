@@ -357,9 +357,9 @@ def test_dist_targets_includes_final_windows_zip(tmp_path: Path) -> None:
     verifier = _load_verifier()
     dist = tmp_path / "dist"
     dist.mkdir()
-    wheel = dist / "trail_cli-0.1.0-py3-none-any.whl"
-    sdist = dist / "trail_cli-0.1.0.tar.gz"
-    zip_artifact = dist / "trail-cli-windows-x64-v0.1.0.zip"
+    wheel = dist / "trail_cli-0.1.1-py3-none-any.whl"
+    sdist = dist / "trail_cli-0.1.1.tar.gz"
+    zip_artifact = dist / "trail-cli-windows-x64-v0.1.1.zip"
     for artifact in (wheel, sdist, zip_artifact):
         artifact.write_bytes(b"artifact")
 
@@ -368,7 +368,7 @@ def test_dist_targets_includes_final_windows_zip(tmp_path: Path) -> None:
 
 def test_verify_target_wheel_accepts_only_package_cw_bundle_layout(tmp_path: Path) -> None:
     verifier = _load_verifier()
-    archive_path = tmp_path / "trail_cli-0.1.0-py3-none-any.whl"
+    archive_path = tmp_path / "trail_cli-0.1.1-py3-none-any.whl"
     _write_zip(archive_path, _cw_bundle_entries("trail/scenes/cw/generated/3.2"))
 
     verifier.verify_target(archive_path)
@@ -381,8 +381,8 @@ def test_verify_target_wheel_accepts_only_package_cw_bundle_layout(tmp_path: Pat
 
 def test_verify_target_sdist_accepts_only_single_rooted_cw_bundle_layout(tmp_path: Path) -> None:
     verifier = _load_verifier()
-    archive_path = tmp_path / "trail_cli-0.1.0.tar.gz"
-    _write_tar(archive_path, _cw_bundle_entries("trail_cli-0.1.0/trail/scenes/cw/generated/3.2"))
+    archive_path = tmp_path / "trail_cli-0.1.1.tar.gz"
+    _write_tar(archive_path, _cw_bundle_entries("trail_cli-0.1.1/trail/scenes/cw/generated/3.2"))
 
     verifier.verify_target(archive_path)
 
@@ -408,7 +408,7 @@ def test_verify_target_sdist_rejects_cw_bundle_outside_single_sdist_root(
 
 def test_verify_target_windows_zip_accepts_only_packaged_pyinstaller_layout(tmp_path: Path) -> None:
     verifier = _load_verifier()
-    archive_path = tmp_path / "trail-cli-windows-x64-v0.1.0.zip"
+    archive_path = tmp_path / "trail-cli-windows-x64-v0.1.1.zip"
     _write_zip(archive_path, _cw_bundle_entries("trail/bin/_internal/trail/scenes/cw/generated/3.2"))
 
     verifier.verify_target(archive_path)

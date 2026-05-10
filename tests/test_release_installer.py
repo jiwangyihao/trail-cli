@@ -243,14 +243,14 @@ def make_release_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
     (skills_dir / "shared").mkdir()
     (skills_dir / "shared" / "escalation-contract.md").write_text("shared\n", encoding="utf-8")
     release.mkdir()
-    zip_path = release / "trail-cli-windows-x64-v0.1.0.zip"
+    zip_path = release / "trail-cli-windows-x64-v0.1.1.zip"
     with zipfile.ZipFile(zip_path, "w") as archive:
         for path in package.rglob("*"):
             if path.is_file():
                 archive.write(path, path.relative_to(package))
     digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
     (release / "SHA256SUMS.txt").write_text(f"{digest}  {zip_path.name}\n", encoding="ascii")
-    return release, package, "0.1.0"
+    return release, package, "0.1.1"
 
 
 def test_agent_install_non_dry_run_installs_cli_and_full_bundle(tmp_path):
@@ -374,7 +374,7 @@ def test_agent_install_skip_user_environment_for_test_keeps_user_env(tmp_path):
 def test_agent_install_stops_on_checksum_mismatch(tmp_path):
     release, _package, version = make_release_fixture(tmp_path)
     (release / "SHA256SUMS.txt").write_text(
-        "0" * 64 + "  trail-cli-windows-x64-v0.1.0.zip\n",
+        "0" * 64 + "  trail-cli-windows-x64-v0.1.1.zip\n",
         encoding="ascii",
     )
 
