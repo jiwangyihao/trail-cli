@@ -1,0 +1,10 @@
+node_modules/
+.waveform-cache/
+preview.log
+renders/review*/
+renders/*.mp4
+!renders/trail-cw-intro-v15-readable-player-language.mp4
+references/*
+!references/montages/
+references/montages/*
+!references/montages/trail-cw-intro-v15-readable-player-language-6fps.jpg

@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="node_modules/gsap/dist/gsap.min.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #050608;
+        color: #f4f1e8;
+        font-family: "Noto Sans SC", Arial, sans-serif;
+      }
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 20% 18%, rgba(101, 245, 211, 0.14), transparent 27%),
+          radial-gradient(circle at 88% 78%, rgba(246, 201, 90, 0.12), transparent 30%),
+          linear-gradient(135deg, #050608 0%, #080b0d 48%, #030405 100%);
+      }
+
+      #field,
+      #signalField,
+      #routeField,
+      #stageWash,
+      #whiteGrid,
+      #pulseDisc,
+      #grain,
+      #fade {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      #field {
+        z-index: 1;
+      }
+
+      .dot {
+        position: absolute;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: rgba(244, 241, 232, 0.8);
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+
+      .dot.teal {
+        background: #65f5d3;
+        box-shadow: 0 0 22px rgba(101, 245, 211, 0.4);
+      }
+
+      .dot.gold {
+        background: #f6c95a;
+        box-shadow: 0 0 22px rgba(246, 201, 90, 0.36);
+      }
+
+      #routeField {
+        z-index: 2;
+      }
+
+      .route {
+        position: absolute;
+        height: 2px;
+        width: 340px;
+        transform-origin: left center;
+        background: linear-gradient(90deg, rgba(101, 245, 211, 0), rgba(101, 245, 211, 0.82), rgba(246, 201, 90, 0));
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+
+      .route.gold {
+        background: linear-gradient(90deg, rgba(246, 201, 90, 0), rgba(246, 201, 90, 0.9), rgba(255, 111, 145, 0));
+      }
+
+      #signalField {
+        z-index: 3;
+      }
+
+      .scan-column {
+        position: absolute;
+        top: -220px;
+        width: 86px;
+        height: 1520px;
+        background: linear-gradient(90deg, transparent, rgba(101, 245, 211, 0.13), transparent);
+        filter: blur(2px);
+        opacity: 0;
+        transform: rotate(13deg);
+        will-change: transform, opacity;
+      }
+
+      .orb {
+        position: absolute;
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        border: 1px solid rgba(244, 241, 232, 0.45);
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+
+      .orb::after {
+        content: "";
+        position: absolute;
+        inset: 3px;
+        border-radius: inherit;
+        background: #65f5d3;
+      }
+
+      .frame-line {
+        position: absolute;
+        left: 142px;
+        top: 114px;
+        z-index: 4;
+        width: 2px;
+        height: 842px;
+        background: linear-gradient(180deg, rgba(101, 245, 211, 0), rgba(101, 245, 211, 0.64), rgba(101, 245, 211, 0));
+        opacity: 0;
+      }
+
+      .frame-rule {
+        position: absolute;
+        left: 160px;
+        bottom: 114px;
+        z-index: 4;
+        width: 0;
+        height: 1px;
+        background: linear-gradient(90deg, rgba(244, 241, 232, 0.5), rgba(244, 241, 232, 0));
+        opacity: 0;
+      }
+
+      #stageWash {
+        z-index: 6;
+        background: #f4f1e8;
+        opacity: 0;
+      }
+
+      #whiteGrid {
+        z-index: 7;
+        opacity: 0;
+        background-image: radial-gradient(circle, rgba(5, 6, 8, 0.18) 1.35px, transparent 1.65px);
+        background-size: 38px 38px;
+        mask-image: linear-gradient(90deg, transparent 0%, #000 14%, #000 86%, transparent 100%);
+        will-change: opacity, background-position;
+      }
+
+      #pulseDisc {
+        z-index: 8;
+        inset: auto;
+        right: 160px;
+        top: 170px;
+        width: 520px;
+        height: 520px;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at 50% 50%, #050608 0 13%, transparent 14%),
+          radial-gradient(circle at 50% 50%, transparent 0 45%, rgba(5, 6, 8, 0.92) 46% 48%, transparent 49%),
+          repeating-radial-gradient(circle at 50% 50%, rgba(5, 6, 8, 0.78) 0 2px, transparent 2px 16px);
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+
+      #pulseDisc::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: #65f5d3;
+        box-shadow: 0 0 34px rgba(101, 245, 211, 0.68);
+        transform: translate(-50%, -50%);
+      }
+
+      #cutFlash,
+      #megaWord,
+      #sliceField {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      #cutFlash {
+        z-index: 18;
+        inset: auto;
+        left: -620px;
+        top: -170px;
+        width: 430px;
+        height: 1420px;
+        background: #f4f1e8;
+        opacity: 0;
+        transform: skewX(-18deg);
+        will-change: transform, opacity;
+      }
+
+      #megaWord {
+        z-index: 5;
+        display: flex;
+        align-items: center;
+        padding-left: 128px;
+        color: transparent;
+        -webkit-text-stroke: 2px rgba(244, 241, 232, 0.42);
+        font-size: 248px;
+        font-weight: 900;
+        line-height: 1;
+        letter-spacing: 0;
+        opacity: 0;
+        mix-blend-mode: screen;
+        will-change: transform, opacity;
+      }
+
+      #sliceField {
+        z-index: 4;
+      }
+
+      .slice {
+        position: absolute;
+        width: 640px;
+        height: 190px;
+        border: 1px solid rgba(244, 241, 232, 0.08);
+        background: linear-gradient(90deg, rgba(101, 245, 211, 0), rgba(101, 245, 211, 0.24), rgba(246, 201, 90, 0));
+        opacity: 0;
+        transform: skewX(-18deg);
+        filter: blur(0.2px);
+        will-change: transform, opacity;
+      }
+
+      .slice.gold {
+        background: linear-gradient(90deg, rgba(246, 201, 90, 0), rgba(246, 201, 90, 0.25), rgba(255, 111, 145, 0));
+      }
+
+      .beat {
+        position: absolute;
+        inset: 0;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 0 150px 0 160px;
+        pointer-events: none;
+      }
+
+      .beat.center {
+        align-items: center;
+        justify-content: center;
+        padding: 0 170px;
+        text-align: center;
+      }
+
+      .beat.light .eyebrow {
+        color: #0f7d6b;
+      }
+
+      .beat.light .headline {
+        color: #050608;
+      }
+
+      .beat.light .headline .teal {
+        color: #0f8f78;
+      }
+
+      .beat.light .headline .gold {
+        color: #9a6611;
+      }
+
+      .beat.light .subline {
+        color: #39403d;
+      }
+
+      .eyebrow {
+        margin-bottom: 24px;
+        color: #65f5d3;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 0;
+        opacity: 0;
+      }
+
+      .headline {
+        max-width: 1160px;
+        color: #f4f1e8;
+        font-size: 116px;
+        font-weight: 850;
+        line-height: 1.04;
+        letter-spacing: 0;
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+
+      .headline.tight {
+        max-width: 1400px;
+        font-size: 128px;
+      }
+
+      .headline.massive {
+        max-width: 1500px;
+        font-size: 168px;
+      }
+
+      .headline .teal {
+        color: #65f5d3;
+      }
+
+      .headline .gold {
+        color: #f6c95a;
+      }
+
+      .headline .pink {
+        color: #ff6f91;
+      }
+
+      .subline {
+        max-width: 880px;
+        margin-top: 28px;
+        color: #bac3bd;
+        font-size: 32px;
+        font-weight: 500;
+        line-height: 1.45;
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+
+      .prompt-card {
+        position: absolute;
+        left: 160px;
+        bottom: 148px;
+        z-index: 15;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        min-width: 820px;
+        padding: 26px 30px;
+        border: 1px solid rgba(244, 241, 232, 0.16);
+        border-radius: 8px;
+        background: rgba(11, 15, 18, 0.82);
+        box-shadow: 0 34px 90px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(244, 241, 232, 0.08);
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+
+      .prompt-label {
+        color: #f6c95a;
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 24px;
+      }
+
+      .prompt-text {
+        color: #f4f1e8;
+        font-size: 42px;
+        font-weight: 760;
+      }
+
+      .cursor {
+        width: 12px;
+        height: 44px;
+        background: #65f5d3;
+        box-shadow: 0 0 18px rgba(101, 245, 211, 0.46);
+      }
+
+      .evidence {
+        position: absolute;
+        z-index: 13;
+        border: 1px solid rgba(244, 241, 232, 0.15);
+        border-radius: 8px;
+        background: rgba(11, 15, 18, 0.9);
+        box-shadow: 0 34px 90px rgba(0, 0, 0, 0.44);
+        overflow: hidden;
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+
+      .shot-chip {
+        width: 330px;
+        height: 190px;
+      }
+
+      .shot-chip img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        filter: saturate(1.03) contrast(1.05) brightness(0.7);
+      }
+
+      .shot-chip::after {
+        content: attr(data-label);
+        position: absolute;
+        left: 14px;
+        bottom: 12px;
+        padding: 7px 10px;
+        color: #f4f1e8;
+        font-size: 18px;
+        font-weight: 700;
+        background: rgba(5, 6, 8, 0.74);
+        border: 1px solid rgba(244, 241, 232, 0.14);
+        border-radius: 4px;
+      }
+
+      .shot-a {
+        right: 170px;
+        top: 132px;
+      }
+
+      .shot-b {
+        right: 438px;
+        bottom: 154px;
+      }
+
+      .shot-c {
+        right: 94px;
+        bottom: 262px;
+      }
+
+      .signal-stack {
+        position: absolute;
+        right: 158px;
+        top: 210px;
+        z-index: 14;
+        width: 550px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .signal-row {
+        display: grid;
+        grid-template-columns: 112px 1fr 96px;
+        align-items: center;
+        gap: 18px;
+        height: 56px;
+        padding: 0 18px;
+        border: 1px solid rgba(5, 6, 8, 0.18);
+        border-radius: 7px;
+        background: #303331;
+        box-shadow: 0 16px 34px rgba(5, 6, 8, 0.16);
+        color: #f4f1e8;
+        font-size: 22px;
+        font-weight: 700;
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+
+      .bar {
+        height: 8px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(244, 241, 232, 0.08);
+      }
+
+      .bar span {
+        display: block;
+        width: 100%;
+        height: 100%;
+        transform: scaleX(0);
+        transform-origin: left center;
+        background: linear-gradient(90deg, #65f5d3, #f6c95a);
+      }
+
+      .score {
+        color: #65f5d3;
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 20px;
+        text-align: right;
+      }
+
+      .terminal {
+        position: absolute;
+        right: 150px;
+        bottom: 126px;
+        z-index: 15;
+        width: 690px;
+        height: 390px;
+        border: 1px solid rgba(101, 245, 211, 0.25);
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(17, 22, 27, 0.98), rgba(6, 8, 10, 0.98));
+        box-shadow: 0 40px 110px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(101, 245, 211, 0.07);
+        overflow: hidden;
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+
+      .term-top {
+        height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 18px;
+        border-bottom: 1px solid rgba(244, 241, 232, 0.1);
+        color: #9aa4a0;
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 16px;
+      }
+
+      .lamp {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #65f5d3;
+        box-shadow: 0 0 16px rgba(101, 245, 211, 0.48);
+      }
+
+      .term-body {
+        padding: 26px 28px;
+        font-family: "Cascadia Mono", Consolas, monospace;
+      }
+
+      .term-line {
+        display: grid;
+        grid-template-columns: 90px 1fr;
+        gap: 16px;
+        min-height: 44px;
+        color: #dfe7df;
+        font-size: 24px;
+        line-height: 1.35;
+        opacity: 0;
+      }
+
+      .term-line span:first-child {
+        color: #65f5d3;
+      }
+
+      .term-line .gold {
+        color: #f6c95a;
+      }
+
+      .term-line .muted {
+        color: #9aa4a0;
+      }
+
+      .action-strip {
+        position: absolute;
+        left: 160px;
+        bottom: 142px;
+        z-index: 14;
+        display: flex;
+        gap: 18px;
+        opacity: 0;
+      }
+
+      .action {
+        width: 222px;
+        height: 116px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 8px;
+        padding: 22px;
+        border: 1px solid rgba(244, 241, 232, 0.14);
+        border-radius: 8px;
+        background: rgba(12, 17, 19, 0.84);
+        box-shadow: 0 28px 70px rgba(0, 0, 0, 0.32);
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+
+      .action strong {
+        color: #f4f1e8;
+        font-size: 32px;
+        line-height: 1;
+      }
+
+      .action span {
+        color: #f4f1e8;
+        font-size: 18px;
+      }
+
+      .tokens {
+        position: absolute;
+        right: 170px;
+        top: 168px;
+        z-index: 12;
+        width: 670px;
+        height: 620px;
+      }
+
+      .token {
+        position: absolute;
+        display: grid;
+        place-items: center;
+        width: 96px;
+        height: 96px;
+        border: 1px solid rgba(244, 241, 232, 0.16);
+        border-radius: 8px;
+        background: rgba(13, 17, 20, 0.9);
+        box-shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
+        opacity: 0;
+        overflow: hidden;
+        will-change: transform, opacity;
+      }
+
+      .token img {
+        width: 86px;
+        height: 86px;
+        object-fit: cover;
+      }
+
+      .token.equip img {
+        width: 76px;
+        height: 76px;
+        object-fit: contain;
+      }
+
+      .token.coin {
+        border-radius: 50%;
+        border-color: rgba(246, 201, 90, 0.42);
+        background-color: #f6c95a;
+        background: #f6c95a;
+      }
+
+      .token.coin::before {
+        content: "";
+        width: 46px;
+        height: 46px;
+        border: 6px solid rgba(5, 6, 8, 0.44);
+        border-radius: 50%;
+        box-shadow: inset 0 0 0 5px rgba(255, 255, 255, 0.22);
+      }
+
+      .loop {
+        position: absolute;
+        right: 170px;
+        top: 162px;
+        z-index: 12;
+        width: 620px;
+        height: 620px;
+        opacity: 0;
+      }
+
+      .loop svg {
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+
+      .loop-path {
+        fill: none;
+        stroke: rgba(101, 245, 211, 0.66);
+        stroke-width: 3;
+        stroke-dasharray: 18 16;
+      }
+
+      .loop-node {
+        position: absolute;
+        width: 148px;
+        height: 74px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(244, 241, 232, 0.15);
+        border-radius: 8px;
+        background: rgba(12, 17, 19, 0.86);
+        color: #f4f1e8;
+        font-size: 28px;
+        font-weight: 800;
+        opacity: 0;
+      }
+
+      .node-read {
+        left: 236px;
+        top: 22px;
+      }
+
+      .node-plan {
+        right: 10px;
+        top: 264px;
+      }
+
+      .node-act {
+        left: 236px;
+        bottom: 20px;
+      }
+
+      .node-check {
+        left: 8px;
+        top: 264px;
+      }
+
+      .final {
+        position: absolute;
+        inset: 0;
+        z-index: 20;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        opacity: 0;
+      }
+
+      .final.light h1 {
+        color: #050608;
+      }
+
+      .final.light p {
+        color: #303734;
+      }
+
+      .final h1 {
+        color: #f4f1e8;
+        font-size: 72px;
+        font-weight: 850;
+        letter-spacing: 0;
+      }
+
+      .final h1 span {
+        color: #65f5d3;
+      }
+
+      .final .rule {
+        width: 0;
+        height: 2px;
+        margin: 34px auto 28px;
+        background: linear-gradient(90deg, rgba(101, 245, 211, 0), rgba(101, 245, 211, 0.9), rgba(246, 201, 90, 0));
+      }
+
+      .final p {
+        max-width: 1160px;
+        margin: 0 auto;
+        color: #f4f1e8;
+        font-size: 30px;
+        font-weight: 520;
+        line-height: 1.45;
+      }
+
+      #grain {
+        z-index: 30;
+        opacity: 0.075;
+        mix-blend-mode: overlay;
+        background-image:
+          linear-gradient(rgba(244, 241, 232, 0.22) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(244, 241, 232, 0.11) 1px, transparent 1px);
+        background-size: 100% 5px, 7px 100%;
+      }
+
+      #fade {
+        z-index: 40;
+        background: #050608;
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="36"
+      data-width="1920"
+      data-height="1080"
+    >
+      <audio
+        id="music"
+        data-start="0"
+        data-duration="36"
+        data-track-index="10"
+        data-volume="0.9"
+        src="assets/audio/trail-cw-trailer.wav"
+      ></audio>
+
+      <div id="field" data-layout-ignore></div>
+      <div id="routeField" data-layout-ignore></div>
+      <div id="signalField" data-layout-ignore></div>
+      <div id="stageWash" data-layout-ignore></div>
+      <div id="whiteGrid" data-layout-ignore></div>
+      <div id="pulseDisc" data-layout-ignore></div>
+      <div id="sliceField" data-layout-ignore></div>
+      <div id="megaWord" data-layout-ignore></div>
+      <div id="cutFlash" data-layout-ignore></div>
+      <div class="frame-line" data-layout-ignore></div>
+      <div class="frame-rule" data-layout-ignore></div>
+
+      <section class="beat center" id="b1">
+        <div class="eyebrow">TRAIL HSR AGENT CLI</div>
+        <div class="headline massive">让 Agent 接手星铁</div>
+        <div class="subline">Trail 提供通用读图和操作入口；这次片头，重点看货币战争。</div>
+      </section>
+
+      <section class="beat light" id="b2">
+        <div class="eyebrow">PLAYER INTENT</div>
+        <div class="headline tight">这局怎么打</div>
+        <div class="subline">上分、周常、补羁绊，先落到模式和职级难度。</div>
+      </section>
+      <div class="prompt-card">
+        <div class="prompt-label">PLAYER</div>
+        <div class="prompt-text">这一局，标准博弈冲高职级。</div>
+        <div class="cursor"></div>
+      </div>
+
+      <section class="beat" id="b3">
+        <div class="eyebrow">OPENING READ</div>
+        <div class="headline tight">先看<span class="teal">投资环境</span></div>
+        <div class="subline">环境、策略、攻略路线，决定这把值不值得开。</div>
+      </section>
+
+      <div class="evidence shot-chip shot-a" data-label="投资环境">
+        <img src="assets/stage/portal.jpg" alt="" data-layout-allow-overflow />
+      </div>
+      <div class="evidence shot-chip shot-b" data-label="商店状态">
+        <img src="assets/stage/shop.jpg" alt="" data-layout-allow-overflow />
+      </div>
+      <div class="evidence shot-chip shot-c" data-label="备战画面">
+        <img src="assets/stage/prep.jpg" alt="" data-layout-allow-overflow />
+      </div>
+
+      <section class="beat light" id="b4">
+        <div class="eyebrow">PREP FACTS</div>
+        <div class="headline">备战不是<span class="teal">空转</span></div>
+        <div class="subline">商店、手牌、装备、羁绊和金币，一起决定搜牌、升人口还是保经济。</div>
+      </section>
+      <div class="signal-stack">
+        <div class="signal-row"><span>金币</span><div class="bar"><span></span></div><span class="score">74</span></div>
+        <div class="signal-row"><span>人口</span><div class="bar"><span></span></div><span class="score">6/7</span></div>
+        <div class="signal-row"><span>装备</span><div class="bar"><span></span></div><span class="score">3 件</span></div>
+        <div class="signal-row"><span>手牌</span><div class="bar"><span></span></div><span class="score">空 2</span></div>
+      </div>
+
+      <section class="beat" id="b5">
+        <div class="eyebrow">ECONOMY LOOP</div>
+        <div class="headline tight">先处理<span class="teal">高价值动作</span></div>
+        <div class="subline">买核心、合优选装备、补人口；出手前先看利息和手牌压力。</div>
+      </section>
+      <div class="action-strip">
+        <div class="action"><strong>买核心</strong><span>补阵容与羁绊</span></div>
+        <div class="action"><strong>合优选</strong><span>不乱吃基础件</span></div>
+        <div class="action"><strong>补人口</strong><span>把战力上场</span></div>
+      </div>
+      <div class="tokens">
+        <div class="token role" style="left: 40px; top: 60px"><img src="assets/roles/firefly.png" alt="" /></div>
+        <div class="token role" style="left: 220px; top: 140px"><img src="assets/roles/silverwolf.png" alt="" /></div>
+        <div class="token role" style="left: 406px; top: 72px"><img src="assets/roles/cerydra.png" alt="" /></div>
+        <div class="token equip" style="left: 108px; top: 344px"><img src="assets/equipment/skates.png" alt="" /></div>
+        <div class="token equip" style="left: 308px; top: 394px"><img src="assets/equipment/blue-diamond.png" alt="" /></div>
+        <div class="token equip" style="left: 482px; top: 308px"><img src="assets/equipment/electromagnetic-launcher.png" alt="" /></div>
+        <div class="token coin" style="left: 286px; top: 250px"></div>
+      </div>
+
+      <section class="beat" id="b6">
+        <div class="eyebrow">AGENT HOST</div>
+        <div class="headline">终端只是<span class="gold">宿主</span></div>
+        <div class="subline">Trail 把 Agent 接进游戏；真正的依据，始终来自截图和命令回传。</div>
+      </section>
+      <div class="terminal">
+        <div class="term-top"><span class="lamp"></span><span>trail start / trail cw</span></div>
+        <div class="term-body">
+          <div class="term-line t1"><span>start</span><div>首帧观察</div></div>
+          <div class="term-line t2"><span>mode</span><div>标准博弈 / highest</div></div>
+          <div class="term-line t3"><span>prep</span><div><span class="gold">shop</span> / hand / equipment</div></div>
+          <div class="term-line t4"><span>next</span><div>出战后继续读局</div></div>
+        </div>
+      </div>
+
+      <section class="beat" id="b7">
+        <div class="eyebrow">BATTLE FLOW</div>
+        <div class="headline tight">打完，<span class="teal">继续看</span></div>
+        <div class="subline">赢了回普通备战，输了看结算；下一步不靠猜，继续读图。</div>
+      </section>
+      <div class="loop">
+        <svg viewBox="0 0 620 620" aria-hidden="true">
+          <path class="loop-path" d="M310 70 C485 70 560 185 560 310 C560 462 462 550 310 550 C158 550 60 462 60 310 C60 158 170 70 310 70" />
+        </svg>
+        <div class="loop-node node-read">读局势</div>
+        <div class="loop-node node-plan">定路线</div>
+        <div class="loop-node node-act">执行</div>
+        <div class="loop-node node-check">校验</div>
+      </div>
+
+      <section class="final light">
+        <div>
+          <h1><span>Trail</span> HSR Agent CLI</h1>
+          <div class="rule"></div>
+          <p>通用接管星铁；货币战争是本次重点优化演示</p>
+        </div>
+      </section>
+
+      <div id="grain" data-layout-ignore></div>
+      <div id="fade" data-layout-ignore></div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+
+      const field = document.getElementById("field");
+      const routeField = document.getElementById("routeField");
+      const signalField = document.getElementById("signalField");
+      const sliceField = document.getElementById("sliceField");
+
+      for (let i = 0; i < 220; i += 1) {
+        const dot = document.createElement("span");
+        dot.className = "dot" + (i % 11 === 0 ? " teal" : i % 17 === 0 ? " gold" : "");
+        const col = i % 22;
+        const row = Math.floor(i / 22);
+        dot.style.left = 70 + col * 84 + ((row * 23 + col * 9) % 30) + "px";
+        dot.style.top = 60 + row * 104 + ((col * 19 + row * 7) % 42) + "px";
+        const size = 3 + ((i * 7) % 9);
+        dot.style.width = size + "px";
+        dot.style.height = size + "px";
+        field.appendChild(dot);
+      }
+
+      const routeSpecs = [
+        [210, 260, 4, ""],
+        [390, 382, -12, "gold"],
+        [610, 214, 15, ""],
+        [830, 352, -7, ""],
+        [1080, 500, 11, "gold"],
+        [1280, 300, -16, ""],
+        [270, 720, -9, ""],
+        [560, 820, 8, "gold"],
+        [930, 760, -12, ""],
+        [1248, 700, 14, ""],
+      ];
+      routeSpecs.forEach((spec) => {
+        const route = document.createElement("span");
+        route.className = "route " + spec[3];
+        route.style.left = spec[0] + "px";
+        route.style.top = spec[1] + "px";
+        route.style.transform = "rotate(" + spec[2] + "deg) scaleX(0)";
+        routeField.appendChild(route);
+      });
+
+      for (let i = 0; i < 7; i += 1) {
+        const scan = document.createElement("span");
+        scan.className = "scan-column";
+        scan.style.left = 150 + i * 260 + "px";
+        signalField.appendChild(scan);
+      }
+
+      for (let i = 0; i < 18; i += 1) {
+        const orb = document.createElement("span");
+        orb.className = "orb";
+        orb.style.left = 134 + (i % 6) * 300 + "px";
+        orb.style.top = 145 + Math.floor(i / 6) * 270 + ((i * 29) % 80) + "px";
+        signalField.appendChild(orb);
+      }
+
+      const sliceSpecs = [
+        [-120, 150, ""],
+        [360, 420, "gold"],
+        [860, 720, ""],
+        [1180, 270, "gold"],
+      ];
+      sliceSpecs.forEach((spec) => {
+        const slice = document.createElement("span");
+        slice.className = "slice " + spec[2];
+        slice.style.left = spec[0] + "px";
+        slice.style.top = spec[1] + "px";
+        sliceField.appendChild(slice);
+      });
+
+      const tl = gsap.timeline({ paused: true, defaults: { ease: "power3.out" } });
+
+      gsap.set(".beat", { opacity: 1 });
+      gsap.set(".eyebrow, .headline, .subline, .prompt-card, .evidence, .signal-row, .action-strip, .action, .token, .terminal, .term-line, .loop, .loop-node, .final", { opacity: 0 });
+      gsap.set(".shot-chip img", { scale: 1.08 });
+      gsap.set(".bar span", { scaleX: 0 });
+      gsap.set(".frame-line", { opacity: 0, scaleY: 0.15, transformOrigin: "center center" });
+      gsap.set(".frame-rule", { opacity: 0, width: 0 });
+      gsap.set("#stageWash, #whiteGrid, #pulseDisc", { opacity: 0 });
+      gsap.set("#fade", { opacity: 0 });
+
+      function inText(root, at) {
+        tl.fromTo(root + " .eyebrow", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.32 }, at);
+        tl.fromTo(root + " .headline", { opacity: 0, y: 54, scale: 0.965 }, { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: "expo.out" }, at + 0.12);
+        tl.fromTo(root + " .subline", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.38 }, at + 0.46);
+      }
+
+      function outText(root, at) {
+        tl.to(root + " .eyebrow", { opacity: 0, y: -14, duration: 0.22 }, at);
+        tl.to(root + " .headline", { opacity: 0, y: -34, scale: 1.035, duration: 0.34, ease: "power2.in" }, at);
+        tl.to(root + " .subline", { opacity: 0, y: -18, duration: 0.24 }, at + 0.04);
+      }
+
+      function pulseField(at, color) {
+        tl.to(".dot", { opacity: 0.45, y: -18, scale: 1.45, duration: 0.8, overwrite: "auto", stagger: { amount: 0.72, from: "center" }, ease: "expo.out" }, at);
+        tl.to(".dot", { opacity: 0.16, y: 0, scale: 1, duration: 1.1, overwrite: "auto", stagger: { amount: 1.2, from: "edges" }, ease: "sine.inOut" }, at + 0.62);
+        tl.to(".route", { opacity: color === "gold" ? 0.72 : 0.58, scaleX: 1, duration: 0.52, overwrite: "auto", stagger: { amount: 0.46, from: "start" } }, at + 0.1);
+        tl.to(".route", { opacity: 0, scaleX: 0.08, duration: 0.54, overwrite: "auto", stagger: { amount: 0.46, from: "end" } }, at + 0.82);
+      }
+
+      function cut(at, color) {
+        tl.set("#cutFlash", { backgroundColor: color || "#f4f1e8" }, at);
+        tl.fromTo("#cutFlash", { opacity: 0, x: 0, scaleX: 0.64 }, { opacity: 0.34, x: 1060, scaleX: 1, duration: 0.1, overwrite: "auto", ease: "power2.out" }, at);
+        tl.to("#cutFlash", { opacity: 0, x: 2360, duration: 0.18, overwrite: "auto", ease: "power2.in" }, at + 0.11);
+      }
+
+      function mega(text, at, color) {
+        tl.set("#megaWord", { textContent: text, WebkitTextStrokeColor: color || "rgba(244, 241, 232, 0.42)" }, at);
+        tl.fromTo("#megaWord", { opacity: 0, x: 180, scale: 0.92 }, { opacity: 0.22, x: 0, scale: 1, duration: 0.5, overwrite: "auto", ease: "expo.out" }, at);
+        tl.to("#megaWord", { opacity: 0, x: -220, scale: 1.06, duration: 0.52, overwrite: "auto", ease: "power2.in" }, at + 1.45);
+      }
+
+      function slices(at, gold) {
+        tl.fromTo(".slice", { opacity: 0, x: -520, scaleX: 0.75 }, { opacity: gold ? 0.55 : 0.46, x: 260, scaleX: 1.12, duration: 0.48, overwrite: "auto", stagger: 0.05, ease: "expo.out" }, at);
+        tl.to(".slice", { opacity: 0, x: 760, scaleX: 0.9, duration: 0.46, overwrite: "auto", stagger: 0.04, ease: "power2.in" }, at + 0.58);
+      }
+
+      function lightStage(at, end, side) {
+        tl.to("#stageWash", { opacity: 1, duration: 0.24, overwrite: "auto", ease: "power2.out" }, at);
+        tl.fromTo("#whiteGrid", { opacity: 0, backgroundPosition: "0px 0px" }, { opacity: 0.72, backgroundPosition: "260px 156px", duration: Math.max(0.2, end - at), overwrite: "auto", ease: "none" }, at + 0.04);
+        tl.fromTo("#pulseDisc", { opacity: 0, x: side === "left" ? -920 : 120, y: side === "left" ? 84 : -40, scale: 0.48, rotation: -16 }, { opacity: 0.54, x: side === "left" ? -760 : 0, y: side === "left" ? 84 : 0, scale: side === "left" ? 1.18 : 1, rotation: 0, duration: 0.52, overwrite: "auto", ease: "expo.out" }, at + 0.12);
+        tl.to("#pulseDisc", { scale: side === "left" ? 1.38 : 1.16, rotation: side === "left" ? -20 : 18, duration: Math.max(0.2, end - at - 0.7), overwrite: "auto", ease: "sine.inOut" }, at + 0.68);
+        tl.to("#pulseDisc", { opacity: 0, scale: 0.74, duration: 0.24, overwrite: "auto", ease: "power2.in" }, end - 0.26);
+        tl.to("#stageWash, #whiteGrid", { opacity: 0, duration: 0.24, overwrite: "auto", ease: "power2.in" }, end);
+      }
+
+      tl.to(".dot", { opacity: 0.18, duration: 0.8, overwrite: "auto", stagger: { amount: 1.2, from: "center" } }, 0);
+      tl.to(".frame-line", { opacity: 0.7, scaleY: 1, duration: 0.8, ease: "expo.out" }, 0.45);
+      tl.to(".frame-rule", { opacity: 0.46, width: 740, duration: 0.8, ease: "expo.out" }, 0.58);
+      tl.to(".scan-column", { opacity: 0.44, x: 220, duration: 1.4, stagger: 0.18, repeat: 9, yoyo: true, ease: "sine.inOut" }, 0.3);
+      tl.to(".orb", { opacity: 0.34, scale: 1.8, duration: 1.2, stagger: { amount: 2.4, from: "center" }, repeat: 6, yoyo: true, ease: "sine.inOut" }, 0.7);
+      tl.to(".cursor", { opacity: 0.16, duration: 0.24, repeat: 38, yoyo: true, ease: "none" }, 3.9);
+
+      inText("#b1", 0.55);
+      mega("CHOICE", 0.98, "rgba(244, 241, 232, 0.34)");
+      pulseField(1.12);
+      outText("#b1", 3.05);
+
+      lightStage(3.12, 6.55, "right");
+      cut(3.18, "#f4f1e8");
+      inText("#b2", 3.42);
+      slices(3.76, true);
+      tl.fromTo(".prompt-card", { opacity: 0, y: 54, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.52, ease: "expo.out" }, 4.2);
+      pulseField(4.88, "gold");
+      tl.to(".prompt-card", { opacity: 0, y: 34, scale: 0.98, duration: 0.34, ease: "power2.in" }, 6.05);
+      outText("#b2", 6.22);
+
+      cut(6.62, "#65f5d3");
+      inText("#b3", 6.82);
+      mega("READ", 7.08, "rgba(101, 245, 211, 0.56)");
+      tl.fromTo(".shot-a", { opacity: 0, x: 140, y: -40, rotation: 4, scale: 0.88 }, { opacity: 1, x: 0, y: 0, rotation: 0, scale: 1, duration: 0.46, ease: "back.out(1.45)" }, 7.45);
+      tl.fromTo(".shot-b", { opacity: 0, x: 80, y: 60, rotation: -3, scale: 0.88 }, { opacity: 1, x: 0, y: 0, rotation: 0, scale: 1, duration: 0.42, ease: "back.out(1.45)" }, 7.88);
+      tl.fromTo(".shot-c", { opacity: 0, x: 130, y: 40, rotation: 5, scale: 0.88 }, { opacity: 1, x: 0, y: 0, rotation: 0, scale: 1, duration: 0.42, ease: "back.out(1.45)" }, 8.24);
+      tl.to(".shot-chip img", { scale: 1.18, duration: 2.7, ease: "sine.inOut" }, 7.48);
+      pulseField(8.9);
+      tl.to(".evidence", { opacity: 0, x: 90, y: -20, scale: 0.92, duration: 0.32, stagger: 0.08, ease: "power2.in" }, 10.05);
+      outText("#b3", 10.15);
+
+      lightStage(10.32, 14.05, "right");
+      cut(10.4, "#f4f1e8");
+      inText("#b4", 10.62);
+      slices(10.86, false);
+      tl.fromTo(".signal-row", { opacity: 0, x: 86, scale: 0.96 }, { opacity: 1, x: 0, scale: 1, duration: 0.4, stagger: 0.08, ease: "expo.out" }, 11.28);
+      tl.to(".signal-row .bar span", { scaleX: 1, duration: 0.62, stagger: 0.1, ease: "power3.out" }, 11.6);
+      pulseField(12.45);
+      tl.to(".signal-row", { opacity: 0, x: -48, duration: 0.26, stagger: 0.05, ease: "power2.in" }, 13.48);
+      outText("#b4", 13.66);
+
+      cut(14.12, "#f6c95a");
+      inText("#b5", 14.32);
+      mega("PLAN", 14.64, "rgba(246, 201, 90, 0.56)");
+      tl.fromTo(".action-strip", { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.32 }, 15.18);
+      tl.fromTo(".action", { opacity: 0, y: 40, scale: 0.94 }, { opacity: 1, y: 0, scale: 1, duration: 0.4, stagger: 0.09, ease: "back.out(1.55)" }, 15.28);
+      tl.fromTo(".token", { opacity: 0, y: 80, scale: 0.58, rotation: -8 }, { opacity: 1, y: 0, scale: 1, rotation: 0, duration: 0.42, stagger: { amount: 0.58, from: "center" }, ease: "back.out(1.85)" }, 15.86);
+      tl.to(".token.role", { x: -42, y: 54, scale: 1.08, duration: 0.5, stagger: 0.07, yoyo: true, repeat: 1, ease: "power2.inOut" }, 16.82);
+      tl.to(".token.equip", { x: 48, y: -42, rotation: 7, scale: 1.12, duration: 0.48, stagger: 0.07, yoyo: true, repeat: 1, ease: "power2.inOut" }, 17.52);
+      tl.to(".token.coin", { scale: 1.28, duration: 0.24, repeat: 3, yoyo: true, ease: "power2.inOut" }, 18.12);
+      pulseField(18.22, "gold");
+      tl.to(".action-strip, .token", { opacity: 0, y: -38, scale: 0.94, duration: 0.3, stagger: 0.03, ease: "power2.in" }, 18.72);
+      outText("#b5", 18.92);
+
+      cut(19.08, "#65f5d3");
+      inText("#b6", 19.28);
+      slices(19.46, false);
+      tl.fromTo(".terminal", { opacity: 0, x: 96, y: 54, scale: 0.92 }, { opacity: 1, x: 0, y: 0, scale: 1, duration: 0.46, ease: "expo.out" }, 19.92);
+      tl.fromTo(".term-line", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.23, stagger: 0.18 }, 20.28);
+      pulseField(20.86);
+      tl.to(".terminal", { x: -10, scale: 1.015, duration: 0.32, yoyo: true, repeat: 1, ease: "sine.inOut" }, 21.78);
+      tl.to(".terminal", { opacity: 0, x: 80, scale: 0.95, duration: 0.34, ease: "power2.in" }, 22.58);
+      outText("#b6", 22.75);
+
+      cut(22.92, "#f4f1e8");
+      inText("#b7", 23.1);
+      mega("LOOP", 23.35, "rgba(101, 245, 211, 0.52)");
+      tl.fromTo(".loop", { opacity: 0, scale: 0.82, rotation: -8 }, { opacity: 1, scale: 1, rotation: 0, duration: 0.52, ease: "expo.out" }, 23.82);
+      tl.fromTo(".loop-node", { opacity: 0, y: 28, scale: 0.92, rotation: 0 }, { opacity: 1, y: 0, scale: 1, rotation: 0, duration: 0.34, overwrite: "auto", stagger: 0.1, ease: "back.out(1.6)" }, 24.28);
+      tl.to(".loop", { rotation: 360, duration: 4.3, ease: "none" }, 24.8);
+      tl.to(".loop-node", { rotation: -360, duration: 4.3, overwrite: "auto", ease: "none" }, 24.8);
+      pulseField(25.1);
+      tl.to(".loop-node", { scale: 1.08, duration: 0.2, overwrite: "auto", stagger: 0.16, yoyo: true, repeat: 1, ease: "power2.inOut" }, 26.42);
+      pulseField(27.4);
+      tl.to(".loop, .loop-node", { opacity: 0, scale: 0.9, duration: 0.33, stagger: 0.04, ease: "power2.in" }, 28.7);
+      outText("#b7", 28.82);
+
+      lightStage(29.05, 34.32, "right");
+      cut(29.12, "#65f5d3");
+      tl.to(".frame-line", { opacity: 0, scaleY: 0.22, duration: 0.36 }, 29.08);
+      tl.to(".frame-rule", { opacity: 0, width: 0, duration: 0.36 }, 29.08);
+      tl.to(".dot", { opacity: 0.28, scale: 1.45, y: -28, duration: 0.9, stagger: { amount: 1.0, from: "center" }, ease: "expo.out" }, 29.1);
+      tl.to(".scan-column, .orb", { opacity: 0, duration: 0.34 }, 29.28);
+      tl.fromTo(".final", { opacity: 0, y: 38, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.58, ease: "expo.out" }, 29.58);
+      tl.to(".final .rule", { width: 840, duration: 0.6, ease: "expo.out" }, 30.08);
+      tl.to(".dot", { opacity: 0.08, scale: 0.85, y: -62, duration: 2.8, stagger: { amount: 1.2, from: "edges" }, ease: "sine.inOut" }, 30.0);
+      tl.to(".final", { opacity: 0, y: -22, duration: 0.46, ease: "power2.in" }, 34.25);
+      tl.to("#fade", { opacity: 1, duration: 0.72, ease: "power1.inOut" }, 34.92);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>
