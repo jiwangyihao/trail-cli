@@ -726,7 +726,7 @@ def test_server_handle_payload_preserves_call_job_and_control_fields(tmp_path: P
             captured["payload"] = request.payload
             return success({"ok": True}, request_id=request.request_id)
 
-    server = TrailDaemonServer(command_service=CapturingCommandService())
+    server = TrailDaemonServer(command_service=CapturingCommandService(), async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -748,6 +748,42 @@ def test_server_handle_payload_preserves_call_job_and_control_fields(tmp_path: P
         "control": {"mode": "async_wait", "wait_timeout": 0.0, "side_effect_stage": "none"},
         "payload": {"lang": "ch"},
     }
+
+
+def test_server_defaults_to_async_after_all_gates(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+
+    class Executor:
+        def __init__(self):
+            self.called = False
+            self.request = None
+
+        def handle(self, request: DaemonRequest):
+            self.called = True
+            self.request = request
+            return success({"state": "running", "request": "job-1", "waited": 0}, request_id=request.call_id)
+
+    executor = Executor()
+    server = TrailDaemonServer(command_service=CommandService(runtime_service=ProtocolRuntimeService(ProtocolRuntime(tmp_path / "shot.png"))), request_executor=executor)
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="call-async",
+            call_id="call-async",
+            method="ocr.read",
+            payload={},
+            control={"mode": "async_wait", "wait_timeout": 0.0, "side_effect_stage": "none"},
+        )
+    )
+
+    assert executor.called is True
+    assert executor.request.call_id == "call-async"
+    assert response["ok"] is True
+    assert response["data"] == {"state": "running", "request": "job-1", "waited": 0}
 
 
 def test_command_failure_accepts_machine_readable_data():

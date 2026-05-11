@@ -22,6 +22,7 @@ from trail.daemon.cw_resource_service import CwResourceService
 from trail.daemon.cw_service import CwService
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
 from trail.daemon.models import DaemonRequest
+from trail.daemon.request_executor import RequestExecutor
 from trail.daemon.paths import resolve_daemon_home
 from trail.daemon.runtime_service import RuntimeService
 from trail.daemon.session_service import SessionServiceRegistry
@@ -91,8 +92,10 @@ class _RequestHandler(StreamRequestHandler):
 
 
 class TrailDaemonServer:
-    def __init__(self, *, command_service: CommandService):
+    def __init__(self, *, command_service: CommandService, request_executor=None, async_enabled: bool = True):
         self.command_service = command_service
+        self.request_executor = request_executor
+        self.async_enabled = bool(async_enabled)
         self._listener: _DaemonTcpServer | None = None
 
     @property
@@ -154,7 +157,15 @@ class TrailDaemonServer:
                 job_id=payload.get("job_id"),
                 control=payload.get("control") or {},
             )
-            response = self.command_service.handle(request)
+            if self.async_enabled:
+                if self.request_executor is None:
+                    self.request_executor = RequestExecutor(
+                        command_service=self.command_service,
+                        session_service=self.command_service.session_service,
+                    )
+                response = self.request_executor.handle(request)
+            else:
+                response = self.command_service.handle(request)
         except TrailError as error:
             return _error_response(
                 request_id=request_id,
@@ -203,4 +214,5 @@ def main() -> None:
     session_service = SessionServiceRegistry()
     cw_service = CwService(runtime_service=runtime_service, cw_resource_service=CwResourceService())
     command_service = CommandService(runtime_service=runtime_service, session_service=session_service, cw_service=cw_service)
-    TrailDaemonServer(command_service=command_service).serve_forever()
+    request_executor = RequestExecutor(command_service=command_service, session_service=session_service)
+    TrailDaemonServer(command_service=command_service, request_executor=request_executor).serve_forever()
