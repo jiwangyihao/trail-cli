@@ -13,7 +13,8 @@ import trail.daemon.server as daemon_server_module
 from trail.daemon.command_service import CommandService, PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted, success
 from trail.daemon.client import TrailDaemonClient, resolve_response_timeout, send_daemon_request
 from trail.daemon.command_timeouts import resolve_command_execution_timeout
-from trail.daemon.models import DaemonRequest
+from trail.daemon.models import DaemonRequest, RequestControl
+from trail.daemon.request_executor import RequestExecutor
 from trail.daemon.protocol import PROTOCOL_VERSION
 from trail.daemon.server import TrailDaemonServer
 from trail.daemon.session_service import SessionServiceRegistry
@@ -78,6 +79,30 @@ class ProtocolRuntime:
             raise self.click_error
 
 
+class BlockingWaitRuntime(ProtocolRuntime):
+    def __init__(self, screenshot_path: Path):
+        super().__init__(screenshot_path)
+        self.wait_entered = threading.Event()
+        self.release_wait = threading.Event()
+
+    def locate(self, template: str, **kwargs):
+        del template, kwargs
+        self.wait_entered.set()
+        self.release_wait.wait(2)
+        return {"left": 1, "top": 2, "width": 3, "height": 4}
+
+
+class BlockingOcrRuntime(ProtocolRuntime):
+    def __init__(self, screenshot_path: Path):
+        super().__init__(screenshot_path)
+        self.ocr_entered = threading.Event()
+        self.release_ocr = threading.Event()
+
+    def ocr(self, *, capture=None, ocr=None, **kwargs):
+        self.ocr_entered.set()
+        self.release_ocr.wait(2)
+        return super().ocr(capture=capture, ocr=ocr, **kwargs)
+
 class ScopedDebugProtocolRuntime(ProtocolRuntime):
     def __init__(self, screenshot_path: Path):
         super().__init__(screenshot_path)
@@ -120,6 +145,13 @@ class ScopedDebugProtocolRuntime(ProtocolRuntime):
                     "point": [x, y],
                 }
             )
+
+
+def _capture_thread_failure(failures: list[BaseException], fn, *args, **kwargs) -> None:
+    try:
+        fn(*args, **kwargs)
+    except BaseException as error:
+        failures.append(error)
 
 
 def _complete_cw_guide_fixture(*, lineup_id: str = "selected-lineup", operation_guide: str = "前期按测试运营") -> dict[str, object]:
@@ -260,7 +292,10 @@ class StartRuntimeServiceStub:
         channel: str = "official",
         timeout_seconds: int = 30,
         interval_seconds: int = 1,
+        cancellation_token=None,
     ):
+        if cancellation_token is not None:
+            cancellation_token.throw_if_cancelled()
         self.start_run_calls.append(
             {
                 "workspace_root": workspace_root,
@@ -280,7 +315,11 @@ class StartRuntimeServiceStub:
         launch_result = self.launch_game(game_path=game_path, channel=channel)
         if not launch_result.get("started") and not launch_result.get("already_running"):
             raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
+        if cancellation_token is not None:
+            cancellation_token.throw_if_cancelled()
         while True:
+            if cancellation_token is not None:
+                cancellation_token.throw_if_cancelled()
             try:
                 return {**self.attach_window(window_title=window_title), "status": self.launch_status}
             except TrailError as error:
@@ -372,6 +411,9 @@ def _server_payload(
     payload: dict,
     session_id: str | None = None,
     verbose: bool = False,
+    call_id: str | None = None,
+    job_id: str | None = None,
+    control: dict | None = None,
 ):
     return {
         "request_id": request_id,
@@ -382,12 +424,338 @@ def _server_payload(
         "method": method,
         "payload": payload,
         "token": token,
+        "call_id": call_id,
+        "job_id": job_id,
+        "control": control or {},
     }
 
 
 def _set_stage(session, stage: dict):
     session.scene_state.setdefault("cw", {})["stage"] = dict(stage)
     return session
+
+
+def test_daemon_request_serializes_call_job_and_control_fields(tmp_path: Path):
+    captured: dict[str, object] = {}
+
+    class Server:
+        def handle(self, payload):
+            captured.update(payload)
+            return build_success_response(request_id=payload["call_id"], data={"ok": True})
+
+    request = DaemonRequest(
+        call_id="call-1",
+        job_id="job-1",
+        request_id="call-1",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id="sess-1",
+        verbose=True,
+        method="cw.battle.run",
+        payload={"timeout": 90},
+        control=RequestControl(mode="async_wait", wait_timeout=15.0),
+    )
+
+    response = send_daemon_request(request, "token", endpoint="fake", server=Server())
+
+    assert response["ok"] is True
+    assert captured["call_id"] == "call-1"
+    assert captured["job_id"] == "job-1"
+    assert captured["request_id"] == "call-1"
+    assert captured["control"] == {"mode": "async_wait", "wait_timeout": 15.0, "side_effect_stage": "none"}
+    assert captured["payload"] == {"timeout": 90}
+
+
+def _cancel_request(tmp_path: Path, job_id: str, *, session_id: str | None = None) -> DaemonRequest:
+    return DaemonRequest(
+        request_id=f"call-cancel-{job_id}",
+        call_id=f"call-cancel-{job_id}",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session_id,
+        verbose=False,
+        method="daemon.request_cancel",
+        payload={"request_id": job_id},
+        control=RequestControl(wait_timeout=0.0),
+    )
+
+
+def test_start_run_runtime_wait_checks_cancel_token(tmp_path: Path):
+    runtime = StartRunCaptureRuntime(workspace_root=tmp_path)
+    runtime_service = StartRuntimeServiceStub(attach_failures_before_success=1, runtime=runtime)
+    session_services = SessionServiceRegistry()
+    command_service = CommandService(runtime_service=runtime_service, session_service=session_services)
+    control = RequestControl(wait_timeout=0.0)
+    request = DaemonRequest(
+        request_id="call-start",
+        call_id="call-start",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=None,
+        verbose=False,
+        method="start.run",
+        payload={"window_title": "崩坏：星穹铁道", "channel": "official"},
+        control=control,
+    )
+
+    control.cancellation_token.cancel()
+
+    with pytest.raises(Exception) as exc_info:
+        command_service.execute_business_request(request)
+    assert type(exc_info.value).__name__ == "RequestCancelled"
+
+
+def test_image_wait_checks_cancel_token(tmp_path: Path):
+    runtime = BlockingWaitRuntime(tmp_path / "shot.png")
+    runtime_service = ProtocolRuntimeService(runtime)
+    session_services = SessionServiceRegistry()
+    command_service = CommandService(runtime_service=runtime_service, session_service=session_services)
+    executor = RequestExecutor(command_service=command_service, session_service=session_services)
+
+    running = executor.handle(
+        DaemonRequest(
+            request_id="call-image-wait",
+            call_id="call-image-wait",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="image.wait",
+            payload={"template": "demo.png", "timeout": 30},
+            control=RequestControl(wait_timeout=0.0),
+        )
+    )
+    job_id = running["data"]["request"]
+    assert runtime.wait_entered.wait(1)
+    executor.handle(_cancel_request(tmp_path, job_id))
+    runtime.release_wait.set()
+
+    final = executor.handle(
+        DaemonRequest(
+            request_id="call-image-replay",
+            call_id="call-image-replay",
+            job_id=job_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="image.wait",
+            payload={"template": "demo.png", "timeout": 30},
+            control=RequestControl(wait_timeout=1.0),
+        )
+    )
+
+    assert final["ok"] is False
+    assert final["error"]["code"] == "REQUEST_CANCELLED"
+    status = session_services.for_workspace(str(tmp_path)).request_status(job_id)
+    assert status["state"] == "cancelled"
+    assert status["tainted"] is False
+
+
+def test_ocr_retry_loop_checks_cancel_token(tmp_path: Path):
+    runtime = BlockingOcrRuntime(tmp_path / "shot.png")
+    runtime_service = ProtocolRuntimeService(runtime)
+    session_services = SessionServiceRegistry()
+    command_service = CommandService(runtime_service=runtime_service, session_service=session_services)
+    executor = RequestExecutor(command_service=command_service, session_service=session_services)
+
+    running = executor.handle(
+        DaemonRequest(
+            request_id="call-ocr",
+            call_id="call-ocr",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="ocr.read",
+            payload={"ocr_mode": "fast", "retry_high": "always"},
+            control=RequestControl(wait_timeout=0.0),
+        )
+    )
+    job_id = running["data"]["request"]
+    assert runtime.ocr_entered.wait(1)
+    executor.handle(_cancel_request(tmp_path, job_id))
+    runtime.release_ocr.set()
+
+    final = executor.handle(
+        DaemonRequest(
+            request_id="call-ocr-replay",
+            call_id="call-ocr-replay",
+            job_id=job_id,
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="ocr.read",
+            payload={"ocr_mode": "fast", "retry_high": "always"},
+            control=RequestControl(wait_timeout=1.0),
+        )
+    )
+
+    assert final["ok"] is False
+    assert final["error"]["code"] == "REQUEST_CANCELLED"
+    status = session_services.for_workspace(str(tmp_path)).request_status(job_id)
+    assert status["state"] == "cancelled"
+    assert status["tainted"] is False
+
+
+def test_cw_service_session_save_methods_check_cancel_token(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = ProtocolRuntime(tmp_path / "shot.png")
+    runtime_service = ProtocolRuntimeService(runtime)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def fake_clear_in_progress(session) -> dict[str, bool]:
+        del session
+        entered.set()
+        release.wait(2)
+        control.cancellation_token.throw_if_cancelled()
+        return {"cleared": True}
+
+    monkeypatch.setattr("trail.daemon.cw_service.clear_cw_battle_resume_hint", fake_clear_in_progress)
+    command_service = CommandService(
+        runtime_service=runtime_service,
+        session_service=registry,
+        cw_service=CwService(runtime_service=runtime_service),
+    )
+    control = RequestControl(wait_timeout=0.0)
+    request = DaemonRequest(
+        request_id="call-cw-battle-clear",
+        call_id="call-cw-battle-clear",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.battle.clear_in_progress",
+        payload={"session_id": session.session_id},
+        control=control,
+    )
+
+    failure: list[BaseException] = []
+    worker = threading.Thread(target=lambda: _capture_thread_failure(failure, command_service.execute_business_request, request))
+    worker.start()
+    assert entered.wait(1)
+    control.cancellation_token.cancel()
+    release.set()
+    worker.join(1)
+
+    assert not worker.is_alive()
+    assert len(failure) == 1
+    assert type(failure[0]).__name__ == "RequestCancelled"
+
+
+def test_executor_managed_mutation_uses_job_id_for_legacy_journal_and_call_status_maps_to_job(tmp_path: Path):
+    runtime = ProtocolRuntime(tmp_path / "shot.png")
+    runtime_service = ProtocolRuntimeService(runtime)
+    session_services = SessionServiceRegistry()
+    command_service = CommandService(runtime_service=runtime_service, session_service=session_services)
+    executor = RequestExecutor(command_service=command_service, session_service=session_services)
+
+    response = executor.handle(
+        DaemonRequest(
+            request_id="call-click",
+            call_id="call-click",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="input.click",
+            payload={"x": 1, "y": 2},
+            control=RequestControl(wait_timeout=1.0),
+        )
+    )
+    service = session_services.for_workspace(str(tmp_path))
+    job = service.find_latest_job_for_method("input.click")
+    legacy_status = service.request_status(job["job_id"])
+    call_status = service.request_status("call-click")
+
+    assert response["ok"] is True
+    assert job["job_id"] != "call-click"
+    assert legacy_status["request_id"] == job["job_id"]
+    assert call_status["request_id"] == "call-click"
+    assert call_status["job_id"] == job["job_id"]
+    assert call_status["method"] == "input.click"
+    assert service.get_call_record("call-click") is not None
+    assert not (Path(tmp_path) / ".trail" / "requests" / "call-click.json").exists()
+
+
+def test_response_timeout_uses_wait_timeout_control_buffer():
+    assert resolve_response_timeout("cw.battle.run", {"timeout": 90}, wait_timeout=12.0) == 17.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": 90}, wait_timeout=0.0) == 5.0
+    assert resolve_response_timeout("ocr.read", {}, wait_timeout=None) == 105.0
+
+
+def test_fake_daemon_round_trip_includes_control_without_polluting_payload(tmp_path: Path):
+    server = start_fake_daemon_server({"ocr.read": build_success_response(request_id="req", data={"ok": True})})
+    request = DaemonRequest(
+        request_id="call-1",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=None,
+        verbose=False,
+        method="ocr.read",
+        payload={"query": {"lang": "zh"}},
+        job_id="job-1",
+        control=RequestControl(wait_timeout=3.0),
+    )
+
+    response = fake_round_trip_transport(server)(request, "token", endpoint="fake")
+
+    assert response["ok"] is True
+    assert server.requests[0]["payload"] == {"query": {"lang": "zh"}}
+    assert server.requests[0]["job_id"] == "job-1"
+    assert server.requests[0]["control"] == {"mode": "async_wait", "wait_timeout": 3.0, "side_effect_stage": "none"}
+
+
+def test_server_handle_payload_preserves_call_job_and_control_fields(tmp_path: Path, monkeypatch):
+    daemon_home = tmp_path / "daemon-home"
+    write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
+    monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
+    captured: dict[str, object] = {}
+
+    class CapturingCommandService:
+        def handle(self, request: DaemonRequest):
+            captured["call_id"] = request.call_id
+            captured["job_id"] = request.job_id
+            captured["control"] = request.control.to_dict()
+            captured["payload"] = request.payload
+            return success({"ok": True}, request_id=request.request_id)
+
+    server = TrailDaemonServer(command_service=CapturingCommandService())
+
+    response = server.handle_payload(
+        _server_payload(
+            tmp_path,
+            token="token-1",
+            request_id="call-1",
+            call_id="call-1",
+            job_id="job-1",
+            control={"mode": "async_wait", "wait_timeout": 0.0, "side_effect_stage": "none"},
+            method="ocr.read",
+            payload={"lang": "ch"},
+        )
+    )
+
+    assert response["ok"] is True, response
+    assert captured == {
+        "call_id": "call-1",
+        "job_id": "job-1",
+        "control": {"mode": "async_wait", "wait_timeout": 0.0, "side_effect_stage": "none"},
+        "payload": {"lang": "ch"},
+    }
+
+
+def test_command_failure_accepts_machine_readable_data():
+    payload = command_failure(code="DAEMON_BUSY", message="busy", data={"active_request": "job-1"})
+
+    assert payload["ok"] is False
+    assert payload["data"] == {"active_request": "job-1"}
+    assert payload["error"] == {"code": "DAEMON_BUSY", "message": "busy"}
 
 
 def _set_shop(session, shop: dict):
@@ -1461,7 +1829,6 @@ def test_command_service_start_run_uses_command_execution_timeout_from_policy(tm
         }
     ]
     assert runtime_service.start_run_calls[0]["timeout_seconds"] == resolve_command_execution_timeout("start.run", request_payload)
-    assert resolve_response_timeout("start.run", request_payload) == float(runtime_service.start_run_calls[0]["timeout_seconds"])
 
 
 @pytest.mark.parametrize(
@@ -7820,7 +8187,7 @@ def test_command_service_handles_cw_battle_run_and_persists_last_result(tmp_path
     cw_service = CwService(runtime_service=runtime_service)
     monkeypatch.setattr(
         "trail.daemon.cw_service.run_cw_battle",
-        lambda session, *, runtime, timeout: {"status": "in_progress", "stale": True, "in_battle": True, "timeout_seconds": timeout},
+        lambda session, *, runtime, timeout, cancellation_token=None: {"status": "in_progress", "stale": True, "in_battle": True, "timeout_seconds": timeout},
     )
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
     request = DaemonRequest(
@@ -7844,6 +8211,57 @@ def test_command_service_handles_cw_battle_run_and_persists_last_result(tmp_path
     assert loaded.last_result["data"]["status"] == "in_progress"
     assert loaded.last_screenshot == ".trail/shots/req-cw-battle-run.png"
     assert runtime.capture_requests == [(False, "req-cw-battle-run")]
+
+
+def test_command_service_cw_battle_run_cancel_after_side_effect_propagates_request_cancelled(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from trail.daemon.cw_service import CwService
+    from trail.daemon.models import RequestCancelled
+
+    class Runtime:
+        def capture_after_action(self, optional: bool = False, request_id: str | None = None):
+            del optional, request_id
+            return tmp_path / ".trail" / "shots" / "req-cw-battle-run-cancel.png"
+
+        def collect_warnings(self):
+            return []
+
+        def match_references(self, screenshot_path, limit: int = 3):
+            del screenshot_path, limit
+            return []
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    runtime = Runtime()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+
+    def fake_run_cw_battle(session, *, runtime, timeout, cancellation_token=None):
+        del session, runtime, timeout
+        setattr(cancellation_token, "side_effect_stage", "side_effect_applied")
+        raise RequestCancelled()
+
+    monkeypatch.setattr("trail.daemon.cw_service.run_cw_battle", fake_run_cw_battle)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    control = RequestControl(wait_timeout=0.0)
+    request = DaemonRequest(
+        request_id="req-cw-battle-run-cancel",
+        protocol_version=PROTOCOL_VERSION,
+        workspace_root=str(tmp_path),
+        session_id=session.session_id,
+        verbose=False,
+        method="cw.battle.run",
+        payload={"session_id": session.session_id, "timeout": 42},
+        control=control,
+    )
+
+    with pytest.raises(RequestCancelled):
+        command_service.execute_business_request(request)
+
+    assert control.side_effect_stage == "side_effect_applied"
 
 
 def test_command_service_cw_battle_run_collects_prep_facts_after_completed_preparation(
@@ -7879,8 +8297,8 @@ def test_command_service_cw_battle_run_collects_prep_facts_after_completed_prepa
     runtime = Runtime()
     runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
 
-    def fake_run_cw_battle(session, *, runtime, timeout):
-        del runtime
+    def fake_run_cw_battle(session, *, runtime, timeout, cancellation_token=None):
+        del runtime, cancellation_token
         events.append(f"battle.run({timeout})")
         session.scene_state.setdefault("cw", {})["stage"] = {"value": "preparation", "stale": False}
         return {
@@ -7965,8 +8383,8 @@ def _run_cw_battle_run_timeout_capture(tmp_path: Path, monkeypatch, raw_timeout=
     cw_service = CwService(runtime_service=runtime_service)
     captured: list[int] = []
 
-    def fake_run_cw_battle(session, *, runtime, timeout):
-        del session, runtime
+    def fake_run_cw_battle(session, *, runtime, timeout, cancellation_token=None):
+        del session, runtime, cancellation_token
         captured.append(timeout)
         return {"status": "in_progress", "stale": True, "in_battle": True, "timeout_seconds": timeout}
 
@@ -8248,7 +8666,7 @@ def test_command_service_handles_state_dump_returns_latest_battle_run_snapshot(t
     cw_service = CwService(runtime_service=runtime_service)
     monkeypatch.setattr(
         "trail.daemon.cw_service.run_cw_battle",
-        lambda session, *, runtime, timeout: {"status": "in_progress", "stale": True, "in_battle": True, "timeout_seconds": timeout},
+        lambda session, *, runtime, timeout, cancellation_token=None: {"status": "in_progress", "stale": True, "in_battle": True, "timeout_seconds": timeout},
     )
     command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
 
@@ -9733,17 +10151,16 @@ def test_client_does_not_bootstrap_on_socket_timeout(tmp_path: Path):
     assert started == []
 
 
-def test_daemon_socket_timeout_budget_covers_long_running_scene_commands():
-    import trail.daemon.client as client_module
+def test_daemon_response_timeout_uses_default_wait_budget_plus_transport_buffer():
+    assert resolve_response_timeout("ocr.read", {}) == 105.0
+    assert resolve_response_timeout("start.run", {}) == 105.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": 90}) == 105.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": 45}, wait_timeout=0.0) == 5.0
+    assert resolve_response_timeout("cw.battle.run", {"timeout": 45}, wait_timeout=12.0) == 17.0
 
-    assert client_module.SOCKET_RESPONSE_TIMEOUT_SECONDS >= 120.0
 
-
-def test_start_run_and_battle_run_timeouts_share_unified_command_policy():
-    assert resolve_response_timeout("ocr.read", {}) == 120.0
+def test_start_run_and_battle_run_keep_unified_command_execution_policy():
     assert resolve_command_execution_timeout("start.run", {}) == 180
-    assert resolve_response_timeout("start.run", {}) == 180.0
-    assert resolve_response_timeout("start.run", {"window_title": "崩坏：星穹铁道"}) == 180.0
     assert resolve_command_execution_timeout("cw.battle.run", {}) == 90
     assert resolve_command_execution_timeout("cw.battle.run", None) == 90
     assert resolve_command_execution_timeout("cw.battle.run", {"timeout": 45}) == 45
@@ -9752,15 +10169,6 @@ def test_start_run_and_battle_run_timeouts_share_unified_command_policy():
     assert resolve_command_execution_timeout("cw.battle.run", {"timeout": False}) == 90
     assert resolve_command_execution_timeout("cw.battle.run", {"timeout": True}) == 90
     assert resolve_command_execution_timeout("cw.battle.run", {"timeout": "45"}) == 90
-    assert resolve_response_timeout("cw.battle.run", {}) == 120.0
-    assert resolve_response_timeout("cw.battle.run", None) == 120.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": 90}) == 120.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": 45}) == 75.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": 0}) == 120.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": -1}) == 120.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": False}) == 120.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": True}) == 120.0
-    assert resolve_response_timeout("cw.battle.run", {"timeout": "45"}) == 120.0
 
 
 def test_client_returns_daemon_unavailable_when_transport_returns_non_object_json(tmp_path: Path):
@@ -10017,11 +10425,14 @@ def test_send_daemon_request_round_trips_over_real_socket(tmp_path: Path):
         {
             "request_id": "req-socket-1",
             "protocol_version": PROTOCOL_VERSION,
+            "call_id": "req-socket-1",
+            "job_id": None,
             "workspace_root": str(tmp_path),
             "session_id": "session-1",
             "verbose": True,
             "method": "screen.shot",
             "payload": {"region": "main"},
+            "control": {"mode": "async_wait", "wait_timeout": 100.0, "side_effect_stage": "none"},
             "token": "token-1",
         }
     ]
@@ -10074,7 +10485,7 @@ def test_send_daemon_request_uses_battle_run_timeout(monkeypatch, tmp_path: Path
     )
 
     assert payload["ok"] is True
-    assert settimeouts == [600.0]
+    assert settimeouts == [105.0]
     assert sent
 
 
@@ -10134,4 +10545,4 @@ def test_trail_daemon_client_call_keeps_timeout_mapping_on_real_path(monkeypatch
     assert battle_payload["ok"] is True
     assert ocr_payload["ok"] is True
     assert methods == ["cw.battle.run", "ocr.read"]
-    assert settimeouts == [600.0, 120.0]
+    assert settimeouts == [105.0, 105.0]

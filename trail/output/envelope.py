@@ -45,7 +45,8 @@ def command_failure(
     *,
     code: str,
     message: str,
-    screenshot: Path | None,
+    screenshot: Path | None = None,
+    data: dict[str, Any] | None = None,
     timing: dict[str, Any] | None = None,
     warnings: list[dict[str, Any]] | None = None,
     references: list[dict[str, Any]] | None = None,
@@ -53,7 +54,7 @@ def command_failure(
 ) -> dict[str, Any]:
     envelope = {
         "ok": False,
-        "data": {},
+        "data": to_jsonable(data or {}),
         "screenshot": None if screenshot is None else str(screenshot),
         "timing": to_jsonable(timing or {}),
         "warnings": to_jsonable(warnings or []),

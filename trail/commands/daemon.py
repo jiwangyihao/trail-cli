@@ -18,7 +18,7 @@ from trail.daemon.bootstrap import install_bootstrap, start_bootstrap, stop_boot
 from trail.daemon.client import daemon_transport_failure, format_exception_detail
 from trail.daemon.manifest import load_manifest, manifest_path_for_user, save_manifest
 from trail.daemon.paths import resolve_daemon_home
-from trail.output.envelope import command_success
+from trail.output.envelope import command_failure, command_success
 from trail.output.rendering import print_output
 
 
@@ -357,6 +357,43 @@ def daemon_logs() -> None:
 @daemon_app.command("request-status")
 def daemon_request_status(request_id: Annotated[str, typer.Option("--request-id")]) -> None:
     print_output("daemon.request_status", call_daemon("daemon.request_status", {"request_id": request_id}))
+
+
+@daemon_app.command("request-result")
+def daemon_request_result(request_id: Annotated[str, typer.Option("--request-id")]) -> None:
+    response = call_daemon("daemon.request_result", {"request_id": request_id})
+    data = response.get("data") if isinstance(response, dict) else None
+    if isinstance(response, dict) and response.get("ok") is True and isinstance(data, dict):
+        render_command = data.get("render_command")
+        envelope = data.get("envelope")
+        if isinstance(render_command, str) and isinstance(envelope, dict):
+            print_output(render_command, envelope)
+            return
+    if isinstance(response, dict) and response.get("ok") is True:
+        print_output(
+            "daemon.request_result",
+            command_failure(
+                code="REQUEST_RESULT_PROTOCOL_INVALID",
+                message="daemon.request_result response missing render_command or envelope",
+                screenshot=None,
+                debug={"request_id": response.get("request_id")},
+            ),
+        )
+        return
+    print_output("daemon.request_result", response)
+
+
+@daemon_app.command("request-cancel")
+def daemon_request_cancel(
+    request_id: Annotated[str, typer.Option("--request-id")],
+    force: Annotated[bool, typer.Option("--force")] = False,
+    confirm_taint: Annotated[bool, typer.Option("--confirm-taint")] = False,
+) -> None:
+    payload: dict[str, object] = {"request_id": request_id}
+    if force:
+        payload["force"] = True
+        payload["confirm_taint"] = bool(confirm_taint)
+    print_output("daemon.request_cancel", call_daemon("daemon.request_cancel", payload))
 
 
 @daemon_app.command("reconcile-session")

@@ -601,7 +601,12 @@ def _unknown_battle_state(*, state: str, detail: object | None = None) -> TrailE
     return TrailError("CW_BATTLE_STATE_UNKNOWN", message)
 
 
-def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> dict[str, object]:
+def _mark_cancel_side_effect_applied(cancellation_token) -> None:
+    if cancellation_token is not None:
+        setattr(cancellation_token, "side_effect_stage", "side_effect_applied")
+
+
+def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float, cancellation_token=None) -> dict[str, object]:
     deadline = monotonic() + timeout
     started_chain = False
     start_attempted = False
@@ -611,9 +616,13 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
 
     try:
         while True:
+            if cancellation_token is not None:
+                cancellation_token.throw_if_cancelled()
             detected_stage = build_cw_stage_detector(runtime)()
             observation: BattleObservation | None = None
             state = _classify_stage_without_ocr(detected_stage)
+            if cancellation_token is not None:
+                cancellation_token.throw_if_cancelled()
             if state is None:
                 observation = observe_cw_battle_page(runtime, detected_stage=detected_stage)
                 state = classify_cw_battle_page(
@@ -622,6 +631,8 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
                     detected_stage=detected_stage,
                     observation=observation,
                 )
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
             if state == "battle_start" and (started_chain or resume_in_battle):
                 completed_stage = detected_stage if detected_stage == "preparation" else "preparation"
                 _set_completed_stage(session, stage=completed_stage)
@@ -660,12 +671,17 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
 
             if state == "game_over":
                 has_return_button = _has_game_over_return(runtime, observation=observation)
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
                 if observation is not None:
                     game_over_summary = _read_game_over_summary(runtime, observation=observation)
                     if "result" not in summary or game_over_summary.get("result") == "lose" or has_return_button:
                         summary.update(game_over_summary)
                 if has_return_button:
                     returned_home = _return_from_game_over(runtime, observation=observation)
+                    _mark_cancel_side_effect_applied(cancellation_token)
+                    if cancellation_token is not None:
+                        cancellation_token.throw_if_cancelled()
                     summary["returned_home"] = returned_home
                     _mark_game_over_return_home(session, returned_home=returned_home)
                 else:
@@ -710,12 +726,19 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
                 )
 
             if state == "battle_start":
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
                 _start_battle(runtime)
+                _mark_cancel_side_effect_applied(cancellation_token)
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
                 start_attempted = True
                 continue
 
             if state == "battle_progress":
                 sleep(min(CW_BATTLE_RUN_POLL_INTERVAL_SECONDS, remaining))
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
                 continue
 
             if state == "settle_entry":
@@ -728,24 +751,38 @@ def run_cw_battle(session: SessionModel, *, runtime, timeout: int | float) -> di
                     ):
                         raise
                 _continue_after_settlement(runtime, observation=observation)
+                _mark_cancel_side_effect_applied(cancellation_token)
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
                 continue
 
             if state == "settle_followup":
                 _advance_settlement_page(runtime, observation=observation)
+                _mark_cancel_side_effect_applied(cancellation_token)
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
                 continue
 
             if state == "game_over_followup":
                 if observation is not None:
                     summary.update(_read_game_over_summary(runtime, observation=observation))
                 _advance_settlement_page(runtime, observation=observation)
+                _mark_cancel_side_effect_applied(cancellation_token)
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
                 continue
 
             if state == "layer_transition":
                 _advance_layer_transition(runtime)
+                _mark_cancel_side_effect_applied(cancellation_token)
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
                 continue
 
             if state == "unknown":
                 sleep(min(CW_BATTLE_RUN_POLL_INTERVAL_SECONDS, remaining))
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
                 continue
 
             raise _unknown_battle_state(state=state)

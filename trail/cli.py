@@ -7,6 +7,7 @@ import typer
 from trail.commands.cw import cw_app
 from trail.commands.daemon import daemon_app
 from trail.commands.guide import guide_app
+from trail.commands.helpers import set_daemon_control_options
 from trail.commands.image import image_app
 from trail.commands.input import input_app
 from trail.commands.ocr import ocr_app
@@ -25,9 +26,13 @@ app = typer.Typer(no_args_is_help=True)
 def main(
     verbose: bool = typer.Option(False, "--verbose", help="输出复杂操作的中间流程，便于开发期调试"),
     output_format: OutputFormat = typer.Option(OutputFormat.TEXT, "--format", help="text 或 yaml"),
+    request_id: str | None = typer.Option(None, "--request-id", help="查询或等待既有 daemon request/job。"),
+    wait_timeout: float | None = typer.Option(None, "--wait-timeout", help="daemon 异步请求等待秒数。"),
+    no_wait: bool = typer.Option(False, "--no-wait", help="提交 daemon 异步请求后立即返回 running 状态。"),
 ) -> None:
     set_capture_options(verbose=verbose)
     set_output_options(output_format=output_format, verbose=verbose)
+    set_daemon_control_options(request_id=request_id, wait_timeout=wait_timeout, no_wait=no_wait)
 
 
 @app.command()

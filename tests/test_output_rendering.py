@@ -5,6 +5,7 @@ import pytest
 
 import trail.output.rendering as rendering_module
 from trail.cli import app, main
+from trail.output.envelope import command_failure, command_success
 from trail.output.rendering import (
     OutputFormat,
     TEXT_RENDERERS,
@@ -6328,6 +6329,170 @@ def test_render_output_daemon_request_status_keeps_session_fact_for_reconcile_ch
 
     assert render_output("daemon.request_status", payload).splitlines() == [
         "ok daemon.request_status request=req-42 session=sess-1 final_state=completed last_visible_stage=responded tainted=0"
+    ]
+
+
+@pytest.mark.parametrize("command", ["start.run", "cw.battle.run", "cw.enter"])
+def test_render_output_async_running_short_circuits_handoff(command: str):
+    payload = command_success(data={"state": "running", "request": "job-1", "waited": 100}, screenshot=None)
+
+    assert render_output(command, payload).splitlines() == [
+        f"ok {command} state=running request=job-1 waited=100",
+        f"info next_action={command} request=job-1",
+    ]
+
+
+
+def test_render_output_async_running_omits_uncorrelatable_next_action():
+    payload = command_success(data={"state": "running", "waited": 100}, screenshot=None)
+
+    assert render_output("start.run", payload).splitlines() == [
+        "ok start.run state=running waited=100",
+    ]
+
+def test_render_output_daemon_busy_uses_request_submit_recover_action_with_session():
+    payload = command_failure(
+        code="DAEMON_BUSY",
+        message="another game operation is running",
+        data={
+            "active_request": "job-active",
+            "active_command": "cw.battle.run",
+            "active_session": "sess-1",
+            "executed": 0,
+            "recover_action": "cw.battle.run",
+        },
+        debug={"request_id": "call-busy"},
+    )
+
+    assert render_output("ocr.read", payload).splitlines() == [
+        "fail daemon.request_submit code=DAEMON_BUSY active_request=job-active active_command=cw.battle.run active_session=sess-1",
+        "request id=call-busy",
+        'why msg="another game operation is running"',
+        "recover action=cw.battle.run request=job-active session=sess-1",
+    ]
+
+
+def test_render_output_daemon_busy_omits_null_active_session_for_start_run():
+    payload = command_failure(
+        code="DAEMON_BUSY",
+        message="another game operation is running",
+        data={
+            "active_request": "job-start",
+            "active_command": "start.run",
+            "active_session": None,
+            "executed": 0,
+            "recover_action": "start.run",
+        },
+        debug={"request_id": "call-busy"},
+    )
+
+    assert render_output("ocr.read", payload).splitlines() == [
+        "fail daemon.request_submit code=DAEMON_BUSY active_request=job-start active_command=start.run",
+        "request id=call-busy",
+        'why msg="another game operation is running"',
+        "recover action=start.run request=job-start",
+    ]
+
+
+def test_render_output_request_status_includes_async_fields_and_next_action():
+    payload = command_success(
+        data={
+            "request_id": "job-1",
+            "method": "cw.battle.run",
+            "session_id": "sess-1",
+            "state": "running",
+            "final": False,
+            "final_state": None,
+            "last_visible_stage": "executing",
+            "side_effect_stage": "none",
+            "tainted": False,
+        },
+        screenshot=None,
+    )
+
+    assert render_output("daemon.request_status", payload).splitlines() == [
+        "ok daemon.request_status request=job-1 command=cw.battle.run session=sess-1 state=running final=0 final_state=null last_visible_stage=executing side_effect_stage=none tainted=0",
+        "info next_action=cw.battle.run request=job-1 session=sess-1",
+    ]
+
+
+def test_render_output_request_status_for_call_record_uses_job_id_in_next_action():
+    payload = command_success(
+        data={
+            "request_id": "call-1",
+            "job_id": "job-1",
+            "next_request_id": "job-1",
+            "method": "cw.battle.run",
+            "session_id": "sess-1",
+            "state": "running",
+            "final": False,
+            "final_state": None,
+            "last_visible_stage": "executing",
+            "side_effect_stage": "none",
+            "tainted": False,
+        },
+        screenshot=None,
+    )
+
+    assert render_output("daemon.request_status", payload).splitlines() == [
+        "ok daemon.request_status request=call-1 job=job-1 command=cw.battle.run session=sess-1 state=running final=0 final_state=null last_visible_stage=executing side_effect_stage=none tainted=0",
+        "info next_action=cw.battle.run request=job-1 session=sess-1",
+    ]
+
+
+def test_render_output_request_status_for_rejected_call_uses_active_request_in_next_action():
+    payload = command_success(
+        data={
+            "request_id": "call-busy",
+            "method": "daemon.request_submit",
+            "state": "rejected",
+            "final": True,
+            "final_state": "failed_before_side_effect",
+            "last_visible_stage": "rejected",
+            "side_effect_stage": "none",
+            "tainted": False,
+            "executed": False,
+            "active_request": "job-active",
+            "active_command": "cw.battle.run",
+            "active_session": "sess-1",
+        },
+        screenshot=None,
+    )
+
+    assert render_output("daemon.request_status", payload).splitlines() == [
+        "ok daemon.request_status request=call-busy command=daemon.request_submit state=rejected final=1 final_state=failed_before_side_effect last_visible_stage=rejected side_effect_stage=none tainted=0 executed=0 active_request=job-active active_command=cw.battle.run active_session=sess-1",
+        "info next_action=cw.battle.run request=job-active session=sess-1",
+    ]
+
+
+def test_render_output_request_status_cancel_unknown_emits_reconcile_recover():
+    payload = command_success(
+        data={
+            "request_id": "job-1",
+            "method": "input.click",
+            "session_id": "sess-1",
+            "state": "cancel_unknown",
+            "final": True,
+            "final_state": "applied_but_not_persisted",
+            "last_visible_stage": "side_effect_applied",
+            "side_effect_stage": "applied",
+            "tainted": True,
+        },
+        screenshot=None,
+    )
+
+    assert render_output("daemon.request_status", payload).splitlines() == [
+        "ok daemon.request_status request=job-1 command=input.click session=sess-1 state=cancel_unknown final=1 final_state=applied_but_not_persisted last_visible_stage=side_effect_applied side_effect_stage=applied tainted=1",
+        "recover action=daemon.reconcile_session session=sess-1",
+    ]
+
+
+def test_render_output_request_cancel():
+    payload = command_success(data={"request_id": "job-1", "state": "cancel_requested", "command": "start.run"}, screenshot=None)
+
+    assert render_output("daemon.request_cancel", payload).splitlines() == [
+        "ok daemon.request_cancel request=job-1 state=cancel_requested command=start.run",
+        "info next_action=start.run request=job-1",
     ]
 
 

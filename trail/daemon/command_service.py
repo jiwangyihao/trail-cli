@@ -14,6 +14,7 @@ from trail.core.errors import TrailError
 from trail.core.jsonable import format_exception_detail, format_exception_message, safe_str, to_jsonable
 from trail.daemon.client import daemon_transport_failure
 from trail.daemon.command_timeouts import resolve_command_execution_timeout
+from trail.daemon.models import RequestCancelled
 from trail.output.envelope import build_image_guidance
 from trail.output.capture import with_auto_capture
 from trail.runtime.ocr_config import OCR_LANG_UNSUPPORTED, split_ocr_call
@@ -329,6 +330,7 @@ class CommandService:
             payload=payload,
             workspace_root=request.workspace_root,
             session_service=service,
+            cancellation_token=self._cancellation_token(request),
         )
 
     def _run_cw_with_capture(self, request, *, service, payload: dict | None = None):
@@ -343,6 +345,7 @@ class CommandService:
                 session_service=service,
                 request_id=request.request_id,
                 verbose=request.verbose,
+                cancellation_token=self._cancellation_token(request),
             ),
         )
         return _normalize_capture_payload(response, workspace_root=Path(request.workspace_root))
@@ -350,15 +353,21 @@ class CommandService:
     def _run_cw_mutation(self, request, *, service, payload: dict | None = None):
         if payload is None:
             payload, _ = self._canonicalize_cw_payload(request)
+        token = self._cancellation_token(request)
         try:
-            response = self._cw_service().handle_mutation(
-                method=request.method,
-                payload=payload,
-                workspace_root=request.workspace_root,
-                session_service=service,
-                request_id=request.request_id,
-                verbose=request.verbose,
-            )
+            try:
+                response = self._cw_service().handle_mutation(
+                    method=request.method,
+                    payload=payload,
+                    workspace_root=request.workspace_root,
+                    session_service=service,
+                    request_id=request.request_id,
+                    verbose=request.verbose,
+                    cancellation_token=token,
+                )
+            finally:
+                if getattr(token, "side_effect_stage", None) not in {None, "", "none"}:
+                    self._mark_control_side_effect_applied(request)
         except TrailError as error:
             if getattr(error, "completed_after_side_effect", False):
                 envelope = self._response_with_request_id(request.request_id, self._failure_envelope(error=error))
@@ -375,6 +384,29 @@ class CommandService:
                     last_known_stage="state_persisted",
                 )
             ) from error
+
+    def handle_control_plane(self, request):
+        if request.method in {"daemon.ping", "daemon.request_status", "daemon.reconcile_session"}:
+            return self.handle(request)
+        raise TrailError("DAEMON_METHOD_NOT_CONTROL_PLANE", f"not a control-plane method: {request.method}")
+
+    def _cancellation_token(self, request):
+        control = getattr(request, "control", None)
+        return getattr(control, "cancellation_token", None)
+
+    def _check_cancelled(self, request) -> None:
+        token = self._cancellation_token(request)
+        if token is not None:
+            token.throw_if_cancelled()
+
+    def _mark_control_side_effect_applied(self, request) -> None:
+        control = getattr(request, "control", None)
+        if control is not None:
+            control.side_effect_stage = "side_effect_applied"
+
+    def execute_business_request(self, request):
+        self._check_cancelled(request)
+        return self.handle(request)
 
     def handle(self, request):
         if request.method == "daemon.ping":
@@ -422,7 +454,7 @@ class CommandService:
             return self._capture_response(
                 request,
                 runtime,
-                lambda: self._read_ocr(runtime, request.payload),
+                lambda: self._read_ocr(runtime, request.payload, cancellation_token=self._cancellation_token(request)),
             )
 
         if request.method == "window.attach":
@@ -462,6 +494,7 @@ class CommandService:
                     runtime,
                     request.payload["template"],
                     timeout=request.payload.get("timeout", 10),
+                    cancellation_token=self._cancellation_token(request),
                 ),
             )
 
@@ -471,7 +504,7 @@ class CommandService:
                 "input.click",
                 lambda service: self._capture_mutation_with_runtime(
                     request,
-                    lambda runtime: self._click(runtime, x=request.payload["x"], y=request.payload["y"]),
+                    lambda runtime: self._input_click_action(request, runtime),
                 ),
             )
 
@@ -481,14 +514,7 @@ class CommandService:
                 "input.drag",
                 lambda service: self._capture_mutation_with_runtime(
                     request,
-                    lambda runtime: self._drag(
-                        runtime,
-                        from_x=request.payload["from_x"],
-                        from_y=request.payload["from_y"],
-                        to_x=request.payload["to_x"],
-                        to_y=request.payload["to_y"],
-                        duration=request.payload.get("duration"),
-                    ),
+                    lambda runtime: self._input_drag_action(request, runtime),
                 ),
             )
 
@@ -498,11 +524,7 @@ class CommandService:
                 "input.key",
                 lambda service: self._capture_mutation_with_runtime(
                     request,
-                    lambda runtime: self._press_key(
-                        runtime,
-                        key=request.payload["key"],
-                        presses=request.payload.get("presses", 1),
-                    ),
+                    lambda runtime: self._input_key_action(request, runtime),
                 ),
             )
 
@@ -743,7 +765,12 @@ class CommandService:
                 pre_capture_hook=pre_capture_hook,
             )
         )
-        response = with_auto_capture(capture_runtime, action, verbose=request.verbose)
+        response = with_auto_capture(
+            capture_runtime,
+            action,
+            verbose=request.verbose,
+            passthrough_exceptions=(RequestCancelled,),
+        )
         response = _normalize_capture_payload(response, workspace_root=Path(request.workspace_root))
         return self._response_with_request_id(request.request_id, response)
 
@@ -925,6 +952,7 @@ class CommandService:
                 game_path=payload.get("game_path"),
                 channel=str(payload.get("channel") or "official"),
                 timeout_seconds=execution_timeout if execution_timeout is not None else 30,
+                cancellation_token=self._cancellation_token(request),
             )
         )
         try:
@@ -1136,6 +1164,8 @@ class CommandService:
                 session_id=effective_session_id,
             )
         except Exception as error:
+            if isinstance(error, RequestCancelled):
+                raise
             if last_known_stage in {"handler_completed", "state_persisted"}:
                 final_state = "persisted_but_response_unknown" if last_known_stage == "state_persisted" else "applied_but_not_persisted"
                 envelope = self._unknown_result_envelope(
@@ -1195,7 +1225,9 @@ class CommandService:
                 envelope=envelope,
                 session_id=effective_session_id,
             )
-    def _read_ocr(self, runtime, payload: dict[str, Any]) -> dict[str, Any]:
+    def _read_ocr(self, runtime, payload: dict[str, Any], cancellation_token=None) -> dict[str, Any]:
+        if cancellation_token is not None:
+            cancellation_token.throw_if_cancelled()
         try:
             ocr_call = split_ocr_call(payload)
         except ValueError as error:
@@ -1203,7 +1235,11 @@ class CommandService:
             if message.startswith("unsupported ocr lang:"):
                 raise TrailError(OCR_LANG_UNSUPPORTED, message) from error
             raise TrailError("OCR_INPUT_INVALID", message) from error
+        if cancellation_token is not None:
+            cancellation_token.throw_if_cancelled()
         result = runtime.ocr(capture=ocr_call.capture, ocr=ocr_call.ocr)
+        if cancellation_token is not None:
+            cancellation_token.throw_if_cancelled()
         if not result:
             raise TrailError("OCR_NO_RESULT", "OCR 无结果")
         return {"result": to_jsonable(result)}
@@ -1214,11 +1250,24 @@ class CommandService:
             raise TrailError("IMAGE_NOT_FOUND", f"未找到 {template}")
         return {"box": to_jsonable(box)}
 
-    def _wait_image(self, runtime, template: str, *, timeout: int) -> dict[str, Any]:
-        box = runtime.wait_img(template, timeout=timeout)
-        if box is None:
-            raise TrailError("IMAGE_NOT_FOUND", f"未找到 {template}")
-        return {"box": to_jsonable(box)}
+    def _wait_image(self, runtime, template: str, *, timeout: int, cancellation_token=None) -> dict[str, Any]:
+        deadline = monotonic() + float(timeout)
+        interval = 0.5
+        while True:
+            if cancellation_token is not None:
+                cancellation_token.throw_if_cancelled()
+            box = runtime.locate(template)
+            if box is not None:
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
+                return {"box": to_jsonable(box)}
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
+            sleep(min(interval, remaining))
+        if cancellation_token is not None:
+            cancellation_token.throw_if_cancelled()
+        raise TrailError("IMAGE_NOT_FOUND", f"未找到 {template}")
 
     def _click(self, runtime, *, x: int, y: int) -> dict[str, Any]:
         runtime.click_point(x, y)
@@ -1231,6 +1280,38 @@ class CommandService:
     def _press_key(self, runtime, *, key: str, presses: int) -> dict[str, Any]:
         runtime.press_key(key, presses=presses)
         return {"key": key, "presses": presses}
+
+    def _input_click_action(self, request, runtime) -> dict[str, Any]:
+        self._check_cancelled(request)
+        self._mark_control_side_effect_applied(request)
+        result = self._click(runtime, x=request.payload["x"], y=request.payload["y"])
+        self._check_cancelled(request)
+        return result
+
+    def _input_drag_action(self, request, runtime) -> dict[str, Any]:
+        self._check_cancelled(request)
+        self._mark_control_side_effect_applied(request)
+        result = self._drag(
+            runtime,
+            from_x=request.payload["from_x"],
+            from_y=request.payload["from_y"],
+            to_x=request.payload["to_x"],
+            to_y=request.payload["to_y"],
+            duration=request.payload.get("duration"),
+        )
+        self._check_cancelled(request)
+        return result
+
+    def _input_key_action(self, request, runtime) -> dict[str, Any]:
+        self._check_cancelled(request)
+        self._mark_control_side_effect_applied(request)
+        result = self._press_key(
+            runtime,
+            key=request.payload["key"],
+            presses=request.payload.get("presses", 1),
+        )
+        self._check_cancelled(request)
+        return result
 
 
 class SideEffectAppliedButStateNotPersisted(Exception):

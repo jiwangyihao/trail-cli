@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
+from trail.commands.helpers import set_daemon_control_options
 
 from trail.artifacts.store import ArtifactStore
 from trail.session.store import SessionStore
@@ -40,6 +41,9 @@ def cli_runner() -> CliRunner:
 @pytest.fixture(autouse=True)
 def isolated_workdir(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    set_daemon_control_options(request_id=None, wait_timeout=None, no_wait=False)
+    yield
+    set_daemon_control_options(request_id=None, wait_timeout=None, no_wait=False)
 
 
 class FakeRuntime:

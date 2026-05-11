@@ -154,7 +154,10 @@ class RuntimeService:
         channel: str = "official",
         timeout_seconds: int = 30,
         interval_seconds: int = 1,
+        cancellation_token=None,
     ):
+        if cancellation_token is not None:
+            cancellation_token.throw_if_cancelled()
         try:
             binding = _window_binding_to_dict(self.attach_window(window_title=window_title))
             return {**binding, "status": "attached"}
@@ -162,6 +165,8 @@ class RuntimeService:
             if error.code != "WINDOW_NOT_FOUND":
                 raise
 
+        if cancellation_token is not None:
+            cancellation_token.throw_if_cancelled()
         launch_result = self.launch_game(game_path=game_path, channel=channel)
         if not launch_result.get("started") and not launch_result.get("already_running"):
             raise TrailError("WINDOW_NOT_FOUND", f"window not found: {window_title}")
@@ -170,6 +175,8 @@ class RuntimeService:
         last_error: TrailError | None = None
         deadline = monotonic() + timeout_seconds
         while True:
+            if cancellation_token is not None:
+                cancellation_token.throw_if_cancelled()
             try:
                 binding = _window_binding_to_dict(self.attach_window(window_title=window_title))
                 break
@@ -180,6 +187,8 @@ class RuntimeService:
             if monotonic() >= deadline:
                 break
             sleep(interval_seconds)
+            if cancellation_token is not None:
+                cancellation_token.throw_if_cancelled()
 
         if binding is not None:
             return {
@@ -189,6 +198,7 @@ class RuntimeService:
                     binding=binding,
                     timeout_seconds=timeout_seconds,
                     interval_seconds=interval_seconds,
+                    cancellation_token=cancellation_token,
                 ),
             }
         if last_error is not None:
@@ -202,6 +212,7 @@ class RuntimeService:
         binding: dict[str, object],
         timeout_seconds: int,
         interval_seconds: int,
+        cancellation_token=None,
     ) -> str:
         if workspace_root is None:
             return "launched_needs_check"
@@ -212,13 +223,19 @@ class RuntimeService:
 
         deadline = monotonic() + timeout_seconds
         while True:
+            if cancellation_token is not None:
+                cancellation_token.throw_if_cancelled()
             target = self._detect_click_enter_target(runtime)
             if target is not None:
+                if cancellation_token is not None:
+                    cancellation_token.throw_if_cancelled()
                 runtime.click_point(*target)
                 return "launched_clicked_enter"
             if monotonic() >= deadline:
                 return "launched_needs_check"
             sleep(interval_seconds)
+            if cancellation_token is not None:
+                cancellation_token.throw_if_cancelled()
 
     def _detect_click_enter_target(self, runtime) -> tuple[int, int] | None:
         try:

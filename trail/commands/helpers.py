@@ -13,6 +13,18 @@ from trail.runtime.operator import build_runtime
 from trail.session.store import SessionStore
 
 
+_DAEMON_CONTROL_OPTIONS = {"request_id": None, "wait_timeout": None, "no_wait": False}
+
+
+def set_daemon_control_options(*, request_id: str | None, wait_timeout: float | None, no_wait: bool) -> None:
+    _DAEMON_CONTROL_OPTIONS.update(
+        {"request_id": request_id, "wait_timeout": wait_timeout, "no_wait": bool(no_wait)}
+    )
+
+
+def current_daemon_control_options() -> dict[str, object]:
+    return dict(_DAEMON_CONTROL_OPTIONS)
+
 DEFAULT_WINDOW_TITLE = "崩坏：星穹铁道"
 TRAIL_WORKSPACE = ".trail"
 
@@ -90,14 +102,24 @@ def call_daemon(
     session_id: str | None = None,
     verbose: bool | None = None,
     daemon_client=None,
+    request_id: str | None = None,
+    wait_timeout: float | None = None,
+    no_wait: bool = False,
 ):
     workspace_root = Path.cwd()
     client = build_default_daemon_client() if daemon_client is None else daemon_client
+    options = current_daemon_control_options()
+    effective_request_id = request_id or options["request_id"]
+    effective_wait_timeout = wait_timeout if wait_timeout is not None else options["wait_timeout"]
+    effective_no_wait = bool(no_wait or options["no_wait"])
     response = client.call(
         method,
         to_jsonable(payload),
         session_id=session_id,
         verbose=resolve_capture_verbose(verbose),
+        job_id=effective_request_id,
+        wait_timeout=effective_wait_timeout,
+        no_wait=effective_no_wait,
     )
     return _normalize_daemon_response_paths(response, workspace_root=workspace_root)
 

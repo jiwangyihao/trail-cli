@@ -15,6 +15,7 @@ from trail.core.errors import TrailError
 from trail.core.jsonable import format_exception_detail, format_exception_message, to_jsonable
 from trail.daemon.command_timeouts import DEFAULT_CW_BATTLE_RUN_TIMEOUT_SECONDS, resolve_command_execution_timeout
 from trail.daemon.command_service import PersistedButResponseUnknown, SideEffectAppliedButStateNotPersisted
+from trail.daemon.models import RequestCancelled
 from trail.output.capture import with_auto_capture, with_selective_capture
 from trail.output.envelope import build_image_guidance
 from trail.scenes.cw.battle import run_cw_battle
@@ -429,12 +430,13 @@ class CwService:
             enrich_traits=enrich_traits,
         )
 
-    def handle(self, *, method: str, payload: dict, workspace_root: str, session_service) -> dict | None:
+    def handle(self, *, method: str, payload: dict, workspace_root: str, session_service, cancellation_token=None) -> dict | None:
         session, _, _, handlers, _, _, _ = self._context(
             method=method,
             payload=payload,
             workspace_root=workspace_root,
             session_service=session_service,
+            cancellation_token=cancellation_token,
         )
 
         result = handlers[method]()
@@ -450,6 +452,7 @@ class CwService:
         session_service,
         request_id: str,
         verbose: bool = False,
+        cancellation_token=None,
     ) -> dict | None:
         session, _, runtime, handlers, _, _, _ = self._context(
             method=method,
@@ -457,6 +460,7 @@ class CwService:
             workspace_root=workspace_root,
             session_service=session_service,
             request_id=request_id,
+            cancellation_token=cancellation_token,
         )
 
         capture_runtime = _RequestScopedCaptureRuntime(runtime(), request_id)
@@ -477,6 +481,7 @@ class CwService:
         session_service,
         request_id: str,
         verbose: bool = False,
+        cancellation_token=None,
     ) -> dict | None:
         session, _, runtime, handlers, tracker, end_runtime_scope_if_started, runtime_if_started = self._context(
             method=method,
@@ -486,6 +491,7 @@ class CwService:
             request_id=request_id,
             track_side_effects=True,
             shared_capture_scope=True,
+            cancellation_token=cancellation_token,
         )
 
         def collect_runtime_debug(debug_runtime=None) -> dict | None:
@@ -532,6 +538,8 @@ class CwService:
                 _validated_start_payload(payload)
             try:
                 result = handlers[method]()
+            except RequestCancelled:
+                raise
             except CwSideEffectAppliedError as error:
                 raise SideEffectAppliedButStateNotPersisted(
                     unknown_result_envelope(error, last_known_stage="side_effect_applied")
@@ -578,6 +586,8 @@ class CwService:
                 attach_runtime_debug(error)
                 raise
             except Exception as error:
+                if isinstance(error, RequestCancelled):
+                    raise
                 if tracker.side_effect_applied or _safe_error_attr(error, "completed_after_side_effect"):
                     raise SideEffectAppliedButStateNotPersisted(
                         unknown_result_envelope(error, last_known_stage="side_effect_applied")
@@ -646,7 +656,10 @@ class CwService:
         request_id: str | None = None,
         track_side_effects: bool = False,
         shared_capture_scope: bool = False,
+        cancellation_token=None,
     ):
+        if cancellation_token is not None:
+            cancellation_token.throw_if_cancelled()
         session_id = payload.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise TrailError("SESSION_REQUIRED", f"cw method requires session: {method}")
@@ -853,6 +866,7 @@ class CwService:
                 session,
                 runtime=runtime(),
                 timeout=timeout if timeout is not None else DEFAULT_CW_BATTLE_RUN_TIMEOUT,
+                cancellation_token=cancellation_token,
             )
             if not _cw_battle_run_reaches_preparation(result):
                 return result

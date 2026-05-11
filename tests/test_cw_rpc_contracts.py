@@ -57,7 +57,32 @@ def _function_option_decls(callback) -> set[str]:
     }
 
 
+def test_cw_battle_run_forwards_command_level_request_id(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {"cw.battle.run": build_success_response(request_id="call-cw", data={"state": "running", "request": "job-cw", "waited": 100})}
+    )
+
+    result = cli_runner.invoke(app, ["cw", "battle", "run", "--session", SESSION_ID, "--request-id", "job-cw"])
+
+    assert result.exit_code == 0
+    assert client.calls[0]["method"] == "cw.battle.run"
+    assert client.calls[0]["session_id"] == SESSION_ID
+    assert client.calls[0]["payload"] == {"session_id": SESSION_ID, "timeout": 90}
+    assert client.calls[0]["job_id"] == "job-cw"
+
+
+def test_wait_timeout_env_and_no_wait_precedence(cli_runner, fake_daemon_client, monkeypatch):
+    client = fake_daemon_client({"ocr.read": build_success_response(request_id="call-ocr", data={"result": [{"text": "x"}]})})
+    monkeypatch.setenv("TRAIL_WAIT_TIMEOUT", "15")
+
+    result = cli_runner.invoke(app, ["--no-wait", "ocr", "read"])
+
+    assert result.exit_code == 0
+    assert client.calls[0]["control"] == {"mode": "async_wait", "wait_timeout": 0.0, "side_effect_stage": "none"}
+
+
 def test_cw_stage_detect_renders_stage_and_shot(cli_runner, fake_daemon_client, tmp_path):
+
     client = fake_daemon_client(
         {
             "cw.stage.detect": build_success_response(

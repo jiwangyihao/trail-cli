@@ -151,7 +151,13 @@ def _safe_collect_capture_metadata(runtime, *, screenshot, verbose: bool) -> dic
     }
 
 
-def with_auto_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None = None):
+def with_auto_capture(
+    runtime,
+    fn: Callable[[], dict],
+    *,
+    verbose: bool | None = None,
+    passthrough_exceptions: tuple[type[BaseException], ...] = (),
+):
     effective_verbose = _resolve_verbose(verbose)
     started = perf_counter()
     resolved_runtime = _resolve_runtime(runtime)
@@ -170,6 +176,8 @@ def with_auto_capture(runtime, fn: Callable[[], dict], *, verbose: bool | None =
                 **metadata,
             )
         except Exception as exc:
+            if passthrough_exceptions and isinstance(exc, passthrough_exceptions):
+                raise
             screenshot = _capture_optional_screenshot(resolved_runtime)
             metadata = _safe_collect_capture_metadata(resolved_runtime, screenshot=screenshot, verbose=effective_verbose)
             return command_failure(

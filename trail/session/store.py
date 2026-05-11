@@ -89,8 +89,14 @@ class SessionStore:
         session.workspace = self.workspace
         session.updated_at = datetime.now(timezone.utc).isoformat()
         path = self.workspace / f"{safe_session_id}.json"
-        path.write_text(
-            json.dumps(session.to_dict(workspace_root=self._workspace_root()), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        temp_path = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
+        try:
+            temp_path.write_text(
+                json.dumps(session.to_dict(workspace_root=self._workspace_root()), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            temp_path.replace(path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
         return session

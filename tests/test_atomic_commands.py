@@ -13,7 +13,9 @@ import typer
 from trail.cli import app
 from trail.commands.cw import (
     CW_APP_HELP,
+    battle_app,
     cw_app,
+    cw_battle_run,
     cw_enter,
     cw_equipment_compose,
     cw_guide_app,
@@ -37,6 +39,44 @@ from trail.daemon.client import TrailDaemonClient
 from trail.runtime.ocr_config import OCR_LANG_UNSUPPORTED
 from trail.runtime.model import Box
 from tests.support.fake_daemon import build_success_response, write_ready_manifest
+
+
+def test_fake_daemon_records_control_without_polluting_payload(cli_runner, fake_daemon_client, tmp_path):
+    client = fake_daemon_client({"ocr.read": build_success_response(request_id="req", data={"result": [{"text": "x"}]})})
+
+    result = cli_runner.invoke(app, ["ocr", "read"])
+
+    assert result.exit_code == 0
+    assert "job_id" not in client.calls[0]["payload"]
+    assert "control" not in client.calls[0]["payload"]
+    assert client.calls[0]["job_id"] is None
+    assert client.calls[0]["control"] == {"mode": "async_wait", "wait_timeout": 100.0, "side_effect_stage": "none"}
+    assert client.calls[0]["workspace_root"] == str(tmp_path)
+
+
+def test_start_forwards_global_request_id_and_wait_timeout_as_control(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {"start.run": build_success_response(request_id="call-1", data={"state": "running", "request": "job-1", "waited": 3})}
+    )
+
+    result = cli_runner.invoke(app, ["--request-id", "job-1", "--wait-timeout", "3", "start"])
+
+    assert result.exit_code == 0
+    assert client.calls[0]["payload"] == {"window_title": "崩坏：星穹铁道", "channel": "official"}
+    assert client.calls[0]["job_id"] == "job-1"
+    assert client.calls[0]["control"] == {"mode": "async_wait", "wait_timeout": 3.0, "side_effect_stage": "none"}
+
+
+def test_start_forwards_command_level_request_id(cli_runner, fake_daemon_client):
+    client = fake_daemon_client(
+        {"start.run": build_success_response(request_id="call-2", data={"state": "running", "request": "job-2", "waited": 100})}
+    )
+
+    result = cli_runner.invoke(app, ["start", "--request-id", "job-2"])
+
+    assert result.exit_code == 0
+    assert client.calls[0]["job_id"] == "job-2"
+    assert client.calls[0]["control"] == {"mode": "async_wait", "wait_timeout": 100.0, "side_effect_stage": "none"}
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -322,6 +362,14 @@ def test_trail_start_help_describes_simple_entry():
     assert "trail daemon status" not in help_text
     assert "trail window attach" not in help_text
     assert "trail session create" not in help_text
+
+def test_cw_battle_run_help_exposes_request_id_option():
+    option_decls = _function_option_decls(cw_battle_run)
+
+    assert "run" in _registered_command_names(battle_app)
+    assert "--session" in option_decls
+    assert "--timeout" in option_decls
+    assert "--request-id" in option_decls
 
 
 def test_trail_start_dispatches_single_start_run_after_local_ready(
@@ -1743,6 +1791,9 @@ def test_cli_help_exposes_top_level_command_groups():
         "cw",
     }.issubset(_registered_group_names(app))
     assert "--verbose" in _callback_option_decls(app)
+    assert "--request-id" in _callback_option_decls(app)
+    assert "--wait-timeout" in _callback_option_decls(app)
+    assert "--no-wait" in _callback_option_decls(app)
 
 
 def test_cw_help_exposes_scene_command_groups():

@@ -150,6 +150,9 @@ class TrailDaemonServer:
                 verbose=bool(payload.get("verbose", False)),
                 method=str(payload["method"]),
                 payload=deepcopy(payload.get("payload") or {}),
+                call_id=payload.get("call_id"),
+                job_id=payload.get("job_id"),
+                control=payload.get("control") or {},
             )
             response = self.command_service.handle(request)
         except TrailError as error:

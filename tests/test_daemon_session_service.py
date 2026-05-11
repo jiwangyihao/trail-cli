@@ -129,6 +129,174 @@ class FailingRuntimeService:
         raise self._error
 
 
+
+def test_job_and_call_records_drive_request_status(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    service.create_job_record(
+        job_id="job-1",
+        job_key="key-1",
+        method="cw.battle.run",
+        payload_digest="digest-1",
+        session_id="sess-1",
+    )
+    service.create_call_record(
+        call_id="call-1",
+        job_id="job-1",
+        method="cw.battle.run",
+        session_id="sess-1",
+        state="attached",
+        executed=True,
+    )
+
+    status_by_call = service.request_status("call-1")
+    status_by_job = service.request_status("job-1")
+
+    assert status_by_call["request_id"] == "call-1"
+    assert status_by_call["job_id"] == "job-1"
+    assert status_by_call["method"] == "cw.battle.run"
+    assert status_by_call["session_id"] == "sess-1"
+    assert status_by_call["state"] == "accepted"
+    assert status_by_call["final"] is False
+    assert status_by_call["final_state"] is None
+    assert status_by_call["last_visible_stage"] == "accepted"
+    assert status_by_call["side_effect_stage"] == "none"
+    assert status_by_call["tainted"] is False
+    assert status_by_call["next_request_id"] == "job-1"
+    assert status_by_job["request_id"] == "job-1"
+    assert status_by_job.get("job_id") in {None, "job-1"}
+    assert status_by_job["next_request_id"] == "job-1"
+
+
+def test_rejected_call_status_reports_active_job_without_execution(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    service.create_rejected_call_record(
+        call_id="call-busy",
+        method="daemon.request_submit",
+        rejection_code="DAEMON_BUSY",
+        active_job_id="job-active",
+        active_command="cw.battle.run",
+        active_session="sess-active",
+    )
+
+    status = service.request_status("call-busy")
+
+    assert status["state"] == "rejected"
+    assert status["final"] is True
+    assert status["executed"] is False
+    assert status["active_request"] == "job-active"
+    assert status["active_command"] == "cw.battle.run"
+    assert status["active_session"] == "sess-active"
+    assert status["final_state"] == "failed_before_side_effect"
+
+
+def test_call_record_status_follows_current_job_record(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    service.create_job_record(
+        job_id="job-current",
+        job_key="key-current",
+        method="cw.battle.run",
+        payload_digest="digest-current",
+        session_id="sess-current",
+    )
+    service.create_call_record(
+        call_id="call-current",
+        job_id="job-current",
+        method="cw.battle.run",
+        session_id="sess-current",
+        state="attached",
+        executed=True,
+    )
+    service.finish_job_record(
+        "job-current",
+        state="completed",
+        final_state="completed",
+        last_visible_stage="responded",
+        side_effect_stage="state_persisted",
+        envelope=_envelope(data={"done": True}),
+        tainted=False,
+    )
+
+    status = service.request_status("call-current")
+
+    assert status["request_id"] == "call-current"
+    assert status["job_id"] == "job-current"
+    assert status["state"] == "completed"
+    assert status["final"] is True
+    assert status["final_state"] == "completed"
+    assert status["last_visible_stage"] == "responded"
+    assert status["side_effect_stage"] == "state_persisted"
+    assert status["executed"] is True
+    assert status["next_request_id"] == "job-current"
+
+
+def test_session_mutation_lease_covers_full_read_modify_write_transaction(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    entered = threading.Event()
+    release = threading.Event()
+
+    def transaction(label: str):
+        with service.session_mutation_lock(session.session_id):
+            loaded = service.load_session(session.session_id)
+            entered.set()
+            if label == "first":
+                release.wait(2)
+            loaded.scene_state.setdefault("test", {})[label] = True
+            service.save_session(loaded)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(transaction, "first")
+        assert entered.wait(1)
+        second = pool.submit(transaction, "second")
+        time.sleep(0.1)
+        assert not second.done()
+        release.set()
+        first.result(timeout=2)
+        second.result(timeout=2)
+
+    state = service.load_session(session.session_id).scene_state["test"]
+    assert state == {"first": True, "second": True}
+
+
+def test_session_store_save_uses_atomic_replace(tmp_path: Path, monkeypatch):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    path = service._store._path_for(session.session_id)
+    original = path.read_text(encoding="utf-8")
+
+    def fail_replace(self, target):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    session.scene_state.setdefault("daemon", {})["tainted"] = True
+
+    with pytest.raises(OSError):
+        service.save_session(session)
+
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_finish_mutation_and_reconcile_do_not_deadlock_with_session_lock(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.begin_mutation(session_id=session.session_id, request_id="req-lock", command_name="input.click")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            service.finish_mutation,
+            session_id=session.session_id,
+            request_id="req-lock",
+            command_name="input.click",
+            final_state="completed",
+            envelope=_envelope(data={"clicked": True}),
+        )
+        assert future.result(timeout=2) is None
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(service.reconcile_session, session.session_id)
+        assert future.result(timeout=2)["tainted"] is False
+
+
 def test_request_status_returns_machine_readable_fields(tmp_path: Path):
     service = SessionService(workspace_root=tmp_path)
     session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
@@ -146,6 +314,38 @@ def test_request_status_returns_machine_readable_fields(tmp_path: Path):
     assert status["started_at"]
     assert status["updated_at"]
 
+
+def test_reconcile_session_waits_for_session_mutation_lock(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    entered = threading.Event()
+    release = threading.Event()
+    concurrent_save_entered = False
+    original_save = service._store.save
+
+    def blocking_save(model):
+        nonlocal concurrent_save_entered
+        if entered.is_set() and not release.is_set():
+            concurrent_save_entered = True
+        entered.set()
+        release.wait(2)
+        return original_save(model)
+
+    service._store.save = blocking_save
+    loaded = service.load_session(session.session_id)
+    loaded.scene_state.setdefault("daemon", {})["tainted"] = True
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(service.save_session, loaded)
+        assert entered.wait(1)
+        second = pool.submit(service.reconcile_session, session.session_id)
+        assert not second.done()
+        release.set()
+        first.result(timeout=2)
+        assert second.result(timeout=2)["tainted"] is False
+
+    assert concurrent_save_entered is False
+    assert service.load_session(session.session_id).scene_state["daemon"]["tainted"] is False
 
 def test_reconcile_session_clears_tainted_state(tmp_path: Path):
     service = SessionService(workspace_root=tmp_path)
@@ -181,6 +381,38 @@ def test_request_status_reflects_reconcile_clearing_taint(tmp_path: Path):
     service.reconcile_session(session.session_id)
 
     assert service.request_status("req-reconcile-status")["tainted"] is False
+
+
+def test_request_status_reflects_async_job_taint_and_reconcile(tmp_path: Path):
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    service.create_job_record(
+        job_id="job-reconcile-status",
+        job_key="key-reconcile-status",
+        method="input.click",
+        payload_digest="digest-reconcile-status",
+        session_id=session.session_id,
+    )
+    service.finish_job_record(
+        "job-reconcile-status",
+        state="cancel_unknown",
+        final_state="applied_but_not_persisted",
+        last_visible_stage="cancel_unknown",
+        side_effect_stage="side_effect_applied",
+        envelope=_envelope(ok=False, error={"code": "REQUEST_CANCEL_UNKNOWN", "message": "request cancelled after side effect"}),
+        tainted=True,
+    )
+
+    assert service.is_session_tainted(session.session_id) is True
+    assert service.request_status("job-reconcile-status")["tainted"] is True
+    with pytest.raises(TrailError) as exc_info:
+        service.ensure_cw_mutation_allowed(session.session_id)
+    assert exc_info.value.code == "SESSION_RECONCILE_REQUIRED"
+
+    service.reconcile_session(session.session_id)
+
+    assert service.is_session_tainted(session.session_id) is False
+    assert service.request_status("job-reconcile-status")["tainted"] is False
 
 
 def test_finish_mutation_completed_failure_does_not_taint_session(tmp_path: Path):
@@ -1158,3 +1390,15 @@ def test_handle_returns_unknown_result_when_recovery_finish_mutation_fails(tmp_p
     assert status["last_visible_stage"] == "responded"
     assert status["final_state"] == "applied_but_not_persisted"
     assert status["tainted"] is True
+
+def test_mark_session_tainted_blocks_cw_mutation(tmp_path):
+
+    service = SessionService(workspace_root=tmp_path)
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+
+    service.mark_session_tainted(session.session_id)
+
+    assert service.is_session_tainted(session.session_id) is True
+    with pytest.raises(TrailError) as exc_info:
+        service.ensure_cw_mutation_allowed(session.session_id)
+    assert exc_info.value.code == "SESSION_RECONCILE_REQUIRED"

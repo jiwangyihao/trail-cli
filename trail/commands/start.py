@@ -38,6 +38,7 @@ def start_command(
     window_title: str = typer.Option(DEFAULT_WINDOW_TITLE, "--window-title", help="覆盖默认窗口标题。"),
     game_path: Path | None = typer.Option(None, "--game-path", help="透传给 daemon-side start.run 的显式游戏路径。"),
     channel: str = typer.Option("official", "--channel", help="透传给 daemon-side start.run 的启动 channel。"),
+    request_id: str | None = typer.Option(None, "--request-id", help="查询既有 start.run daemon job。"),
 ) -> None:
     """自动收口 daemon ready、游戏窗口与 session。"""
 
@@ -55,4 +56,4 @@ def start_command(
     if game_path is not None:
         payload["game_path"] = str(game_path)
 
-    print_output("start.run", call_daemon("start.run", payload))
+    print_output("start.run", call_daemon("start.run", payload, request_id=request_id))

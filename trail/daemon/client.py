@@ -8,12 +8,12 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from trail.daemon.command_timeouts import (
-    SOCKET_RESPONSE_TIMEOUT_SECONDS,
-    resolve_command_response_timeout,
+    DAEMON_TRANSPORT_TIMEOUT_BUFFER_SECONDS,
+    normalize_daemon_wait_timeout,
 )
 from trail.daemon.bootstrap import start_bootstrap, wait_until_runtime_ready
 from trail.daemon.manifest import load_manifest, manifest_path_for_user
-from trail.daemon.models import DaemonRequest
+from trail.daemon.models import DaemonRequest, RequestControl
 from trail.daemon.protocol import PROTOCOL_VERSION
 from trail.output.envelope import command_failure
 
@@ -81,8 +81,9 @@ def is_daemon_control_plane_error(response: dict[str, Any]) -> bool:
     return isinstance(code, str) and code.startswith("DAEMON_")
 
 
-def resolve_response_timeout(method: str, payload: dict[str, Any] | None) -> float:
-    return resolve_command_response_timeout(method, payload)
+def resolve_response_timeout(method: str, payload: dict[str, Any] | None, *, wait_timeout: float | None = None) -> float:
+    del method, payload
+    return normalize_daemon_wait_timeout(wait_timeout) + DAEMON_TRANSPORT_TIMEOUT_BUFFER_SECONDS
 
 
 def send_daemon_request(
@@ -95,11 +96,14 @@ def send_daemon_request(
     body = {
         "request_id": request.request_id,
         "protocol_version": request.protocol_version,
+        "call_id": request.call_id,
+        "job_id": request.job_id,
         "workspace_root": request.workspace_root,
         "session_id": request.session_id,
         "verbose": request.verbose,
         "method": request.method,
         "payload": request.payload,
+        "control": request.control.to_dict(),
         "token": token,
     }
 
@@ -108,7 +112,7 @@ def send_daemon_request(
 
     host, port_text = endpoint.split(":", 1)
     with socket.create_connection((host, int(port_text)), timeout=5) as sock:
-        sock.settimeout(resolve_response_timeout(request.method, request.payload))
+        sock.settimeout(resolve_response_timeout(request.method, request.payload, wait_timeout=request.control.wait_timeout))
         sock.sendall(json.dumps(body, ensure_ascii=False).encode("utf-8") + b"\n")
         with sock.makefile("r", encoding="utf-8") as reader:
             return json.loads(reader.readline())
@@ -163,6 +167,9 @@ class TrailDaemonClient:
         *,
         session_id: str | None = None,
         verbose: bool = False,
+        job_id: str | None = None,
+        wait_timeout: float | None = None,
+        no_wait: bool = False,
     ) -> dict[str, Any]:
         request_id = uuid4().hex
         manifest_path = manifest_path_for_user(self.daemon_home)
@@ -196,6 +203,7 @@ class TrailDaemonClient:
                 detail=format_exception_detail(error),
             )
 
+        control = RequestControl(wait_timeout=normalize_daemon_wait_timeout(wait_timeout, no_wait=no_wait))
         request = DaemonRequest(
             request_id=request_id,
             protocol_version=PROTOCOL_VERSION,
@@ -204,8 +212,9 @@ class TrailDaemonClient:
             verbose=verbose,
             method=method,
             payload=payload,
+            job_id=job_id,
+            control=control,
         )
-
         while True:
             endpoint = manifest.runtime.endpoint
             if not endpoint:

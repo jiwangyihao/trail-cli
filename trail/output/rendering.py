@@ -2151,17 +2151,86 @@ def _render_daemon_logs(command: str, payload: dict[str, Any]) -> list[str]:
 
 
 def _render_daemon_request_status(command: str, payload: dict[str, Any]) -> list[str]:
-    data = payload.get("data") or {}
-    facts = _format_fact_sequence(
+    data = _as_dict(payload.get("data"))
+    command_name = data.get("method") or data.get("command")
+    final_state = data.get("final_state")
+    final_state_fact = "null" if "final_state" in data and final_state is None else final_state
+
+    facts: list[tuple[str, Any]] = [
         ("request", data.get("request_id")),
+        ("job", data.get("job_id")),
+        ("command", command_name),
         ("session", data.get("session_id")),
-        ("final_state", data.get("final_state")),
-        ("last_visible_stage", data.get("last_visible_stage")),
-        ("tainted", bool(data.get("tainted"))),
-    )
-    return [
-        f"ok {command} {facts}" if facts else f"ok {command}"
+        ("state", data.get("state")),
     ]
+    if "final" in data:
+        facts.append(("final", bool(data.get("final"))))
+    facts.extend(
+        [
+            ("final_state", final_state_fact),
+            ("last_visible_stage", data.get("last_visible_stage")),
+            ("side_effect_stage", data.get("side_effect_stage")),
+            ("tainted", bool(data.get("tainted"))),
+        ]
+    )
+    if "executed" in data:
+        facts.append(("executed", bool(data.get("executed"))))
+    facts.extend(
+        [
+            ("active_request", data.get("active_request")),
+            ("active_command", data.get("active_command")),
+            ("active_session", data.get("active_session")),
+        ]
+    )
+
+    rendered_facts = _format_fact_sequence(*facts)
+    lines = [f"ok {command} {rendered_facts}" if rendered_facts else f"ok {command}"]
+
+    state = data.get("state")
+    session_id = data.get("session_id")
+    if state == "cancel_unknown" and session_id:
+        _append_fact_line(lines, "recover", ("action", "daemon.reconcile_session"), ("session", session_id))
+        return lines
+
+    active_request = data.get("active_request")
+    active_command = data.get("active_command")
+    if state == "rejected" and active_request and active_command:
+        _append_fact_line(
+            lines,
+            "info",
+            ("next_action", active_command),
+            ("request", active_request),
+            ("session", data.get("active_session")),
+        )
+        return lines
+
+    if state == "running" and command_name:
+        next_request_id = data.get("next_request_id") or data.get("job_id") or data.get("request_id")
+        if next_request_id:
+            _append_fact_line(
+                lines,
+                "info",
+                ("next_action", command_name),
+                ("request", next_request_id),
+                ("session", session_id),
+            )
+
+    return lines
+
+
+def _render_daemon_request_cancel(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    request_id = data.get("request_id") or data.get("request")
+    command_name = data.get("command") or data.get("method")
+    facts = _format_fact_sequence(
+        ("request", request_id),
+        ("state", data.get("state")),
+        ("command", command_name),
+    )
+    lines = [f"ok {command} {facts}" if facts else f"ok {command}"]
+    if command_name and request_id:
+        _append_fact_line(lines, "info", ("next_action", command_name), ("request", request_id))
+    return lines
 
 
 def _render_daemon_reconcile_session(command: str, payload: dict[str, Any]) -> list[str]:
@@ -2289,6 +2358,7 @@ TEXT_RENDERERS = {
     "daemon.restart": _render_daemon_restart,
     "daemon.logs": _render_daemon_logs,
     "daemon.request_status": _render_daemon_request_status,
+    "daemon.request_cancel": _render_daemon_request_cancel,
     "daemon.reconcile_session": _render_daemon_reconcile_session,
     "state.dump": _render_state_dump,
     "guide.config.cw": _render_guide_config,
@@ -2326,8 +2396,55 @@ def _failure_tainted_value(payload: dict[str, Any]) -> bool | None:
     return None
 
 
+def _render_async_running(command: str, payload: dict[str, Any]) -> list[str]:
+    data = _as_dict(payload.get("data"))
+    request_id = data.get("request") or data.get("request_id") or data.get("job_id")
+    facts = _format_fact_sequence(
+        ("state", data.get("state")),
+        ("request", request_id),
+        ("waited", data.get("waited")),
+    )
+    lines = [f"ok {command} {facts}" if facts else f"ok {command}"]
+    if request_id:
+        _append_fact_line(lines, "info", ("next_action", command), ("request", request_id))
+    return lines
+
+
+def _render_daemon_busy_failure(payload: dict[str, Any]) -> list[str]:
+    error = _as_dict(payload.get("error"))
+    data = _as_dict(payload.get("data"))
+    debug = _as_dict(payload.get("debug"))
+
+    first_line_facts = _format_fact_sequence(
+        ("code", error.get("code") or "DAEMON_BUSY"),
+        ("active_request", data.get("active_request")),
+        ("active_command", data.get("active_command")),
+        ("active_session", data.get("active_session")),
+    )
+    lines = [f"fail daemon.request_submit {first_line_facts}" if first_line_facts else "fail daemon.request_submit"]
+
+    request_id = debug.get("request_id") or payload.get("request_id")
+    if request_id:
+        lines.append(f"request id={_encode_value(request_id)}")
+
+    message = error.get("message")
+    if message is not None:
+        lines.append(f"why msg={_encode_value(message)}")
+
+    _append_fact_line(
+        lines,
+        "recover",
+        ("action", data.get("recover_action") or data.get("active_command")),
+        ("request", data.get("active_request")),
+        ("session", data.get("active_session")),
+    )
+    return lines
+
 def _render_failure_lines(command: str, payload: dict[str, Any]) -> list[str]:
-    error = payload.get("error") or {}
+    error = _as_dict(payload.get("error"))
+    if error.get("code") == "DAEMON_BUSY":
+        return _render_daemon_busy_failure(payload)
+
     debug = _as_dict(payload.get("debug"))
 
     first_line = f"fail {command} code={_encode_value(error.get('code'))}"
@@ -2357,6 +2474,9 @@ def _render_failure_lines(command: str, payload: dict[str, Any]) -> list[str]:
 
 def _render_text_lines(command: str, payload: dict[str, Any]) -> list[str]:
     if payload.get("ok"):
+        data = _as_dict(payload.get("data"))
+        if data.get("state") == "running" and command != "daemon.request_status":
+            return _render_async_running(command, payload)
         renderer = TEXT_RENDERERS.get(command, _render_generic_success)
         return _finalize_success_lines(renderer(command, payload), command, payload)
     return _render_failure_lines(command, payload)

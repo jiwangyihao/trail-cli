@@ -164,6 +164,8 @@ class ScriptedBattleRuntime:
             return "game_over"
         if self.state == "game_over_return":
             return None
+        if self.state == "layer_transition":
+            return "layer_transition"
         if self.state == "settle_entry":
             return self.settle_detect_stage
         if self.state == "preparation":
@@ -1108,6 +1110,56 @@ def test_run_cw_battle_stops_on_next_round_preparation_after_settle(tmp_path: Pa
     assert runtime.actions == ["start", "continue", "next"]
     assert session.scene_state["cw"]["stage"] == {"value": "preparation", "stale": False}
     assert session.last_stage == {"scene": "cw", "value": "preparation"}
+
+
+@pytest.mark.parametrize(
+    ("states", "expected_action"),
+    [
+        (["battle_start", "battle_progress"], "start"),
+        (["settle_entry", "settle_followup"], "continue"),
+        (["settle_followup", "stable_stage"], "next"),
+        (["game_over_followup", "stable_stage"], "next"),
+        (["layer_transition", "stable_stage"], "blank_continue"),
+    ],
+)
+def test_run_cw_battle_marks_side_effect_before_post_action_cancel(
+    tmp_path: Path,
+    monkeypatch,
+    states: list[str],
+    expected_action: str,
+):
+    battle_scene = load_cw_battle_module()
+    session = build_session(tmp_path)
+    runtime = ScriptedBattleRuntime(states, sleep_advances_from=())
+    if states[0] == "layer_transition":
+        ensure_cw_state(session)["battle_resume"] = {"in_battle_hint": True}
+    token = type("Token", (), {"side_effect_stage": "none"})()
+    cancelled = {"value": False}
+
+    def throw_if_cancelled():
+        if getattr(token, "side_effect_stage", "none") != "none":
+            cancelled["value"] = True
+            raise RuntimeError("cancel after action")
+
+    token.throw_if_cancelled = throw_if_cancelled
+    _patch_run_loop(
+        monkeypatch,
+        battle_scene,
+        runtime,
+        start_advances=False,
+        continue_advances=False,
+        settle_advances=False,
+    )
+    if states[0] == "layer_transition":
+        monkeypatch.setattr(battle_scene, "build_cw_stage_detector", lambda _runtime: runtime.detect_stage, raising=False)
+        monkeypatch.setattr(battle_scene, "_advance_layer_transition", lambda _runtime: runtime.run_action("blank_continue", advance=False), raising=False)
+
+    with pytest.raises(RuntimeError, match="cancel after action"):
+        battle_scene.run_cw_battle(session, runtime=runtime, timeout=30, cancellation_token=token)
+
+    assert cancelled["value"] is True
+    assert token.side_effect_stage == "side_effect_applied"
+    assert runtime.actions == [expected_action]
 
 
 def test_run_cw_battle_stops_on_detected_next_round_preparation_when_ocr_misses_start_text(

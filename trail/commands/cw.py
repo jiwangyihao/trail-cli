@@ -116,12 +116,24 @@ cw_app.add_typer(settle_app, name="settle")
 cw_app.add_typer(event_app, name="event")
 
 
-def _rpc_cw(method: str, *, session_id: str, payload: dict[str, object] | None = None) -> dict[str, Any]:
-    return call_daemon(method, {"session_id": session_id, **(payload or {})}, session_id=session_id)
+def _rpc_cw(
+    method: str,
+    *,
+    session_id: str,
+    payload: dict[str, object] | None = None,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    return call_daemon(method, {"session_id": session_id, **(payload or {})}, session_id=session_id, request_id=request_id)
 
 
-def _print_cw(method: str, *, session_id: str, payload: dict[str, object] | None = None) -> None:
-    print_output(method, _rpc_cw(method, session_id=session_id, payload=payload))
+def _print_cw(
+    method: str,
+    *,
+    session_id: str,
+    payload: dict[str, object] | None = None,
+    request_id: str | None = None,
+) -> None:
+    print_output(method, _rpc_cw(method, session_id=session_id, payload=payload, request_id=request_id))
 
 
 def _cw_input_invalid_response(message: str) -> dict[str, Any]:
@@ -509,8 +521,9 @@ def cw_battle_start(session: str = typer.Option(..., "--session")) -> None:
 def cw_battle_run(
     session: str = typer.Option(..., "--session"),
     timeout: int = typer.Option(DEFAULT_CW_BATTLE_RUN_TIMEOUT, "--timeout"),
+    request_id: str | None = typer.Option(None, "--request-id", help="查询既有 cw.battle.run daemon job。"),
 ) -> None:
-    _print_cw("cw.battle.run", session_id=session, payload={"timeout": timeout})
+    _print_cw("cw.battle.run", session_id=session, payload={"timeout": timeout}, request_id=request_id)
 
 
 @battle_app.command("clear-in-progress")

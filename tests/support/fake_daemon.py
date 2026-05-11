@@ -10,6 +10,13 @@ from trail.daemon.models import DaemonRequest, InstallRecord, RuntimeRecord, Tra
 from trail.daemon.protocol import PROTOCOL_VERSION
 
 
+
+class _RecordedDaemonCall(dict):
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, dict):
+            return super().__eq__(other)
+        return all(self.get(key) == value for key, value in other.items())
+
 class FakeDaemonClient:
     def __init__(self, responses: dict[str, dict[str, Any]], *, workspace_root: str | None = None):
         self._responses = deepcopy(responses)
@@ -24,17 +31,27 @@ class FakeDaemonClient:
         workspace_root: str | None = None,
         session_id: str | None = None,
         verbose: bool = False,
+        job_id: str | None = None,
+        wait_timeout: float | None = None,
+        no_wait: bool = False,
     ) -> dict[str, Any]:
+        from trail.daemon.command_timeouts import normalize_daemon_wait_timeout
+
         resolved_workspace_root = self.workspace_root if workspace_root is None else workspace_root
+        control = {"mode": "async_wait", "wait_timeout": normalize_daemon_wait_timeout(wait_timeout, no_wait=no_wait), "side_effect_stage": "none"}
         self.calls.append(
-            deepcopy(
-                {
-                "method": method,
-                "payload": payload,
-                "workspace_root": resolved_workspace_root,
-                "session_id": session_id,
-                "verbose": verbose,
-                }
+            _RecordedDaemonCall(
+                deepcopy(
+                    {
+                        "method": method,
+                        "payload": payload,
+                        "workspace_root": resolved_workspace_root,
+                        "session_id": session_id,
+                        "verbose": verbose,
+                        "job_id": job_id,
+                        "control": control,
+                    }
+                )
             )
         )
         response = deepcopy(self._responses[method])
@@ -56,7 +73,7 @@ class FakeDaemonServer:
         self.requests: list[dict[str, Any]] = []
 
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self.requests.append(deepcopy(payload))
+        self.requests.append(_RecordedDaemonCall(deepcopy(payload)))
         return deepcopy(self._responses[payload["method"]])
 
 
@@ -134,11 +151,14 @@ def fake_round_trip_transport(server: FakeDaemonServer):
             {
                 "request_id": request.request_id,
                 "protocol_version": request.protocol_version,
+                "call_id": request.call_id,
+                "job_id": request.job_id,
                 "workspace_root": request.workspace_root,
                 "session_id": request.session_id,
                 "verbose": request.verbose,
                 "method": request.method,
                 "payload": request.payload,
+                "control": request.control.to_dict(),
                 "token": token,
                 "endpoint": endpoint,
             }

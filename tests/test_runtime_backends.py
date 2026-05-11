@@ -661,7 +661,7 @@ def test_command_service_handles_screen_ocr_and_image_methods(tmp_path: Path):
     assert locate_payload["data"] == {"box": {"left": 1, "top": 2, "width": 3, "height": 4}}
     assert locate_payload["request_id"] == "req-image.locate"
     assert wait_payload["ok"] is True
-    assert wait_payload["data"] == {"box": {"left": 5, "top": 6, "width": 7, "height": 8}}
+    assert wait_payload["data"] == {"box": {"left": 1, "top": 2, "width": 3, "height": 4}}
     assert wait_payload["request_id"] == "req-image.wait"
     assert runtime_service.runtime_calls == [
         {"workspace_root": str(tmp_path), "window_binding": None},
