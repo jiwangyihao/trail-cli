@@ -403,7 +403,7 @@ def test_executor_leases_payload_session_attached_read_result_writes(tmp_path: P
     assert service.request_status("call-read-payload-session")["state"] == "completed"
 
 
-def test_resending_same_business_command_attaches_to_running_job_without_duplicate_execution(tmp_path: Path):
+def test_resending_business_command_attaches_to_running_singleton_without_request_id(tmp_path: Path):
     business = BlockingBusinessService()
     executor = RequestExecutor(command_service=business, session_service=SessionServiceRegistry())
     first = executor.handle(
@@ -430,7 +430,6 @@ def test_resending_same_business_command_attaches_to_running_job_without_duplica
                 call_id="call-2",
                 session_id=None,
                 payload={"timeout": 90},
-                job_id=first["data"]["request"],
                 control=RequestControl(wait_timeout=0.0),
                 workspace_root=str(tmp_path),
             ),
@@ -442,9 +441,10 @@ def test_resending_same_business_command_attaches_to_running_job_without_duplica
     business.release.set()
 
 
-def test_without_request_id_terminal_same_payload_creates_new_job(tmp_path: Path):
+def test_without_request_id_terminal_same_payload_replays_latest_singleton_job(tmp_path: Path):
     service = CountingService()
-    executor = RequestExecutor(command_service=service, session_service=SessionServiceRegistry())
+    registry = SessionServiceRegistry()
+    executor = RequestExecutor(command_service=service, session_service=registry)
 
     first = executor.handle(
         _request(tmp_path, method="input.click", call_id="call-1", payload={"x": 1, "y": 2}, control=RequestControl(wait_timeout=1.0))
@@ -453,9 +453,9 @@ def test_without_request_id_terminal_same_payload_creates_new_job(tmp_path: Path
         _request(tmp_path, method="input.click", call_id="call-2", payload={"x": 1, "y": 2}, control=RequestControl(wait_timeout=1.0))
     )
 
-    assert first["data"] == {"call": 1}
-    assert second["data"] == {"call": 2}
-
+    assert second["data"] == first["data"]
+    assert service.calls == 1
+    assert registry.for_workspace(str(tmp_path)).request_status("call-2")["job_id"] == registry.for_workspace(str(tmp_path)).find_latest_job_for_method("input.click")["job_id"]
 
 def test_resending_same_non_game_business_command_attaches_to_running_job(tmp_path: Path):
     business = BlockingBusinessService()

@@ -1,7 +1,7 @@
 # Simple Command Surface
 
 - `trail start` 用来建立或恢复一个可继续推进的游戏会话入口，但它不是 scene owner 选择器。
-- `trail start` 现在不再只是返回 `session`；默认文本可能先返回 `state=running request=<job_id>`，表示 daemon 已创建后台 job 且 CLI 等待预算用尽。此时重发同一业务命令并带 `--request-id <job_id>` 续查，不要把它当成失败，也不要换成其它 scene 命令。
+- `trail start` 现在不再只是返回 `session`；默认文本可能先返回 `state=running request=<job_id>`，表示 daemon 已创建后台 job 且 CLI 等待预算用尽。此时原样重发 `trail start` 续查，不要把它当成失败，也不要换成其它 scene 命令。
 - `trail start` 终态默认文本首行会带 `status=...`，并在成功时附带截图，因此要把它理解成“启动 + 首帧观察”的组合入口，而不是只有 session 分配器。
 - 只要 `trail start` 返回了 `shot path=...`，就说明这一轮已经产出了原始截图；如果同时带 `info read_image_first=1`，应先读图，再决定是否继续 scene 命令。
 - `trail start` 的 `status=attached`、`status=launched_needs_check`、`status=launched_clicked_enter` 都只是启动链路状态，不等于已经稳定进入大世界；三态细节见 `start-run-status-handling.md`。

@@ -126,6 +126,14 @@ class RequestExecutor:
         )
         if explicit_job_response is not None:
             return explicit_job_response
+        singleton_job_response = self._singleton_job_response(
+            request,
+            service,
+            job_key=job_key,
+            wait_timeout=float(request.control.wait_timeout or 0.0),
+        )
+        if singleton_job_response is not None:
+            return singleton_job_response
 
         if not is_game_operation(request.method):
             active_job_response = self._reserve_non_game_job_or_active(request, service, job_key=job_key)
@@ -304,6 +312,37 @@ class RequestExecutor:
             if job_id in self._job_metadata:
                 self._remember_call_mapping(request.call_id, job_id)
         return self._job_response(job, job_id=job_id, wait_timeout=wait_timeout)
+
+    def _singleton_job_response(self, request: DaemonRequest, service, *, job_key: str, wait_timeout: float) -> dict | None:
+        job = self._latest_singleton_job(request, service, job_key=job_key)
+        if job is None:
+            return None
+        job_id = job["job_id"]
+        service.create_call_record(
+            call_id=request.call_id,
+            job_id=job_id,
+            method=request.method,
+            session_id=_session_id_for_request(request),
+            state="attached",
+            executed=False,
+        )
+        with self._mutex:
+            if job_id in self._job_metadata:
+                self._remember_call_mapping(request.call_id, job_id)
+        return self._job_response(job, job_id=job_id, wait_timeout=wait_timeout)
+
+    def _latest_singleton_job(self, request: DaemonRequest, service, *, job_key: str) -> dict | None:
+        with self._mutex:
+            job_id = self._job_key_to_job_id.get(job_key)
+            metadata = deepcopy(self._job_metadata.get(job_id)) if job_id is not None else None
+        if metadata is not None:
+            return metadata
+        latest = service.find_latest_job_for_method(request.method)
+        if latest is None:
+            return None
+        if latest.get("job_key") != job_key:
+            return None
+        return latest
 
     def _find_job_across_workspaces(self, service, job_id: str) -> dict | None:
         job = service.get_job_record(job_id)

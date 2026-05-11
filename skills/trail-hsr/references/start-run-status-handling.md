@@ -1,6 +1,6 @@
 # Start Run Status Handling
 
-- `trail start` 现在不再只是建立 `session`；它可能先返回 `ok start.run state=running request=<job_id> waited=<n>`，表示后台 job 仍在执行。此时按异步模型重发同一业务命令：`trail --request-id <job_id> start`；不要把 running 当作启动失败，也不要立刻换跑 scene 命令。
+- `trail start` 现在不再只是建立 `session`；它可能先返回 `ok start.run state=running request=<job_id> waited=<n>`，表示后台 job 仍在执行。此时按异步单例模型原样重发 `trail start`；不要把 running 当作启动失败，也不要立刻换跑 scene 命令。
 - `trail start` 终态默认文本首行会返回 `ok start.run status=... session=...`，成功时还会附带 `shot path=...`，并紧跟 `info read_image_first=1`。看到 `shot path=...` 与 `info read_image_first=1` 后，第一动作始终是先读这张原始截图；不要只看 `status` 就盲目继续 scene 命令。
 - 需要判断“大世界稳定态”时，优先看本目录下的 `04-world-chaoluguan.jpg`，也就是 `大世界探索态（示例图：朝露公馆）`。这张参考图对应的大世界稳定特征是：左上小地图、右上工具栏、右侧角色栏、左下私聊入口、右下操作区；不要把偶然出现的地点名或附近功能入口当作核心判据。
 - 如果返回截图像星穹列车在太空中的启动/过场画面，或仍处于纯黑、淡入这类明显过渡态，就还不是大世界稳定态；不要把这类瞬时过场当成已经可继续推进的正常落点。

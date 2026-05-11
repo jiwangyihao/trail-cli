@@ -289,7 +289,7 @@ def test_trail_hsr_skill_has_required_sections_and_root_entry_semantics() -> Non
     assert "trail start" in text
     assert "status" in text
     assert "state=running request=<job_id>" in text
-    assert "--request-id <job_id>" in text
+    assert "常规续查方式是原样重发同一条业务命令" in text
     assert "references/async-command-model.md" in text
     assert "shot path=" in text
     assert "info read_image_first=1" in text
@@ -309,19 +309,20 @@ def test_trail_hsr_reference_files_exist_with_required_content() -> None:
             "trail input",
             "status=",
             "state=running request=<job_id>",
-            "--request-id <job_id>",
+            "原样重发 `trail start`",
             "shot path=",
         ],
         async_command_model: [
             "state=running request=<job_id>",
-            "重发同一条业务命令",
-            "trail --request-id <job_id> start",
-            "trail cw battle run --session <session_id> --request-id <job_id>",
+            "原样重发同一条业务命令",
+            "继续运行 `trail start`",
+            "继续运行 `trail cw battle run --session <session_id>`",
+            "通常无需把 `request=<job_id>` 改写成 `--request-id`",
             "DAEMON_BUSY",
             "trail daemon request-status --request-id <id>",
             "trail daemon request-result --request-id <job_id>",
             "trail daemon request-cancel --request-id <id>",
-            "没有显式 `--request-id`",
+            "旧 job 已终态时也回放终态业务输出",
         ],
         OCR_AND_SCREENSHOT: [
             "shot path=",
@@ -332,7 +333,7 @@ def test_trail_hsr_reference_files_exist_with_required_content() -> None:
         ],
         START_RUN_STATUS_HANDLING: [
             "state=running request=<job_id>",
-            "trail --request-id <job_id> start",
+            "原样重发 `trail start`",
             "attached",
             "launched_needs_check",
             "launched_clicked_enter",
