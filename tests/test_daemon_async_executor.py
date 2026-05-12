@@ -10,7 +10,7 @@ import pytest
 from trail.core.errors import TrailError
 from trail.daemon.models import DaemonRequest, RequestCancelled, RequestControl
 from trail.daemon.protocol import PROTOCOL_VERSION
-from trail.daemon.request_executor import RequestExecutor
+from trail.daemon.request_executor import RequestExecutor, canonical_payload_digest
 from trail.daemon.session_service import SessionServiceRegistry
 from trail.output.envelope import command_success
 
@@ -441,21 +441,280 @@ def test_resending_business_command_attaches_to_running_singleton_without_reques
     business.release.set()
 
 
-def test_without_request_id_terminal_same_payload_replays_latest_singleton_job(tmp_path: Path):
+def test_without_request_id_terminal_same_payload_creates_new_job(tmp_path: Path):
     service = CountingService()
     registry = SessionServiceRegistry()
     executor = RequestExecutor(command_service=service, session_service=registry)
+    session_service = registry.for_workspace(str(tmp_path))
 
     first = executor.handle(
         _request(tmp_path, method="input.click", call_id="call-1", payload={"x": 1, "y": 2}, control=RequestControl(wait_timeout=1.0))
     )
+    first_job = session_service.find_latest_job_for_method("input.click")["job_id"]
+
     second = executor.handle(
         _request(tmp_path, method="input.click", call_id="call-2", payload={"x": 1, "y": 2}, control=RequestControl(wait_timeout=1.0))
     )
+    second_job = session_service.request_status("call-2")["job_id"]
 
-    assert second["data"] == first["data"]
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert service.calls == 2
+    assert second_job != first_job
+
+
+@pytest.mark.parametrize(
+    "final_state",
+    [
+        "completed",
+        "failed_before_side_effect",
+        "cancelled",
+        "applied_but_not_persisted",
+        "persisted_but_response_unknown",
+        "cancel_unknown",
+    ],
+)
+def test_without_request_id_does_not_replay_any_terminal_job(tmp_path: Path, final_state: str):
+    service = CountingService()
+    registry = SessionServiceRegistry()
+    executor = RequestExecutor(command_service=service, session_service=registry)
+    session_service = registry.for_workspace(str(tmp_path))
+
+    first = executor.handle(
+        _request(tmp_path, method="input.click", call_id="call-terminal-1", payload={"x": 3, "y": 4}, control=RequestControl(wait_timeout=1.0))
+    )
+    first_job = session_service.find_latest_job_for_method("input.click")["job_id"]
+    session_service.update_job_record(
+        first_job,
+        state="completed" if final_state == "completed" else "failed",
+        final=True,
+        final_state=final_state,
+        last_envelope=first,
+    )
+
+    second = executor.handle(
+        _request(tmp_path, method="input.click", call_id="call-terminal-2", payload={"x": 3, "y": 4}, control=RequestControl(wait_timeout=1.0))
+    )
+    second_job = session_service.request_status("call-terminal-2")["job_id"]
+
+    assert second["ok"] is True
+    assert second_job != first_job
+    assert service.calls == 2
+
+
+def test_without_request_id_does_not_replay_finished_future_metadata(tmp_path: Path):
+    service = CountingService()
+    registry = SessionServiceRegistry()
+    executor = RequestExecutor(command_service=service, session_service=registry)
+    session_service = registry.for_workspace(str(tmp_path))
+
+    first = executor.handle(
+        _request(tmp_path, method="input.click", call_id="call-meta-1", payload={"x": 5, "y": 6}, control=RequestControl(wait_timeout=1.0))
+    )
+    first_job = session_service.find_latest_job_for_method("input.click")["job_id"]
+    with executor._mutex:
+        executor._job_key_to_job_id[session_service.get_job_record(first_job)["job_key"]] = first_job
+        executor._job_metadata[first_job] = {
+            **session_service.get_job_record(first_job),
+            "final": False,
+            "final_state": None,
+        }
+        executor._futures.pop(first_job, None)
+
+    second = executor.handle(
+        _request(tmp_path, method="input.click", call_id="call-meta-2", payload={"x": 5, "y": 6}, control=RequestControl(wait_timeout=1.0))
+    )
+    second_job = session_service.request_status("call-meta-2")["job_id"]
+
+    assert second["ok"] is True
+    assert second_job != first_job
+    assert service.calls == 2
+
+
+def test_without_request_id_does_not_replay_orphan_non_terminal_persisted_job(tmp_path: Path):
+    service = CountingService()
+    registry = SessionServiceRegistry()
+    executor = RequestExecutor(command_service=service, session_service=registry)
+    session_service = registry.for_workspace(str(tmp_path))
+    payload = {"x": 7, "y": 8}
+
+    orphan = session_service.create_job_record(
+        job_id="orphan-job",
+        job_key="\n".join([str(tmp_path).replace("\\", "/").casefold(), "", "input.click", canonical_payload_digest(payload)]),
+        method="input.click",
+        payload_digest=canonical_payload_digest(payload),
+        session_id=None,
+    )
+    assert orphan["final"] is False
+
+    response = executor.handle(
+        _request(tmp_path, method="input.click", call_id="call-orphan", payload=payload, control=RequestControl(wait_timeout=1.0))
+    )
+
+    created_job = session_service.request_status("call-orphan")["job_id"]
+    assert response["ok"] is True
+    assert created_job != "orphan-job"
     assert service.calls == 1
-    assert registry.for_workspace(str(tmp_path)).request_status("call-2")["job_id"] == registry.for_workspace(str(tmp_path)).find_latest_job_for_method("input.click")["job_id"]
+
+def test_same_non_game_resubmit_during_stale_done_future_cleanup_reserves_single_new_job(tmp_path: Path, monkeypatch):
+    business = BlockingBusinessService()
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    executor = RequestExecutor(command_service=business, session_service=registry)
+    payload = {"query": "x"}
+    job_key = "\n".join([
+        str(tmp_path).replace("\\", "/").casefold(),
+        "",
+        "guide.list.cw",
+        canonical_payload_digest(payload),
+    ])
+    stale_job = service.create_job_record(
+        job_id="stale-job",
+        job_key=job_key,
+        method="guide.list.cw",
+        payload_digest=canonical_payload_digest(payload),
+        session_id=None,
+    )
+    stale_future = Future()
+    stale_future.set_result(command_success(data={"stale": True}, screenshot=None))
+    with executor._mutex:
+        executor._job_key_to_job_id[job_key] = "stale-job"
+        executor._job_metadata["stale-job"] = {
+            **stale_job,
+            "final": False,
+            "final_state": None,
+        }
+        executor._futures["stale-job"] = stale_future
+        executor._future_job_keys["stale-job"] = job_key
+
+    entered_first_create = threading.Event()
+    release_first_create = threading.Event()
+    entered_second_create = threading.Event()
+    create_lock = threading.Lock()
+    created_job_ids: list[str] = []
+    original_create_job_record = service.create_job_record
+
+    def slow_first_create_job_record(*args: Any, **kwargs: Any):
+        with create_lock:
+            created_job_ids.append(kwargs["job_id"])
+            create_count = len(created_job_ids)
+        if create_count == 1:
+            entered_first_create.set()
+            release_first_create.wait(5)
+        elif create_count == 2:
+            entered_second_create.set()
+        return original_create_job_record(*args, **kwargs)
+
+    monkeypatch.setattr(service, "create_job_record", slow_first_create_job_record)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_resubmit = pool.submit(
+            executor.handle,
+            _request(
+                tmp_path,
+                method="guide.list.cw",
+                call_id="call-stale-resubmit-1",
+                payload=payload,
+                control=RequestControl(wait_timeout=0.0),
+            ),
+        )
+        assert entered_first_create.wait(1)
+        second_resubmit = pool.submit(
+            executor.handle,
+            _request(
+                tmp_path,
+                method="guide.list.cw",
+                call_id="call-stale-resubmit-2",
+                payload=payload,
+                control=RequestControl(wait_timeout=0.0),
+            ),
+        )
+        assert entered_second_create.wait(0.25) is False
+        release_first_create.set()
+        started_second_worker = threading.Event()
+        original_worker_request = executor._worker_request
+
+        def tracking_worker_request(request, *, job_id, service):
+            worker_request = original_worker_request(request, job_id=job_id, service=service)
+            if request.call_id == "call-stale-resubmit-2":
+                started_second_worker.set()
+            return worker_request
+
+        monkeypatch.setattr(executor, "_worker_request", tracking_worker_request)
+        assert business.started.wait(1)
+        assert business.entered_wait.wait(1)
+        first_response = first_resubmit.result(timeout=1)
+        second_response = second_resubmit.result(timeout=1)
+        assert started_second_worker.wait(0.25) is False
+
+    assert first_response["data"]["state"] == "running"
+    assert second_response["data"]["state"] == "running"
+    assert first_response["data"]["request"] == second_response["data"]["request"]
+    assert first_response["data"]["request"] != "stale-job"
+    assert created_job_ids == [first_response["data"]["request"]]
+    assert service.request_status("call-stale-resubmit-1")["executed"] is True
+    assert service.request_status("call-stale-resubmit-2")["executed"] is False
+    business.release.set()
+
+def test_same_non_game_resubmit_during_metadata_before_future_registration_attaches(tmp_path: Path, monkeypatch):
+    business = BlockingBusinessService()
+    registry = SessionServiceRegistry()
+    executor = RequestExecutor(command_service=business, session_service=registry)
+    payload = {"query": "x"}
+
+    entered_worker_request = threading.Event()
+    release_worker_request = threading.Event()
+    started_second_worker = threading.Event()
+    original_worker_request = executor._worker_request
+
+    def blocking_worker_request(request, *, job_id, service):
+        if request.call_id == "call-inflight-1":
+            entered_worker_request.set()
+            release_worker_request.wait(5)
+        if request.call_id == "call-inflight-2":
+            started_second_worker.set()
+        return original_worker_request(request, job_id=job_id, service=service)
+
+    monkeypatch.setattr(executor, "_worker_request", blocking_worker_request)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(
+            executor.handle,
+            _request(
+                tmp_path,
+                method="guide.list.cw",
+                call_id="call-inflight-1",
+                payload=payload,
+                control=RequestControl(wait_timeout=0.0),
+            ),
+        )
+        assert entered_worker_request.wait(1)
+
+        second = pool.submit(
+            executor.handle,
+            _request(
+                tmp_path,
+                method="guide.list.cw",
+                call_id="call-inflight-2",
+                payload=payload,
+                control=RequestControl(wait_timeout=0.0),
+            ),
+        )
+        assert started_second_worker.wait(0.25) is False
+        release_worker_request.set()
+        assert business.started.wait(1)
+        assert business.entered_wait.wait(1)
+        first_response = first.result(timeout=1)
+        second_response = second.result(timeout=1)
+
+    assert first_response["data"]["state"] == "running"
+    assert second_response["data"]["state"] == "running"
+    assert first_response["data"]["request"] == second_response["data"]["request"]
+    assert registry.for_workspace(str(tmp_path)).request_status("call-inflight-1")["executed"] is True
+    assert registry.for_workspace(str(tmp_path)).request_status("call-inflight-2")["executed"] is False
+    assert business.calls == 1
+    business.release.set()
+
 
 def test_resending_same_non_game_business_command_attaches_to_running_job(tmp_path: Path):
     business = BlockingBusinessService()

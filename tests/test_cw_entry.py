@@ -36,6 +36,7 @@ def _install_template_runtime(
     locate_results: dict[str, object] | None = None,
     wait_results: dict[str, object] | None = None,
     ocr_results: object | None = None,
+    ocr_side_effect=None,
 ) -> None:
     locate_results = locate_results or {}
     wait_results = wait_results or {}
@@ -51,6 +52,8 @@ def _install_template_runtime(
         return wait_results.get(template)
 
     def ocr(**kwargs):
+        if ocr_side_effect is not None:
+            return ocr_side_effect(**kwargs)
         del kwargs
         return ocr_results or []
 
@@ -448,6 +451,134 @@ def test_enter_new_game_waits_before_first_difficulty_ocr(monkeypatch: pytest.Mo
     assert sleep_calls == [2.0]
     assert selected == ["A5-1:True"]
 
+
+def test_enter_from_start_page_dismisses_home_update_prompt_before_start_click(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    events: list[tuple[object, ...]] = []
+    start_box = _box("entry.start", left=1500, top=900, width=120, height=60)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.dismissed = False
+            self.ocr_calls: list[dict[str, object]] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            events.append(("click", x, y))
+            if (x, y) == entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT:
+                self.dismissed = True
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            if kwargs.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION and not self.dismissed:
+                return [{"text": "积分线已更新"}]
+            return [{"text": "货币战争"}]
+
+    runtime = Runtime()
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: events.append(("sleep", seconds)))
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+    monkeypatch.setattr(
+        entry_module,
+        "_select_battle_mode",
+        lambda actual_runtime, *, battle_mode: events.append(("battle_mode", battle_mode)),
+    )
+    monkeypatch.setattr(
+        entry_module,
+        "_enter_new_game",
+        lambda actual_runtime, *, difficulty: events.append(("new_game", difficulty)),
+    )
+
+    entry_module._enter_from_start_page(
+        runtime,
+        mode="new",
+        difficulty="current",
+        battle_mode="standard",
+        start_box=start_box,
+    )
+
+    assert events == [
+        ("click", *entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT),
+        ("sleep", 0.8),
+        ("click", *start_box.center),
+        ("battle_mode", "standard"),
+        ("new_game", "current"),
+    ]
+    assert any(call.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION for call in runtime.ocr_calls)
+
+
+def test_enter_from_start_page_update_prompt_reconfirm_failure_does_not_click_start(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    start_box = _box("entry.start", left=1500, top=900, width=120, height=60)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.dismissed = False
+            self.ocr_calls: list[dict[str, object]] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == _asset("entry.start") and not self.dismissed:
+                return start_box
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del template, timeout, interval
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT:
+                self.dismissed = True
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            if kwargs.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION and not self.dismissed:
+                return [{"text": "积分线已更新"}]
+            return []
+
+    runtime = Runtime()
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+
+    with pytest.raises(TrailError) as exc_info:
+        entry_module._enter_from_start_page(
+            runtime,
+            mode="new",
+            difficulty="current",
+            battle_mode="standard",
+            start_box=start_box,
+        )
+
+    assert exc_info.value.code == "CW_HOME_UPDATE_PROMPT_DISMISS_UNCONFIRMED"
+    assert runtime.clicks == [
+        entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT,
+        entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT,
+    ]
 
 def test_select_exact_difficulty_recovery_when_highest_button_missing(monkeypatch):
     import trail.scenes.cw.entry as entry_module
@@ -989,6 +1120,214 @@ def test_detect_current_enter_page_keeps_true_stage_boss_preview_from_detector(m
     assert page == {"page": "stage.boss_preview", "stage": "boss_preview"}
 
 
+def test_detect_current_enter_page_prioritizes_home_update_prompt_over_recorded_game_over(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
+    start_box = _box("entry.start", left=1500, top=900, width=120, height=60)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.ocr_calls: list[dict[str, object]] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del template, timeout, interval
+            return None
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            if kwargs.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION:
+                return [{"text": "积分线已更新"}]
+            return [{"text": "货币战争"}]
+
+    runtime = Runtime()
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+
+    page = entry_module._detect_current_enter_page(runtime, session=session)
+
+    assert page == {"page": "home", "update_prompt": "1"}
+    assert any(call.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION for call in runtime.ocr_calls)
+
+def test_detect_current_enter_page_prioritizes_home_update_prompt_without_start_template_over_recorded_game_over(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.ocr_calls: list[dict[str, object]] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            return None
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            if kwargs.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION:
+                return [{"text": "积分线已更新"}]
+            return [{"text": "货币战争"}]
+
+    runtime = Runtime()
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+
+    page = entry_module._detect_current_enter_page(runtime, session=session)
+
+    assert page == {"page": "home", "update_prompt": "1"}
+    assert any(call.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION for call in runtime.ocr_calls)
+
+
+def test_detect_current_enter_page_does_not_treat_update_prompt_as_home_without_anchor(monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del template, timeout, interval
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            return [{"text": "积分线已更新"}]
+
+    runtime = Runtime()
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+    monkeypatch.setattr(entry_module, "_detect_cw_stage_from_ocr", lambda actual_runtime: None)
+
+    page = entry_module._detect_current_enter_page(runtime)
+
+    assert page == {"page": "world"}
+    assert runtime.clicks == []
+
+def test_detect_current_enter_page_treats_ocr_home_anchor_as_home_over_recorded_game_over(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.ocr_calls: list[dict[str, object]] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            return None
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            return [{"text": "积分奖励当前积分0/18000"}]
+
+    runtime = Runtime()
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+    monkeypatch.setattr(entry_module, "_detect_cw_stage_from_ocr", lambda actual_runtime: None)
+
+    page = entry_module._detect_current_enter_page(runtime, session=session)
+
+    assert page == {"page": "home", "already_home": "1"}
+
+
+@pytest.mark.parametrize(
+    ("locate_results", "ocr_text", "preferred_mode", "expected"),
+    [
+        (
+            {_asset("entry.start"): _box("entry.start", left=10, top=20)},
+            "继续进度 当前进度 积分线已更新",
+            None,
+            {"page": "home", "unfinished_progress": "1"},
+        ),
+        (
+            {
+                _asset("entry.start"): _box("entry.start", left=10, top=20),
+                _asset("entry.new"): _box("entry.new", left=30, top=40),
+            },
+            "积分线已更新",
+            None,
+            {"page": "entry.new"},
+        ),
+        (
+            {
+                _asset("entry.start"): _box("entry.start", left=10, top=20),
+                _asset("entry.continue"): _box("entry.continue", left=30, top=40),
+            },
+            "积分线已更新",
+            None,
+            {"page": "entry.continue"},
+        ),
+        (
+            {
+                _asset("entry.start"): _box("entry.start", left=10, top=20),
+                _asset("entry.invest_environment"): _box("entry.invest_environment", left=30, top=40),
+            },
+            "积分线已更新",
+            None,
+            {"page": "invest"},
+        ),
+        (
+            {_asset("entry.start"): _box("entry.start", left=10, top=20)},
+            "挑战成功 下一步 积分线已更新",
+            None,
+            {"page": "settlement.entry"},
+        ),
+    ],
+)
+def test_detect_current_enter_page_does_not_let_update_prompt_override_high_confidence_pages(
+    monkeypatch,
+    locate_results,
+    ocr_text,
+    preferred_mode,
+    expected,
+):
+    import trail.scenes.cw.entry as entry_module
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+    runtime = Runtime()
+    _install_template_runtime(runtime, locate_results=locate_results, ocr_results=[{"text": ocr_text}])
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+    monkeypatch.setattr(entry_module, "_detect_cw_stage_from_ocr", lambda actual_runtime: None)
+
+    page = entry_module._detect_current_enter_page(runtime, preferred_mode=preferred_mode)
+
+    assert page == expected
+    assert runtime.clicks == []
+
+
 def test_start_cw_continue_mode_handles_layer_transition_with_recorded_truth(tmp_path, monkeypatch):
     import trail.scenes.cw.entry as entry_module
 
@@ -1154,6 +1493,267 @@ def test_enter_cw_returns_home_noop_when_already_on_start_page(tmp_path):
     assert refreshed.last_stage is None
     assert runtime.clicks == []
     assert runtime.wait_calls == []
+
+
+def test_enter_cw_home_update_prompt_dismisses_and_returns_home(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: sleep_calls.append(seconds))
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
+    start_box = _box("entry.start", left=1500, top=900, width=120, height=60)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+            self.dismissed = False
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT:
+                self.dismissed = True
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            if kwargs.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION and not self.dismissed:
+                return [{"text": "积分线已更新"}]
+            return [{"text": "货币战争"}]
+
+    runtime = Runtime()
+
+    refreshed = enter_cw(session, mode="continue", runtime=runtime)
+
+    assert runtime.clicks == [entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT]
+    assert sleep_calls == [0.8]
+    assert runtime.locate_calls.count(_asset("entry.start")) >= 2
+    assert any(call.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION for call in runtime.ocr_calls)
+    assert refreshed.scene_state["cw"]["entry"]["page"] == "home"
+
+def test_enter_cw_home_update_prompt_then_reward_prompt_dismisses_twice(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: sleep_calls.append(seconds))
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    session.scene_state["cw"] = {"stage": {"value": "game_over", "stale": False}}
+    start_box = _box("entry.start", left=1500, top=900, width=120, height=60)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+            self.dismiss_count = 0
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del timeout, interval
+            self.wait_calls.append(template)
+            if template == _asset("entry.start"):
+                return start_box
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT:
+                self.dismiss_count += 1
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            if kwargs.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION:
+                if self.dismiss_count == 0:
+                    return [{"text": "积分线已更新"}]
+                if self.dismiss_count == 1:
+                    return [{"text": "积分奖励"}]
+            return [{"text": "货币战争"}]
+
+    runtime = Runtime()
+
+    refreshed = enter_cw(session, mode="continue", runtime=runtime)
+
+    assert runtime.clicks == [
+        entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT,
+        entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT,
+    ]
+    assert sleep_calls == [0.8, 0.8]
+    assert refreshed.scene_state["cw"]["entry"]["page"] == "home"
+
+
+def test_enter_cw_home_update_prompt_reward_prompt_still_visible_fails(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    start_box = _box("entry.start", left=1500, top=900, width=120, height=60)
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+            self.dismiss_count = 0
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            if template == _asset("entry.start"):
+                return start_box
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del template, timeout, interval
+            return start_box
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT:
+                self.dismiss_count += 1
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            if kwargs.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION:
+                if self.dismiss_count == 0:
+                    return [{"text": "积分线已更新"}]
+                return [{"text": "积分奖励"}]
+            return [{"text": "货币战争"}]
+
+    runtime = Runtime()
+
+    with pytest.raises(TrailError) as exc_info:
+        enter_cw(session, mode="continue", runtime=runtime)
+
+    assert exc_info.value.code == "CW_HOME_UPDATE_PROMPT_DISMISS_UNCONFIRMED"
+    assert session.scene_state.get("cw", {}).get("entry") is None
+    assert runtime.clicks == [
+        entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT,
+        entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT,
+    ]
+
+
+def test_enter_cw_home_update_prompt_reconfirm_failure_does_not_record_home(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    monkeypatch.setattr(entry_module, "build_cw_stage_detector", lambda actual_runtime: lambda: None)
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    start_box = _box("entry.start", left=1500, top=900, width=120, height=60)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+            self.dismissed = False
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            self.locate_calls.append(template)
+            if template == _asset("entry.start") and not self.dismissed:
+                return start_box
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del template, timeout, interval
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT:
+                self.dismissed = True
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            if kwargs.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION and not self.dismissed:
+                return [{"text": "积分线已更新"}]
+            return []
+
+    runtime = Runtime()
+
+    with pytest.raises(TrailError) as exc_info:
+        enter_cw(session, mode="continue", runtime=runtime)
+
+    assert exc_info.value.code == "CW_HOME_UPDATE_PROMPT_DISMISS_UNCONFIRMED"
+    assert session.scene_state.get("cw", {}).get("entry") is None
+    assert runtime.clicks == [
+        entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT,
+        entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT,
+    ]
+
+def test_enter_cw_home_update_prompt_still_visible_reconfirm_failure_does_not_record_home(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+    start_box = _box("entry.start", left=1500, top=900, width=120, height=60)
+
+    class Runtime:
+        def __init__(self):
+            self.clicks: list[tuple[int, int]] = []
+            self.ocr_calls: list[dict[str, object]] = []
+
+        def locate(self, template: str, **kwargs):
+            del kwargs
+            if template == _asset("entry.start"):
+                return start_box
+            return None
+
+        def wait_img(self, template: str, timeout: int = 10, interval: float = 0.5):
+            del template, timeout, interval
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+
+        def ocr(self, **kwargs):
+            self.ocr_calls.append(kwargs)
+            if kwargs.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION:
+                return [{"text": "积分线已更新"}]
+            return [{"text": "货币战争"}]
+
+    runtime = Runtime()
+
+    with pytest.raises(TrailError) as exc_info:
+        enter_cw(session, runtime=runtime)
+
+    assert exc_info.value.code == "CW_HOME_UPDATE_PROMPT_DISMISS_UNCONFIRMED"
+    assert session.scene_state.get("cw", {}).get("entry") is None
+    assert runtime.clicks == [
+        entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT,
+        entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT,
+    ]
+
 
 
 def test_enter_cw_returns_home_when_start_page_visible_and_ocr_backend_errors(tmp_path):
@@ -1415,6 +2015,74 @@ def test_enter_cw_world_entry_flow_waits_between_guide_transitions(tmp_path, mon
     entry_module.enter_cw(session, mode="continue", runtime=runtime)
 
     assert sleep_calls == [2.0, 1.0, 0.8, 1.0]
+
+def test_enter_cw_world_entry_flow_dismisses_home_update_prompt_after_home(tmp_path, monkeypatch):
+    import trail.scenes.cw.entry as entry_module
+
+    monkeypatch.setattr(entry_module, "_transition_sleep", lambda seconds: None)
+    session = SessionStore(tmp_path).create(window_binding={"title": "崩坏：星穹铁道"})
+
+    menu_box = _box("entry.menu", left=12, top=24)
+    cosmic_box = _box("entry.cosmic_strife", left=36, top=48)
+    start_box = _box("entry.start", left=84, top=96)
+
+    class Runtime:
+        def __init__(self):
+            self.locate_calls: list[str] = []
+            self.wait_calls: list[str] = []
+            self.clicks: list[tuple[int, int]] = []
+            self.keys: list[tuple[str, int, float]] = []
+            self.update_prompt_visible = True
+
+        def capture_after_action(self, optional: bool = False):
+            del optional
+            return None
+
+        def click_point(self, x: int, y: int, **kwargs):
+            del kwargs
+            self.clicks.append((x, y))
+            if (x, y) == entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT:
+                self.update_prompt_visible = False
+
+        def press_key(self, key: str, presses: int = 1, interval: float = 0.2):
+            self.keys.append((key, presses, interval))
+
+    runtime = Runtime()
+    _install_template_runtime(
+        runtime,
+        locate_results={
+            _asset("entry.start"): None,
+            _asset("entry.new"): None,
+            _asset("entry.continue"): None,
+            _asset("entry.invest_environment"): None,
+            _asset("stage.preparation"): None,
+            _asset("stage.invest"): None,
+            _asset("stage.boss_preview"): None,
+            _asset("stage.shop"): None,
+            _asset("stage.replenish"): None,
+            _asset("stage.encounter"): None,
+            _asset("stage.fortune"): None,
+            _asset("stage.event"): None,
+            _asset("stage.settle"): None,
+            _asset("stage.game_over"): None,
+        },
+        wait_results={
+            _asset("entry.menu"): menu_box,
+            _asset("entry.cosmic_strife"): cosmic_box,
+            _asset("entry.start"): start_box,
+        },
+        ocr_side_effect=lambda **kwargs: [{"text": "积分线已更新"}] if kwargs.get("capture") == entry_module.HOME_UPDATE_PROMPT_REGION and runtime.update_prompt_visible else [],
+    )
+
+    refreshed = enter_cw(session, mode="continue", difficulty="current", battle_mode="standard", runtime=runtime)
+
+    assert refreshed.scene_state["cw"]["entry"] == {"page": "home"}
+    assert runtime.clicks == [
+        cosmic_box.center,
+        (464, 324),
+        (1494, 884),
+        entry_module.HOME_UPDATE_PROMPT_DISMISS_POINT,
+    ]
 
 
 @pytest.mark.parametrize(

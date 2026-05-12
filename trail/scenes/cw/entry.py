@@ -32,10 +32,17 @@ OVERCLOCK_BATTLE_MODE_POINT = (int(CW_WIDTH * 0.15625), int(CW_HEIGHT * 0.4167))
 ENTRY_PRE_DIFFICULTY_OCR_SETTLE_SECONDS = 2.0
 HOME_UNFINISHED_PROGRESS_PRIMARY = "继续进度"
 HOME_UNFINISHED_PROGRESS_SECONDARY = ("结束并结算", "当前进度")
+HOME_SCREEN_KEYWORDS = ("货币战争", "开始「货币战争」", "零和博弈", "创业指南", "优势布局", "攻略大全", "积分奖励", "当前积分")
 SETTLEMENT_CONTINUE_PRIMARY = ("挑战成功", "挑战失败")
 SETTLEMENT_CONTINUE_NEXT = ("下一步", "下一页")
 SETTLEMENT_CONTINUE_RETURN = "返回货币战争"
 SETTLEMENT_CONTINUE_POINT = (960, 908)
+HOME_UPDATE_PROMPT_DISMISS_POINT = (1450, 580)
+HOME_UPDATE_PROMPT_DISMISS_SETTLE_SECONDS = 0.8
+HOME_UPDATE_PROMPT_KEYWORDS = ("积分线已更新",)
+HOME_REWARD_PROMPT_KEYWORDS = ("积分奖励",)
+HOME_PROMPT_DISMISS_MAX_CLICKS = 2
+HOME_UPDATE_PROMPT_REGION = {"from_x": 520, "from_y": 420, "to_x": 1160, "to_y": 600}
 SETTLEMENT_CONTINUE_SETTLE_SECONDS = 1.0
 ENTRY_ENEMY_DIFFICULTY_REGION = {"from_x": 480, "from_y": 940, "to_x": 590, "to_y": 1005}
 ENTRY_EXACT_DIFFICULTY_PATTERN = re.compile(r"^A(?P<rank>[0-8])-(?P<layer>[1-9]\d*)$")
@@ -75,6 +82,14 @@ class CwEnterStateError(TrailError):
         if stage is not None:
             self.data["stage"] = stage
 
+
+
+class CwHomeUpdatePromptDismissUnconfirmedError(TrailError):
+    def __init__(self):
+        super().__init__(
+            "CW_HOME_UPDATE_PROMPT_DISMISS_UNCONFIRMED",
+            "cw enter dismissed home update prompt but could not confirm currency wars home",
+        )
 
 class CwStartStateError(TrailError):
     def __init__(self, *, page: str, stage: str | None = None):
@@ -454,23 +469,31 @@ def read_entry_enemy_difficulty(
     return current_enemy_difficulty
 
 
-def _home_has_unfinished_progress(runtime) -> bool:
-    try:
-        texts = _extract_ocr_texts(runtime.ocr())
-    except Exception:
-        return False
-    joined = "".join(texts)
-    return HOME_UNFINISHED_PROGRESS_PRIMARY in joined and any(
-        keyword in joined for keyword in HOME_UNFINISHED_PROGRESS_SECONDARY
-    )
-
-
-def _detect_continue_settlement_page(runtime) -> dict[str, str] | None:
+def _read_home_text(runtime) -> str | None:
     try:
         texts = _extract_ocr_texts(runtime.ocr())
     except Exception:
         return None
-    joined = "".join(texts)
+    return "".join(texts)
+
+
+def _home_text_has_unfinished_progress(joined: str) -> bool:
+    return HOME_UNFINISHED_PROGRESS_PRIMARY in joined and any(
+        keyword in joined for keyword in HOME_UNFINISHED_PROGRESS_SECONDARY
+    )
+
+def _home_text_has_home_anchor(joined: str | None) -> bool:
+    return bool(joined) and any(keyword in joined for keyword in HOME_SCREEN_KEYWORDS)
+
+
+def _home_has_unfinished_progress(runtime) -> bool:
+    joined = _read_home_text(runtime)
+    if joined is None:
+        return False
+    return _home_text_has_unfinished_progress(joined)
+
+
+def _detect_continue_settlement_page_from_text(joined: str) -> dict[str, str] | None:
     if SETTLEMENT_CONTINUE_RETURN in joined:
         return {"page": "settlement.return"}
     if any(keyword in joined for keyword in SETTLEMENT_CONTINUE_PRIMARY) and "下一步" in joined:
@@ -479,6 +502,67 @@ def _detect_continue_settlement_page(runtime) -> dict[str, str] | None:
         return {"page": "settlement.followup"}
     return None
 
+
+def _detect_continue_settlement_page(runtime) -> dict[str, str] | None:
+    joined = _read_home_text(runtime)
+    if joined is None:
+        return None
+    return _detect_continue_settlement_page_from_text(joined)
+
+
+def _home_text_has_update_prompt(joined: str | None) -> bool:
+    return bool(joined) and any(keyword in joined for keyword in HOME_UPDATE_PROMPT_KEYWORDS)
+
+
+def _home_text_has_reward_prompt(joined: str | None) -> bool:
+    return bool(joined) and any(keyword in joined for keyword in HOME_REWARD_PROMPT_KEYWORDS)
+
+
+def _home_text_has_dismissible_prompt(joined: str | None) -> bool:
+    return _home_text_has_update_prompt(joined) or _home_text_has_reward_prompt(joined)
+
+
+def _read_home_update_prompt_text(runtime, *, has_home_anchor: bool) -> str | None:
+    if not has_home_anchor:
+        return None
+    try:
+        texts = _extract_ocr_texts(runtime.ocr(capture=HOME_UPDATE_PROMPT_REGION))
+    except TypeError:
+        try:
+            texts = _extract_ocr_texts(runtime.ocr())
+        except Exception:
+            return None
+    except Exception:
+        return None
+    return "".join(texts)
+
+
+def _home_has_update_prompt(runtime, *, has_home_anchor: bool) -> bool:
+    return _home_text_has_update_prompt(_read_home_update_prompt_text(runtime, has_home_anchor=has_home_anchor))
+
+
+def _confirm_home_after_update_prompt(runtime) -> bool:
+    start_box = _locate(runtime, "entry.start")
+    if start_box is None:
+        try:
+            start_box = runtime.wait_img(_asset("entry.start"), timeout=ENTRY_UI_WAIT_TIMEOUT)
+        except Exception:
+            return False
+    if start_box is None:
+        return False
+    prompt_text = _read_home_update_prompt_text(runtime, has_home_anchor=True)
+    if prompt_text is None:
+        return True
+    return not _home_text_has_dismissible_prompt(prompt_text)
+
+
+def _dismiss_home_update_prompt(runtime) -> None:
+    for _ in range(HOME_PROMPT_DISMISS_MAX_CLICKS):
+        runtime.click_point(*HOME_UPDATE_PROMPT_DISMISS_POINT)
+        _transition_sleep(HOME_UPDATE_PROMPT_DISMISS_SETTLE_SECONDS)
+        if _confirm_home_after_update_prompt(runtime):
+            return
+    raise CwHomeUpdatePromptDismissUnconfirmedError()
 
 def _allows_boss_preview_compat_fallback(session: SessionModel | None) -> bool:
     if session is None:
@@ -876,6 +960,17 @@ def _continue_from_settlement_chain(runtime, *, difficulty: str, battle_mode: st
 def _enter_from_start_page(runtime, *, mode: str, difficulty: str, battle_mode: str, start_box=None) -> None:
     if start_box is None:
         start_box = _wait(runtime, "entry.start")
+    current = _detect_current_enter_page(runtime, preferred_mode=mode)
+    if current.get("page") == "home" and current.get("update_prompt") == "1":
+        _dismiss_home_update_prompt(runtime)
+        start_box = _locate(runtime, "entry.start")
+        if start_box is None:
+            raise CwHomeUpdatePromptDismissUnconfirmedError()
+        current = _detect_current_enter_page(runtime, preferred_mode=mode)
+    if current.get("page") == "home" and current.get("unfinished_progress") == "1":
+        raise CwStartProgressPendingError()
+    if current.get("page") != "home":
+        raise CwHomeUpdatePromptDismissUnconfirmedError()
     _click_box_center(runtime, start_box)
     current = _detect_current_enter_page(runtime, preferred_mode=mode)
     if current.get("page") == "home" and current.get("unfinished_progress") == "1":
@@ -886,7 +981,6 @@ def _enter_from_start_page(runtime, *, mode: str, difficulty: str, battle_mode: 
         return
     _enter_continue_game(runtime)
     _handle_invest_environment_flow(runtime)
-
 
 def _enter_from_world(runtime, *, mode: str, difficulty: str, battle_mode: str) -> None:
     del mode, difficulty, battle_mode
@@ -900,7 +994,8 @@ def _enter_from_world(runtime, *, mode: str, difficulty: str, battle_mode: str) 
     runtime.click_point(*CURRENCY_WARS_PARTICIPATE_POINT)
     _transition_sleep(ENTRY_PARTICIPATE_SETTLE_SECONDS)
     _wait(runtime, "entry.start")
-
+    if _home_has_update_prompt(runtime, has_home_anchor=True):
+        _dismiss_home_update_prompt(runtime)
 
 def _detect_current_enter_page(
     runtime,
@@ -910,8 +1005,16 @@ def _detect_current_enter_page(
 ) -> dict[str, str]:
     start_box = _locate(runtime, "entry.start")
     continue_box = _locate(runtime, "entry.continue")
-    if (start_box is not None or continue_box is not None) and _home_has_unfinished_progress(runtime):
-        return {"page": "home", "unfinished_progress": "1"}
+    has_template_home_anchor = start_box is not None or continue_box is not None
+    has_home_anchor = has_template_home_anchor
+    home_text: str | None = None
+    if has_template_home_anchor:
+        home_text = _read_home_text(runtime)
+        if home_text is not None and _home_text_has_unfinished_progress(home_text):
+            return {"page": "home", "unfinished_progress": "1"}
+    else:
+        home_text = _read_home_text(runtime)
+        has_home_anchor = _home_text_has_home_anchor(home_text)
 
     new_box = _locate(runtime, "entry.new")
     if new_box is not None and continue_box is not None:
@@ -928,9 +1031,22 @@ def _detect_current_enter_page(
     if _locate(runtime, "entry.invest_environment") is not None:
         return {"page": "invest"}
 
-    continue_page = _detect_continue_settlement_page(runtime)
+    if home_text is None:
+        continue_page = _detect_continue_settlement_page(runtime)
+    else:
+        continue_page = _detect_continue_settlement_page_from_text(home_text)
     if continue_page is not None:
         return continue_page
+
+    if has_home_anchor and _home_has_update_prompt(runtime, has_home_anchor=True):
+        return {"page": "home", "update_prompt": "1"}
+
+    if not has_home_anchor and session is not None:
+        cw_state = ensure_cw_state(session)
+        recorded_stage = cw_state.get("stage", {})
+        if recorded_stage.get("stale") is False and recorded_stage.get("value") == "game_over":
+            if _home_text_has_update_prompt(_read_home_update_prompt_text(runtime, has_home_anchor=True)):
+                return {"page": "home", "update_prompt": "1"}
 
     try:
         detected_stage = build_cw_stage_detector(runtime)()
@@ -951,6 +1067,8 @@ def _detect_current_enter_page(
         ocr_stage = None
     if ocr_stage is not None:
         return {"page": "in_game", "stage": ocr_stage}
+    if has_home_anchor and not has_template_home_anchor:
+        return {"page": "home", "already_home": "1"}
 
     if _allows_boss_preview_compat_fallback(session) and _locate(runtime, "stage.boss_preview") is not None:
         return {"page": "stage.boss_preview", "stage": "boss_preview"}
@@ -962,7 +1080,7 @@ def _detect_current_enter_page(
             continue
         return {"page": "in_game", "stage": stage}
 
-    if start_box is not None:
+    if has_home_anchor:
         if session is not None:
             cw_state = ensure_cw_state(session)
             recorded_stage = cw_state.get("stage", {})
@@ -1178,7 +1296,11 @@ def enter_cw(
     if runtime is not None:
         current = _detect_current_enter_page(runtime, session=session)
         if current["page"] == "home":
-            entry = {"page": "home", "already_home": True}
+            if current.get("update_prompt") == "1":
+                _dismiss_home_update_prompt(runtime)
+                entry = {"page": "home", "already_home": True, "dismissed_update_prompt": True}
+            else:
+                entry = {"page": "home", "already_home": True}
         elif current["page"] == "world":
             entry = _run_entry_chain(
                 runtime,

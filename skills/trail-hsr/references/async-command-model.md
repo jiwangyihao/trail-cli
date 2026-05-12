@@ -11,4 +11,4 @@
 - `trail daemon request-status --request-id <id>`、`trail daemon request-result --request-id <job_id>` 和 `trail daemon request-cancel --request-id <id>` 是控制面 / 恢复面命令，不是常规轮询首选。只有在 stdout 丢失、跨命令恢复、busy/recover 无法重发原命令、unknown result、tainted 或需要取消时使用。
 - `trail daemon request-result --request-id <job_id>` 只用于已知 job id 的终态结果回放；业务命令常规路径仍优先重发原命令。
 - `trail daemon request-cancel --request-id <id>` 是 soft cancel。若取消发生在 UI side effect 之后，可能返回 `REQUEST_CANCEL_UNKNOWN` / `tainted=1`；此时停止普通操作，按输出 `recover action=daemon.reconcile_session session=<id>` 或 advanced 恢复链路收敛上下文。
-- 没有显式 `--request-id` 时，重发同 payload 会附着该业务命令的最新 singleton job；旧 job 已终态时也回放终态业务输出，不重新执行同 payload mutation。
+- 没有显式 `--request-id` 时，重发同 payload 只会附着当前仍在运行的 singleton job；如果匹配 job 已终态，普通业务命令不会 replay 旧结果，而是按一次新的业务命令提交。需要查看旧终态结果时，使用 `trail daemon request-status --request-id <job_id>` 或 `trail daemon request-result --request-id <job_id>`。

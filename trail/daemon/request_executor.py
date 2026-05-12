@@ -181,6 +181,8 @@ class RequestExecutor:
                     self._job_ready.notify_all()
                     if game_operation:
                         self._active_game_ready.notify_all()
+                    if non_game_reserved:
+                        self._non_game_active_keys.discard(job_key)
                 else:
                     future = self._pool.submit(self._execute_job, worker_request, request.call_id, job_id, job_key)
                     self._futures[job_id] = future
@@ -189,16 +191,18 @@ class RequestExecutor:
                     if game_operation:
                         self._active_game_ready.notify_all()
                     future.add_done_callback(lambda completed, job_id=job_id: self._release_completed_job(job_id))
+                    if non_game_reserved:
+                        self._non_game_active_keys.discard(job_key)
         except Exception:
             if game_operation:
                 self._clear_reserved_game_job(job_id)
             if non_game_reserved:
-                self._clear_non_game_job_key(job_key)
                 with self._mutex:
                     self._future_job_keys.pop(job_id, None)
                     self._job_metadata.pop(job_id, None)
                     self._job_key_to_job_id.pop(job_key, None)
                     self._call_id_to_job_id.pop(request.call_id, None)
+                    self._non_game_active_keys.discard(job_key)
                     self._job_ready.notify_all()
             raise
 
@@ -314,7 +318,7 @@ class RequestExecutor:
         return self._job_response(job, job_id=job_id, wait_timeout=wait_timeout)
 
     def _singleton_job_response(self, request: DaemonRequest, service, *, job_key: str, wait_timeout: float) -> dict | None:
-        job = self._latest_singleton_job(request, service, job_key=job_key)
+        job = self._latest_singleton_job(job_key=job_key)
         if job is None:
             return None
         job_id = job["job_id"]
@@ -331,18 +335,44 @@ class RequestExecutor:
                 self._remember_call_mapping(request.call_id, job_id)
         return self._job_response(job, job_id=job_id, wait_timeout=wait_timeout)
 
-    def _latest_singleton_job(self, request: DaemonRequest, service, *, job_key: str) -> dict | None:
+    def _replayable_running_metadata(self, job_id: str | None, metadata: dict | None) -> dict | None:
+        if job_id is None or metadata is None or metadata.get("final"):
+            return None
+        future = self._futures.get(job_id)
+        if future is not None and not future.done():
+            return deepcopy(metadata)
+        if job_id in self._paused_jobs:
+            return deepcopy(metadata)
+        return None
+
+    def _clear_stale_job_key_mapping_unlocked(self, *, job_key: str, job_id: str) -> None:
+        future = self._futures.get(job_id)
+        if future is not None and future.done():
+            self._release_completed_job_unlocked(job_id)
+            return
+        self._job_key_to_job_id.pop(job_key, None)
+        self._future_job_keys.pop(job_id, None)
+        self._job_metadata.pop(job_id, None)
+        self._cancellation_tokens.pop(job_id, None)
+        stale_call_ids = [call_id for call_id, mapped_job_id in self._call_id_to_job_id.items() if mapped_job_id == job_id]
+        for call_id in stale_call_ids:
+            self._call_id_to_job_id.pop(call_id, None)
+        self._job_ready.notify_all()
+
+    def _latest_singleton_job(self, *, job_key: str) -> dict | None:
         with self._mutex:
-            job_id = self._job_key_to_job_id.get(job_key)
-            metadata = deepcopy(self._job_metadata.get(job_id)) if job_id is not None else None
-        if metadata is not None:
-            return metadata
-        latest = service.find_latest_job_for_method(request.method)
-        if latest is None:
-            return None
-        if latest.get("job_key") != job_key:
-            return None
-        return latest
+            while True:
+                job_id = self._job_key_to_job_id.get(job_key)
+                if job_id is None:
+                    return None
+                metadata = self._job_metadata.get(job_id)
+                replayable = self._replayable_running_metadata(job_id, metadata)
+                if replayable is not None:
+                    return replayable
+                if job_key in self._non_game_active_keys:
+                    self._job_ready.wait()
+                    continue
+                self._clear_stale_job_key_mapping_unlocked(job_key=job_key, job_id=job_id)
 
     def _find_job_across_workspaces(self, service, job_id: str) -> dict | None:
         job = service.get_job_record(job_id)
@@ -636,10 +666,10 @@ class RequestExecutor:
                     future = self._futures.get(job_id)
                     if metadata is not None and future is not None and not future.done():
                         break
-                    if metadata is not None and future is None and job_key in self._non_game_active_keys:
-                        self._job_ready.wait()
-                        continue
-                    return None
+                    if metadata is not None and job_id in self._paused_jobs:
+                        break
+                    self._clear_stale_job_key_mapping_unlocked(job_key=job_key, job_id=job_id)
+                    continue
                 if job_key not in self._non_game_active_keys:
                     self._non_game_active_keys.add(job_key)
                     return None

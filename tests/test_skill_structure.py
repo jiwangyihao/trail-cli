@@ -322,7 +322,9 @@ def test_trail_hsr_reference_files_exist_with_required_content() -> None:
             "trail daemon request-status --request-id <id>",
             "trail daemon request-result --request-id <job_id>",
             "trail daemon request-cancel --request-id <id>",
-            "旧 job 已终态时也回放终态业务输出",
+            "只会附着当前仍在运行的 singleton job",
+            "普通业务命令不会 replay 旧结果",
+            "trail daemon request-status --request-id <job_id>",
         ],
         OCR_AND_SCREENSHOT: [
             "shot path=",
@@ -350,6 +352,9 @@ def test_trail_hsr_reference_files_exist_with_required_content() -> None:
         text = path.read_text(encoding="utf-8")
         for fragment in expected_fragments:
             assert fragment in text
+
+    async_text = async_command_model.read_text(encoding="utf-8")
+    assert "旧 job 已终态时也回放终态业务输出" not in async_text
 
 
 def test_trail_hsr_simple_command_surface_documents_start_run_status_and_screenshot() -> None:

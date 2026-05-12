@@ -683,6 +683,126 @@ def test_executor_managed_mutation_uses_job_id_for_legacy_journal_and_call_statu
     assert service.get_call_record("call-click") is not None
     assert not (Path(tmp_path) / ".trail" / "requests" / "call-click.json").exists()
 
+def test_async_executor_reconcile_allows_same_payload_after_session_tainted_terminal(tmp_path: Path, monkeypatch):
+    from trail.daemon.cw_service import CwService
+
+    registry = SessionServiceRegistry()
+    service = registry.for_workspace(str(tmp_path))
+    session = service.create_session(window_binding={"title": "崩坏：星穹铁道", "hwnd": 1})
+    session.scene_state.setdefault("daemon", {})["tainted"] = True
+    service.save_session(session)
+
+    runtime = SimpleNamespace()
+    runtime_service = SimpleNamespace(get_runtime=lambda **kwargs: runtime)
+    cw_service = CwService(runtime_service=runtime_service)
+    command_service = CommandService(runtime_service=runtime_service, session_service=registry, cw_service=cw_service)
+    executor = RequestExecutor(command_service=command_service, session_service=registry)
+
+    first = executor.handle(
+        DaemonRequest(
+            request_id="call-tainted-1",
+            call_id="call-tainted-1",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.enter",
+            payload={"session_id": session.session_id},
+            control=RequestControl(wait_timeout=1.0),
+        )
+    )
+    first_job = service.request_status("call-tainted-1")["job_id"]
+
+    assert first["ok"] is False
+    assert first["error"]["code"] == "SESSION_RECONCILE_REQUIRED"
+    assert first_job
+    assert service.request_status(first_job)["final_state"] == "failed_before_side_effect"
+
+    reconcile = executor.handle(
+        DaemonRequest(
+            request_id="call-reconcile",
+            call_id="call-reconcile",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="daemon.reconcile_session",
+            payload={"session_id": session.session_id},
+            control=RequestControl(wait_timeout=1.0),
+        )
+    )
+
+    assert reconcile["ok"] is True
+    assert reconcile["data"] == {"session_id": session.session_id, "tainted": False}
+    assert service.is_session_tainted(session.session_id) is False
+
+    enter_calls: list[str] = []
+
+    def fake_enter_cw(session, *, runtime):
+        enter_calls.append(session.session_id)
+        session.scene_state.setdefault("cw", {})["entry"] = {"page": "home"}
+        return session
+
+    monkeypatch.setattr("trail.daemon.cw_service.enter_cw", fake_enter_cw)
+
+    second = executor.handle(
+        DaemonRequest(
+            request_id="call-tainted-2",
+            call_id="call-tainted-2",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=session.session_id,
+            verbose=False,
+            method="cw.enter",
+            payload={"session_id": session.session_id},
+            control=RequestControl(wait_timeout=1.0),
+        )
+    )
+    second_job = service.request_status("call-tainted-2")["job_id"]
+
+    assert second["ok"] is True
+    assert second["data"] == {"page": "home"}
+    assert enter_calls == [session.session_id]
+    assert second_job
+    assert second_job != first_job
+    assert second.get("request_id") == second_job
+    assert service.request_status(second_job)["final_state"] == "completed"
+
+    status = executor.handle(
+        DaemonRequest(
+            request_id="call-status-terminal",
+            call_id="call-status-terminal",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="daemon.request_status",
+            payload={"request_id": first_job},
+            control=RequestControl(wait_timeout=1.0),
+        )
+    )
+    result = executor.handle(
+        DaemonRequest(
+            request_id="call-result-terminal",
+            call_id="call-result-terminal",
+            protocol_version=PROTOCOL_VERSION,
+            workspace_root=str(tmp_path),
+            session_id=None,
+            verbose=False,
+            method="daemon.request_result",
+            payload={"request_id": first_job},
+            control=RequestControl(wait_timeout=1.0),
+        )
+    )
+
+    assert status["ok"] is True
+    assert status["data"]["request_id"] == first_job
+    assert status["data"]["final_state"] == "failed_before_side_effect"
+    assert result["ok"] is True
+    assert result["data"]["render_command"] == "cw.enter"
+    assert result["data"]["envelope"]["ok"] is False
+    assert result["data"]["envelope"]["error"]["code"] == "SESSION_RECONCILE_REQUIRED"
+
 
 def test_response_timeout_uses_wait_timeout_control_buffer():
     assert resolve_response_timeout("cw.battle.run", {"timeout": 90}, wait_timeout=12.0) == 17.0
@@ -1158,7 +1278,7 @@ def test_server_handle_payload_rejects_guide_fetch_select_missing_top_level_sess
     write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
     monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
     command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -1183,7 +1303,7 @@ def test_server_handle_payload_rejects_guide_fetch_with_top_level_session_withou
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fetch should not run without select")),
     )
     command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -1209,7 +1329,7 @@ def test_server_handle_payload_rejects_guide_fetch_when_top_level_session_is_emp
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fetch should not run for empty session_id")),
     )
     command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -1235,7 +1355,7 @@ def test_server_handle_payload_rejects_guide_fetch_select_with_conflicting_paylo
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fetch should not run with payload session_id")),
     )
     command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -1261,7 +1381,7 @@ def test_server_handle_payload_rejects_guide_fetch_with_non_boolean_select(tmp_p
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fetch should not run for invalid select type")),
     )
     command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -1291,7 +1411,7 @@ def test_server_handle_payload_rejects_guide_fetch_select_when_session_is_tainte
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fetch should not run for tainted session")),
     )
     command_service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -1326,7 +1446,7 @@ def test_server_handle_payload_rejects_cw_methods_with_payload_only_session_id(
     write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
     monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
     command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -1356,7 +1476,7 @@ def test_server_handle_payload_rejects_cw_methods_with_conflicting_payload_sessi
     write_ready_manifest(daemon_home, endpoint="127.0.0.1:8765", token_value="token-1")
     monkeypatch.setattr(daemon_server_module, "resolve_daemon_home", lambda: daemon_home)
     command_service = CommandService(runtime_service=SimpleNamespace(), session_service=SessionServiceRegistry())
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -1390,7 +1510,7 @@ def test_server_handle_payload_rejects_cw_guide_apply_payload_only_session_on_ta
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("apply should not run for payload-only session_id")),
     )
     command_service = CommandService(runtime_service=SimpleNamespace(), session_service=registry)
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -2655,20 +2775,20 @@ def test_command_service_routes_cw_captured_reads_through_handle_with_capture(
     )
 
     response = command_service.handle(request)
+    expected_call = dict(cw_service.capture_calls[0])
+    expected_call.pop("cancellation_token", None)
 
     assert response["ok"] is True
     assert response["data"] == response_data
     assert response["screenshot"] == f".trail/shots/{request.request_id}.png"
-    assert cw_service.capture_calls == [
-        {
-            "method": method,
-            "payload": {"session_id": session.session_id, **payload},
-            "workspace_root": str(tmp_path),
-            "session_service": service,
-            "request_id": request.request_id,
-            "verbose": False,
-        }
-    ]
+    assert expected_call == {
+        "method": method,
+        "payload": {"session_id": session.session_id, **payload},
+        "workspace_root": str(tmp_path),
+        "session_service": service,
+        "request_id": request.request_id,
+        "verbose": False,
+    }
 
 
 def test_command_service_routes_cw_slots_read_payload_without_agent_slot_conversion(tmp_path: Path):
@@ -2750,19 +2870,19 @@ def test_command_service_routes_cw_shop_status_through_plain_handle(tmp_path: Pa
     )
 
     response = command_service.handle(request)
+    expected_call = dict(cw_service.handle_calls[0])
+    expected_call.pop("cancellation_token", None)
 
     assert response["ok"] is True
     assert response["data"] == {"items": [{"slot": 1, "name": "银狼", "price": 20}]}
     assert response["screenshot"] is None
     assert "image_guidance" not in response
-    assert cw_service.handle_calls == [
-        {
-            "method": "cw.shop.status",
-            "payload": {"session_id": session.session_id},
-            "workspace_root": str(tmp_path),
-            "session_service": service,
-        }
-    ]
+    assert expected_call == {
+        "method": "cw.shop.status",
+        "payload": {"session_id": session.session_id},
+        "workspace_root": str(tmp_path),
+        "session_service": service,
+    }
 
 
 @pytest.mark.parametrize("slots_state", [None, {"front": [], "back": [], "hand": [], "stale": True}])
@@ -4820,7 +4940,13 @@ def test_command_service_handles_cw_start_reports_completed_known_failure_when_p
     assert status["tainted"] is True
     assert runtime.clicks == [(104, 106)]
     assert runtime.wait_calls == []
-    assert runtime.ocr_calls == [{}, {}, {}]
+    assert runtime.ocr_calls == [
+        {},
+        {"capture": {"from_x": 520, "from_y": 420, "to_x": 1160, "to_y": 600}},
+        {},
+        {"capture": {"from_x": 520, "from_y": 420, "to_x": 1160, "to_y": 600}},
+        {},
+    ]
     assert loaded.scene_state.get("daemon", {}).get("tainted", False) is True
 
 
@@ -5725,7 +5851,7 @@ def test_command_service_handles_cw_start_rejects_continue_mode_on_clean_home(tm
     }
     assert service.request_status(request.request_id)["final_state"] == "failed_before_side_effect"
     assert runtime.clicks == []
-    assert runtime.ocr_calls == [{}, {}]
+    assert runtime.ocr_calls == [{}, {"capture": {"from_x": 520, "from_y": 420, "to_x": 1160, "to_y": 600}}]
 
 
 def test_command_service_handles_cw_start_continue_from_whole_run_settlement_chain(tmp_path: Path, monkeypatch):
@@ -8990,8 +9116,9 @@ def test_server_main_injects_session_service_registry(monkeypatch):
         return SimpleNamespace(session_service=session_service)
 
     class FakeTrailDaemonServer:
-        def __init__(self, *, command_service):
+        def __init__(self, *, command_service, request_executor=None):
             captured["command_service"] = command_service
+            captured["request_executor"] = request_executor
 
         def serve_forever(self):
             captured["served"] = True
@@ -9025,7 +9152,7 @@ def test_server_handle_payload_preserves_captured_mutation_failure_envelope(tmp_
         runtime_service=ProtocolRuntimeService(runtime),
         session_service=registry,
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9071,7 +9198,7 @@ def test_server_handle_payload_routes_window_launch_without_game_path(tmp_path: 
         runtime_service=runtime_service,
         session_service=registry,
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9129,7 +9256,7 @@ def test_server_handle_payload_routes_window_launch_without_game_path_through_re
         runtime_service=RuntimeService(),
         session_service=SessionServiceRegistry(),
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9189,7 +9316,7 @@ def test_server_handle_payload_promotes_window_launch_warnings_to_envelope(tmp_p
         runtime_service=runtime_service,
         session_service=registry,
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9242,7 +9369,7 @@ def test_server_handle_payload_window_launch_explicit_launch_failure_keeps_stabl
         runtime_service=RuntimeService(),
         session_service=SessionServiceRegistry(),
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9278,7 +9405,7 @@ def test_server_handle_ocr_protocol_request_routes_ocr_mode_and_retry_high_optio
         runtime_service=ProtocolRuntimeService(runtime),
         session_service=registry,
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9343,7 +9470,7 @@ def test_server_handle_payload_rejects_invalid_ocr_mode_or_retry_high_payload_va
         runtime_service=ProtocolRuntimeService(runtime),
         session_service=registry,
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9385,7 +9512,7 @@ def test_server_handle_payload_rejects_invalid_ocr_payload_values(
         runtime_service=ProtocolRuntimeService(runtime),
         session_service=registry,
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9415,7 +9542,7 @@ def test_server_handle_ocr_read_returns_ocr_no_result_when_fast_has_no_hits(tmp_
         runtime_service=ProtocolRuntimeService(runtime),
         session_service=registry,
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9447,7 +9574,7 @@ def test_server_handle_payload_records_runtime_prefight_failure_in_journal(tmp_p
         runtime_service=FailingProtocolRuntimeService(TrailError("WINDOW_NOT_FOUND", "window not found")),
         session_service=registry,
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9483,7 +9610,7 @@ def test_server_handle_payload_marks_terminal_failure_when_mark_executing_fails(
         raise OSError("executing marker failed")
 
     monkeypatch.setattr(service, "mark_executing", fail_mark_executing)
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9542,7 +9669,7 @@ def test_server_handle_payload_preserves_unknown_result_envelope(
         "_mutating_capture",
         lambda *args, **kwargs: (_ for _ in ()).throw(error_type(envelope=envelope)),
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9850,7 +9977,7 @@ def test_server_handle_payload_keeps_unknown_result_envelope_for_post_handler_fa
         return original_finish_mutation(**kwargs)
 
     monkeypatch.setattr(service, "finish_mutation", fail_completed_finish_mutation)
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9909,7 +10036,7 @@ def test_server_handle_payload_keeps_unknown_result_envelope_when_unknown_marker
         "_mutating_capture",
         lambda *args, **kwargs: (_ for _ in ()).throw(PersistedButResponseUnknown(envelope=envelope)),
     )
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9949,7 +10076,7 @@ def test_server_handle_payload_keeps_cw_unknown_result_envelope_for_late_ui_fail
         raise TrailError("CW_ENTRY_UI_NOT_FOUND", "late failure after ui action")
 
     monkeypatch.setattr("trail.daemon.cw_service.enter_cw", late_failure)
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
@@ -9999,7 +10126,7 @@ def test_server_handle_payload_keeps_risky_terminal_state_when_recovery_finish_f
 
     monkeypatch.setattr(service, "mark_state_persisted", fail_mark_state_persisted)
     monkeypatch.setattr(service, "finish_mutation", fail_recovery_finish_mutation)
-    server = TrailDaemonServer(command_service=command_service)
+    server = TrailDaemonServer(command_service=command_service, async_enabled=False)
 
     response = server.handle_payload(
         _server_payload(
