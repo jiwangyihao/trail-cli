@@ -20,9 +20,9 @@ description: 当用户希望 Agent 接管并自动游玩《崩坏：星穹铁道
 ## Default Workflow
 
 1. 先判断用户是否真的在请求 Agent 接管并继续推进星铁；如果请求其实是 PDF、表格、邮件、代码或别的非游戏任务，不进入本 skill。
-2. 以“先接住当前局面”为默认动作；`trail start` 不再只是拿 `session`，还会返回 `status` 并自动带回截图。只要结果里有 `shot path=...` 与 `info read_image_first=1`，就先读这张原始图，再决定是否继续后续命令。
+2. 以“先接住当前局面并回到大世界”为默认动作；`trail start` 不再只是拿 `session`，还会返回 `status` 并自动带回截图。`trail start` 必须以大世界界面作为成功收口目标；只要结果里有 `shot path=...` 与 `info read_image_first=1`，就先读这张原始图，再决定是否继续后续命令。
 3. Trail CLI 的 daemon-backed 业务命令默认走 daemon 端异步单例 job 模型；如果输出 `state=running request=<job_id>`，不要改用 `daemon.request_status` 当常规轮询，也不要重复提交不同命令。常规续查方式是原样重发同一条业务命令；`request=<job_id>` 是恢复和排障线索，不要求 Agent 在常规续查中手动补 `--request-id`。完整规则见 `references/async-command-model.md`。
-4. 当 `trail start` 返回 `status=attached`、`status=launched_needs_check` 或 `status=launched_clicked_enter` 时，都先做画面判断，不能盲目继续 scene 命令。具体判断逻辑下沉到 `references/start-run-status-handling.md`，并配合 `references/simple-command-surface.md` 与 `references/ocr-and-screenshot.md` 使用。
+4. 当 `trail start` 返回 `status=attached`、`status=launched_needs_check` 或 `status=launched_clicked_enter` 时，都先做画面判断，不能盲目继续 scene 命令。如果 `trail start` 返回截图不是大世界界面，Agent 应使用截图、`trail ocr read`、`trail input` 等原子命令获取当前游戏状态，并尝试回到大世界界面；不要把非大世界画面当作可移交 scene entry 的稳定落点。具体判断逻辑下沉到 `references/start-run-status-handling.md`，并配合 `references/simple-command-surface.md` 与 `references/ocr-and-screenshot.md` 使用。
 5. 如果 `skills/registry/scene-entries.yaml` 里存在 `status=active` 且 `exposure=public` 的 scene entry，并且用户意图已经明确命中该场景入口，则把 owner 交给对应的 `trail-<scene>-entry`。
 6. 如果某个 scene 仍是 `planned`，即使用户提到了该玩法，也继续由 `trail-hsr` 接住当前请求；planned scene 只能回退到 `trail-hsr`，不得回退 archive skill。
 7. 只在总入口已经无法继续推进、需要专门恢复链路时，按共享升级契约转交到 advanced 层，恢复完成后再拿回控制权继续推进。

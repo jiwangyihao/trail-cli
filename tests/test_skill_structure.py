@@ -299,6 +299,15 @@ def test_trail_hsr_skill_has_required_sections_and_root_entry_semantics() -> Non
     assert "archive" in text
     assert "references/start-run-status-handling.md" in text
 
+def test_trail_hsr_skill_requires_start_to_reach_world_or_recover_with_atomic_commands() -> None:
+    text = TRAIL_HSR_SKILL.read_text(encoding="utf-8")
+
+    assert "`trail start` 必须以大世界界面作为成功收口目标" in text
+    assert "如果 `trail start` 返回截图不是大世界界面" in text
+    assert "使用截图、`trail ocr read`、`trail input`" in text
+    assert "尝试回到大世界界面" in text
+    assert "不要把非大世界画面当作可移交 scene entry 的稳定落点" in text
+
 
 def test_trail_hsr_reference_files_exist_with_required_content() -> None:
     async_command_model = PROJECT_ROOT / "skills" / "trail-hsr" / "references" / "async-command-model.md"
