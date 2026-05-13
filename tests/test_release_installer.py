@@ -616,6 +616,10 @@ def test_user_installer_agent_docs_and_skill_install_notes_exist():
     assert "发布页" in readme
     assert "https://github.com/" in readme and "/releases" in readme
     assert "https://github.com/jiwangyihao/trail-cli/releases" in readme
+    assert "双击 `安装 Trail.cmd`" in readme
+    assert "普通安装不要求本机已有 Python、uv 或 Node" in readme
+    assert "让 Agent 帮你安装" in readme
+    assert "面向 Agent 的安装说明" in readme
     assert "releases/latest" not in readme
     assert "https://github.com/trail-cli/trail-cli/releases/latest" not in readme
     assert "trail-cli-windows-x64-vX.Y.Z.zip" in readme

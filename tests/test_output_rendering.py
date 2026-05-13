@@ -345,241 +345,105 @@ def test_agents_active_specs_document_screenshot_first_override() -> None:
             assert "| `cw.shop.status` | `count`、每个 `item` 的 `slot/name/cost`、`shot` |" not in text, path.as_posix()
 
 
-def test_readme_documents_ocr_provider_and_lang_contract() -> None:
+def test_readme_is_short_user_facing_release_guide() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "trail ocr read --provider auto|cpu|dml" in readme
-    assert "trail ocr read --lang ch" in readme
-    assert "首版仅支持 `ch`" in readme
-    assert "TRAIL_OCR_PROVIDER`、`TRAIL_OCR_LANG`、`TRAIL_OCR_USE_CLS`、`TRAIL_OCR_TEXT_SCORE" in readme
-    assert "provider=auto` 会优先尝试 DirectML；如果当前环境不可用或本次 DML 推理失败，会自动回退 CPU" in readme
-    assert "provider=dml` 会把 DirectML 视为硬约束；环境不可用或推理期 DML 失败都会返回 `OCR_PROVIDER_UNAVAILABLE`" in readme
-    assert "lang` 首版仅支持 `ch`；其他值返回 `OCR_LANG_UNSUPPORTED`" in readme
+    for expected in [
+        "[![Release](https://img.shields.io/github/v/release/jiwangyihao/trail-cli",
+        "[![Platform: Windows]",
+        "[![License: GPL-3.0-only]",
+        "> **当前重点：货币战争**",
+        "## 功能一览",
+        "**本地接管**",
+        "**截图与 OCR**",
+        "**玩法编排**",
+        "<details open>",
+        "<summary><b>面向普通用户</b></summary>",
+        "<summary><b>让 Agent 帮你安装</b></summary>",
+        "<summary><b>面向 Agent 的安装说明</b></summary>",
+        "## 使用方式",
+        "## 使用边界",
+        "让 AI Agent 接管《崩坏：星穹铁道》的本地工具。",
+        "发布页",
+        "https://github.com/jiwangyihao/trail-cli/releases",
+        "trail-cli-windows-x64-vX.Y.Z.zip",
+        "双击 `安装 Trail.cmd`",
+        "普通安装不要求本机已有 Python、uv 或 Node",
+        "使用 trail-hsr 接管星铁",
+        "使用 trail-hsr 帮我玩货币战争",
+        "AGENT_INSTALL.md",
+        "OpenCode、OpenClaw、Claude Code、GitHub Copilot、Cursor、Gemini 和自定义 skills 目录",
+        "启动或接管游戏窗口",
+        "读取截图和 OCR 文本",
+        "通过 Trail skills 编排玩法流程",
+    ]:
+        assert expected in readme
+
+    assert "releases/latest" not in readme
+    assert readme.count("## ") <= 8
+    assert len(readme) < 4500
 
 
-def test_readme_documents_ocr_mode_and_retry_high_contract() -> None:
+def test_readme_does_not_contain_command_protocol_details() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "trail ocr read --ocr-mode fast|high" in readme
-    assert "trail ocr read --retry-high auto|never|always" in readme
-    assert "TRAIL_OCR_MODE`、`TRAIL_OCR_RETRY_HIGH` 用于设置低优先级默认值" in readme
-    assert "默认 `ocr_mode=fast`" in readme
-    assert "默认 `retry_high=auto`" in readme
-    assert "`fast = 1280x720`" in readme
-    assert "`high = native`" in readme
-    assert "`retry_high=auto` 只在 `hits==0`、平均分过低、或出现 `OCR_LOW_CONFIDENCE` 时触发" in readme
-    assert "`retry_high=always` 在 `ocr_mode=fast` 下会先跑 `fast`，再无条件补跑一次 `high`" in readme
-    assert "`ocr_mode=high` 下 `retry_high` 为 no-op" in readme
-    assert "模式与重试事实只在 `--verbose` 下出现" in readme
+    forbidden_fragments = [
+        "## Advanced 启动与排障",
+        "## 货币战争流程",
+        "## 命令面概览",
+        "## Window Launch",
+        "## OCR 选项",
+        "## 输出约定",
+        "## Guide 字段语义",
+        "## Skill 边界",
+        "trail daemon",
+        "trail cw",
+        "trail window",
+        "trail session",
+        "trail screen",
+        "trail image",
+        "trail state",
+        "shot path=",
+        "info read_image_first=1",
+        "handoff_skill=",
+        "request id=",
+        "recover action=",
+        "guide.config.cw",
+        "guide 投资环境=",
+        "layer_transition",
+        "battle flow",
+        "A0-1..A8-40",
+        "--format yaml",
+    ]
+    for fragment in forbidden_fragments:
+        assert fragment not in readme
 
 
-def test_readme_documents_trail_start_as_default_entry() -> None:
+def test_readme_detail_contracts_live_in_active_docs_not_readme() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    quick_start = readme.split("## 开始使用", 1)[1].split("## ", 1)[0]
-
-    assert "trail start" in quick_start
-    assert "trail ocr read" in quick_start
-    assert "trail input" in quick_start
-    assert "trail daemon install" not in quick_start
-    assert "trail daemon status" not in quick_start
-    assert "trail daemon start" not in quick_start
-    assert "trail daemon request-status" not in quick_start
-    assert "trail daemon reconcile-session" not in quick_start
-    assert "trail window launch" not in quick_start
-    assert "trail window attach" not in quick_start
-    assert "trail session create" not in quick_start
-    assert "trail screen shot" not in quick_start
-    assert "trail image" not in quick_start
-    assert "trail state dump" not in quick_start
-
-
-def test_readme_and_active_skills_document_help_boundaries() -> None:
-    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
     hsr_skill = (PROJECT_ROOT / "skills" / "trail-hsr" / "SKILL.md").read_text(encoding="utf-8")
     hsr_advanced_skill = (PROJECT_ROOT / "skills" / "trail-hsr-advanced" / "SKILL.md").read_text(encoding="utf-8")
     simple_command_surface = SIMPLE_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
     advanced_command_surface = ADVANCED_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
     request_status_and_taint = REQUEST_STATUS_AND_TAINT_PATH.read_text(encoding="utf-8")
+    cw_entry = CW_ENTRY_SKILL_PATH.read_text(encoding="utf-8")
+    stage_reference = (PROJECT_ROOT / "docs" / "cw-stage-reference" / "README.md").read_text(encoding="utf-8")
 
-    assert "货币战争固定流程命令；`enter` 到首页，`start` 从首页进入投资环境页" in readme
-    assert "常规 battle / settle 流程默认执行：`trail cw battle run --session <id>`；默认 timeout 现在是 `90s`" in readme
-    assert "info next_action=cw.battle.run why=battle_flow_not_finished" in readme
-    assert "结算页也属于 battle flow" in readme
-    assert "`trail state dump --session <id> --format yaml`" in readme
-    assert "`trail cw stage` 只适用于已进入货币战争后的内部阶段快速检测/等待，不用于登录页、大世界等非 CW 场景判断" in readme
-    assert "`cw`：货币战争固定流程命令" in readme
-    assert "`stage` 只用于已进入货币战争后的内部阶段快速检测/等待" in readme
-    assert "`trail cw guide` 只负责当前对局已选攻略的 current/apply" in readme
-    assert "`trail cw invest read|choose` 继续只表示局内 invest 事件" in readme
-    assert "`trail cw portal select --session <id> --card-idx <n>`" in readme
-    assert "`trail cw portal select|detect|refresh|restart` 只用于首页之后的投资环境选择页" in readme
-    assert "`trail-hsr` 是对外总入口" in readme
-    assert "`trail-<scene>-entry` 是对外场景入口" in readme
-    assert "`trail-hsr-advanced` 是内部恢复层" in readme
-    assert "`trail-hsr-advanced` 不作为用户入口" in readme
-    assert "guide 投资环境=购物区 count=1 more=1 next=group-token" in readme
-    assert "guide.config.cw --format yaml" in readme
-    assert "artifact=" not in readme
-    assert (
-        "```text\nok guide.list.cw count=2 more=1 next=token-2\nguide id=abc idx=1 carry=希儿 hard=1 change_equip=0 expert=1\nguide id=def idx=2 hard=0 change_equip=1 expert=0\n```"
-        not in readme
-    )
-    assert (
-        "通用场景判断继续走 `trail start` / `trail ocr read` / `trail input ...`，不要把 `trail cw stage` 当成登录页、大世界等非 CW 场景检测器"
-        in simple_command_surface
-    )
-    assert "artifact=" not in hsr_skill
-    assert "artifact=" not in hsr_advanced_skill
-    assert "trail daemon install" not in hsr_skill
-    assert "trail daemon status" not in hsr_skill
+    assert "README 只面向普通用户" in agents
+    assert "禁止在 README 编写命令协议、输出字段、恢复链路、renderer 契约、skill 拓扑或玩法流程细节" in agents
+
+    assert "通用场景判断继续走 `trail start` / `trail ocr read` / `trail input ...`" in simple_command_surface
     assert "trail daemon request-status --request-id <id>" in request_status_and_taint
     assert "trail daemon reconcile-session --session <id>" in request_status_and_taint
     assert "trail state dump --session <id> --format yaml" in advanced_command_surface
-
-
-def test_readme_documents_battle_run_short_timeout_and_resume_contract() -> None:
-    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    stage_reference = (PROJECT_ROOT / "docs" / "cw-stage-reference" / "README.md").read_text(encoding="utf-8")
-    entry_skill = CW_ENTRY_SKILL_PATH.read_text(encoding="utf-8")
-    prep_skill = (PROJECT_ROOT / "skills" / "trail-cw-prep" / "SKILL.md").read_text(encoding="utf-8")
-    prep_command_surface = (
-        PROJECT_ROOT / "skills" / "trail-cw-prep" / "references" / "command-surface.md"
-    ).read_text(encoding="utf-8")
-    simple_surface = SIMPLE_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
-    workflow_handoffs = (PROJECT_ROOT / "skills" / "registry" / "workflow-handoffs.yaml").read_text(encoding="utf-8")
-    cw_flow_section = _markdown_section(readme, "货币战争流程")
-    command_overview_section = _markdown_section(readme, "命令面概览")
-    skill_boundary_section = _markdown_section(readme, "Skill 边界")
-    settle_reference_section = _markdown_section(stage_reference, "08-cw-round-settle-success.jpg")
-    entry_battle_resume_section = _markdown_section(entry_skill, "Battle Flow Resume")
-
-    for section in (cw_flow_section, command_overview_section, skill_boundary_section):
-        assert "默认 timeout 现在是 `90s`" in section
-        assert "结算页也属于 battle flow" in section
-        assert "info next_action=cw.battle.run why=battle_flow_not_finished" in section
-        assert "trail cw battle clear-in-progress --session <id>" in section
-        assert "只清内部提示位" in section
-        assert "--timeout 570" not in section
-        assert "timeout 570" not in section
-        assert "570s" not in section
-
-    assert "结算页也属于 battle flow" in settle_reference_section
-    assert "`trail cw battle run --session <id>`" in settle_reference_section
-    assert "若要继续当前对局的下一小节，运行" not in settle_reference_section
-    assert "- `trail cw settle next --session <id>`" not in settle_reference_section
-    assert "--timeout 570" not in settle_reference_section
-    assert "570s" not in settle_reference_section
-
-    assert "默认 timeout 现在是 `90s`" in entry_battle_resume_section
-    assert "返回 `status=in_progress` 时，先读取本次截图" in entry_battle_resume_section
-    assert "结算页也属于 battle flow" in entry_battle_resume_section
-    assert "trail cw battle clear-in-progress --session <id>" in entry_battle_resume_section
-    assert "只清 battle.run 的内部续跑提示位" in entry_battle_resume_section
-    assert "不实现新的 skill 本体" in entry_battle_resume_section
-    assert "--timeout 570" not in entry_battle_resume_section
-    assert "570s" not in entry_battle_resume_section
-
-    _assert_text_contains_in_order(
-        simple_surface,
-        "battle in-progress 当前只是场景/命令说明，不实现新的 skill 本体",
-        "info next_action=cw.battle.run why=battle_flow_not_finished",
-        "若仍在 battle flow 中，就继续运行 `trail cw battle run --session <id>`",
-        "结算页也属于 battle flow",
-        "默认 timeout 现在是 `90s`",
-        "trail cw battle clear-in-progress --session <id>",
-        "只清 battle.run 的内部续跑提示位",
-    )
-    assert "--timeout 570" not in simple_surface
-    assert "570s" not in simple_surface
-
-    assert "默认 timeout 现在是 `90s`" in readme
-    assert "结算页也属于 battle flow" in readme
-    assert "info next_action=cw.battle.run why=battle_flow_not_finished" in readme
-    assert "status=completed result=lose stage=game_over stale=0 in_battle=0" in readme
-    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in readme
-    assert "trail cw battle clear-in-progress --session <id>" in readme
-    assert "cw.battle.clear_in_progress" in agents
-    assert "不加入 YAML allowlist" in agents
-    assert "status=completed result=lose stage=game_over stale=0 in_battle=0" in agents
-    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in agents
-    assert "`cw.battle.run` 在 `status=completed stage=preparation` 时会自动收集普通备战 facts" in agents
-    assert "`cw.battle.run(status=completed, stage=preparation)` -> `trail-cw-prep`" in agents
-    assert "结算页也属于 battle flow" in stage_reference
-    assert "仍在 battle flow 中就继续运行 `trail cw battle run --session <id>`" in entry_skill
-    assert "返回 `status=completed result=win stage=preparation` 时会 handoff 到 `trail-cw-prep`" in entry_skill
-    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in entry_skill
-    assert "`cw.battle.run` 的 preparation handoff 与 `cw.portal.select` 一样先复用同次 stage/slots/equipment/shop facts" in prep_skill
-    assert "接收 `cw.portal.select` 或 `cw.battle.run` 的 preparation handoff" in prep_command_surface
-    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in prep_skill
-    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in prep_command_surface
-    assert "--timeout 570" not in prep_skill
-    assert "--timeout 570" not in prep_command_surface
-    assert "battle in-progress" in simple_surface
-    assert "status=completed result=win stage=preparation" in simple_surface
-    assert "game_over=1 end_reason=global_battle_failed restart_candidate=1 returned_home=1" in simple_surface
-    assert "cw.battle.run:" in workflow_handoffs
-    assert "preparation:" in workflow_handoffs
-
-
-def test_docs_and_active_surfaces_split_layer_transition_from_boss_preview() -> None:
-    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    stage_reference = (PROJECT_ROOT / "docs" / "cw-stage-reference" / "README.md").read_text(encoding="utf-8")
-    cw_entry = CW_ENTRY_SKILL_PATH.read_text(encoding="utf-8")
-    simple_surface = SIMPLE_COMMAND_SURFACE_PATH.read_text(encoding="utf-8")
-    settle_reference_section = _markdown_section(stage_reference, "08-cw-round-settle-success.jpg")
-    boss_preview_reference_section = _markdown_section(stage_reference, "05-cw-boss-preview-page.jpg")
-
-    assert "layer_transition" in readme
+    assert "info next_action=cw.battle.run why=battle_flow_not_finished" in simple_command_surface
+    assert "默认 timeout 现在是 `90s`" in cw_entry
     assert "layer_transition" in stage_reference
-    assert "layer_transition" in cw_entry
-    assert "layer_transition" in simple_surface
 
-    assert "`layer_transition` 仍属于 battle flow" in readme
-    assert "默认继续 `trail cw battle run --session <id>`" in readme
-    assert "不要把它当成真正 `boss_preview`、普通稳定阶段或手工中断点" in readme
-    assert "`layer_transition` 仍属于 battle flow" in cw_entry
-    assert "默认继续 `trail cw battle run --session <id>`" in cw_entry
-    assert "不要把它当成真正 `boss_preview`、普通稳定阶段或手工中断点" in cw_entry
-    assert "`layer_transition` 仍属于 battle flow" in simple_surface
-    assert "默认继续 `trail cw battle run --session <id>`" in simple_surface
-    assert "不要把它当成真正 `boss_preview`、普通稳定阶段或手工中断点" in simple_surface
-
-    assert "layer_transition" in settle_reference_section
-    assert "`layer_transition` 仍属于 battle flow" in settle_reference_section
-    assert "默认继续 `trail cw battle run --session <id>`" in settle_reference_section
-    assert "不作为普通稳定阶段或手工中断点" in settle_reference_section
-    assert "boss_preview" in boss_preview_reference_section
-    assert "本场对局首领" in boss_preview_reference_section
-
-
-def test_readme_documents_portal_detect_recovery_contract() -> None:
-    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-    cw_flow_section = _markdown_section(readme, "货币战争流程")
-
-    _assert_text_contains_in_order(
-        cw_flow_section,
-        "- 如果已经手动进入投资环境页，但 `cw start` 中途失败或 session 没有 fresh portal snapshot，使用 `trail cw portal detect --session <id>`；不要重复执行 `trail cw start`",
-        "- `detect = 重识别当前三张卡，不点击`",
-        "- detect 后可直接 `select`",
-        "- `restart` 依旧要求已有开局真值；detect 不会补录 `mode/difficulty/battle_mode`",
-    )
-    assert "detect 后需要先 `trail cw portal refresh --session <id>`" not in cw_flow_section
-    assert "detect 会补录 `mode/difficulty/battle_mode`" not in cw_flow_section
-
-
-def test_readme_cw_start_exact_rank_documents_public_difficulty_surface() -> None:
-    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-
-    assert (
-        "`trail cw start --session <id> --mode new|continue --difficulty lowest|current|highest|AX-X --battle-mode standard|overclock`"
-        in readme
-    )
-    assert "`A0-1..A8-40`" in readme
-    assert "`A7-3`" in readme
-    assert "enemy_difficulty" not in readme
-    assert "A7-3 对应难度 51" not in readme
-    assert "--rank" not in readme
+    assert "artifact=" not in readme
+    assert "artifact=" not in hsr_skill
+    assert "artifact=" not in hsr_advanced_skill
 
 
 def test_skill_cw_start_exact_rank_documents_public_difficulty_surface() -> None:
