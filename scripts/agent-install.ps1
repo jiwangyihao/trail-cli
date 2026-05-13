@@ -41,7 +41,7 @@ function Fail([string]$Code, [string]$Message) {
   New-Item -ItemType Directory -Force -Path $logDir | Out-Null
   $logPath = Join-Path $logDir ('install-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
   "code=$Code message=$Message" | Set-Content -LiteralPath $logPath -Encoding utf8
-  [Console]::Error.WriteLine("错误码=$Code 日志路径=$logPath")
+  [Console]::Error.WriteLine("error_code=$Code log_path=$logPath")
   [Console]::Error.WriteLine("$Code $Message")
   exit 2
 }
@@ -144,15 +144,15 @@ function Confirm-Yes([string]$Prompt) {
 function Prompt-ConfirmedSkillDir([string]$Prompt) {
   $path = Read-Host $Prompt
   if (Is-Blank $path) { Fail 'SKILL_DIR_REQUIRED' 'A skills directory path is required.' }
-  Write-Host "目标 skills 目录: $path"
-  if (-not (Confirm-Yes "将安装到 $path，输入 yes 确认")) {
+  Write-Host "Target skills directory: $path"
+  if (-not (Confirm-Yes "Install to $path. Type yes to confirm")) {
     Fail 'USER_CANCELLED' 'User cancelled skill directory confirmation.'
   }
   return $path
 }
 
 function Write-DetectedTargets($Targets) {
-  Write-Host '检测到以下 AI 工具 skills 目录：'
+  Write-Host 'Detected AI tool skills directories:'
   foreach ($target in $Targets) {
     Write-Host "- $($target.agent): $($target.skill_dir)"
   }
@@ -161,21 +161,21 @@ function Write-DetectedTargets($Targets) {
 function Use-DetectedTargetsFromMenu() {
   $detected = @(Get-DetectedTargets $TargetRoot)
   if ($detected.Count -eq 0) {
-    Write-Host '未检测到 AI 工具目录，请选择自定义 skills 目录。'
-    $script:SkillDir = Prompt-ConfirmedSkillDir '请输入自定义 skills 目录完整路径，例如 C:\Users\你\.agents\skills'
+    Write-Host 'No AI tool directory was detected. Select a custom skills directory.'
+    $script:SkillDir = Prompt-ConfirmedSkillDir 'Enter custom skills directory path, for example C:\Users\you\.agents\skills'
     return
   }
 
   Write-DetectedTargets $detected
   if ($detected.Count -gt 1) {
-    if (-not (Confirm-Yes '将安装到以上全部目录，输入 yes 确认')) {
+    if (-not (Confirm-Yes 'Install to all directories above. Type yes to confirm')) {
       Fail 'USER_CANCELLED' 'User cancelled detected target installation.'
     }
     $script:Agent = 'all'
     return
   }
 
-  if (-not (Confirm-Yes '将安装到以上目录，输入 yes 确认')) {
+  if (-not (Confirm-Yes 'Install to the directory above. Type yes to confirm')) {
     Fail 'USER_CANCELLED' 'User cancelled detected target installation.'
   }
   $script:Agent = [string]$detected[0].agent
@@ -184,23 +184,23 @@ function Use-DetectedTargetsFromMenu() {
 
 function Use-UnverifiedHostSkillDir([string]$AgentName, [string]$DisplayName) {
   $script:Agent = $AgentName
-  $script:SkillDir = Prompt-ConfirmedSkillDir "请输入 $DisplayName skills 目录完整路径。该宿主路径未在本安装器内验证，请使用该工具实际加载 skills 的目录"
+  $script:SkillDir = Prompt-ConfirmedSkillDir "Enter $DisplayName skills directory path. This host path is not verified by this installer; use the directory actually loaded by that tool"
 }
 
 function Invoke-InteractiveInstallMenu() {
-  Write-Host 'Trail 安装向导'
-  Write-Host '1. 自动检测并安装到已发现的 AI 工具（推荐）'
+  Write-Host 'Trail installer'
+  Write-Host '1. Auto-detect and install to discovered AI tools (recommended)'
   Write-Host '2. OpenCode'
   Write-Host '3. OpenClaw'
   Write-Host '4. Claude Code'
   Write-Host '5. GitHub Copilot'
   Write-Host '6. Cursor'
   Write-Host '7. Gemini'
-  Write-Host '8. 全部检测到的环境'
-  Write-Host '9. 自定义 skills 目录，例如 C:\Users\你\.agents\skills'
-  Write-Host '10. 高级：仅安装 CLI'
-  Write-Host '11. 高级：仅安装 skills'
-  $choice = Read-Host '请选择'
+  Write-Host '8. All detected environments'
+  Write-Host '9. Custom skills directory, for example C:\Users\you\.agents\skills'
+  Write-Host '10. Advanced: CLI only'
+  Write-Host '11. Advanced: skills only'
+  $choice = Read-Host 'Select an option'
 
   if ($choice -eq '1') { Use-DetectedTargetsFromMenu }
   elseif ($choice -eq '2') { $script:Agent = 'opencode' }
@@ -210,15 +210,15 @@ function Invoke-InteractiveInstallMenu() {
   elseif ($choice -eq '6') { Use-UnverifiedHostSkillDir 'cursor' 'Cursor' }
   elseif ($choice -eq '7') { Use-UnverifiedHostSkillDir 'gemini' 'Gemini' }
   elseif ($choice -eq '8') { Use-DetectedTargetsFromMenu; if ((Is-Blank $script:SkillDir) -and $script:Agent -ne 'all') { $script:Agent = 'all' } }
-  elseif ($choice -eq '9') { $script:SkillDir = Prompt-ConfirmedSkillDir '请输入自定义 skills 目录完整路径，例如 C:\Users\你\.agents\skills' }
+  elseif ($choice -eq '9') { $script:SkillDir = Prompt-ConfirmedSkillDir 'Enter custom skills directory path, for example C:\Users\you\.agents\skills' }
   elseif ($choice -eq '10') {
-    Write-Host '风险：仅安装 CLI 不会安装 complete Trail skill bundle，Agent 可能无法接管游戏。'
-    if (-not (Confirm-Yes '输入 yes 确认')) { Fail 'USER_CANCELLED' 'User cancelled CLI-only installation.' }
+    Write-Host 'Risk: CLI-only install does not install the complete Trail skill bundle. Agent may not be able to take over the game.'
+    if (-not (Confirm-Yes 'Type yes to confirm')) { Fail 'USER_CANCELLED' 'User cancelled CLI-only installation.' }
     $script:CliOnly = $true
   }
   elseif ($choice -eq '11') {
-    Write-Host '风险：仅安装 skills 要求 trail.exe 已可执行，否则 Agent 无法调用 Trail CLI。'
-    if (-not (Confirm-Yes '输入 yes 确认')) { Fail 'USER_CANCELLED' 'User cancelled skills-only installation.' }
+    Write-Host 'Risk: skills-only install requires trail.exe to already be executable. Otherwise Agent cannot call Trail CLI.'
+    if (-not (Confirm-Yes 'Type yes to confirm')) { Fail 'USER_CANCELLED' 'User cancelled skills-only installation.' }
     $script:SkillsOnly = $true
   }
   else { Fail 'MENU_CHOICE_INVALID' 'Invalid menu choice.' }
@@ -548,22 +548,22 @@ $result = [ordered]@{
   skills = $BundleSkills
 }
 
-Write-Host "Trail 安装位置: $resolvedInstallDir"
+Write-Host "Trail install dir: $resolvedInstallDir"
 if ($installSkillsValue) {
   $skillsDisplay = $resolvedSkillDir
   if (Is-Blank $skillsDisplay) {
     $skillsDisplay = (@($resolvedTargets) | ForEach-Object { [string]$_.skill_dir }) -join '; '
   }
-  Write-Host "skills 安装位置: $skillsDisplay"
+  Write-Host "skills install dir: $skillsDisplay"
 } else {
-  Write-Host 'skills 安装位置: 未安装（仅安装 CLI）'
+  Write-Host 'skills install dir: not installed (CLI only)'
 }
 if ($installCliValue -and $installSkillsValue) {
-  Write-Host '下一步：打开对应 AI 工具，对 Agent 说：使用 trail-hsr 接管星铁'
+  Write-Host 'Next: open your AI tool and tell Agent: use trail-hsr to take over Star Rail'
 } elseif ($installCliValue) {
-  Write-Host '下一步：仅安装 CLI，未安装 skills；如需 Agent 接管，请再运行 skills 安装或使用 AGENT_INSTALL.md'
+  Write-Host 'Next: CLI only, skills were not installed. To let Agent take over, run skills install or use AGENT_INSTALL.md'
 } elseif ($installSkillsValue) {
-  Write-Host '下一步：仅安装 skills，请确认 trail.exe 已在 PATH 或让 Agent 使用完整路径'
+  Write-Host 'Next: skills only. Confirm trail.exe is in PATH, or let Agent use the full path'
 }
 $result | ConvertTo-Json -Depth 4 -Compress
 exit 0

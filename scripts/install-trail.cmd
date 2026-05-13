@@ -18,9 +18,9 @@ if exist "%ENTRY_DIR%scripts\agent-install.ps1" (
   for /f %%T in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "LOG_STAMP=%%T"
   set "LOG_PATH=%LOG_DIR%\install-%LOG_STAMP%.log"
   > "%LOG_PATH%" echo code=INSTALLER_NOT_FOUND message=agent-install.ps1 not found entry_dir=%ENTRY_DIR%
-  echo 错误码=INSTALLER_NOT_FOUND 日志路径=%LOG_PATH%
-  echo Trail 安装失败。找不到 scripts\agent-install.ps1。
-  echo 请把上面的错误码和日志路径复制给 Agent。
+  echo error_code=INSTALLER_NOT_FOUND log_path=%LOG_PATH%
+  echo Trail install failed. scripts\agent-install.ps1 was not found.
+  echo Copy the error_code and log_path above to Agent.
   pause
   exit /b 1
 )
@@ -28,11 +28,11 @@ if exist "%ENTRY_DIR%scripts\agent-install.ps1" (
 powershell -NoProfile -ExecutionPolicy Bypass -File "%INSTALLER%" -PackageRoot "%PACKAGE_ROOT%"
 if errorlevel 1 (
   echo.
-  echo Trail 安装失败。请把上面的错误码和日志路径复制给 Agent。
+  echo Trail install failed. Copy the error_code and log_path above to Agent.
   pause
   exit /b 1
 )
 
 echo.
-echo Trail 安装完成。请打开对应 AI 工具，对 Agent 说：使用 trail-hsr 接管星铁
+echo Trail install complete. Open your AI tool and tell Agent: use trail-hsr to take over Star Rail
 pause

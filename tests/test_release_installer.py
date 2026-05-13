@@ -87,6 +87,18 @@ def restore_user_environment_after_installer_tests():
         set_user_environment_variable(name, value)
 
 
+def assert_ascii_file(path: Path) -> None:
+    data = path.read_bytes()
+    try:
+        data.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise AssertionError(f"{path.name} contains non-ASCII byte at offset {exc.start}") from exc
+
+
+def test_windows_installer_entrypoints_are_ascii_only():
+    assert_ascii_file(SCRIPT)
+    assert_ascii_file(ROOT / "scripts" / "install-trail.cmd")
+
 def test_agent_install_dry_run_openclaw_user_scope(tmp_path):
     target_root = tmp_path / "targets"
     (target_root / "openclaw" / "skills").mkdir(parents=True)
@@ -293,7 +305,7 @@ def test_agent_install_non_dry_run_installs_cli_and_full_bundle(tmp_path):
     assert (skill_dir / "trail-cw-prep" / "SKILL.md").exists()
     assert (skill_dir / "registry" / "workflow-handoffs.yaml").exists()
     assert (skill_dir / "shared" / "escalation-contract.md").exists()
-    assert "打开对应 AI 工具，对 Agent 说：使用 trail-hsr 接管星铁" in result.stdout
+    assert "Next: open your AI tool and tell Agent: use trail-hsr to take over Star Rail" in result.stdout
 
 
 def test_agent_install_cli_only_success_page_does_not_claim_agent_handoff(tmp_path):
@@ -313,8 +325,8 @@ def test_agent_install_cli_only_success_page_does_not_claim_agent_handoff(tmp_pa
     )
 
     assert result.returncode == 0, result.stderr
-    assert "仅安装 CLI，未安装 skills；如需 Agent 接管，请再运行 skills 安装或使用 AGENT_INSTALL.md" in result.stdout
-    assert "打开对应 AI 工具，对 Agent 说：使用 trail-hsr 接管星铁" not in result.stdout
+    assert "Next: CLI only, skills were not installed. To let Agent take over, run skills install or use AGENT_INSTALL.md" in result.stdout
+    assert "Next: open your AI tool and tell Agent: use trail-hsr to take over Star Rail" not in result.stdout
 
 
 def test_agent_install_skills_only_success_page_warns_about_cli_path(tmp_path):
@@ -338,8 +350,8 @@ def test_agent_install_skills_only_success_page_warns_about_cli_path(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert "仅安装 skills，请确认 trail.exe 已在 PATH 或让 Agent 使用完整路径" in result.stdout
-    assert "打开对应 AI 工具，对 Agent 说：使用 trail-hsr 接管星铁" not in result.stdout
+    assert "Next: skills only. Confirm trail.exe is in PATH, or let Agent use the full path" in result.stdout
+    assert "Next: open your AI tool and tell Agent: use trail-hsr to take over Star Rail" not in result.stdout
 
 
 def test_agent_install_skip_user_environment_for_test_keeps_user_env(tmp_path):
@@ -589,11 +601,11 @@ def test_user_installer_agent_docs_and_skill_install_notes_exist():
 
     assert "scripts\\agent-install.ps1" in cmd_text
     assert "PackageRoot" in cmd_text
-    assert "Trail 安装失败" in cmd_text
-    assert "Trail 安装完成" in cmd_text
+    assert "Trail install failed" in cmd_text
+    assert "Trail install complete" in cmd_text
     assert "INSTALLER_NOT_FOUND" in cmd_text
-    assert "错误码=INSTALLER_NOT_FOUND" in cmd_text
-    assert "日志路径=" in cmd_text
+    assert "error_code=INSTALLER_NOT_FOUND" in cmd_text
+    assert "log_path=" in cmd_text
     assert "%LOCALAPPDATA%" in cmd_text
     assert "TrailCLI\\logs" in cmd_text
     assert "install-" in cmd_text
@@ -632,12 +644,12 @@ def test_user_installer_agent_docs_and_skill_install_notes_exist():
     assert "complete Trail skill bundle" in cw_entry
 
     for expected in [
-        "自动检测并安装到已发现的 AI 工具",
+        "Auto-detect and install to discovered AI tools",
         "OpenClaw",
-        "自定义 skills 目录",
-        "仅安装 CLI",
-        "仅安装 skills",
-        "输入 yes 确认",
+        "Custom skills directory",
+        "CLI only",
+        "skills only",
+        "Type yes to confirm",
     ]:
         assert expected in installer
 
