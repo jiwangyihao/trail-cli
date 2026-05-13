@@ -335,86 +335,35 @@ def test_verbose_output_ocr_failure_keeps_ocr_trace_from_runtime(tmp_path):
     assert all(line not in rendered for line in LEGACY_OCR_CONTEXT_DEBUG_LINES)
 
 
-def test_project_agents_declares_renderer_contracts() -> None:
+def test_project_agents_records_design_principles_not_protocol_catalog() -> None:
     agents_path = PROJECT_ROOT / "AGENTS.md"
     agents = agents_path.read_text(encoding="utf-8") if agents_path.exists() else ""
 
-    assert (
-        "- 默认模式一律使用内部 canonical command 名，必须是点号形式，例如 `cw.shop.buy_slot`、`daemon.request_status`、`screen.shot`；不要写成 `cw.shop.buy-slot`、`daemon request-status`。"
-        in agents
-    )
-    assert "- 只要当前命令产出截图，就必须输出 `shot path=...`。" in agents
-    assert "- 失败结果只要带 `request_id`，就必须输出 `request id=<id>` 供恢复或排障使用。" in agents
-    assert "- 只有结果未知或当前失败显式可恢复时，才输出 `recover action=daemon.request_status request=<id>`。" in agents
-    assert (
-        "- 默认正文前缀只允许使用 `request`、`shot`、`item`、`guide`、`text`、`slot`、`opt`、`why`、`warn`、`ref`、`recover`、`info`；`debug` 仅用于 `--verbose` 追加层。"
-        in agents
-    )
-    assert (
-        "- failure 路径正文顺序固定为：`request` -> `shot` -> `why` -> `warn` -> `ref` -> `recover`；`debug` 只能在 `--verbose` 时追加在最后。"
-        in agents
-    )
-    assert (
-        "- 高频冻结字段至少包括：`session_id` -> `session`、`next_page_token` -> `next`、`similarity` -> `sim`、`confidence/score` -> `score`、`bbox/rect` -> `box`、条目序号 -> `idx`、人类消息 -> `msg`。"
-        in agents
-    )
-    assert (
-        "- 默认文本统一使用 `key=value`；除首行的 `ok|fail` 和 `<command>` 外，不再新增位置参数。"
-        in agents
-    )
-    assert (
-        "- 布尔值统一编码为 `0/1`；含空格、引号、反斜杠、换行、等号或逗号歧义的值必须使用双引号。"
-        in agents
-    )
-    assert (
-        "- 只省略语义缺失值，不能省略会影响下一步动作的 `0`、`false`、`count`、`more`、`tainted`。"
-        in agents
-    )
-    assert "trail.output.debug.collect_debug_events" in agents
-    assert "trail.output.debug.render_debug_lines" in agents
-    assert "`# 标题` 行" in agents
-    assert "标题行不承载 must-keep 事实" in agents
-    assert "标题行不得插入 `shot path=...` 与 `info read_image_first=1` 之间" in agents
-    assert "首批固定标题" in agents
-    assert "当前 YAML allowlist 是 `cw.equipment.read`、`daemon.status`、`state.dump`、`guide.fetch.cw`、`guide.config.cw`。" in agents
-    assert "`item` 行字段固定使用 `pos/center/name/score/uncertain/gap/alt/alt_score`" in agents
-    assert "只有 `uncertain=1` 时才输出 `gap/alt/alt_score`" in agents
-    assert "`cw.equipment.read` 默认文本不输出 `idx/row/col/box`" in agents
-    assert "`row/col` 只保留在结构化 `data`、`trail --format yaml cw equipment read --session <id>` 与 `trail --format yaml state dump --session <id>` 的 `cw_state.equipment` 中" in agents
-    assert "`cw.equipment.read` 成功写入 `cw_state.equipment` 最近快照" in agents
-    assert "`cw.equipment.read` 第一版不写入 `cw_state` 长期状态" not in agents
-    assert "`cw.equipment.read` 第一版不写入 `cw_state` 长期状态；它不加入 YAML allowlist" not in agents
-    assert "guide.list.cw 的默认文本改用 攻略ID/攻略标题/版本/主C/攻略标签/最终阵容" in agents
-    assert "cw.start` / `cw.portal.select|refresh|restart` 的 portal 卡片字段使用 `投资环境/说明/待收集`" in agents
-    assert "cw.guide.current|apply` 使用 `攻略ID/攻略标题/攻略码/版本`，并以 `info 攻略快照ID=...` 表示 artifact id" in agents
-    assert "cw.guide.current|apply` 的 `攻略快照ID` 是 artifact id / 恢复追踪 id，不是 `shot path` 截图路径" in agents
-    assert "guide.fetch.cw --select` 只负责把当前攻略写入 session，不扩张 success / YAML shape" in agents
-    assert "cw.portal.select` 若响应 `data.skill_info` 非空，默认正文使用 `info skill_info=运营思路 text=...`" in agents
-    assert "必须在 `warn`、`ref` 之前输出" in agents
-    assert "cw.portal.select` 成功进入备战页后会自动收集 slots/equipment/shop 预备事实" in agents
-    assert "（如有）之后复用 `cw.slots.read` 的 `slot` 行与羁绊 `info` 摘要" in agents
-    assert "cw.portal.select` 的 stage/status 事实固定在 `# 综合信息` 输出" in agents
-    assert "`# 商店信息` 只承载商店 `item` 与 `info coins/reserve_full`" in agents
-    assert "复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影" not in agents
-    assert "自动收集得到的 shop `opened/stale` 不进入首行，也不作为 body 事实渲染" in agents
-    assert "不要因为已有 slots/equipment/shop 文本就跳过截图" in agents
-    assert "cw.portal.select` 命中 workflow handoff 时，success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`" in agents
-    assert "cw.shop.buy_exp` 属于 shop action renderer family" in agents
-    assert "team_size=null` 是 must-keep null fact" in agents
-    assert "cw.shop.buy_exp` 不在 YAML allowlist，`--format yaml` 返回 `OUTPUT_FORMAT_NOT_SUPPORTED`" in agents
-    assert "不扩张 success / YAML shape" in agents
-    assert "guide.fetch.cw --select` 只负责把当前攻略写入 session" in agents
-    assert "由 `cw.portal.select` 成功时自动兑现当前已选攻略" in agents
-    assert "current/apply` 只看当前已应用攻略摘要" not in agents
-    assert "在进入游戏并完成投资环境选择后，再执行" not in agents
-    assert "cw guide apply --session <id> --lineup-id <lineup_id>" not in agents
-    assert "--lineup-id" not in agents
-    assert "guide.config.cw` 使用 `赛季/子赛季/大版本/搜牌档位/羁绊/角色/角色标签/投资环境`" in agents
-    assert "对应契约测试和相关 `skills/*/SKILL.md`" in agents
-    assert "只有影响普通安装、用户入口或公开定位时才更新根目录 `README.md`" in agents
-    assert "renderer 单测" in agents
-    assert "CLI stdout 测试或 RPC/契约测试增量" in agents
+    for expected in [
+        "# 项目设计准则",
+        "`README.md` 只面向普通用户",
+        "不要在 `README.md` 编写命令协议、输出字段、恢复链路、renderer 契约、skill 拓扑或玩法流程细节",
+        "发布完成后必须手动重写 release note",
+        "Release note 面向用户和安装者",
+        "默认文本是 Agent 主通道",
+        "新命令必须先归类到已有 renderer 家族",
+        "带截图的成功结果必须先输出截图路径，再立即提示 Agent 先读原始截图",
+        "failure 输出顺序必须稳定",
+        "`--verbose` 只追加开发和排障层",
+        "输出变更至少补 renderer 单测",
+        "玩法事实应按稳定板块分组",
+        "自动收集 facts 时，缺失、stale、低置信和可恢复失败必须清晰呈现",
+        "Agent 可见位置使用 1-based 表达",
+        "daemon 采用单例异步续查模型",
+        "控制面命令只负责状态查询、恢复和取消",
+    ]:
+        assert expected in agents
 
+    assert "默认模式一律使用内部 canonical command 名" not in agents
+    assert "当前 YAML allowlist 是" not in agents
+    assert "success 首行固定" not in agents
+    assert "ok cw.equipment.compose pos=" not in agents
+    assert "team_size=null" not in agents
 
 def test_cw_equipment_recommendation_docs_are_synced() -> None:
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -431,12 +380,12 @@ def test_cw_equipment_recommendation_docs_are_synced() -> None:
         or "trail cw equipment compose" in line
     )
 
-    for text in (agents, prep_skill, command_surface):
+    for text in (prep_skill, command_surface):
         assert "# 装备优先级" in text
         assert "# 角色装备需求" in text
         assert "cw.equipment.compose" in text
 
-    assert "ok cw.equipment.compose pos=" in agents
+    assert "装备合成" in agents
     assert "cw.equipment.compose" in command_surface
     assert "trail cw equipment compose" in command_surface
     assert "--slot <front|back|hand>:<1-based>" in command_surface
@@ -453,8 +402,8 @@ def test_cw_equipment_recommendation_docs_are_synced() -> None:
     assert "材料不足" in compose_docs
     assert "info todo=slots" in prep_skill
     assert "info todo=slots" in command_surface
-    assert "`# 装备优先级` 的 `guide` 行 -> `# 角色装备需求` 的 `slot` 行或 `info todo=slots` -> `warn` -> `ref`" in agents
-    assert "角色装备需求只推荐攻略 `first_equipments` / `优选装备`" in agents
+    assert "装备识别、装备推荐和装备合成分别保持边界" in agents
+    assert "推荐只表达当前攻略优选装备需求" in agents
     assert "当前只消费攻略 `优选装备` / `first_equipments`" in prep_skill
     assert "当前只推荐攻略 `优选装备` / `first_equipments`" in command_surface
     assert "装备推荐分块位于 `warn`、`ref` 之前" in prep_skill

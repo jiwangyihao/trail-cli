@@ -1948,11 +1948,9 @@ def test_trail_cw_prep_documents_lv999_cost_protocol() -> None:
     text = CW_PREP_SKILL.read_text(encoding="utf-8")
     surface = CW_PREP_COMMAND_SURFACE.read_text(encoding="utf-8")
 
-    assert "银狼LV.999 与普通 银狼 完全无关" in agents
-    assert "cost 是 slots/shop/sell_plan 的 must-keep 事实" in agents
-    assert "cost 只能作为默认文本既有 slot/item 行字段输出" in agents
-    assert "guide/info/role_verification 默认文本不得输出 cost" in agents
-    assert "银狼LV.999 不使用普通 star-equivalent 1/3/9" in agents
+    assert "`银狼LV.999` 与普通 `银狼` 完全无关" in agents
+    assert "必须保留 cost/star 语义" in agents
+    assert "不能用普通星级等价规则代替" in agents
     assert "银狼LV.999 默认文本身份使用 name + cost + star" in text
     assert "cost 是 slots/shop/sell_plan 的 must-keep 事实" in text
     assert "role_id 只作内部资源/诊断，不作 Agent 业务身份" in text

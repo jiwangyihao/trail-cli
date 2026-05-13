@@ -91,58 +91,16 @@ def _trigger_rows(path: Path, sample_type: str) -> list[dict]:
     return [row for row in _load_json(path) if row["sample_type"] == sample_type]
 
 
-def _assert_cw_entry_mentions_are_scoped(text: str) -> None:
-    lines = _lines_with_token(text, "trail-cw-entry")
-
-    assert lines
-    assert any(("当前入口" in line or "当前 active public" in line) and "scene entry" in line for line in lines)
-    assert any(("整局 owner" in line or "owner" in line) and "不是" in line for line in lines)
-
-
-def _assert_cw_guide_mentions_are_scoped(text: str) -> None:
-    lines = _lines_with_token(text, "trail-cw-guide")
-
-    assert lines
-    assert any(("攻略" in line or "攻略选择" in line) and "public" in line for line in lines)
-    assert any("direct-user" in line or "直接" in line for line in lines)
-    assert any("scene entry" in line and "不是" in line for line in lines)
-    assert any("默认 owner" in line and "不是" in line for line in lines)
-    assert any("整局 owner" in line and "不是" in line for line in lines)
-
-
-def _assert_cw_portal_mentions_are_scoped(text: str) -> None:
-    lines = _lines_with_token(text, "trail-cw-portal")
-
-    assert lines
-    assert any("internal" in line and ("投资环境页" in line or "portal-page" in line or "portal page" in line) for line in lines)
-    assert any("scene entry" in line and "不是" in line for line in lines)
-    assert any("owner" in line and "不是" in line for line in lines)
-    assert any(
-        ("direct-user" in line or "用户入口" in line) and ("不是" in line or "不作为" in line)
-        for line in lines
-    )
-
-
-def _assert_cw_event_unknown_mentions_are_scoped(text: str) -> None:
-    lines = _lines_with_token(text, "trail-cw-event-unknown")
-
-    assert lines
-    assert any("internal" in line and ("未知事件" in line or "unknown" in line) for line in lines)
-    assert any("scene entry" in line and "不是" in line for line in lines)
-    assert any("owner" in line and "不是" in line for line in lines)
-    assert any(
-        ("direct-user" in line or "用户入口" in line) and ("不是" in line or "不作为" in line)
-        for line in lines
-    )
+def _assert_cw_skill_topology_principles(text: str) -> None:
+    assert "public/internal 边界" in text
+    assert "owner 职责" in text
+    assert "`trail-hsr` 是对外总入口" in text
 
 
 def _assert_expected_workflow_handoff_doc_smoke(text: str) -> None:
-    assert "cw.enter -> trail-cw-entry" in text
-    assert "cw.portal.select -> trail-cw-prep" in text
-    assert "cw.event.handle" in text and "trail-cw-event-unknown" in text
-    assert "handoff_reason=event_unknown_manual_required" in text
-    assert "handoff_skill=trail-cw-prep" in text
-    assert "handoff_reason=preparation_stage_entered" in text
+    assert "strong handoff" in text
+    assert "下一步 skill 切换信号" in text
+    assert "阶段转换" in text
     assert "handoff_skill=trail-cw-guide" not in text
     assert "handoff_skill=trail-cw-portal" not in text
 
@@ -505,25 +463,12 @@ def test_routing_review_keeps_auditable_methodology_and_complete_rows() -> None:
 def test_new_skill_topology_is_documented_in_agents() -> None:
     text = AGENTS.read_text(encoding="utf-8")
 
-    _assert_cw_entry_mentions_are_scoped(text)
-    _assert_cw_guide_mentions_are_scoped(text)
-    _assert_cw_portal_mentions_are_scoped(text)
-    _assert_cw_event_unknown_mentions_are_scoped(text)
-    assert "scene entry" in text and "status=active" in text and "exposure=public" in text
-    assert "`info handoff_skill=... handoff_strength=strong ...`" in text
+    _assert_cw_skill_topology_principles(text)
+    assert "status=active" in text and "exposure=public" in text
+    assert "strong handoff" in text
     assert "下一步 skill 切换信号" in text
-    assert "在 `warn`、`ref` 之后追加一行尾行强提示" in text
-    assert "该行必须是 success 输出最后一行" in text
-    assert "stage/slots/equipment/shop facts" in text
-    assert "`# 装备信息`" in text
-    assert "标题行不是正文前缀" in text
-    assert "不得被 Agent 当作 action/prefix 消费" in text
-    assert "trail-cw-prep` 接收 `cw.portal.select` handoff" in text
-    assert "equipment" in text and "只有事实缺失、stale 或页面已变化" in text
-    assert "stale_facts=stage/status|slots|shop|equipment|strategy|sell_plan|variable_cost_roles" in text
-    assert "crystals_stale=0" in text
-    assert "cw.event.reconcile" in text
-    assert "任何 active skill 都不得直接或间接调用 archive skill" in text
+    assert "阶段转换" in text
+    assert "active skill 都不得直接或间接调用 archive skill" in text
     _assert_expected_workflow_handoff_doc_smoke(text)
     _assert_no_legacy_cw_skill_mentions(text)
     assert "当前推荐入口" not in text

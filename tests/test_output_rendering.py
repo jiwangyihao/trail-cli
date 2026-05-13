@@ -285,34 +285,18 @@ def test_render_output_failure_does_not_render_read_image_first_line():
 def test_agents_document_screenshot_first_protocol_facts() -> None:
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
-    assert (
-        "success 路径必须先输出首行，再按需要输出 `shot`；若当前结果带截图，再紧跟 `info read_image_first=1`；然后才是 `# 标题` 行（如有）与 `item`、`guide`、`text`、`slot`、`opt`、其余 `info` 这类实体行"
-        in agents
-    )
-    assert "标题行不得插入 `shot path=...` 与 `info read_image_first=1` 之间" in agents
-    assert (
-        "若命令命中已配置 workflow handoff，success 路径允许在 `warn`、`ref` 之后追加一行尾行强提示 `info handoff_skill=... handoff_strength=... handoff_reason=...`，且该行必须是 success 输出最后一行。"
-        in agents
-    )
-    assert "envelope 顶层若带 `screenshot`，同步生成 `image_guidance.read_image_first=1`" in agents
-    assert "`image_guidance` 不进入 YAML body" in agents
-    assert "`--verbose` 不为 `image_guidance` 新增独立 guidance 事件" in agents
-    assert "`cw.shop.scan|status` 的 stage 投影固定使用 `stage_level/stage_exp/stage_team_size/stage_status_stale`" in agents
+    assert "带截图的成功结果必须先输出截图路径，再立即提示 Agent 先读原始截图" in agents
+    assert "标题行只用于分组，不承载 must-keep 事实" in agents
+    assert "failure 输出顺序必须稳定" in agents
+    assert "默认文本是 Agent 主通道" in agents
 
 
 def test_agents_document_verbose_major_action_trace_contract() -> None:
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
-    assert "`--verbose` 只追加开发/排障层，不改变默认文本协议的事实集合和顺序。" in agents
-    assert "major action trace 固定输出" in agents
-    assert "UTC RFC3339" in agents
-    assert "ok=0|1" in agents
-    assert "trace/context" in agents
-    assert "`trace` 只承载 finalized helper 动作事件" in agents
-    assert "`context` 只承载跨动作请求级事实" in agents
-    assert "debug kind=trace step=ocr ..." in agents
-    assert "不再作为 top-level debug context 暴露" in agents
-    assert "best-effort" in agents
+    assert "`--verbose` 只追加开发和排障层" in agents
+    assert "不改变默认文本协议的事实集合、顺序或恢复语义" in agents
+    assert "debug 收集失败只能丢弃 debug" in agents
 
 
 def test_skills_document_screenshot_first_guidance_rule() -> None:
@@ -430,8 +414,8 @@ def test_readme_detail_contracts_live_in_active_docs_not_readme() -> None:
     cw_entry = CW_ENTRY_SKILL_PATH.read_text(encoding="utf-8")
     stage_reference = (PROJECT_ROOT / "docs" / "cw-stage-reference" / "README.md").read_text(encoding="utf-8")
 
-    assert "README 只面向普通用户" in agents
-    assert "禁止在 README 编写命令协议、输出字段、恢复链路、renderer 契约、skill 拓扑或玩法流程细节" in agents
+    assert "`README.md` 只面向普通用户" in agents
+    assert "不要在 `README.md` 编写命令协议、输出字段、恢复链路、renderer 契约、skill 拓扑或玩法流程细节" in agents
 
     assert "通用场景判断继续走 `trail start` / `trail ocr read` / `trail input ...`" in simple_command_surface
     assert "trail daemon request-status --request-id <id>" in request_status_and_taint
@@ -470,30 +454,11 @@ def test_skill_cw_start_exact_rank_documents_public_difficulty_surface() -> None
 def test_agents_document_cw_portal_select_auto_collect_contract() -> None:
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
-    _assert_text_contains_in_order(
-        agents,
-        "`cw.portal.select` success 首行固定为 `ok cw.portal.select idx=... 投资环境=...`",
-        "`cw.portal.select` 成功进入备战页后会自动收集 slots/equipment/shop 预备事实",
-        "读取 slots、确认 slots fresh 后读取 equipment、打开商店",
-        "`shot path=...` 后必须紧跟 `info read_image_first=1`",
-        "`# 综合信息` -> `# 攻略提示` -> `# 角色信息` -> `# 羁绊信息` -> `# 装备信息` -> `# 装备优先级` -> `# 角色装备需求` -> `# 商店信息`",
-        "stage/status 事实固定在 `# 综合信息` 输出",
-        "`info skill_info=运营思路 text=...`",
-        "（如有）之后复用 `cw.slots.read` 的 `slot` 行与羁绊 `info` 摘要",
-        "`# 装备信息` 承载装备背包 `item` 与 summary `info`",
-        "装备推荐/需求继续落在 `# 装备优先级` 和 `# 角色装备需求` 下",
-        "`# 商店信息` 只承载商店 `item` 与 `info coins/reserve_full`",
-        "`warn`、`ref` 之前输出",
-        "success 最后一行必须是 `info handoff_skill=trail-cw-prep handoff_strength=strong handoff_reason=preparation_stage_entered`",
-    )
-    assert "自动收集得到的 shop `opened/stale` 不进入首行，也不作为 body 事实渲染" in agents
-    assert "不要因为已有 slots/equipment/shop 文本就跳过截图" in agents
-    assert "warn code=CW_EQUIPMENT_AUTO_COLLECT_FAILED" in agents
-    assert "不阻止 shop 收集或 final handoff" in agents
-    assert "fresh `data.equipment.stale=0/False`" in agents
-    assert "抑制残留的 auto collect failed warning" in agents
-    assert "stale/无 equipment 时保留 warning" in agents
-    assert "复用商店 `item` 行与 `info coins/reserve_full/stage_level/stage_exp/stage_team_size/stage_status_stale` 投影" not in agents
+    assert "玩法事实应按稳定板块分组" in agents
+    assert "综合信息、攻略提示、角色信息、羁绊信息、装备信息、装备优先级、角色装备需求、商店信息" in agents
+    assert "跨阶段 handoff 只能表达下一步建议" in agents
+    assert "自动收集 facts 时，缺失、stale、低置信和可恢复失败必须清晰呈现" in agents
+    assert "soft warning 不应阻断可继续执行的后续收集或 handoff" in agents
 
 
 def test_render_output_renders_canonical_stage_wait_text():
