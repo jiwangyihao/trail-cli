@@ -1,4 +1,4 @@
-param([string]$Version = '0.1.1')
+param([string]$Version = '0.1.2')
 
 $ErrorActionPreference = 'Stop'
 $Version = $Version.TrimStart('v')

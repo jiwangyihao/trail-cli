@@ -29,4 +29,4 @@ def test_version_falls_back_to_source_metadata_when_distribution_missing(monkeyp
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert result.stdout == "trail 0.1.1\n"
+    assert result.stdout == "trail 0.1.2\n"
