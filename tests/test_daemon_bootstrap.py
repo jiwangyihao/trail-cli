@@ -681,6 +681,7 @@ def _start_server_in_thread(*, daemon_home: Path, monkeypatch):
     from trail.daemon.bootstrap import wait_until_runtime_ready
     from trail.daemon.command_service import CommandService
     from trail.daemon.server import TrailDaemonServer
+    from trail.daemon.session_service import SessionServiceRegistry
 
     class StubRuntime:
         def ocr(self, **kwargs):
@@ -698,7 +699,10 @@ def _start_server_in_thread(*, daemon_home: Path, monkeypatch):
 
     write_installed_manifest(daemon_home, runtime_state="starting")
     runtime_service = StubRuntimeService()
-    server = TrailDaemonServer(command_service=CommandService(runtime_service=runtime_service))
+    server = TrailDaemonServer(
+        command_service=CommandService(runtime_service=runtime_service, session_service=SessionServiceRegistry()),
+        async_enabled=False,
+    )
     monkeypatch.setattr("trail.daemon.server.resolve_daemon_home", lambda: daemon_home)
 
     thread = threading.Thread(target=server.serve_forever, daemon=True)

@@ -2075,8 +2075,8 @@ def test_cw_start_help_mentions_ax_x_and_rank_ranges():
 def test_cw_start_invalid_difficulty_reaches_daemon_instead_of_typer(cli_runner, monkeypatch):
     seen: dict[str, object] = {}
 
-    def fake_call(method, payload, *, session_id=None, verbose=None, daemon_client=None):
-        del session_id, verbose, daemon_client
+    def fake_call(method, payload, *, session_id=None, verbose=None, daemon_client=None, request_id=None):
+        del session_id, verbose, daemon_client, request_id
         seen["method"] = method
         seen["payload"] = payload
         return {

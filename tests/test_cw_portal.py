@@ -1505,7 +1505,15 @@ def test_cw_start_from_home_advances_to_invest_and_persists_portal_snapshot(tmp_
     assert persisted.scene_state["cw"]["shop"] == {"stale": True, "opened": True}
     assert persisted.scene_state["cw"]["sell_plan"] == {"stale": True}
     assert status["final_state"] == "completed"
-    assert runtime.ocr_calls == [{}, {}, {}, {}, {}]
+    assert runtime.ocr_calls == [
+        {},
+        {"capture": {"from_x": 520, "from_y": 420, "to_x": 1160, "to_y": 600}},
+        {},
+        {"capture": {"from_x": 520, "from_y": 420, "to_x": 1160, "to_y": 600}},
+        {},
+        {"capture": {"from_x": 520, "from_y": 420, "to_x": 1160, "to_y": 600}},
+        {},
+    ]
     assert observed_summary_inputs == [
         {
             "pieces": [{"text": "alpha"}],
@@ -1614,7 +1622,10 @@ def test_cw_start_rejects_continue_mode_on_clean_home_before_side_effects(tmp_pa
     assert registry.for_workspace(str(tmp_path)).request_status("req-cw-start-home-continue-invalid")["final_state"] == "failed_before_side_effect"
     assert runtime.clicks == []
     assert runtime.wait_calls == []
-    assert runtime.ocr_calls == [{}, {}]
+    assert runtime.ocr_calls == [
+        {},
+        {"capture": {"from_x": 520, "from_y": 420, "to_x": 1160, "to_y": 600}},
+    ]
 
 
 def test_cw_start_from_clean_home_reveals_unfinished_progress_after_start_click(
@@ -1686,7 +1697,13 @@ def test_cw_start_from_clean_home_reveals_unfinished_progress_after_start_click(
     assert status["tainted"] is True
     assert runtime.clicks == [start_box.center]
     assert runtime.wait_calls == []
-    assert runtime.ocr_calls == [{}, {}, {}]
+    assert runtime.ocr_calls == [
+        {},
+        {"capture": {"from_x": 520, "from_y": 420, "to_x": 1160, "to_y": 600}},
+        {},
+        {"capture": {"from_x": 520, "from_y": 420, "to_x": 1160, "to_y": 600}},
+        {},
+    ]
     assert persisted.scene_state["cw"]["entry"] == {"page": "home"}
     assert persisted.scene_state["cw"]["slots"] == {"stale": False, "hand": ["希儿"]}
     assert persisted.scene_state["daemon"]["tainted"] is True
